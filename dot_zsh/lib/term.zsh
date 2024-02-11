@@ -1,3 +1,7 @@
+#|------------------------------------------------------------|#
+#| Cool greeting                                              |#
+#|------------------------------------------------------------|#
+
 cutes=("✨ 🔮 ✨" "🕒 🧠 🕒" "💥 ✌️ 💥" "☔️ 🐳 ☔️" "🌟 🌙 🌟" "⏰ 💡 ⏰" "⚡️ 🤘 ⚡️" "🌨️ 🐋 🌨️" "🔥 🤙 🔥" "⏳ 💭 ⏳" "🌈 🙌 🌈" "🍀 💪 🍀" "🌞 🤞 🌞" "🍁 🤟 🍁");
 cute_message_to_me="welcome, ya cutie!"
 cute_tmux_prompt_notice="OH!! there's a tmux runnin'!"
@@ -94,63 +98,4 @@ resume_tmux_prompt () {
 loading_message () {
   clear && reset_cursor && \
   print_center_cuteness "$(random_from $expressions)"
-}
-
-#|------------------------------------------------------------|#
-#| NodeJS Package linking                                     |#
-#|------------------------------------------------------------|#
-#| TODO: Consider dropping since there are better alternatives
-function build_pack () {
-  package_name="$(node -pe "require('./package.json').name")" && \
-  echo "Building & packing \"$package_name\"" && \
-  yarn build && package_tar=$(npm pack) && \
-  echo "Packed!" && \
-  echo "Run \`link_pack $package_name $(pwd)/$package_tar\`"
-}
-function link_pack () {
-  package_name="${1:?required}"
-  src_tgz="${2:?required}"
-  package_dir="node_modules/$package_name"
-  under_package_dir="$package_dir/package"
-
-  echo "Linking a packed tar.: $(basename "$src_tgz")"
-  echo ""
-  echo "  $(basename "$src_tgz")  ⟹   $package_dir"
-  echo ""
-  rm -rf "$package_dir" && \
-  mkdir "$package_dir" && \
-  tar --strip=1 -C "$package_dir" -xzf "$src_tgz" && \
-  echo "...Linked! Bai!"
-}
-
-#|------------------------------------------------------------|#
-#| Cross-platform file agnostic open                          |#
-#|------------------------------------------------------------|#
-function open_command() {
-  local open_cmd
-
-  # define the open command
-  case "$OSTYPE" in
-    darwin*)  open_cmd='open' ;;
-    cygwin*)  open_cmd='cygstart' ;;
-    linux*)   ! [[ $(uname -a) =~ "Microsoft" ]] && open_cmd='xdg-open' || {
-                open_cmd='cmd.exe /c start ""'
-                [[ -e "$1" ]] && { 1="$(wslpath -w "${1:a}")" || return 1 }
-              } ;;
-    msys*)    open_cmd='start ""' ;;
-    *)        echo "Platform $OSTYPE not supported"
-              return 1
-              ;;
-  esac
-
-  # don't use nohup on OSX
-  if [[ "$OSTYPE" == darwin* ]]; then
-    ${=open_cmd} "$@" &>/dev/null
-  else
-    nohup ${=open_cmd} "$@" &>/dev/null
-  fi
-}
-
-function color_table() {
-  for x in {0..8}; do for i in {30..37}; do for a in {40..47}; do echo -ne "\e[$x;$i;$a""m\\\e[$x;$i;$a""m\e[0;37;40m "; done; echo; done; done; echo ""
 }

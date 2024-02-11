@@ -16,7 +16,7 @@ fi
 #|------------------------------------------------------------|#
 #| Reset terminal text                                        |#
 #|------------------------------------------------------------|#
-clear && source $HOME/.zsh/zsh-functions
+clear && source $HOME/.zsh/lib/term.zsh
 clear && reset_cursor && cursor_disable
 
 #|------------------------------------------------------------|#
@@ -27,28 +27,9 @@ echo -ne "\033]6;1;bg;green;brightness;42\a"
 echo -ne "\033]6;1;bg;blue;brightness;54\a"
 
 #|------------------------------------------------------------|#
-#| Env variables                                              |#
-#|------------------------------------------------------------|#
-export DEFAULT_USER=loch
-export EDITOR='subl -w'
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-export PATH="$PATH:$HOME/.local/bin"
-export PATH="$PATH:$HOME/.gem/bin"
-export N_PREFIX="$HOME/.n";
-export PATH="$N_PREFIX/bin:$PATH"
-export PATH="./node_modules/.bin:$PATH"
-#export DENO_INSTALL="$HOME/.deno"  # Added by deno_install (see https://github.com/denoland/deno_install)
-#export PATH="$DENO_INSTALL/bin:$PATH"
-export PATH="$HOME/.cargo/bin:$PATH"
-export RUST_SRC_PATH="$(rustc --print sysroot)/lib/rustlib/src/rust/src"
-if type pyenv > /dev/null; then eval "$(pyenv init -)"; fi
-export FLYCTL_INSTALL="$HOME/.fly"
-export PATH="$FLYCTL_INSTALL/bin:$PATH"
-
-#|------------------------------------------------------------|#
 #| Load in env changes                                        |#
 #|------------------------------------------------------------|#
-[ -f $HOME/.zsh/zsh-env ] && source $HOME/.zsh/zsh-env
+[ -f $HOME/.zsh/env.zsh ] && source $HOME/.zsh/env.zsh
 
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up                                  |#
@@ -79,7 +60,8 @@ source $ZPLUG_HOME/init.zsh
 
 #|--------------------------------|#
 #| Prompt plugins
-#| TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
+zplug "~/.zsh/plugins/iterm2", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+# TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
 zplug "~/.zsh/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
 zplug "~/.zsh/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
 # TODO: Migrate history to https://atuin.sh/
@@ -89,6 +71,7 @@ bindkey '^[[A' history-substring-search-up
 bindkey '^[[B' history-substring-search-down
 zplug "~/.zsh/plugins/fzf", from:local, use:"shell/*.zsh"
 # TODO: Fork this to get complete control over experience (e.g. quick git branch info)
+#       Or better yet, switch to https://starship.rs/guide/
 zplug "~/.zsh/themes/pure", from:local, use:"pure.zsh", as:theme
 zplug "~/.zsh/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
 zplug "~/.zsh/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
@@ -125,8 +108,8 @@ zplug load
 fpath=("$ZSH_CACHE_DIR/completions" $fpath)
 autoload bashcompinit && bashcompinit
 autoload -Uz compinit
-if typeset -f _add_completions > /dev/null; then
-  _add_completions
+if typeset -f _add_env_completions > /dev/null; then
+  _add_env_completions
 fi
 compinit
 

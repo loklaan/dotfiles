@@ -1,15 +1,3 @@
-#|------------------------------------------------------------|#
-#| Languages: NodeJS                                          |#
-#|------------------------------------------------------------|#
-[".n/repo"]
-    type = "archive"
-    url = "https://github.com/tj/n/archive/v9.2.0.tar.gz"
-    exact = true
-    stripComponents = 1
-    refreshPeriod = "168h"
-#|------------------------------------------------------------|#
-#| Plugins: ZSH                                               |#
-#|------------------------------------------------------------|#
 [".zsh/zplug"]
     type = "archive"
     url = "https://github.com/zplug/zplug/archive/2.4.2.tar.gz"
@@ -70,41 +58,7 @@
     exact = true
     stripComponents = 1
     refreshPeriod = "168h"
-
-#|------------------------------------------------------------|#
-#| Plugins: TMUX                                              |#
-#|------------------------------------------------------------|#
-[".tmux/_plugins/tmux-continuum"]
-    type = "archive"
-    url = "https://github.com/tmux-plugins/tmux-continuum/archive/7f99beee.tar.gz"
-    exact = true
-    stripComponents = 1
-    refreshPeriod = "168h"
-[".tmux/_plugins/tmux-resurrect"]
-    type = "archive"
-    url = "https://github.com/tmux-plugins/tmux-resurrect/archive/c66b791f.tar.gz"
-    exact = true
-    stripComponents = 1
-    refreshPeriod = "168h"
-[".tmux/_plugins/tmux-themepack"]
-    type = "archive"
-    url = "https://github.com/jimeh/tmux-themepack/archive/1b1b8098.tar.gz"
-    exact = true
-    stripComponents = 1
-    refreshPeriod = "168h"
-[".tmux/_plugins/tmux-yank"]
-    type = "archive"
-    url = "https://github.com/tmux-plugins/tmux-yank/archive/ce21dafd.tar.gz"
-    exact = true
-    stripComponents = 1
-    refreshPeriod = "168h"
-
-#|------------------------------------------------------------|#
-#| Integrations: Iterm2                                       |#
-#|------------------------------------------------------------|#
-{{ if eq .chezmoi.os "darwin" }}
-[".iterm2_shell_integration.zsh"]
+[".zsh/plugins/iterm2/iterm2_shell_intergration.plugin.zsh"]
     type = "file"
     url = "https://iterm2.com/shell_integration/zsh"
     refreshPeriod = "168h"
-{{ end }}
