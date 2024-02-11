@@ -1,0 +1,18 @@
+# General
+alias rm="safe-rm"
+alias rmrf="rm -rf"
+alias o="open_command"
+alias c="clear"
+alias headers="curl -I -s -X GET"
+alias gt="git"
+
+## ls
+alias l="ls -lah"
+alias la="ls -lAH"
+alias ll="ls -lh"
+alias ls="ls -G"
+
+{{ if eq .chezmoi.os "darwin" }}
+# OSX Aliases
+alias tmux="TERM=screen-256color-bce tmux"
+{{ end }}

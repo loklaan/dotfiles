@@ -1,0 +1,141 @@
+[alias]
+  squish = squash
+  st = status
+  co = checkout
+  cp = cherry-pick
+  ls = ls-files
+  staged = diff --staged
+  # Colourful graph, kawaii
+  lg = log --graph --pretty=format:'%C(ul yellow)%h%Creset -%C(red)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset'
+  rh = reset --hard
+  rbc = rebase --continue
+  cpc = cherry-pick --continue
+  # Reset to parent commit and keep the commit changes in *stage*
+  undo = reset --soft HEAD^
+  # Removes local tracking references for since-removed remote branches
+  prune = fetch --prune
+  # Woops, correct that last commit ~LIT~
+  amend = commit --amend
+  amend-then = commit --amend --no-edit -C HEAD
+  amend-now = !git commit --amend --no-edit -C HEAD --date=\"$(date)\"
+  # Often want to stash new files
+  stash-all = stash --incude-untracked
+  # Branches that have since been merged (should probably be deleted)
+  branch-merged = branch --merged
+  branch-remote-merged = branch -r --merged
+  # Copies content of done.commit into the message of a new commit
+  commit-done = commit -eF done.commit
+  mergein = merge --no-ff
+  who = !git-who
+  # Do it once for new remote branches
+  track = "!git push -u origin `git symbolic-ref --short HEAD`"
+
+[user]
+  name = Lochlan Bunn
+  email = bunn@lochlan.io
+  # Key ID derived from pub fingerprint
+  signingkey = CE6FBFFBCA7C88A55CA6E3EF30AAECE310808A76
+
+[push]
+  default = simple
+  # Push tags by default
+  followtags = true
+
+[pull]
+  rebase = true
+
+[status]
+  # Expands untracked directories
+  showuntrackedfiles = all
+
+[merge]
+  # Adds third merge marker in files, that sections original text
+  conflictstyle = diff3
+
+[transfer]
+  # Check for object data corruption
+  # NOTE: This may need to be disabled during some workflows, like install oh-my-zsh which is corrupt
+  fsckobjects = true
+
+[commit]
+  gpgsign = true
+
+[gpg]
+  program = gpg
+
+[core]
+  # https://github.com/so-fancy/diff-so-fancy
+  #editor = vim
+  editor = 'subl' --wait
+  excludesfile = ~/.gitignore_global
+
+[diff]
+  # https://github.com/jeffkaufman/icdiff
+  # Good for side-by-side diffs, as opposed inline-paging
+  # CURRENTLY BROKEN??
+  # tool = icdiff
+  # https://github.com/blog/2188-git-2-9-has-been-released#beautiful-diffs
+  # Compacts the changed LOC when possible in diffs
+  compactionHeuristic = true
+
+[difftool]
+  prompt = false
+
+[difftool "icdiff"]
+  # Background is ~LIT~, as opposed to foreground colors
+  cmd = icdiff -H --line-numbers $LOCAL $REMOTE
+
+[pager]
+  diff = delta --diff-so-fancy
+  log = delta --diff-so-fancy
+  reflog = delta --diff-so-fancy
+  show = delta --diff-so-fancy
+
+[delta]
+  plus-style = "syntax #012800"
+  minus-style = "syntax #340001"
+  syntax-theme = "none" # Not an actual theme - I just prefer white text for diffs
+  navigate = true
+  line-numbers = true
+
+[interactive]
+  diffFilter = delta --diff-so-fancy --color-only
+
+[filter "lfs"]
+  required = true
+  clean = git-lfs clean -- %f
+  smudge = git-lfs smudge -- %f
+  process = git-lfs filter-process
+
+[color]
+  ui = always
+
+[color "branch"]
+  current = yellow reverse
+  local = yellow
+  remote = green
+
+[color "diff"]
+  meta = yellow bold
+  frag = magenta bold
+  old = red bold
+  new = green bold
+  whitespace = red reverse
+
+[color "diff-highlight"]
+  oldNormal = red bold
+  oldHighlight = red bold 52
+  newNormal = green bold
+  newHighlight = green bold 22
+
+[color "status"]
+  added = yellow
+  changed = green
+  untracked = cyan
+
+[github]
+  user = loklaan
+  token = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
+
+[init]
+	defaultBranch = main

@@ -1,0 +1,164 @@
+################################################################
+#                           ~ Magic ~                          #
+################################################################
+
+#|-------------------------------|#
+#| DEBUG TERM PERFORMANCE        |#
+#|-------------------------------|#
+PROFILE_STARTUP=false # When true, the profile will be profiled.
+if [[ "$PROFILE_STARTUP" == true ]]; then
+    # http://zsh.sourceforge.net/Doc/Release/Prompt-Expansion.html
+    PS4=$'%D{%M%S%.} %N:%i> '
+    exec 3>&2 2>/tmp/startlog.$$.log
+    setopt xtrace prompt_subst
+fi
+
+#|------------------------------------------------------------|#
+#| Reset terminal text                                        |#
+#|------------------------------------------------------------|#
+clear && source $HOME/.zsh/zsh-functions
+clear && reset_cursor && cursor_disable
+
+#|------------------------------------------------------------|#
+#| Customise iTerm's titlebar                                 |#
+#|------------------------------------------------------------|#
+echo -ne "\033]6;1;bg;red;brightness;40\a"
+echo -ne "\033]6;1;bg;green;brightness;42\a"
+echo -ne "\033]6;1;bg;blue;brightness;54\a"
+
+#|------------------------------------------------------------|#
+#| Env variables                                              |#
+#|------------------------------------------------------------|#
+export DEFAULT_USER=loch
+export EDITOR='subl -w'
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export PATH="$PATH:$HOME/.local/bin"
+export PATH="$PATH:$HOME/.gem/bin"
+export N_PREFIX="$HOME/.n";
+export PATH="$N_PREFIX/bin:$PATH"
+export PATH="./node_modules/.bin:$PATH"
+#export DENO_INSTALL="$HOME/.deno"  # Added by deno_install (see https://github.com/denoland/deno_install)
+#export PATH="$DENO_INSTALL/bin:$PATH"
+export PATH="$HOME/.cargo/bin:$PATH"
+export RUST_SRC_PATH="$(rustc --print sysroot)/lib/rustlib/src/rust/src"
+if type pyenv > /dev/null; then eval "$(pyenv init -)"; fi
+export FLYCTL_INSTALL="$HOME/.fly"
+export PATH="$FLYCTL_INSTALL/bin:$PATH"
+
+#|------------------------------------------------------------|#
+#| Load in env changes                                        |#
+#|------------------------------------------------------------|#
+[ -f $HOME/.zsh/zsh-env ] && source $HOME/.zsh/zsh-env
+
+#|------------------------------------------------------------|#
+#| Drop into tmux if it's up                                  |#
+#|------------------------------------------------------------|#
+if (tmux has-session 2> /dev/null && [[ -z "$TMUX" ]]); then
+	if resume_tmux_prompt; then
+		tmux attach
+	fi
+fi
+
+#|------------------------------------------------------------|#
+#| Cute lochlanness                                           |#
+#|------------------------------------------------------------|#
+cursor_disable && loading_message
+
+#|------------------------------------------------------------|#
+#| fzf                                                        |#
+#|------------------------------------------------------------|#
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+
+#|------------------------------------------------------------|#
+#| zplug                                                      |#
+#|------------------------------------------------------------|#
+export ZPLUG_HOME="$HOME/.zsh/zplug"
+export ZPLUG_LOG_LOAD_SUCCESS=false
+export ZPLUG_LOG_LOAD_FAILURE=false
+source $ZPLUG_HOME/init.zsh
+
+#|--------------------------------|#
+#| Prompt plugins
+#| TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
+zplug "~/.zsh/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
+# TODO: Migrate history to https://atuin.sh/
+zplug "~/.zsh/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zsh", defer:2 # Should be loaded 2nd last
+zplug "~/.zsh/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+zplug "~/.zsh/plugins/fzf", from:local, use:"shell/*.zsh"
+# TODO: Fork this to get complete control over experience (e.g. quick git branch info)
+zplug "~/.zsh/themes/pure", from:local, use:"pure.zsh", as:theme
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/thefuck", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+zplug "~/.zsh/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
+zplug "~/.zsh/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
+
+#|--------------------------------|#
+#| Check for uninstalled plugins
+
+echo "\n\e[1;33;40mChecking zplug plugin state...\e[0;37;40m"
+if ! zplug check --verbose; then
+  printf "Install? [y/N]: "
+  if read -q; then
+    echo; zplug install
+  fi
+fi
+
+#|--------------------------------|#
+#| Source plugins
+
+zplug load
+
+#|--------------------------------|#
+#| Reload autocompletions
+
+fpath=("$ZSH_CACHE_DIR/completions" $fpath)
+autoload bashcompinit && bashcompinit
+autoload -Uz compinit
+if typeset -f _add_completions > /dev/null; then
+  _add_completions
+fi
+compinit
+
+#|------------------------------------------------------------|#
+#| History setup                                              |#
+#|------------------------------------------------------------|#
+#| TODO: Migrate history provider to https://atuin.sh/
+[ -z "$HISTFILE" ] && HISTFILE="$HOME/.zsh_history"
+HISTSIZE=50000
+SAVEHIST=10000
+setopt extended_history       # record timestamp of command in HISTFILE
+setopt hist_expire_dups_first # delete duplicates first when HISTFILE size exceeds HISTSIZE
+setopt hist_ignore_dups       # ignore duplicated commands history list
+setopt hist_ignore_space      # ignore commands that start with space
+setopt hist_verify            # show command with history expansion to user before running it
+setopt inc_append_history     # add commands to HISTFILE in order of execution
+setopt share_history          # share command history data
+
+#|------------------------------------------------------------|#
+#| Load in alias                                              |#
+#|------------------------------------------------------------|#
+source $HOME/.aliases
+
+#|------------------------------------------------------------|#
+#| Final cute lochlanness                                     |#
+#|------------------------------------------------------------|#
+welcome_message && cursor_enable
+
+#|-------------------------------|#
+#| DEBUG TERM PERFORMANCE        |#
+#|-------------------------------|#
+if [[ "$PROFILE_STARTUP" == true ]]; then
+    unsetopt xtrace
+    exec 2>&3 3>&-
+fi
