@@ -1,0 +1,8 @@
+[data]
+    where = "{{ promptChoiceOnce .data "Who's machine are you on" list "home" "work" }}"
+
+[data.git]
+    signingKey = "{{ promptStringOnce .data.git "signingKey" "GPG key ID to use for signing commits" }}"
+
+[data.homebrew]
+    prefix = "{{ if eq .chezmoi.arch "arm64" }}/opt/homebrew{{ else }}/usr/local{{ end }}"

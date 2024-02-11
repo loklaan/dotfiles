@@ -8,3 +8,12 @@ worktree
 
 # Good place to put commit message notes
 done.commit
+
+# Nodejs version manager files for personal use
+.n-node-version
+
+# When you want some of your own files in a project
+.me
+
+# PR Train tool
+.pr-train

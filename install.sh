@@ -12,7 +12,7 @@ require_commands() {
 
 case "$(uname)" in
   Darwin)
-    require_commands ${("curl" "bash")[@]}
+    require_commands "curl" "bash"
     case "$(uname -m)" in
       arm64) readonly PREFIX=/opt/homebrew ;;
       x86_64) readonly PREFIX=/usr/local ;;
@@ -25,14 +25,13 @@ case "$(uname)" in
     PATH="${PREFIX:?}/bin:${PATH}"
     pkgs=""
     if ! command -v chezmoi >/dev/null 2>&1; then
-      pkgs=chezmoi
+      pkgs="$pkgs chezmoi"
     fi
     if ! command -v bw >/dev/null 2>&1; then
-      pkgs+=bitwarden-cli
+      pkgs="$pkgs bitwarden-cli"
     fi
-    pkgs_str=${pkgs[@]}
-    if [ -n "$pkgs_str" ]; then
-      brew install $pkgs_str
+    if [ -n "$pkgs" ]; then
+      brew install $pkgs
     fi
     ;;
 esac
