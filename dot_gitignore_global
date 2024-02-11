@@ -1,0 +1,10 @@
+# OSX Crap
+*~
+.DS_Store
+.idea
+
+# Good place to initiate worktree's for one-off tasks
+worktree
+
+# Good place to put commit message notes
+done.commit
