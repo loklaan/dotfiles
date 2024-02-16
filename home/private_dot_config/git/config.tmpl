@@ -33,10 +33,9 @@
 
 [user]
   name = Lochlan Bunn
-  email = bunn@lochlan.io
-  # Key ID derived from pub fingerprint
-{{- if ne "" .git.signingKey }}
-  signingkey = {{ .git.signingKey }}
+  email = {{ .email }}
+{{- if ne "" .signingKey }}
+  signingkey = {{ .signingKey }}
 {{- end }}
 
 [push]
@@ -60,8 +59,8 @@
   # NOTE: This may need to be disabled during some workflows, like install oh-my-zsh which is corrupt
   fsckobjects = true
 
+{{- if ne "" .signingKey -}}
 [commit]
-{{- if ne "" .git.signingKey }}
   gpgsign = true
 {{- end }}
 
@@ -73,6 +72,8 @@
   #editor = vim
   editor = 'code' --wait
   excludesfile = ~/.gitignore_global
+  untrackedcache = true
+  fsmonitor = true
 
 [diff]
   # https://github.com/jeffkaufman/icdiff
@@ -144,17 +145,17 @@
   apiKey = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
 
 [init]
-	defaultBranch = main
+  defaultBranch = main
 
 [gc]
-	auto = 200
-	autodetach = false
+  auto = 200
+  autodetach = false
 
 [protocol]
-	version = 2
+  version = 2
 
 [includeIf "gitdir:~/dev/canva/**"]
-    path = ~/dev/canva/.gitconfig
+    path = ~/.config/git/canva.config
 
 [trace2]
-	eventTarget = af_unix:dgram:/tmp/olly-git-trace2.sock
+  eventTarget = af_unix:dgram:/tmp/olly-git-trace2.sock

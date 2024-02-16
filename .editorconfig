@@ -1,0 +1,23 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 2
+indent_style = space
+insert_final_newline = true
+max_line_length = 80
+tab_width = 2
+
+[*.json]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[{*.sh,*.sh.tmpl,*.zsh,*.zsh.tmpl,*zshrc,*zshrc.tmpl}]
+indent_size = 2
+tab_width = 2
+
+[{*.toml,*.toml.tmpl,*gitconfig.tmpl}]
+indent_size = 2

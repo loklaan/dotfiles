@@ -1,0 +1,9 @@
+{{- $email := promptStringOnce . "email" "Email for you" -}}
+{{- $emailWork := promptStringOnce . "email" "Email for Canva" -}}
+{{- $signingKey := promptStringOnce . "signingKey" "Your signing key" -}}
+
+[data]
+  email = {{ $email | quote }}
+  emailWork = {{ $emailWork | quote }}
+  signingKey = {{ $signingKey | quote }}
+  brewprefix = "{{ if eq .chezmoi.arch "arm64" }}/opt/homebrew{{ else }}/usr/local{{ end }}"

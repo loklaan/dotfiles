@@ -1,40 +1,163 @@
 #!/bin/sh
+set -eu
 
-require_commands() {
+bw_email="${BITWARDEN_EMAIL:?'Your email for Bitwarden'}"
+github_user="${GITHUB_USERNAME:?"Your github username"}"
+
+main() {
+  print_colored magenta bold "Installing dotfiles!" >&2
+
+  bin_dir="${HOME}/.local/bin"
+
+  # Install dependencies
+  mkdir -p $bin_dir
+  if ! chezmoi="$(command -v chezmoi)"; then
+    chezmoi_install_url="get.chezmoi.io"
+    print_colored cyan italic " ▷ Installing chezmoi" >&2
+    chezmoi="${bin_dir}/chezmoi"
+    chezmoi_install_script="$(http_get $chezmoi_install_url)" || return 1
+    sh -c "${chezmoi_install_script}" -- -b "${bin_dir}" || return 1
+  fi
+  if ! bitwarden="$(command -v bw)"; then
+    bitwarden_install_url="https://vault.bitwarden.com/download/?app=cli&platform=$(get_bitwarden_os)"
+    print_colored cyan italic " ▷ Installing bitwarden-cli" >&2
+    bitwarden_zip="$(bin_dir)/bw.zip"
+    bitwarden="${bin_dir}/bw"
+    http_download "${bitwarden_zip}" "$bitwarden_install_url" || return 1
+    cd "$bitwarden_zip" && unarchive "$bitwarden_zip" && rm "$bitwarden_zip" || return 1
+    chmod +x "$bitwarden"
+  fi
+
+  # Authenticate with credentials provider (used in chezmoi templates)
+  print_colored cyan italic " ▶ Running 'bw login $bw_email --raw'" >&2
+  echo "Running 'bw login $bw_email --raw'" >&2
+  bw_token=$(bw login "$bw_email" --raw) || return 1
+
+  # Run chezmoi init
+  print_colored cyan italic " ▶ Running '$chezmoi init $github_user --apply --keep-going'" >&2
+  BW_SESSION="$bw_token" exec "$chezmoi" init "$github_user" --apply --keep-going
+}
+
+http_get() {
+	tmpfile="$(mktemp)"
+	http_download "${tmpfile}" "${1}" "${2}" || return 1
+	body="$(cat "${tmpfile}")"
+	rm -f "${tmpfile}"
+	printf '%s\n' "${body}"
+}
+
+http_download_curl() {
+	local_file="${1}"
+	source_url="${2}"
+	header="${3}"
+	if [ -z "${header}" ]; then
+		code="$(curl -w '%{http_code}' -sL -o "${local_file}" "${source_url}")"
+	else
+		code="$(curl -w '%{http_code}' -sL -H "${header}" -o "${local_file}" "${source_url}")"
+	fi
+	if [ "${code}" != "200" ]; then
+	  print_colored "Error: Could not download $source_url (HTTP status: ${code})" >&2
+		return 1
+	fi
+	return 0
+}
+
+http_download_wget() {
+	local_file="${1}"
+	source_url="${2}"
+	header="${3}"
+	if [ -z "${header}" ]; then
+		wget -q -O "${local_file}" "${source_url}" || return 1
+	else
+		wget -q --header "${header}" -O "${local_file}" "${source_url}" || return 1
+	fi
+}
+
+http_download() {
+	log_debug "http_download ${2}"
+	if is_command curl; then
+		http_download_curl "${@}" || return 1
+		return
+	elif is_command wget; then
+		http_download_wget "${@}" || return 1
+		return
+	fi
+	return 1
+}
+
+required_commands() {
   for cmd in "$@"
   do
-    if ! command -v $cmd >/dev/null 2>&1; then
-      echo "Error: Command $cmd required but not found. Ensure all of the following commands are install - $@"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      print_colored red bold "Error: Command $cmd required but not found. Ensure all of the following commands are install: ${*}"
       exit 1
     fi
   done
 }
 
-case "$(uname)" in
-  Darwin)
-    require_commands "curl" "bash"
-    case "$(uname -m)" in
-      arm64) readonly PREFIX=/opt/homebrew ;;
-      x86_64) readonly PREFIX=/usr/local ;;
-    esac
-    PATH=/usr/sbin:/usr/bin:/sbin:/bin
-    if [ ! -e "${PREFIX:?}/bin/brew" ]; then
-      install="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      bash -c "${install}"
-    fi
-    PATH="${PREFIX:?}/bin:${PATH}"
-    pkgs=""
-    if ! command -v chezmoi >/dev/null 2>&1; then
-      pkgs="$pkgs chezmoi"
-    fi
-    if ! command -v bw >/dev/null 2>&1; then
-      pkgs="$pkgs bitwarden-cli"
-    fi
-    if [ -n "$pkgs" ]; then
-      brew install $pkgs
-    fi
-    ;;
-esac
+get_bitwarden_os() {
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "${os}" in
+    cygwin_nt*) goos="windows" ;;
+    linux)
+      if is_command termux-info; then
+        goos=android
+      else
+        goos=linux
+      fi
+      ;;
+    mingw*) goos="windows" ;;
+    msys_nt*) goos="windows" ;;
+    darwin*) goos="macos" ;;
+    *) goos="${os}" ;;
+  esac
+  printf '%s' "${goos}"
+}
 
-export BW_SESSION=$(bw login "${BITWARDEN_EMAIL:-'bunn@lochlan.io'}" --raw)
-chezmoi init https://github.com/${GITHUB_USERNAME:-loklaan}/dotfiles.git --apply --keep-going
+unarchive() {
+	tarball="${1}"
+	case "${tarball}" in
+    *.tar.gz | *.tgz) tar -xzf "${tarball}" ;;
+    *.tar) tar -xf "${tarball}" ;;
+    *.zip) unzip -- "${tarball}" ;;
+    *)
+      print_colored red bold "Error: Unknown archive format for ${tarball}."
+      return 1
+      ;;
+	esac
+}
+
+print_colored() {
+  case "$1" in
+    black) color="30" ;;
+    red) color="31" ;;
+    green) color="32" ;;
+    yellow) color="33" ;;
+    blue) color="34" ;;
+    magenta) color="35" ;;
+    cyan) color="36" ;;
+    white) color="37" ;;
+    *) echo "Unknown color: $1"; return 1 ;;
+  esac
+
+  shift
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;;
+      italic) color="${color};3" ;;
+      underline) color="${color};4" ;;
+      dim) color="${color};2" ;;
+      *) echo "Unknown option: $1"; return 1 ;;
+    esac
+    shift
+  done
+
+  supported_colors=$(tput colors 2>/dev/null)
+  if [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%s\\033[0m\\n" "$1"
+  else
+    printf "%s\n" "$1"
+  fi
+}
+
+main "${@}"

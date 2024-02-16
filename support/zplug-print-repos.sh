@@ -19,7 +19,7 @@ do
   tarball="${url%.*}/archive/${commit}.tar.gz"
 
   # Output TOML
-  echo "[\".zsh/plugins/${repo}\"]"
+  echo "[\".zshrc.d/plugins/${repo}\"]"
   echo "    type = \"archive\""
   echo "    url = \"${tarball}\""
   echo "    exact = true"
