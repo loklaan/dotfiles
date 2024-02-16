@@ -1,0 +1,150 @@
+#!/bin/sh
+
+set -o errexit
+set -o nounset
+
+#/ Usage:
+#/   my-install-packages [options]
+#/   my-install-packages --gui
+#/
+#/ Description:
+#/
+#/ Options:
+#/   --gui: Optional. Install GUI app packages in addition to CLI packages.
+#/   --help: Display this help message
+usage() { grep '^#/' "$0" | cut -c4- ; }
+expr "$*" : ".*--help" > /dev/null && usage
+
+gui=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --gui)
+      gui=true
+      ;;
+    *)
+      echo "Invalid argument: $1"
+      usage
+      exit 1
+  esac
+  shift
+done
+
+main() {
+  {{ if eq .chezmoi.os "darwin" }}
+
+  {{ $brews := list
+       "awscli"
+       "bash"
+       "coreutils"
+       "deno"
+       "ffmpeg"
+       "flyctl"
+       "git"
+       "git-delta"
+       "git-extras"
+       "git-lfs"
+       "gnupg"
+       "handbrake"
+       "htop"
+       "jq"
+       "less"
+       "lua"
+       "make"
+       "ncdu"
+       "ncurses"
+       "pintentry"
+       "pintentry-mac"
+       "pyenv"
+       "readline"
+       "rename"
+       "rustup-init"
+       "safe-rm"
+       "shellcheck"
+       "tmux"
+       "tree"
+       "wget"
+       "wireguard-tools"
+       "zsh" -}}
+  {{ $casks := list
+       "alfred"
+       "bartender"
+       "brave-browser"
+       "docker"
+       "figma"
+       "firefox"
+       "fontgoggles"
+       "glyphs"
+       "google-chrome"
+       "imageoptim"
+       "insomnia"
+       "iterm2"
+       "java"
+       "jetbrains-toolbox"
+       "kap"
+       "logitune"
+       "loopback"
+       "notion"
+       "private-internet-access"
+       "qlcolorcode"
+       "qlimagesize"
+       "qlmarkdown"
+       "qlstephen"
+       "qlvideo"
+       "quicklook-json"
+       "quicklookase"
+       "rectangle"
+       "rive"
+       "rocket"
+       "slack"
+       "spotify"
+       "sublime-text"
+       "visual-studio-code"
+       "vlc"
+       "webpquicklook" -}}
+
+  if ! command -v brew; then
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  fi
+
+  # Brew managed programs/libraries
+  brew bundle --no-lock --file=/dev/stdin <<EOF
+{{ range ($brews | sortAlpha | uniq) -}}
+brew {{ . | quote }}
+{{ end -}}
+EOF
+
+  # Brew managed GUI
+  if [ $gui == "true" ]; then
+    brew bundle --no-lock --file=/dev/stdin <<EOF
+{{ range ($casks | sortAlpha | uniq) -}}
+brew {{ . | quote }}
+{{ end -}}
+EOF
+  fi
+
+  # The amazing fzf
+  FZF_INSTALL="$HOME/.zshrc.d/plugins/fzf/install"
+  if [[ -f $FZF_INSTALL ]]; then
+    bash "$FZF_INSTALL"
+  fi
+
+  # Nodejs version manager
+  PREFIX="$HOME/.n"
+  if [[ ! -f $PREFIX ]]; then
+    curl -L https://raw.githubusercontent.com/mklement0/n-install/stable/bin/n-install | N_PREFIX=~/.n bash -s -- -yn -
+  fi
+
+  echo "\nDone installing packages! Continue tool environment setup:
+
+  Nodejs
+    \$ n lts
+
+  Rust/Cargo
+    \$ rustup-init
+"
+
+  {{ end }}
+}
+
+main "${@}"

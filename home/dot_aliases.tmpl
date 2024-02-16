@@ -12,7 +12,7 @@ alias la="ls -lAH"
 alias ll="ls -lh"
 alias ls="ls -G"
 
-{{ if eq .chezmoi.os "darwin" }}
+{{ if eq .chezmoi.os "darwin" -}}
 # OSX Aliases
 alias tmux="TERM=screen-256color-bce tmux"
-{{ end }}
+{{- end }}
