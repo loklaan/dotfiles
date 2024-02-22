@@ -1,55 +1,91 @@
 #!/bin/sh
 set -eu
 
-bw_email="${BITWARDEN_EMAIL:?'Your email for Bitwarden'}"
-github_user="${GITHUB_USERNAME:?"Your github username"}"
+echo "" >&2
+
+#/ Usage:
+#/   BITWARDEN_EMAIL=.. GITHUB_USERNAME=.. install.sh
+#/
+#/ Description:
+#/   Installs dotfiles and dependencies.
+#/
+#/ Options:
+#/   --help: Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+expr "$*" : ".*--help" > /dev/null && usage
+
+bw_email="${BITWARDEN_EMAIL:-""}"
+github_user="${GITHUB_USERNAME:-""}"
+if [ "$bw_email" = "" ] || [ "$github_user" = "" ]; then
+  usage
+  exit 1;
+fi
 
 main() {
   print_colored magenta bold "Installing dotfiles!" >&2
+  echo "" >&2
 
   bin_dir="${HOME}/.local/bin"
 
   # Install dependencies
-  mkdir -p $bin_dir
+  mkdir -p "$bin_dir"
   if ! chezmoi="$(command -v chezmoi)"; then
     chezmoi_install_url="get.chezmoi.io"
-    print_colored cyan italic " ▷ Installing chezmoi" >&2
+    print_colored cyan italic " ▷ Installing chezmoi " >&2
     chezmoi="${bin_dir}/chezmoi"
     chezmoi_install_script="$(http_get $chezmoi_install_url)" || return 1
     sh -c "${chezmoi_install_script}" -- -b "${bin_dir}" || return 1
   fi
   if ! bitwarden="$(command -v bw)"; then
     bitwarden_install_url="https://vault.bitwarden.com/download/?app=cli&platform=$(get_bitwarden_os)"
-    print_colored cyan italic " ▷ Installing bitwarden-cli" >&2
-    bitwarden_zip="$(bin_dir)/bw.zip"
+    print_colored cyan italic " ▷ Installing bitwarden-cli " >&2
+    bitwarden_zip="${bin_dir}/bw.zip"
     bitwarden="${bin_dir}/bw"
     http_download "${bitwarden_zip}" "$bitwarden_install_url" || return 1
-    cd "$bitwarden_zip" && unarchive "$bitwarden_zip" && rm "$bitwarden_zip" || return 1
+    last_dir=$(pwd)
+    cd "$(dirname "$bitwarden_zip")"
+    unarchive "$bitwarden_zip" && rm "$bitwarden_zip" || return 1
     chmod +x "$bitwarden"
+    cd "$last_dir"
   fi
 
   # Authenticate with credentials provider (used in chezmoi templates)
-  print_colored cyan italic " ▶ Running 'bw login $bw_email --raw'" >&2
-  echo "Running 'bw login $bw_email --raw'" >&2
-  bw_token=$(bw login "$bw_email" --raw) || return 1
+  print_colored cyan italic " ▶ Running 'bw login $bw_email --raw' " >&2
+  counter=0
+  bw_token=""
+  while [ $counter -lt 3 ]; do
+    set +e
+    if ! bw_token="$("$bitwarden" login "$bw_email" --raw)"; then
+      counter=$((counter+1))
+    else
+      break
+    fi
+    set -e
+  done
+  if [ "$bw_token" = "" ]; then
+    print_colored red bold "Error: Failed to login" >&2
+    exit 1
+  fi
 
   # Run chezmoi init
-  print_colored cyan italic " ▶ Running '$chezmoi init $github_user --apply --keep-going'" >&2
+  print_colored cyan italic " ▶ Running '$chezmoi init $github_user --apply --keep-going' " >&2
   BW_SESSION="$bw_token" exec "$chezmoi" init "$github_user" --apply --keep-going
 }
 
 http_get() {
+	source_url="${1:?"Source URL required"}"
+	header="${2:-""}"
 	tmpfile="$(mktemp)"
-	http_download "${tmpfile}" "${1}" "${2}" || return 1
+	http_download "${tmpfile}" "${source_url}" "${header}" || return 1
 	body="$(cat "${tmpfile}")"
 	rm -f "${tmpfile}"
 	printf '%s\n' "${body}"
 }
 
 http_download_curl() {
-	local_file="${1}"
-	source_url="${2}"
-	header="${3}"
+	local_file="${1:?"Local file required"}"
+	source_url="${2:?"Source URL required"}"
+	header="${3:-""}"
 	if [ -z "${header}" ]; then
 		code="$(curl -w '%{http_code}' -sL -o "${local_file}" "${source_url}")"
 	else
@@ -63,9 +99,9 @@ http_download_curl() {
 }
 
 http_download_wget() {
-	local_file="${1}"
-	source_url="${2}"
-	header="${3}"
+	local_file="${1:?"Local file required"}"
+	source_url="${2:?"Source URL required"}"
+	header="${3:-""}"
 	if [ -z "${header}" ]; then
 		wget -q -O "${local_file}" "${source_url}" || return 1
 	else
@@ -74,11 +110,10 @@ http_download_wget() {
 }
 
 http_download() {
-	log_debug "http_download ${2}"
-	if is_command curl; then
+	if command -v curl >/dev/null 2>&1; then
 		http_download_curl "${@}" || return 1
 		return
-	elif is_command wget; then
+	elif command -v wget >/dev/null 2>&1; then
 		http_download_wget "${@}" || return 1
 		return
 	fi
