@@ -69,10 +69,11 @@ zplug "~/.zshrc.d/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zs
 zplug "~/.zshrc.d/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
 bindkey '^[[A' history-substring-search-up
 bindkey '^[[B' history-substring-search-down
+zplug "~/.zshrc.d/plugins/zsh-async", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/fzf", from:local, use:"shell/*.zsh"
 # TODO: Fork this to get complete control over experience (e.g. quick git branch info)
 #       Or better yet, switch to https://starship.rs/guide/
-zplug "~/.zshrc.d/themes/pure", from:local, use:"pure.zsh", as:theme
+zplug "~/.zshrc.d/plugins/pure", from:local, use:"pure.zsh", as:theme
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
@@ -90,13 +91,13 @@ zplug "~/.zshrc.d/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
 #| Check for uninstalled plugins
 
 # Is this needed?
-echo "\n\e[1;33;40mChecking zplug plugin state...\e[0;37;40m"
-if ! zplug check --verbose; then
-  printf "Install? [y/N]: "
-  if read -q; then
-    echo; zplug install
-  fi
-fi
+#echo "\n\e[1;33;40mChecking zplug plugin state...\e[0;37;40m"
+#if ! zplug check --verbose; then
+#  printf "Install? [y/N]: "
+#  if read -q; then
+#    echo; zplug install
+#  fi
+#fi
 
 #|--------------------------------|#
 #| Source plugins
