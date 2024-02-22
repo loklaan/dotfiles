@@ -1,2 +1,19 @@
-*.log
-../../.idea
+# OSX Crap
+*~
+.DS_Store
+.idea
+
+# Good place to initiate worktree's for one-off tasks
+worktree
+
+# Good place to put commit message notes
+done.commit
+
+# Nodejs version manager files for personal use
+.n-node-version
+
+# When you want some of your own files in a project
+.me
+
+# PR Train tool
+.pr-train
