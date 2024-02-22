@@ -53,8 +53,8 @@ main() {
        "make"
        "ncdu"
        "ncurses"
-       "pintentry"
-       "pintentry-mac"
+       "pinentry"
+       "pinentry-mac"
        "pyenv"
        "readline"
        "rename"
@@ -79,20 +79,20 @@ main() {
        "imageoptim"
        "insomnia"
        "iterm2"
-       "java"
        "jetbrains-toolbox"
        "kap"
        "logitune"
-       "loopback"
        "notion"
        "private-internet-access"
        "qlcolorcode"
        "qlimagesize"
        "qlmarkdown"
-       "qlstephen"
        "qlvideo"
-       "quicklook-json"
        "quicklookase"
+       # Not working:
+       # "qlstephen"
+       # "webpquicklook"
+       # "quicklook-json"
        "rectangle"
        "rive"
        "rocket"
@@ -100,10 +100,9 @@ main() {
        "spotify"
        "sublime-text"
        "visual-studio-code"
-       "vlc"
-       "webpquicklook" -}}
+       "vlc" -}}
 
-  if ! command -v brew; then
+  if ! command -v brew > /dev/null; then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
@@ -118,7 +117,7 @@ EOF
   if [ $gui == "true" ]; then
     brew bundle --no-lock --file=/dev/stdin <<EOF
 {{ range ($casks | sortAlpha | uniq) -}}
-brew {{ . | quote }}
+cask {{ . | quote }}
 {{ end -}}
 EOF
   fi
@@ -147,4 +146,4 @@ EOF
   {{ end }}
 }
 
-main "${@}"
+main "${@:-""}"
