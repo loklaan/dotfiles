@@ -59,7 +59,7 @@
   # NOTE: This may need to be disabled during some workflows, like install oh-my-zsh which is corrupt
   fsckobjects = true
 
-{{- if ne "" .signingKey -}}
+{{ if ne "" .signingKey -}}
 [commit]
   gpgsign = true
 {{- end }}
@@ -71,7 +71,6 @@
   # https://github.com/so-fancy/diff-so-fancy
   #editor = vim
   editor = 'code' --wait
-  excludesfile = ~/.gitignore_global
   untrackedcache = true
   fsmonitor = true
 
@@ -148,8 +147,8 @@
   defaultBranch = main
 
 [gc]
-  auto = 200
-  autodetach = false
+  auto = 4000
+  autoDetach = true
 
 [protocol]
   version = 2

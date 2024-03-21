@@ -29,7 +29,7 @@ echo -ne "\033]6;1;bg;blue;brightness;54\a"
 #|------------------------------------------------------------|#
 #| Load in env changes                                        |#
 #|------------------------------------------------------------|#
-[ -f "$HOME/.zshrc.d/env.zsh" ] && source "$HOME/.zshrc.d/env.sh"
+[ -f "$HOME/.zshrc.d/env.sh" ] && source "$HOME/.zshrc.d/env.sh"
 
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up                                  |#
@@ -44,11 +44,6 @@ fi
 #| Cute lochlanness                                           |#
 #|------------------------------------------------------------|#
 cursor_disable && loading_message
-
-#|------------------------------------------------------------|#
-#| fzf                                                        |#
-#|------------------------------------------------------------|#
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
 #|------------------------------------------------------------|#
 #| zplug                                                      |#
@@ -78,7 +73,6 @@ zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/thefuck", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
 zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"

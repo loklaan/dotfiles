@@ -73,7 +73,7 @@ print_center_cuteness () {
 }
 
 welcome_message () {
-  clear && reset_cursor && \
+  clear_line && reset_cursor && \
   print_middle_cuteness "$cute_message_to_me"
 }
 
