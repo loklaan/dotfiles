@@ -99,14 +99,18 @@ zplug "~/.zshrc.d/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
 zplug load
 
 #|--------------------------------|#
-#| Reload autocompletions
+#| Setup completions
 
-autoload bashcompinit && bashcompinit
-autoload -Uz compinit
+autoload -Uz compinit; compinit # The completion.zh plugin handles bashcompinit.
+
 if typeset -f _add_env_completions > /dev/null; then
   _add_env_completions
 fi
-compinit
+
+zstyle ':completion:*' completer _complete _ignored
+zstyle ':completion:*' format 'Completing %d...'
+zstyle ':completion:*' group-name ''
+zstyle :compinstall filename "$HOME/.zshrc"
 
 #|------------------------------------------------------------|#
 #| History setup                                              |#
