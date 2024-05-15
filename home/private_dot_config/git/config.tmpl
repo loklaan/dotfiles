@@ -53,6 +53,14 @@
 [merge]
   # Adds third merge marker in files, that sections original text
   conflictstyle = diff3
+  tool = intellij
+
+[mergetool "intellij"]
+  cmd = idea merge "$LOCAL" "$REMOTE" "$BASE" "$MERGED"
+  trustExitCode = true
+
+[mergetool]
+  keepBackup = false
 
 [transfer]
   # Check for object data corruption
@@ -154,7 +162,7 @@
   version = 2
 
 [includeIf "gitdir:~/dev/canva/**"]
-    path = ~/.config/git/canva.config
+  path = ~/.config/git/canva.config
 
 [trace2]
   eventTarget = af_unix:dgram:/tmp/olly-git-trace2.sock
