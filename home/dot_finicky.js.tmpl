@@ -1,0 +1,70 @@
+{{ if ne "" .emailWork -}}
+const Browser = {
+  WORK: {
+    name: "Google Chrome",
+    profile: "Profile 1",
+  },
+  WORK_ADMIN: {
+    name: "Google Chrome",
+    profile: "Profile 3",
+  },
+  PERSONAL: "Firefox",
+};
+
+module.exports = {
+  defaultBrowser: Browser.WORK,
+  options: {
+    logRequests: true,
+  },
+  handlers: [
+    {
+      match: /canva(-dev)?\.com\/admin/,
+      browser: Browser.WORK_ADMIN,
+    },
+    {
+      match: /youtube\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /youtube\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /(twitter|x)\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /linkedin\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /instagram\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /rive\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /logi\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /fly\.io/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /amazon\.com\.au/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /pccasegear\.com/,
+      browser: Browser.PERSONAL
+    },
+    {
+      match: /spotify\.com/,
+      browser: Browser.PERSONAL
+    }
+  ]
+}
+{{- end }}
