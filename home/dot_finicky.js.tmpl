@@ -1,4 +1,5 @@
 {{ if ne "" .emailWork -}}
+// https://github.com/johnste/finicky/wiki/Configuration
 const Browser = {
   WORK: {
     name: "Google Chrome",
@@ -16,6 +17,14 @@ module.exports = {
   options: {
     logRequests: true,
   },
+  rewrite: [
+    {
+      match: /www.canva-iris.com\/admin/,
+      url: ({ url }) => {
+        return `https://www.canva.com${url.pathname}${url.search ? '?' + url.search : ''}`;
+      }
+    }
+  ],
   handlers: [
     {
       match: /canva(-dev)?\.com\/admin/,
