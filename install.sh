@@ -135,7 +135,7 @@ get_bitwarden_os() {
   case "${os}" in
     cygwin_nt*) goos="windows" ;;
     linux)
-      if is_command termux-info; then
+      if command -v termux-info >/dev/null 2>&1; then
         goos=android
       else
         goos=linux
