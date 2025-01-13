@@ -13,7 +13,7 @@ set -o nounset
 #/   --gui: Optional. Install GUI app packages in addition to CLI packages.
 #/   --help: Display this help message
 usage() { grep '^#/' "$0" | cut -c4- ; }
-expr "$*" : ".*--help" > /dev/null && usage
+expr "$*" : ".*--help" > /dev/null && usage && exit 0
 
 gui=false
 
@@ -123,13 +123,13 @@ EOF
 
   # The amazing fzf
   FZF_INSTALL="$HOME/.zshrc.d/plugins/fzf/install"
-  if [[ -f $FZF_INSTALL ]]; then
+  if [[ -f "$FZF_INSTALL" ]]; then
     bash "$FZF_INSTALL"
   fi
 
   # Nodejs version manager
   PREFIX="$HOME/.n"
-  if [[ ! -f $PREFIX ]]; then
+  if [[ ! -f "$PREFIX" ]]; then
     curl -L https://raw.githubusercontent.com/mklement0/n-install/stable/bin/n-install | N_PREFIX=~/.n bash -s -- -yn -
   fi
 
@@ -142,6 +142,60 @@ EOF
     \$ rustup-init
 "
 
+  {{ else if eq .chezmoi.os "linux" -}}
+    {{ $pkgs := list
+    "awscli"
+    "bash"
+    "coreutils"
+    "deno"
+    "ffmpeg"
+    "flyctl"
+    "git"
+    "git-delta"
+    "git-extras"
+    "git-lfs"
+    "gnupg"
+    "handbrake"
+    "htop"
+    "jq"
+    "less"
+    "lua"
+    "make"
+    "ncdu"
+    "ncurses"
+    "pinentry"
+    "pinentry-mac"
+    "pyenv"
+    "readline"
+    "rename"
+    "rustup-init"
+    "safe-rm"
+    "shellcheck"
+    "tmux"
+    "tree"
+    "wget"
+    "wireguard-tools"
+    "zsh" -}}
+    packages=$(cat <<EOF
+    {{ range ($pkgs | sortAlpha | uniq) -}}
+      {{ . | quote }}
+    {{ end -}}
+    EOF)
+
+    {{ if eq .chezmoi.osRelease "ubuntu" -}}
+    sudo apt update
+    sudo apt install -y $packages
+    {{ else if eq .chezmoi.osRelease "fedora" -}}
+    sudo dnf install -y $packages
+    {{ else if eq .chezmoi.osRelease "alpine" -}}
+    sudo apk add $packages
+    {{ else }}
+    echo "Not implemented for this Linux OS: {{ .chezmoi.os }} / {{ .chezmoi.osRelease }}"
+    echo "Full release details from /etc/os-release:"
+    cat /etc/os-release
+    {{ end }}
+  {{ else }}
+  echo "Not implemented for this OS: {{ .chezmoi.os }}"
   {{ end }}
 }
 

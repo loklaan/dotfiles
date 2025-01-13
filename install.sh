@@ -124,7 +124,7 @@ required_commands() {
   for cmd in "$@"
   do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-      print_colored red bold "Error: Command $cmd required but not found. Ensure all of the following commands are install: ${*}"
+      print_colored red bold "Error: Command $cmd required but not found. Ensure all of the following commands are installed - ${*}"
       exit 1
     fi
   done
