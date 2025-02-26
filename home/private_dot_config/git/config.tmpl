@@ -38,21 +38,62 @@
   signingkey = {{ .signingKey }}
 {{- end }}
 
+[github]
+  user = loklaan
+  token = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
+  apiKey = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
+
+[gpg]
+  program = gpg
+
+[commit]
+  # Show diff of staged changes in commit message editor
+  # Use --no-verbose flag to temporarily disable this behavior
+  verbose = true
+{{ if ne "" .signingKey -}}
+  gpgsign = true
+{{- end }}
+
 [push]
+  # Make git push only affect the current branch
   default = simple
-  # Push tags by default
+  # Automatically configure upstream tracking when pushing new branches
+  autoSetupRemote = true
+  # Push tags to remote when pushing commits
   followtags = true
 
 [pull]
+  # Always rebase local changes on top of fetched changes instead of merging
+  # Merge commits are more trouble than they're worth
   rebase = true
 
+[fetch]
+  # Remove stale remote-tracking branches when fetching
+  prune = true
+  # Remove stale tags when fetching
+  pruneTags = true
+  # Fetch from all remotes, not just origin
+  all = true
+
 [status]
-  # Expands untracked directories
+  # Show all untracked files in directories, not just directory names
   showuntrackedfiles = all
+
+[branch]
+  # Sort branches by most recently committed first
+  sort = -committerdate
+
+[tag]
+  # Sort tags by version number if semantic versioning is used
+  sort = version:refname
+
+[help]
+  # Prompt before automatically correcting mistyped commands
+  autocorrect = prompt
 
 [merge]
   # Adds third merge marker in files, that sections original text
-  conflictstyle = diff3
+  conflictstyle = zdiff3
   tool = intellij
 
 [mergetool "intellij"]
@@ -60,26 +101,42 @@
   trustExitCode = true
 
 [mergetool]
+  # Never create backup .orig files after merge conflict resolution
+  # Save disk space and remove clutter when resolving merge conflicts
   keepBackup = false
 
+[rebase]
+  # Automatically squash/fixup commits marked with those prefixes during rebase
+  autoSquash = true
+  # Automatically stash and pop uncommitted changes when rebasing
+  autoStash = true
+  # If you have branches that depend on each other (e.g., feature branch based on another feature branch),
+  # this will automatically update the dependent branches' refs when rebasing their base branches.
+  # Example: If branch B is based on branch A, and you rebase A onto main,
+  # branch B's base commit will be updated to point to A's new position.
+  updateRefs = true
+
 [transfer]
-  # Check for object data corruption
-  # NOTE: This may need to be disabled during some workflows, like install oh-my-zsh which is corrupt
+  # Enforce strict data integrity by verifying objects during transfer
+  # Block corrupted objects from being downloaded or uploaded
+  # Disable temporarily with '-c transfer.fsckObjects=false' when needed e.g. installing oh-my-zsh
   fsckobjects = true
 
-{{ if ne "" .signingKey -}}
-[commit]
-  gpgsign = true
-{{- end }}
-
-[gpg]
-  program = gpg
+[init]
+  # Set the default branch name when creating new repositories
+  # Use 'main' instead of legacy 'master' for inclusive naming conventions
+  defaultBranch = main
 
 [core]
   # https://github.com/so-fancy/diff-so-fancy
   #editor = vim
+  # Ensure a VS Code window opens and blocks until closed, for commit messages
   editor = 'code' --wait
+  # Speed up filesystem status operations by maintaining untracked file cache
+  # Note: May need occasional `git update-index --untracked-cache` if cache becomes stale
+  # or `git update-index --really-refresh` if showing incorrect status
   untrackedcache = true
+  # Speed up filesystem status operations by using OS filesystem monitoring
   fsmonitor = true
 
 [diff]
@@ -88,10 +145,21 @@
   # CURRENTLY BROKEN??
   # tool = icdiff
   # https://github.com/blog/2188-git-2-9-has-been-released#beautiful-diffs
-  # Compacts the changed LOC when possible in diffs
+  #
+  # Ensure changes are shown compactly when lines are moved within a file
   compactionHeuristic = true
+  # Use histogram algorithm for comparing changes, optimized for finding similar code blocks
+  algorithm = histogram
+  # Show moved lines of code in different colors without extra markers or syntax
+  colorMoved = plain
+  # Use shortened mnemonics in diff output (i.e., a/file.txt instead of full path)
+  # A "mnemonic" is a pattern that helps remember or reference something - in programming, it's often a shortened/memorable name
+  mnemonicPrefix = true
+  # Detect files that were renamed between commits
+  renames = true
 
 [difftool]
+  # Do not prompt for confirmation before each invocation of the diff tool
   prompt = false
 
 [difftool "icdiff"]
@@ -112,7 +180,10 @@
   line-numbers = true
 
 [rerere]
+  # Remember and replay conflict resolutions for identical conflicts
   enabled = true
+  # After remembering a resolution, auto-stage resolution in future conflicts
+  autoupdate = true
 
 [interactive]
   diffFilter = delta --diff-so-fancy --color-only
@@ -123,7 +194,25 @@
   smudge = git-lfs smudge -- %f
   process = git-lfs filter-process
 
+[gc]
+  # Ensure garbage collection runs automatically after ~4000 loose objects accumulate
+  auto = 4000
+  # Ensure garbage collection runs in background to prevent blocking repository operations
+  # Significantly improves performance for large repositories, for day-to-day commands
+  autoDetach = true
+
+[protocol]
+  # Ensure Git uses protocol version 2 for improved performance and efficiency
+  # This protocol version is more efficient for fetching and pushing, reducing data transfer
+  # and network round trips compared to protocol version 1
+  version = 2
+
+[column]
+  # Arrange output in columns where UI elements are shown (e.g. git branch)
+  ui = auto
+
 [color]
+  # Enable colored output for all Git commands when appropriate
   ui = auto
 
 [color "branch"]
@@ -149,23 +238,6 @@
   changed = green
   untracked = cyan
 
-[github]
-  user = loklaan
-  token = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
-  apiKey = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
-
-[init]
-  defaultBranch = main
-
-[gc]
-  auto = 4000
-  autoDetach = true
-
-[protocol]
-  version = 2
-
+# Set work-only config, such as work email, work signing key, etc.
 [includeIf "gitdir:~/dev/canva/**"]
   path = ~/.config/git/canva.config
-
-[trace2]
-  eventTarget = af_unix:dgram:/tmp/olly-git-trace2.sock
