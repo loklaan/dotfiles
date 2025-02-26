@@ -20,23 +20,23 @@ clear && source "$HOME/.zshrc.d/lib/term.sh"
 clear && reset_cursor && cursor_disable
 
 #|------------------------------------------------------------|#
-#| Customise iTerm's titlebar                                 |#
+#| Integrate with terminal                                    |#
 #|------------------------------------------------------------|#
-echo -ne "\033]6;1;bg;red;brightness;40\a"
-echo -ne "\033]6;1;bg;green;brightness;42\a"
-echo -ne "\033]6;1;bg;blue;brightness;54\a"
+[ -f "$HOME/.zshrc.d/integrations.sh" ] && \
+  source "$HOME/.zshrc.d/integrations.sh"
 
 #|------------------------------------------------------------|#
-#| Load in env changes                                        |#
+#| Add env-specific tooling/configuration                     |#
 #|------------------------------------------------------------|#
-[ -f "$HOME/.zshrc.d/env.sh" ] && source "$HOME/.zshrc.d/env.sh"
+[ -f "$HOME/.zshrc.d/env.sh" ] && \
+  source "$HOME/.zshrc.d/env.sh"
 
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up                                  |#
 #|------------------------------------------------------------|#
 if (tmux has-session 2> /dev/null && [[ -z "$TMUX" ]]); then
 	if resume_tmux_prompt; then
-		tmux attach
+		tmux attach-session
 	fi
 fi
 
