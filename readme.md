@@ -4,8 +4,9 @@ Lochy's dotfiles, managed with [`chezmoi`](https://github.com/twpayne/chezmoi).
 
 Install them with:
 ```shell
-curl -fsSL https://raw.githubusercontent.com/loklaan/dotfiles/main/install.sh | \
-  BITWARDEN_EMAIL=null@lochlan.io GITHUB_USERNAME="loklaan" bash
+curl -fsSL https://raw.githubusercontent.com/loklaan/dotfiles/main/install.sh > install.sh && \
+  BITWARDEN_EMAIL=null@lochlan.io GITHUB_USERNAME="loklaan" bash ./install.sh && \
+  rm ./install.sh
 
 # or without the install script
 chezmoi init loklaan

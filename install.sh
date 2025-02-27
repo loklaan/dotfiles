@@ -3,16 +3,23 @@ set -eu
 
 echo "" >&2
 
-#/ Usage:
-#/   BITWARDEN_EMAIL=.. GITHUB_USERNAME=.. install.sh
+#/ Usage: install.sh
 #/
 #/ Description:
 #/   Installs dotfiles and dependencies.
 #/
+#/ Environment Variables:
+#/  BITWARDEN_EMAIL   <login-email>   - Login email for the Bitwarden client.
+#/  GITHUB_USERNAME   <username>      - GitHub username to fetch dotfiles from.
+#/
 #/ Options:
 #/   --help: Display this help message
+#/
+#/ Example:
+#/   BITWARDEN_EMAIL=.. GITHUB_USERNAME=.. install.sh
+#/
 usage() { grep '^#/' "$0" | cut -c4-; }
-expr "$*" : ".*--help" > /dev/null && usage
+expr "$*" : ".*--help" > /dev/null && usage && exit 0
 
 bw_email="${BITWARDEN_EMAIL:-""}"
 github_user="${GITHUB_USERNAME:-""}"
@@ -21,11 +28,30 @@ if [ "$bw_email" = "" ] || [ "$github_user" = "" ]; then
   exit 1;
 fi
 
+original_path=$PATH
+tracked_paths=
+add_tracked_path() {
+  tracked_paths="$tracked_paths
+$1"
+}
+
+cleanup() {
+  export PATH="$original_path"
+  printf '%s' "$tracked_paths" |
+    while IFS='' read -r path; do
+      # Safely remove temporary files (e.g. dont remove / or ~)
+      if [ "$path" != "/" ] && [ "$path" != "$HOME" ]; then
+        rm -rf "$path"
+      fi
+    done
+}
+
 main() {
   print_colored magenta bold "Installing dotfiles!" >&2
   echo "" >&2
 
   bin_dir="${HOME}/.local/bin"
+  export PATH="${bin_dir}:${PATH}"
 
   # Install dependencies
   mkdir -p "$bin_dir"
@@ -69,16 +95,19 @@ main() {
 
   # Run chezmoi init
   print_colored cyan italic " ▶ Running '$chezmoi init $github_user --apply --keep-going' " >&2
-  BW_SESSION="$bw_token" exec "$chezmoi" init "$github_user" --apply --keep-going
+  chezmoi_tmp_dir="$HOME/.tmp" # Chezmoi attempts to execute files in mktemp, which is not allowed in some OS's
+  mkdir -p "$chezmoi_tmp_dir"
+  add_tracked_path chezmoi_tmp_dir
+  BW_SESSION="$bw_token" TMPDIR="$chezmoi_tmp_dir" exec "$chezmoi" init "$github_user" --apply --keep-going
 }
 
 http_get() {
 	source_url="${1:?"Source URL required"}"
 	header="${2:-""}"
-	tmpfile="$(mktemp)"
-	http_download "${tmpfile}" "${source_url}" "${header}" || return 1
-	body="$(cat "${tmpfile}")"
-	rm -f "${tmpfile}"
+	temp_file="$(mktemp)"
+	http_download "${temp_file}" "${source_url}" "${header}" || return 1
+	body="$(cat "${temp_file}")"
+	rm -f "${temp_file}"
 	printf '%s\n' "${body}"
 }
 
@@ -194,5 +223,8 @@ print_colored() {
     printf "%s\n" "$1"
   fi
 }
+
+
+trap cleanup 0 1 2 3 15
 
 main "${@}"
