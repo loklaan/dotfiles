@@ -47,6 +47,7 @@ main() {
        "git-extras"
        "git-lfs"
        "gnupg"
+       "go"
        "handbrake"
        "htop"
        "jq"
@@ -100,6 +101,9 @@ main() {
        "sublime-text"
        "visual-studio-code"
        "vlc" -}}
+  {{ $goget := list
+       "github.com/CtrlSpice/otel-desktop-viewer@latest"
+       "github.com/equinix-labs/otel-cli@latest" -}}
 
   if ! command -v brew > /dev/null; then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -120,6 +124,11 @@ cask {{ . | quote }}
 {{ end -}}
 EOF
   fi
+
+  # Go built binaries
+  {{ range ($casks | sortAlpha | uniq) -}}
+  {{ $.brewprefix }}/bin/go install {{ . | quote }}
+  {{ end -}}
 
   # The amazing fzf
   FZF_INSTALL="$HOME/.zshrc.d/plugins/fzf/install"
