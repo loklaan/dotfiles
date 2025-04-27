@@ -3,33 +3,33 @@
 ################################################################
 
 #|-------------------------------|#
-#| DEBUG TERM PERFORMANCE        |#
+#| DEBUG TERM PERFORMANCE
 #|-------------------------------|#
 PROFILE_STARTUP=false # When true, the profile will be profiled.
 if [[ "$PROFILE_STARTUP" == true ]]; then
-  zmodload zsh/zprof
+    zmodload zsh/zprof
 fi
 
 #|------------------------------------------------------------|#
-#| Reset terminal text                                        |#
+#| Reset terminal text
 #|------------------------------------------------------------|#
 clear && source "$HOME/.zshrc.d/lib/term.zsh"
 clear && reset_cursor && cursor_disable
 
 #|------------------------------------------------------------|#
-#| Integrate with terminal                                    |#
+#| Integrate with terminal
 #|------------------------------------------------------------|#
 [ -f "$HOME/.zshrc.d/integrations.zsh" ] && \
   source "$HOME/.zshrc.d/integrations.zsh"
 
 #|------------------------------------------------------------|#
-#| Add env-specific tooling/configuration                     |#
+#| Add env-specific tooling/configuration
 #|------------------------------------------------------------|#
 [ -f "$HOME/.zshrc.d/env.zsh" ] && \
   source "$HOME/.zshrc.d/env.zsh"
 
 #|------------------------------------------------------------|#
-#| Drop into tmux if it's up                                  |#
+#| Drop into tmux if it's up
 #|------------------------------------------------------------|#
 if (tmux has-session 2> /dev/null && [[ -z "$TMUX" ]]); then
 	if resume_tmux_prompt; then
@@ -38,12 +38,12 @@ if (tmux has-session 2> /dev/null && [[ -z "$TMUX" ]]); then
 fi
 
 #|------------------------------------------------------------|#
-#| Cute lochlanness                                           |#
+#| Cute lochlanness
 #|------------------------------------------------------------|#
 cursor_disable && loading_message
 
 #|------------------------------------------------------------|#
-#| zplug                                                      |#
+#| zplug
 #|------------------------------------------------------------|#
 export ZPLUG_HOME="$HOME/.zshrc.d/zplug"
 export ZPLUG_LOG_LOAD_SUCCESS=false
@@ -111,7 +111,7 @@ zstyle ':completion:*' group-name ''
 zstyle :compinstall filename "$HOME/.zshrc"
 
 #|------------------------------------------------------------|#
-#| History setup                                              |#
+#| History setup
 #|------------------------------------------------------------|#
 #| TODO: Migrate history provider to https://atuin.sh/
 [ -z "$HISTFILE" ] && HISTFILE="$HOME/.zsh_history"
@@ -126,18 +126,18 @@ setopt inc_append_history     # add commands to HISTFILE in order of execution
 setopt share_history          # share command history data
 
 #|------------------------------------------------------------|#
-#| Load in alias                                              |#
+#| Load in alias
 #|------------------------------------------------------------|#
 source $HOME/.aliases
 
 #|------------------------------------------------------------|#
-#| Final cute lochlanness                                     |#
+#| Final cute lochlanness
 #|------------------------------------------------------------|#
 welcome_message && cursor_enable
 
 #|-------------------------------|#
-#| DEBUG TERM PERFORMANCE        |#
+#| DEBUG TERM PERFORMANCE
 #|-------------------------------|#
 if [[ "$PROFILE_STARTUP" == true ]]; then
-  zprof
+     zprof
 fi
