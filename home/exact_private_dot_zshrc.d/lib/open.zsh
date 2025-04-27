@@ -1,5 +1,5 @@
 #|------------------------------------------------------------|#
-#| Cross-platform file agnostic open                          |#
+#| Cross-platform file agnostic open
 #|------------------------------------------------------------|#
 
 function open_command() {
