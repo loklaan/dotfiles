@@ -5,31 +5,12 @@ const Browser = {
     name: "Google Chrome",
     profile: "Profile 1",
   },
-  WORK_ADMIN: {
-    name: "Google Chrome",
-    profile: "Profile 3",
-  },
   PERSONAL: "Firefox",
 };
 
 module.exports = {
   defaultBrowser: Browser.WORK,
-  options: {
-    logRequests: true,
-  },
-  rewrite: [
-    {
-      match: /www.canva-iris.com\/admin/,
-      url: ({ url }) => {
-        return `https://www.canva.com${url.pathname}${url.search ? '?' + url.search : ''}`;
-      }
-    }
-  ],
   handlers: [
-    {
-      match: /canva(-dev)?\.com\/admin/,
-      browser: Browser.WORK_ADMIN,
-    },
     {
       match: /youtube\.com/,
       browser: Browser.PERSONAL,
