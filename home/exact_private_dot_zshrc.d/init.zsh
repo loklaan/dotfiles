@@ -31,7 +31,7 @@ clear && reset_cursor && cursor_disable
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up
 #|------------------------------------------------------------|#
-if (tmux has-session 2> /dev/null && [[ -z "$TMUX" ]]); then
+if should_attempt_resume_tmux_prompt; then
 	if resume_tmux_prompt; then
 		tmux new-session -A -s "main-session"
 	fi

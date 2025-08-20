@@ -77,6 +77,17 @@ welcome_message () {
   print_middle_cuteness "$cute_message_to_me"
 }
 
+should_attempt_resume_tmux_prompt () {
+  if ( ! echo "${TERMINAL_EMULATOR:-}" | grep -iq "jetbrains" \
+    && ! echo "${TERM_PROGRAM:-}" | grep -iq "vscode" \
+    && tmux has-session 2> /dev/null \
+    && [[ -z "$TMUX" ]]) then
+    return 0
+  else
+    return 1
+  fi
+}
+
 resume_tmux_prompt () {
   local center_line=$(get_line_number_for_vertical_center)
   local notice_line=$(( center_line - 1 ))

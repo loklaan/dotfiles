@@ -156,28 +156,17 @@ EOF
     "awscli"
     "bash"
     "coreutils"
-    "deno"
     "ffmpeg"
-    "flyctl"
     "git"
-    "git-delta"
     "git-extras"
     "git-lfs"
     "gnupg"
-    "handbrake"
     "htop"
     "jq"
     "less"
-    "lua"
     "make"
     "ncdu"
-    "ncurses"
-    "pinentry"
-    "pinentry-mac"
-    "pyenv"
-    "readline"
     "rename"
-    "rustup-init"
     "safe-rm"
     "shellcheck"
     "tmux"
@@ -185,21 +174,35 @@ EOF
     "wget"
     "wireguard-tools"
     "zsh" -}}
-    packages=$(cat <<EOF
-    {{ range ($pkgs | sortAlpha | uniq) -}}
-      {{ . | quote }}
-    {{ end -}}
-    EOF)
 
-    {{ if eq .chezmoi.osRelease "ubuntu" -}}
+    # Disabling due to not being available in relevant distros
+    # "deno"
+    # "flyctl"
+    # "git-delta"
+    # "handbrake"
+    # "lua"
+    # "ncurses"
+    # "pinentry"
+    # "pinentry-mac"
+    # "pyenv"
+    # "readline"
+    # "rustup-init"
+    packages=$(cat <<EOF
+{{ range ($pkgs | sortAlpha | uniq) -}}
+  {{ . | quote }}
+{{ end -}}
+EOF
+)
+
+    {{ if eq .chezmoi.osRelease.id "ubuntu" -}}
     sudo apt update
-    sudo apt install -y $packages
-    {{ else if eq .chezmoi.osRelease "fedora" -}}
-    sudo dnf install -y $packages
-    {{ else if eq .chezmoi.osRelease "alpine" -}}
-    sudo apk add $packages
+    sudo apt install -y $(echo "$packages" | xargs)
+    {{ else if eq .chezmoi.osRelease.id "fedora" -}}
+    sudo dnf install -y $(echo "$packages" | xargs)
+    {{ else if eq .chezmoi.osRelease.id "alpine" -}}
+    sudo apk add $(echo "$packages" | xargs)
     {{ else }}
-    echo "Not implemented for this Linux OS: {{ .chezmoi.os }} / {{ .chezmoi.osRelease }}"
+    echo "Not implemented for this Linux OS: {{ .chezmoi.os }} / {{ .chezmoi.osRelease.id }}"
     echo "Full release details from /etc/os-release:"
     cat /etc/os-release
     {{ end }}
