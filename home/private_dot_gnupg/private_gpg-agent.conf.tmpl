@@ -7,5 +7,5 @@ max-cache-ttl-ssh 7200
 # pinentry program from GPGtools. This is the OSX 'magic sauce',
 # allowing the gpg key's passphrase to be stored in the login
 # keychain, enabling automatic key signing.
-pinentry-program /opt/homebrew/bin/pinentry-mac
+pinentry-program {{ .brewprefix }}/bin/pinentry-mac
 {{ end }}
