@@ -55,8 +55,12 @@ main() {
   bw_token=""
   while [ $counter -lt 3 ]; do
     set +e
-    if ! bw_token="$("$bitwarden" login "$bw_email" --raw)"; then
-      counter=$((counter+1))
+    if ! bw_token="$("$bitwarden" login "$bw_email" --raw < /dev/tty)"; then
+      if ! bw_token="$("$bitwarden" unlock --raw < /dev/tty)"; then
+        counter=$((counter+1))
+      else
+        break
+      fi
     else
       break
     fi
