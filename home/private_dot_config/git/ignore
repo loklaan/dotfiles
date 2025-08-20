@@ -17,3 +17,6 @@ done.commit
 
 # PR Train tool
 .pr-train
+
+# Tool dependency management
+.mise.local.toml
