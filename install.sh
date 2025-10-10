@@ -25,29 +25,21 @@ main() {
   print_colored magenta bold "Installing dotfiles!" >&2
   echo "" >&2
 
-  bin_dir="${HOME}/.local/bin"
+  # Install mise
+  if ! command -v mise >/dev/null 2>&1; then
+    print_colored cyan italic " ▷ Installing mise " >&2
+    gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D
+    tmp_mise_install_sh=$(mktemp)
+    curl https://mise.jdx.dev/install.sh.sig | gpg --decrypt > "$tmp_mise_install_sh"
+    sh "$tmp_mise_install_sh"
+  fi
+  export PATH="${HOME}/.local/bin:${PATH}"
+  export PATH="$HOME/.local/share/mise/shims:$PATH"
 
-  # Install dependencies
-  mkdir -p "$bin_dir"
-  if ! chezmoi="$(command -v chezmoi)"; then
-    chezmoi_install_url="get.chezmoi.io"
-    print_colored cyan italic " ▷ Installing chezmoi " >&2
-    chezmoi="${bin_dir}/chezmoi"
-    chezmoi_install_script="$(http_get $chezmoi_install_url)" || return 1
-    sh -c "${chezmoi_install_script}" -- -b "${bin_dir}" || return 1
-  fi
-  if ! bitwarden="$(command -v bw)"; then
-    bitwarden_install_url="https://vault.bitwarden.com/download/?app=cli&platform=$(get_bitwarden_os)"
-    print_colored cyan italic " ▷ Installing bitwarden-cli " >&2
-    bitwarden_zip="${bin_dir}/bw.zip"
-    bitwarden="${bin_dir}/bw"
-    http_download "${bitwarden_zip}" "$bitwarden_install_url" || return 1
-    last_dir=$(pwd)
-    cd "$(dirname "$bitwarden_zip")"
-    unarchive "$bitwarden_zip" && rm "$bitwarden_zip" || return 1
-    chmod +x "$bitwarden"
-    cd "$last_dir"
-  fi
+  # Install dependencies with mise
+  print_colored cyan italic " ▷ Installing dependencies with mise " >&2
+  mise use --global chezmoi
+  mise use --global bitwarden
 
   # Authenticate with credentials provider (used in chezmoi templates)
   print_colored cyan italic " ▶ Running 'bw login $bw_email --raw' " >&2
@@ -55,8 +47,8 @@ main() {
   bw_token=""
   while [ $counter -lt 3 ]; do
     set +e
-    if ! bw_token="$("$bitwarden" login "$bw_email" --raw < /dev/tty)"; then
-      if ! bw_token="$("$bitwarden" unlock --raw < /dev/tty)"; then
+    if ! bw_token="$(bw login "$bw_email" --raw < /dev/tty)"; then
+      if ! bw_token="$(bw unlock --raw < /dev/tty)"; then
         counter=$((counter+1))
       else
         break
@@ -72,8 +64,8 @@ main() {
   fi
 
   # Run chezmoi init
-  print_colored cyan italic " ▶ Running '$chezmoi init $github_user --apply --keep-going' " >&2
-  BW_SESSION="$bw_token" exec "$chezmoi" init "$github_user" --apply --keep-going
+  print_colored cyan italic " ▶ Running 'chezmoi init $github_user --apply --keep-going' " >&2
+  BW_SESSION="$bw_token" exec chezmoi init "$github_user" --apply --keep-going
 }
 
 http_get() {
