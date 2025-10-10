@@ -58,10 +58,8 @@ main() {
        "ncurses"
        "pinentry"
        "pinentry-mac"
-       "pyenv"
        "readline"
        "rename"
-       "rustup-init"
        "safe-rm"
        "shellcheck"
        "tmux"
@@ -126,7 +124,7 @@ EOF
   fi
 
   # Go built binaries
-  {{ range ($casks | sortAlpha | uniq) -}}
+  {{ range ($goget | sortAlpha | uniq) -}}
   {{ $.brewprefix }}/bin/go install {{ . | quote }}
   {{ end -}}
 
@@ -136,20 +134,12 @@ EOF
     bash "$FZF_INSTALL"
   fi
 
-  # Nodejs version manager
-  PREFIX="$HOME/.n"
-  if [[ ! -f "$PREFIX" ]]; then
-    curl -L https://raw.githubusercontent.com/mklement0/n-install/stable/bin/n-install | N_PREFIX=~/.n bash -s -- -yn -
-  fi
+  # Install runtimes with mise
+  mise use --global node@lts
+  mise use --global python@latest
+  mise use --global rust@latest
 
-  echo "\nDone installing packages! Continue tool environment setup:
-
-  Nodejs
-    \$ n lts
-
-  Rust/Cargo
-    \$ rustup-init
-"
+  echo "\nDone installing node, python & rust!"
 
   {{ else if eq .chezmoi.os "linux" -}}
     {{ $pkgs := list
