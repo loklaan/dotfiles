@@ -38,13 +38,8 @@
   signingkey = {{ .signingKey }}
 {{- end }}
 
-[github]
-  user = loklaan
-  token = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
-  apiKey = {{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
-
 [gpg]
-  program = gpg
+  format = ssh
 
 [commit]
   # Show diff of staged changes in commit message editor
@@ -140,10 +135,9 @@
   fsmonitor = true
 
 [diff]
-  # https://github.com/jeffkaufman/icdiff
+  # https://github.com/Wilfred/difftastic
   # Good for side-by-side diffs, as opposed inline-paging
-  # CURRENTLY BROKEN??
-  # tool = icdiff
+  tool = difftastic
   # https://github.com/blog/2188-git-2-9-has-been-released#beautiful-diffs
   #
   # Ensure changes are shown compactly when lines are moved within a file
@@ -162,9 +156,8 @@
   # Do not prompt for confirmation before each invocation of the diff tool
   prompt = false
 
-[difftool "icdiff"]
-  # Background is ~LIT~, as opposed to foreground colors
-  cmd = icdiff -H --line-numbers $LOCAL $REMOTE
+[difftool "difftastic"]
+  cmd = difft "$LOCAL" "$REMOTE"
 
 [pager]
   diff = delta --diff-so-fancy

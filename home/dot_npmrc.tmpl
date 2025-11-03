@@ -6,4 +6,4 @@ init-author-email=bunn@lochlan.io
 init-author-license=MIT
 init-version=0.1.0
 init-license=MIT
-//registry.npmjs.org/:_authToken={{ (bitwardenFields "item" "dotfiles").npm_auth_token.value }}
+//registry.npmjs.org/:_authToken={{ (bitwardenSecrets .bwsIdNpmAuthToken).value }}
