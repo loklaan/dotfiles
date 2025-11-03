@@ -1,5 +1,5 @@
 {{- if ne "" .emailWork -}}
-{{ (bitwardenFields "item" "dotfiles").canva_github_auth_token.value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly).value }}
 {{- else -}}
-{{ (bitwardenFields "item" "dotfiles").github_auth_token.value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthToken).value }}
 {{- end -}}

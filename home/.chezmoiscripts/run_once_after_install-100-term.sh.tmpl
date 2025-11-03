@@ -5,7 +5,7 @@ set -o nounset
 
 zsh_shell="/bin/zsh"
 if [ ! "$SHELL" = "$zsh_shell" ]; then
-  if [[ $(command -v go) ]]; then
+  if [[ ! $(command -v zsh) ]]; then
     echo "You must manually install zsh and set it as the default shell."
     echo " 1. Install \"zsh\""
     echo " 2. Run: chsh -s \"$zsh_shell\""

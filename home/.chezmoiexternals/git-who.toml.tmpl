@@ -1,0 +1,14 @@
+[".local/bin/git-who"]
+  type = "archive-file"
+  path = "git-who"
+{{- $version := "v1.2" }}
+{{- $baseUrl := printf "https://github.com/sinclairtarget/git-who/releases/download/%s/git-who-%s" $version $version }}
+{{- $platform := printf "%s-%s" .chezmoi.os .chezmoi.arch }}
+{{- $checksums := dict
+  "darwin-amd64" "sha256:a2efc5b085a4c430d311969a4180fe5eb55b10e5d96d72b3ba8bb375428805ca"
+  "darwin-arm64" "sha256:ad11a554c90d92b72d411d0987432eba434b19eb1b4cfcba5d8a39d2c3f48b21"
+  "linux-amd64" "sha256:ad4ff932d3cf34bf97c55b42e9e6158be5db278450ac4dc8205d6d4c76396c5b"
+  "linux-arm64" "sha256:ec7ed247b52867e5d303948511a52aede8754a53d1dd9a39cc1dc66f181beee6"
+}}
+  url = "{{ $baseUrl }}-{{ $platform }}.tar.gz"
+  checksum = "{{ index $checksums $platform }}"
