@@ -2,7 +2,7 @@
 # Global tools listed here will be automatically installed.
 "ubi:bitwarden/sdk" = { version = "bws-v1.0.0", exe = "bws", tag_regex = "^bws" }
 bitwarden = "2025.10.0"
-chezmoi = "2.66.1"
+chezmoi = "2.67.0"
 delta = "0.18.2"
 deno = "2.5.4"
 difftastic = "0.65.0"
@@ -12,7 +12,6 @@ lua = "5.4.8"
 node = "22.20.0"
 rust = "1.90.0"
 shellcheck = "0.11.0"
-tmux = "3.5"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node"]

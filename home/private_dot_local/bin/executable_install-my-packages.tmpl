@@ -1,48 +1,103 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -o errexit
-set -o nounset
+IFS=$'\n\t'
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
-#/   my-install-packages [options]
-#/   my-install-packages --gui
+#/   install-my-packages [--gui]
 #/
 #/ Description:
+#/   Installs non-critical packages.
 #/
 #/ Options:
-#/   --gui: Optional. Install GUI app packages in addition to CLI packages.
-#/   --help: Display this help message
-usage() { grep '^#/' "$0" | cut -c4- ; }
-
-gui=1
-
-while [ $# -gt 0 ]; do
+#/   --gui:       Includes GUI app packages, like browsers etc.
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+_print() {
   case "$1" in
-    --help)
-      usage
-      exit 0
-      ;;
-    --gui)
-      gui=0
-      ;;
-    *)
-      echo "Invalid argument: $1"
-      usage
-      exit 1
+    black) color="30" ;;
+    red) color="31" ;;
+    green) color="32" ;;
+    yellow) color="33" ;;
+    blue) color="34" ;;
+    magenta) color="35" ;;
+    cyan) color="36" ;;
+    white) color="37" ;;
+    *) echo "Unknown color: $1" >&2; return 1 ;;
   esac
+
   shift
-done
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;;
+      italic) color="${color};3" ;;
+      underline) color="${color};4" ;;
+      dim) color="${color};2" ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  supported_colors=$(tput colors 2>/dev/null)
+  if [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%s\\033[0m\\n" "$1"
+  else
+    printf "%s\n" "$1"
+  fi
+}
+info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
+warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
+error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+
+cleanup() {
+  echo "" >&2
+  _print white dim "Log: $LOG_FILE" >&2
+}
+
+parse_args() {
+  gui=1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      --gui)
+        gui=0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+    shift
+  done
+}
 
 main() {
+  parse_args "$@"
+  info "▶ Installing non-critical packages"
+
+  info "╍ Running 'mise install'"
+  export PATH="${HOME}/.local/bin:${PATH}"
+  export PATH="$HOME/.local/share/mise/shims:$PATH"
   mise install
 
+  {{ if eq .chezmoi.os "darwin" }}
   #
   #-----------------------------------------------------------------------------
   # Macos-only
   #-----------------------------------------------------------------------------
   #
 
-  {{ if eq .chezmoi.os "darwin" }}
+  info "╍ Running 'brew install'"
+  if ! command -v brew >/dev/null 2>&1; then
+    fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"
+  fi
 
   PATH="$PATH:{{ .brewprefix }}/bin"
 
@@ -129,85 +184,87 @@ EOF
 
   # Go built binaries
   {{ range ($goget | sortAlpha | uniq) -}}
-  {{ $.brewprefix }}/bin/go install {{ . | quote }}
+  mise x -- go install {{ . | quote }}
   {{ end -}}
 
+  {{ else if eq .chezmoi.os "linux" -}}
   #
   #-----------------------------------------------------------------------------
   # Linux-only
   #-----------------------------------------------------------------------------
   #
 
-  {{ else if eq .chezmoi.os "linux" -}}
-    {{ $pkgs := list
-    "bash"
-    "coreutils"
-    "ffmpeg"
-    "git"
-    "git-lfs"
-    "gnupg"
-    "less"
-    "make"
-    "rename"
-    "safe-rm"
-    "tree"
-    "wget"
-    "zsh" -}}
+  {{ $pkgs := list
+  "bash"
+  "coreutils"
+  "ffmpeg"
+  "git"
+  "git-lfs"
+  "gnupg"
+  "less"
+  "make"
+  "rename"
+  "safe-rm"
+  "tmux"
+  "tree"
+  "wget"
+  "zsh" -}}
 
-    packages=$(cat <<EOF
+  packages=$(cat <<EOF
 {{ range ($pkgs | sortAlpha | uniq) -}}
   {{ . | quote }}
 {{ end -}}
 EOF
 )
 
-    linux_distro="{{ .chezmoi.osRelease.id }}"
-    # TODO finish this, copy over from install.sh
-    case $linux_distro in
-      alpine)
-        info " ▶ Running 'apk add git zsh'"
-        $Sudo apk add --update --no-cache git curl zsh
-      ;;
-      amzn|rhel|fedora|rocky)
-        info " ▶ Running 'yum install git zsh'"
-        $Sudo yum update -y
-        $Sudo yum install -y git zsh
-      ;;
-      *)
-        info " ▶ Running 'apt-get install git zsh locales'"
-        $Sudo apt-get update
-        $Sudo apt-get -y install git curl zsh locales
-        #if [ "$VERSION" != "14.04" ]; then
-        #  $Sudo apt-get -y install locales-all
-        #fi
-        info " ▶ Running 'locale-gen en_US.UTF-8'"
-        $Sudo locale-gen en_US.UTF-8
-    esac
-    {{ if eq .chezmoi.osRelease.id "ubuntu" -}}
-    sudo apt update
-    sudo apt install -y $(echo "$packages" | xargs)
-    {{ #Golang template for checking multiple versions -}}
-    {{
-    {{ else if eq .chezmoi.osRelease.id "fedora" -}}
-    sudo yum install -y $(echo "$packages" | xargs)
-    {{ else if eq .chezmoi.osRelease.id "alpine" -}}
-    sudo apk add $(echo "$packages" | xargs)
-    {{ else }}
-    echo "Not implemented for this Linux OS: {{ .chezmoi.os }} / {{ .chezmoi.osRelease.id }}"
-    echo "Full release details from /etc/os-release:"
-    cat /etc/os-release
-    {{ end }}
+  if [ "$(id -u)" = "0" ]; then
+    Sudo=''
+    info "╍ Root user detected, skipping sudo for following commands"
+  elif which sudo >/dev/null 2>&1; then
+    Sudo='sudo'
+    info "╍ Sudo detected, using it for following commands"
+  else
+    Sudo=''
+    warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
+  fi
+  linux_distro=$(
+    . /etc/os-release
+    echo "$ID"
+  )
+  case $linux_distro in
+    alpine)
+      info "╍ Running 'apk add \$packages'"
+      bash -c "$Sudo apk add --update $(echo "$packages" | xargs)"
+    ;;
+    amzn|rhel|fedora|rocky)
+      info "╍ Running 'yum install \$packages'"
+      $Sudo yum update -y
+      bash -c "$Sudo yum install -y $(echo "$packages" | xargs)"
+    ;;
+    ubuntu|debian)
+      info "╍ Running 'apt install \$packages'"
+      $Sudo apt update
+      bash -c "$Sudo apt install --no-install-recommends -y $(echo "$packages" | xargs)"
+    ;;
+    *)
+      fatal "The \"$linux_distro\" is not supported yet. Full release details from /etc/os-release:\n$(cat /etc/os-release)\n\nAdd '$linux_distro' and it's package manager to this script."
+    ;;
+  esac
 
+  {{ else }}
   #
   #-----------------------------------------------------------------------------
   # Unsupported OS
   #-----------------------------------------------------------------------------
   #
 
-  {{ else }}
-  echo "Not implemented for this OS: {{ .chezmoi.os }}"
+  fatal "Not implemented for this OS: {{ .chezmoi.os }}"
 
   {{ end }}
 }
 
-main "${@:-""}"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+  trap cleanup EXIT
+  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+  main "$@"
+fi

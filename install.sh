@@ -55,14 +55,13 @@ warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
 error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
 fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
-
 cleanup() {
   echo "" >&2
   _print white dim "Log: $LOG_FILE" >&2
 }
 
 parse_args() {
-  if [ -z "${CONFIG_BWS_ACCESS_TOKEN-}" ] ]; then
+  if [ -z "${CONFIG_BWS_ACCESS_TOKEN}" ]; then
     usage
     fatal "Missing required environment variables."
   fi
@@ -89,13 +88,13 @@ parse_args() {
 
 main() {
   parse_args "$@"
-  info "Installing ...dotfiles!"
+  info "▶ Starting installation of dotfiles!"
 
   # Install required shell & locale packages for OS
   if command -v git >/dev/null 2>&1 && command -v zsh >/dev/null 2>&1; then
-    info "▶ Found 'git' and 'zsh' already installed"
+    info "╍ Found 'git' and 'zsh' already installed"
   else
-    info "▶ Installing shell & locale"
+    info "▶ Installing critical packages (shell, locale)"
     os_kind=$(get_os_kind)
     case $os_kind in
       windows|android) fatal "Nope, $os_kind is not supported." ;;
@@ -129,44 +128,49 @@ main() {
             $Sudo yum update -y
             $Sudo yum install -y git zsh
           ;;
-          *)
-            info "╍ Running 'apt-get install git zsh locales'"
-            $Sudo apt-get update
-            $Sudo apt-get -y install git zsh locales
-            #if [ "$VERSION" != "14.04" ]; then
-            #  $Sudo apt-get -y install locales-all
-            #fi
+          ubuntu|debian)
+            info "╍ Running 'apt install git zsh locales'"
+            $Sudo apt update
+            $Sudo apt --no-install-recommends -y install git zsh locales
+
             info "╍ Running 'locale-gen en_US.UTF-8'"
             $Sudo locale-gen en_US.UTF-8
+          ;;
+          *)
+            fatal "The \"$linux_distro\" is not supported yet. Add '$linux_distro' and it's package manager to \`install.sh\`."
+          ;;
         esac
         ;;
     esac
   fi
 
-  # Install mise & required packages
+  # Install mise & critical packages
   if ! command -v mise >/dev/null 2>&1; then
-    info "▶ Installing mise"
-    info "╍ Running 'gpg --recv-keys' for mise install script verification"
-    gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D > /dev/null 2>&1
+    info "▶ Installing critical packages (mise , chezmoi, bitwarden)"
+    info "╍ Running 'gpg --recv-keys' for install script verification"
+    gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D >/dev/null 2>&1
     tmp_mise_install_sh=$(mktemp)
     info "╍ Running 'curl mise.jdx.dev' for install script"
-    curl https://mise.jdx.dev/install.sh.sig | gpg --decrypt > "$tmp_mise_install_sh"
-    info "╍ Running mise install script"
-    sh "$tmp_mise_install_sh"
+    curl https://mise.jdx.dev/install.sh.sig 2>/dev/null | gpg --decrypt 2>/dev/null > "$tmp_mise_install_sh"
+    info "╍ Running downloaded install script"
+    sh "$tmp_mise_install_sh" 2>/dev/null
   fi
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
-  info "▶ Installing required packages with mise"
-  mise use --global chezmoi 'ubi:bitwarden/sdk[tag_regex=^bws,exe=bws]@bws-v1.0.0'
+  info "╍ Running mise for chezmoi and bitwarden"
+  _print white dim "Tip: Install non-critical packages anytime with \`install-my-packages\`"
+  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[tag_regex=^bws,exe=bws]@bws-v1.0.0'
 
   # Run chezmoi init
-  info "▶ Running 'chezmoi init'"
+  info "▶ Installing templated dotfiles with 'chezmoi init'"
   BWS_ACCESS_TOKEN="$config_bw_access_token" exec chezmoi init "$config_github_user" \
     --apply \
-    --branch to-mise-dependency-management \
+    --branch to-reproducible \
     --promptString email="$config_email" \
     --promptString emailWork="$config_email_work" \
     --promptString signingKey="$config_signing_key"
+
+  info "▶ Installed dotfiles. Done."
 }
 
 get_os_kind() {
@@ -197,5 +201,6 @@ get_linux_distro() {
 
 if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
   trap cleanup EXIT
+  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
   main "$@"
 fi
