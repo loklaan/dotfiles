@@ -1,0 +1,36 @@
+#|-----------------------------------------------------------------------------|
+#| INTERACTIVE                                                                 |
+#|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Sourced by:                                                                 |
+#|  - interactive shells                                                       |
+#|  - login or non-login                                                       |
+#|                                                                             |
+#| Run after:                                                                  |
+#|  - .zshenv                                                                  |
+#|                                                                             |
+#|-----------------------------------------------------------------------------|
+
+if [[ ! -o interactive ]]; then
+  return
+fi
+
+if [[ -f "${HOME}/.aliases" ]]; then
+  # shellcheck source=home/dot_aliases
+  source "${HOME}/.aliases"
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/options.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/options.zsh
+  source "${ZSH_CONFIG_DIR}/init/options.zsh"
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/plugins.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/plugins.zsh
+  source "${ZSH_CONFIG_DIR}/init/plugins.zsh"
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/prompt.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/prompt.zsh
+  source "${ZSH_CONFIG_DIR}/init/prompt.zsh"
+fi
