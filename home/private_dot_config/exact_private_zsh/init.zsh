@@ -13,20 +13,20 @@ fi
 #|------------------------------------------------------------|#
 #| Reset terminal text
 #|------------------------------------------------------------|#
-clear && source "$HOME/.zshrc.d/lib/term.zsh"
+clear && source "$HOME/.config/zsh/lib/term.zsh"
 clear && reset_cursor && cursor_disable
 
 #|------------------------------------------------------------|#
 #| Integrate with terminal
 #|------------------------------------------------------------|#
-[ -f "$HOME/.zshrc.d/integrations.zsh" ] && \
-  source "$HOME/.zshrc.d/integrations.zsh"
+[ -f "$HOME/.config/zsh/integrations.zsh" ] && \
+  source "$HOME/.config/zsh/integrations.zsh"
 
 #|------------------------------------------------------------|#
 #| Add env-specific tooling/configuration
 #|------------------------------------------------------------|#
-[ -f "$HOME/.zshrc.d/env.zsh" ] && \
-  source "$HOME/.zshrc.d/env.zsh"
+[ -f "$HOME/.config/zsh/env.zsh" ] && \
+  source "$HOME/.config/zsh/env.zsh"
 
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up
@@ -45,39 +45,39 @@ cursor_disable && loading_message
 #|------------------------------------------------------------|#
 #| zplug
 #|------------------------------------------------------------|#
-export ZPLUG_HOME="$HOME/.zshrc.d/zplug"
+export ZPLUG_HOME="$HOME/.config/zsh/zplug"
 export ZPLUG_LOG_LOAD_SUCCESS=false
 export ZPLUG_LOG_LOAD_FAILURE=false
 source $ZPLUG_HOME/init.zsh
 
 #|--------------------------------|#
 #| Prompt plugins
-zplug "~/.zshrc.d/plugins/iterm2", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
-zplug "~/.zshrc.d/plugins/ghostty", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/iterm2", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+zplug "~/.config/zsh/plugins/ghostty", from:local, use:"*.plugin.zsh"
 # TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
-zplug "~/.zshrc.d/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
 # TODO: Migrate history to https://atuin.sh/
-zplug "~/.zshrc.d/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zsh", defer:2 # Should be loaded 2nd last
-zplug "~/.zshrc.d/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
+zplug "~/.config/zsh/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zsh", defer:2 # Should be loaded 2nd last
+zplug "~/.config/zsh/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
 bindkey '^[[A' history-substring-search-up
 bindkey '^[[B' history-substring-search-down
-zplug "~/.zshrc.d/plugins/zsh-async", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/fzf", from:local, use:"shell/*.zsh"
+zplug "~/.config/zsh/plugins/zsh-async", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/fzf", from:local, use:"shell/*.zsh"
 # TODO: Fork this to get complete control over experience (e.g. quick git branch info)
 #       Or better yet, switch to https://starship.rs/guide/
-zplug "~/.zshrc.d/plugins/pure", from:local, use:"pure.zsh", as:theme
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
-zplug "~/.zshrc.d/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
+zplug "~/.config/zsh/plugins/pure", from:local, use:"pure.zsh", as:theme
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+zplug "~/.config/zsh/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
+zplug "~/.config/zsh/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
 
 #|--------------------------------|#
 #| Check for uninstalled plugins

@@ -1,0 +1,18 @@
+#|-----------------------------------------------------------------------------|
+#| LOGINS                                                                      |
+#|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Sourced by:                                                                 |
+#|  - login shells                                                             |
+#|  - interactive or non-interactive                                           |
+#|                                                                             |
+#| Run after:                                                                  |
+#|  - .zshenv                                                                  |
+#|  - .zshrc                                                                   |
+#|                                                                             |
+#|-----------------------------------------------------------------------------|
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/login.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh
+  source "${ZSH_CONFIG_DIR}/init/login.zsh"
+fi
