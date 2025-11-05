@@ -21,16 +21,16 @@ if [[ -f "${HOME}/.aliases" ]]; then
 fi
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/options.zsh" ]]; then
-  # shellcheck source=home/private_dot_config/exact_private_zsh/init/options.zsh
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/options.zsh.tmpl
   source "${ZSH_CONFIG_DIR}/init/options.zsh"
 fi
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/plugins.zsh" ]]; then
-  # shellcheck source=home/private_dot_config/exact_private_zsh/init/plugins.zsh
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/plugins.zsh.tmpl
   source "${ZSH_CONFIG_DIR}/init/plugins.zsh"
 fi
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/prompt.zsh" ]]; then
-  # shellcheck source=home/private_dot_config/exact_private_zsh/init/prompt.zsh
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/prompt.zsh.tmpl
   source "${ZSH_CONFIG_DIR}/init/prompt.zsh"
 fi

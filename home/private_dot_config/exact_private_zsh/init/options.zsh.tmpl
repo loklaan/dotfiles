@@ -1,0 +1,14 @@
+fpath=(
+  "$ZSH_CACHE_DIR/completions"
+  "${HOME}/.local/share/zsh-completions"
+  {{ if eq .chezmoi.os "darwin" }}"{{ .brewprefix }}/share/zsh/site-functions"{{ end }}
+  ${fpath}
+)
+
+{{ if eq .chezmoi.os "darwin" }}
+manpath=(
+  '{{ .brewprefix }}/share/man'
+  /Library/Developer/CommandLineTools/usr/share/man
+  ${manpath}
+)
+{{ end }}
