@@ -1,0 +1,19 @@
+# Package managers
+## Mise (full)
+if [[ -o interactive ]] && which mise >/dev/null; then
+  eval "$(mise activate zsh)"
+fi
+## Nix
+[[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
+
+# Background daemons / agents
+## SSH
+source "$HOME/.config/zsh/lib/ssh.sh"
+if typeset -f _ssh_agent > /dev/null; then
+  _ssh_agent
+fi
+export GPG_TTY=$(tty)
+
+# Dev machines & ai agents
+## Coder boxes
+[ -e "$HOME/.coder.sh" ] && . "$HOME/.coder.sh"

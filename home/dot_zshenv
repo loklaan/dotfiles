@@ -11,6 +11,6 @@ ZSH_CONFIG_DIR="${HOME}/.config/zsh"
 export ZDOTDIR="${ZSH_CONFIG_DIR}"
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/env.zsh" ]]; then
-  # shellcheck source=home/private_dot_config/exact_private_zsh/init/env.zsh
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/env.zsh.tmpl
   source "${ZSH_CONFIG_DIR}/init/env.zsh"
 fi

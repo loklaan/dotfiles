@@ -1,18 +1,18 @@
 #|-----------------------------------------------------------------------------|
-#| LOGINS                                                                      |
+#| LOGIN PROFILE                                                               |
 #|-----------------------------------------------------------------------------|
 #|                                                                             |
 #| Sourced by:                                                                 |
-#|  - login shells                                                             |
-#|  - interactive or non-interactive                                           |
+#|  - login shells       ←──┐                                                  |
+#|  - interactive           │                                                  |
+#|  - non-interactive    ←──┴── The focus of this script.                      |
 #|                                                                             |
 #| Run after:                                                                  |
 #|  - .zshenv                                                                  |
-#|  - .zshrc                                                                   |
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/login.zsh" ]]; then
-  # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh.tmpl
   source "${ZSH_CONFIG_DIR}/init/login.zsh"
 fi
