@@ -1,0 +1,63 @@
+#|-----------------------------------------------------------------------------|
+#| INIT MODULE: Plugins                                                        |
+#|-----------------------------------------------------------------------------|
+#|
+#| Purpose:
+#|   Manages zsh plugin loading and configuration through zplug, including
+#|   syntax highlighting, autosuggestions, completions, prompt themes, and
+#|   various tool-specific plugins.
+#|
+#|-----------------------------------------------------------------------------|
+
+#|------------------------------------------------------------|#
+#| Plugin Management: zplug
+#|
+#|  Files for plugins are managed as chezmoi externals.
+#|
+export ZPLUG_HOME="$ZSH_CONFIG_DIR/zplug" # Added via .chezmoiexternals/zsh.toml
+export ZPLUG_LOG_LOAD_SUCCESS=false
+export ZPLUG_LOG_LOAD_FAILURE=false
+source $ZPLUG_HOME/init.zsh
+zplug "$ZSH_CONFIG_DIR/plugins/ghostty", from:local, use:"*.plugin.zsh"
+# TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
+zplug "$ZSH_CONFIG_DIR/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
+# TODO: Migrate history to https://atuin.sh/
+zplug "$ZSH_CONFIG_DIR/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zsh", defer:2 # Should be loaded 2nd last
+zplug "$ZSH_CONFIG_DIR/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+zplug "$ZSH_CONFIG_DIR/plugins/zsh-async", from:local, use:"*.plugin.zsh"
+# TODO: Fork this to get complete control over experience (e.g. quick git branch info)
+#       Or better yet, switch to https://starship.rs/guide/
+zplug "$ZSH_CONFIG_DIR/plugins/pure", from:local, use:"pure.zsh", as:theme
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/fzf", from:local, use:"*.plugin.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
+zplug load
+
+#|------------------------------------------------------------|#
+#| Completions Loader
+#|
+autoload -Uz compinit; compinit # The completion.zh plugin handles bashcompinit.
+# AWS
+if [ -f {{ .brewprefix }}/bin/aws_completer ] && which aws >/dev/null; then
+  complete -C '{{ .brewprefix }}/bin/aws_completer' aws;
+fi
+# Google Cloud
+if [ -f "{{ .brewprefix }}/share/google-cloud-sdk/completion.zsh.inc" ] && which gcloud >/dev/null; then
+  source "{{ .brewprefix }}/share/google-cloud-sdk/completion.zsh.inc"
+fi
+zstyle ':completion:*' completer _complete _ignored
+zstyle ':completion:*' format 'Completing %d...'
+zstyle ':completion:*' group-name ''
+zstyle :compinstall filename "$HOME/.zshrc"

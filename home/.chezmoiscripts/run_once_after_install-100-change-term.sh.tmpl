@@ -6,7 +6,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
-#/   term.sh
+#/   change-term.sh
 #/
 #/ Description:
 #/   Sets the shell for the user.
@@ -57,16 +57,19 @@ cleanup() {
 }
 
 main() {
+  info "▶ Setting the user shell to zsh"
+
   zsh_shell="$(which zsh)"
+  info "╍  \$SHELL    = ${SHELL}"
+  info "╍  which zsh = ${zsh_shell}"
   if [ "$SHELL" = "$zsh_shell" ]; then
+    info "╍ User shell already set"
     return
   fi
 
   if [[ ! $(command -v zsh) ]]; then
     fatal "You must manually install zsh and set it as the default shell.\n 1. Install \"zsh\"\n 2. Run: chsh -s \"$zsh_shell\""
   fi
-
-  info "▶ Setting the user shell to zsh"
 
   if [ "$(id -u)" = "0" ]; then
     Sudo=''
@@ -78,9 +81,21 @@ main() {
     Sudo=''
     warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
   fi
+  
+  # Check if the zsh_shell exists in /etc/shells, if not just append it in
+  if ! grep -q "^${zsh_shell}$" /etc/shells; then
+    info "╍ Adding ${zsh_shell} to /etc/shells"
+    echo "$zsh_shell" | sudo tee -a /etc/shells >/dev/null
+  else
+    info "╍ ${zsh_shell} exists in /etc/shells"
+  fi
 
-  # Change the default shell to zsh
-  $Sudo chsh -s "$zsh_shell"
+  # Change the default shell to zsh, if it isn't already the default
+  info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
+  {{/*  $Sudo chsh -s "$zsh_shell"*/}}
+  chsh -s "$zsh_shell"
+
+  info "╍ Now, run 'zsh' to start a new term session"
 }
 
 if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then

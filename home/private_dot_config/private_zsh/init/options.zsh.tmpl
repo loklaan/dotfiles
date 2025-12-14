@@ -1,3 +1,17 @@
+#|-----------------------------------------------------------------------------|
+#| INIT MODULE: Options                                                        |
+#|-----------------------------------------------------------------------------|
+#|
+#| Purpose:
+#|   Configures shell options, paths, and history settings. This module sets up
+#|   completion paths (fpath), manual paths (manpath), and comprehensive history
+#|   management for persistent command tracking across sessions.
+#|
+#|-----------------------------------------------------------------------------|
+
+#|------------------------------------------------------------|#
+#| Completion paths
+#|
 fpath=(
   "$ZSH_CACHE_DIR/completions"
   "${HOME}/.local/share/zsh-completions"
@@ -5,6 +19,9 @@ fpath=(
   ${fpath}
 )
 
+#|------------------------------------------------------------|#
+#| Manual Paths
+#|
 {{ if eq .chezmoi.os "darwin" }}
 manpath=(
   '{{ .brewprefix }}/share/man'
@@ -14,10 +31,10 @@ manpath=(
 {{ end }}
 
 #|------------------------------------------------------------|#
-#| History setup
-#|------------------------------------------------------------|#
-#| TODO: Migrate history provider to https://atuin.sh/
-[ -z "$HISTFILE" ] && HISTFILE="$HOME/.zsh_history"
+#| History Management
+#|
+# TODO: Migrate history provider to https://atuin.sh/
+[ -z "$HISTFILE" ] && HISTFILE="$ZDOTDIR/.zsh_history"
 HISTSIZE=50000
 SAVEHIST=10000
 setopt extended_history       # record timestamp of command in HISTFILE

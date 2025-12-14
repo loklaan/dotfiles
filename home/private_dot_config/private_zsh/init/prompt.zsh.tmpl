@@ -1,0 +1,45 @@
+#|-----------------------------------------------------------------------------|
+#| INIT MODULE: Prompt                                                         |
+#|-----------------------------------------------------------------------------|
+#|
+#| Purpose:
+#|   Configures the interactive shell's visual appearance and user experience.
+#|   Handles terminal initialization, clearing, cursor control, and displays
+#|   welcome messages for a pleasant shell startup experience.
+#|
+#|-----------------------------------------------------------------------------|
+
+source "$ZSH_CONFIG_DIR/lib/term.zsh"
+
+#|------------------------------------------------------------|#
+#| Reset terminal text
+#|
+{{/*clear && reset_cursor && cursor_disable*/}}
+
+#|------------------------------------------------------------|#
+#| Cute lochlanness
+#|
+{{/*cursor_disable && loading_message*/}}
+
+#|------------------------------------------------------------|#
+#| Final cute lochlanness
+#|
+{{/*welcome_message && cursor_enable*/}}
+
+#|------------------------------------------------------------|#
+#| Terminal Profile
+#|
+if [[ "$PROFILE_STARTUP" == true ]]; then
+  # Logs the profile, started in .zshenv
+  zprof
+fi
+
+#|------------------------------------------------------------|#
+#| Tmux Sessions
+#|
+# Disable temporarily
+if should_attempt_resume_tmux_prompt; then
+	if resume_tmux_prompt; then
+		tmux new-session -A -s 'main-session'
+	fi
+fi
