@@ -12,8 +12,11 @@ readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 #/   Installs dotfiles and packages.
 #/
 #/ Environment Variables:
-#/   CONFIG_BWS_ACCESS_TOKEN: For authentication—with Bitwarden Secrets.
+#/   CONFIG_BWS_ACCESS_TOKEN: Required. For authentication—with Bitwarden Secrets.
+#/   CONFIG_SIGNING_KEY:      Required. The primary key of the signing GPG keypair; use `gpg -K` to find it.
 #/   CONFIG_GH_USER:          Dotfiles GitHub user.
+#/   CONFIG_EMAIL:            Personal email address for Git configuration.
+#/   CONFIG_EMAIL_WORK:       Work email address for Git configuration.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -61,8 +64,9 @@ cleanup() {
 }
 
 parse_args() {
-  if [ -z "${CONFIG_BWS_ACCESS_TOKEN}" ]; then
+  if [ -z "${CONFIG_BWS_ACCESS_TOKEN:-}" ] || [ -z "${CONFIG_SIGNING_KEY:-}" ]; then
     usage
+    echo "" >&2
     fatal "Missing required environment variables."
   fi
 
@@ -79,11 +83,11 @@ parse_args() {
     esac
   done
 
-  config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN}"
+  config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
+  config_signing_key="${CONFIG_SIGNING_KEY:-}"
   config_github_user="${CONFIG_GH_USER:-"loklaan"}"
   config_email="${CONFIG_EMAIL:-"bunn@lochlan.io"}"
   config_email_work="${CONFIG_EMAIL_WORK:-"lochlan@canva.com"}"
-  config_signing_key="${CONFIG_SIGNING_KEY:-"~/.ssh/id_rsa.pub"}"
 }
 
 main() {
