@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
+
+#/ Usage:
+#/   change-term.sh
+#/
+#/ Description:
+#/   Sets the shell for the user.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+_print() {
+  case "$1" in
+    black) color="30" ;;
+    red) color="31" ;;
+    green) color="32" ;;
+    yellow) color="33" ;;
+    blue) color="34" ;;
+    magenta) color="35" ;;
+    cyan) color="36" ;;
+    white) color="37" ;;
+    *) echo "Unknown color: $1" >&2; return 1 ;;
+  esac
+
+  shift
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;;
+      italic) color="${color};3" ;;
+      underline) color="${color};4" ;;
+      dim) color="${color};2" ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  supported_colors=$(tput colors 2>/dev/null)
+  if [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%s\\033[0m\\n" "$1"
+  else
+    printf "%s\n" "$1"
+  fi
+}
+info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
+warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
+error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+
+cleanup() {
+  echo "" >&2
+  _print white dim "Log: $LOG_FILE" >&2
+}
+
+main() {
+  info "▶ Setting the user shell to zsh"
+
+  zsh_shell="$(which zsh)"
+  info "╍  \$SHELL    = ${SHELL}"
+  info "╍  which zsh = ${zsh_shell}"
+  if [ "$SHELL" = "$zsh_shell" ]; then
+    info "╍ User shell already set"
+    return
+  fi
+
+  if [[ ! $(command -v zsh) ]]; then
+    fatal "You must manually install zsh and set it as the default shell.\n 1. Install \"zsh\"\n 2. Run: chsh -s \"$zsh_shell\""
+  fi
+
+  if [ "$(id -u)" = "0" ]; then
+    Sudo=''
+    info "╍ Root user detected, skipping sudo for following commands"
+  elif which sudo >/dev/null 2>&1; then
+    Sudo='sudo'
+    info "╍ Sudo detected, using it for following commands"
+  else
+    Sudo=''
+    warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
+  fi
+  
+  # Check if the zsh_shell exists in /etc/shells, if not just append it in
+  if ! grep -q "^${zsh_shell}$" /etc/shells; then
+    info "╍ Adding ${zsh_shell} to /etc/shells"
+    echo "$zsh_shell" | sudo tee -a /etc/shells >/dev/null
+  else
+    info "╍ ${zsh_shell} exists in /etc/shells"
+  fi
+
+  # Change the default shell to zsh, if it isn't already the default
+  info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
+  {{/*  $Sudo chsh -s "$zsh_shell"*/}}
+  chsh -s "$zsh_shell"
+
+  info "╍ Now, run 'zsh' to start a new term session"
+}
+
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+  trap cleanup EXIT
+  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+  main "$@"
+fi

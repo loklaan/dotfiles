@@ -1,0 +1,46 @@
+#|-----------------------------------------------------------------------------|
+#| INIT MODULE: Options                                                        |
+#|-----------------------------------------------------------------------------|
+#|
+#| Purpose:
+#|   Configures shell options, paths, and history settings. This module sets up
+#|   completion paths (fpath), manual paths (manpath), and comprehensive history
+#|   management for persistent command tracking across sessions.
+#|
+#|-----------------------------------------------------------------------------|
+
+#|------------------------------------------------------------|#
+#| Completion paths
+#|
+fpath=(
+  "$ZSH_CACHE_DIR/completions"
+  "${HOME}/.local/share/zsh-completions"
+  {{ if eq .chezmoi.os "darwin" }}"{{ .brewprefix }}/share/zsh/site-functions"{{ end }}
+  ${fpath}
+)
+
+#|------------------------------------------------------------|#
+#| Manual Paths
+#|
+{{ if eq .chezmoi.os "darwin" }}
+manpath=(
+  '{{ .brewprefix }}/share/man'
+  /Library/Developer/CommandLineTools/usr/share/man
+  ${manpath}
+)
+{{ end }}
+
+#|------------------------------------------------------------|#
+#| History Management
+#|
+# TODO: Migrate history provider to https://atuin.sh/
+[ -z "$HISTFILE" ] && HISTFILE="$ZDOTDIR/.zsh_history"
+HISTSIZE=50000
+SAVEHIST=10000
+setopt extended_history       # record timestamp of command in HISTFILE
+setopt hist_expire_dups_first # delete duplicates first when HISTFILE size exceeds HISTSIZE
+setopt hist_ignore_dups       # ignore duplicated commands history list
+setopt hist_ignore_space      # ignore commands that start with space
+setopt hist_verify            # show command with history expansion to user before running it
+setopt inc_append_history     # add commands to HISTFILE in order of execution
+setopt share_history          # share command history data

@@ -1,0 +1,5 @@
+[data]
+  email = "bunn@lochlan.io"
+  emailWork = "bunn@lochlan.io"
+  signingKey = "CE6FBFFBCA7C88A55CA6E3EF30AAECE310808A76"
+  brewprefix = "/usr/local"

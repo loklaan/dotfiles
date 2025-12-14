@@ -1,0 +1,36 @@
+#|-----------------------------------------------------------------------------|
+#| INIT MODULE: Login                                                          |
+#|-----------------------------------------------------------------------------|
+#|
+#| Purpose:
+#|   Configures the shell environment for login shells, including package managers,
+#|   background services, development tools, and optional tmux session management.
+#|
+#|-----------------------------------------------------------------------------|
+
+#|------------------------------------------------------------|#
+#| Package Managers
+#|  - Mise (full)
+#|  - Nix
+#|
+if [[ -o interactive ]] && which mise >/dev/null; then
+  eval "$(mise activate zsh)"
+fi
+[[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
+
+#|------------------------------------------------------------|#
+#| Background Daemons / Agents
+#|  - SSH
+#|
+source "$ZSH_CONFIG_DIR/lib/ssh.zsh"
+if typeset -f _ssh_agent > /dev/null; then
+  _ssh_agent
+fi
+export GPG_TTY=$(tty)
+
+#|------------------------------------------------------------|#
+#| Dev Machines & LLM Agents
+#|  - Coder boxes
+#|
+[ -e "$HOME/.coder.sh" ] && . "$HOME/.coder.sh"
+

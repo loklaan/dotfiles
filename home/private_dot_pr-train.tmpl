@@ -1,0 +1,5 @@
+{{- if ne "" .emailWork -}}
+{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly).value }}
+{{- else -}}
+{{ (bitwardenSecrets .bwsIdGithubAuthToken).value }}
+{{- end -}}

@@ -1,9 +1,17 @@
 {{- $email := promptStringOnce . "email" "Email for you" -}}
-{{- $emailWork := promptStringOnce . "email" "Email for Canva" -}}
-{{- $signingKey := promptStringOnce . "signingKey" "Your signing key" -}}
+{{- $emailWork := promptStringOnce . "emailWork" "Email for Canva" -}}
+{{- $signingKey := promptStringOnce . "signingKey" "Your commit-signing key (e.g. public ssh/gpg key)" -}}
 
 [data]
   email = {{ $email | quote }}
   emailWork = {{ $emailWork | quote }}
   signingKey = {{ $signingKey | quote }}
   brewprefix = "{{ if eq .chezmoi.arch "arm64" }}/opt/homebrew{{ else }}/usr/local{{ end }}"
+
+  {{/*
+     * Bitwarden Secrets - see:
+     * https://www.chezmoi.io/reference/templates/bitwarden-functions/bitwardenSecrets/
+     */}}
+  bwsIdNpmAuthToken = "302ba3e1-8fde-4c5d-8a1c-b37c01600278"
+  bwsIdGithubAuthToken = "13a3305b-0c71-411c-89e3-b37c016033b5"
+  bwsIdGithubAuthTokenCanvaOnly = "3e26117a-3676-4afd-814a-b37c0160543e"

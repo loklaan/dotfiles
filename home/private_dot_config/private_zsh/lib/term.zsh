@@ -2,11 +2,13 @@
 #| Cool greeting
 #|------------------------------------------------------------|#
 
-cutes=("✨ 🔮 ✨" "🕒 🧠 🕒" "💥 ✌️ 💥" "☔️ 🐳 ☔️" "🌟 🌙 🌟" "⏰ 💡 ⏰" "⚡️ 🤘 ⚡️" "🌨️ 🐋 🌨️" "🔥 🤙 🔥" "⏳ 💭 ⏳" "🌈 🙌 🌈" "🍀 💪 🍀" "🌞 🤞 🌞" "🍁 🤟 🍁");
-cute_message_to_me="welcome, ya cutie!"
-cute_tmux_prompt_notice="OH!! there's a tmux runnin'!"
-cute_prompt="Wanna? y/N: "
-expressions=("hold on to ya butts!" "how is your POSTURE lochlan?" "i wonder if you drink enough water dude" "srsly did you hydrate sufficiently?" "CONTRABAND, CONTRABAND, CONTRABAND" "have you tried turning it off and on again" "let's not fall into the rabbit hole of typescript golfin'" "bug free code? more like cug bree fode" "remember, rome wasn't built in a day and actually they abandoned romejs thats pretty sad" "why didn't you pursue botany instead haha" "you're slouchin' in that chair arent cha?" "UNACCEPTAABLLLLLE")
+source "$ZSH_CONFIG_DIR/lib/color.zsh"
+
+message_string_decorations=("✨ 🔮 ✨" "🕒 🧠 🕒" "💥 ✌️ 💥" "☔️ 🐳 ☔️" "🌟 🌙 🌟" "⏰ 💡 ⏰" "⚡️ 🤘 ⚡️" "🌨️ 🐋 🌨️" "🔥 🤙 🔥" "⏳ 💭 ⏳" "🌈 🙌 🌈" "🍀 💪 🍀" "🌞 🤞 🌞" "🍁 🤟 🍁");
+message_string_welcome="welcome, bunny boi!"
+message_string_tmux_session_found="➤ tmux session(s) found"
+message_string_attach_prompt="  wanna attach? y/N: "
+message_string_loadings=("hold on to ya butts!" "how is your POSTURE lochlan?" "i wonder if you drink enough water dude" "srsly did you hydrate sufficiently?" "CONTRABAND, CONTRABAND, CONTRABAND" "have you tried turning it off and on again" "let's not fall into the rabbit hole of typescript golfin'" "bug free code? more like cug bree fode" "remember, rome wasn't built in a day and actually they abandoned romejs thats pretty sad" "why didn't you pursue botany instead haha" "you're slouchin' in that chair arent cha?" "UNACCEPTAABLLLLLE")
 
 random_from () {
   local from=( $@ )
@@ -62,19 +64,19 @@ print_in_vertical_center () {
   print_in_horizontal_center "$text" $line
 }
 
-print_middle_cuteness () {
-  local cute=$(random_from $cutes)
-  print_in_horizontal_center "$cute    $1    $cute"
+print_middle_decorations () {
+  local decoration=$(random_from $message_string_decorations)
+  print_in_horizontal_center "$decoration    $1    $decoration"
 }
 
-print_center_cuteness () {
-  local cute=$(random_from $cutes)
-  print_in_vertical_center "$cute    $1    $cute"
+print_center_decorations () {
+  local decoration=$(random_from $message_string_decorations)
+  print_in_vertical_center "$decoration    $1    $decoration"
 }
 
 welcome_message () {
   clear_line && reset_cursor && \
-  print_middle_cuteness "$cute_message_to_me"
+  print_middle_decorations "$message_string_welcome"
 }
 
 should_attempt_resume_tmux_prompt () {
@@ -88,17 +90,27 @@ should_attempt_resume_tmux_prompt () {
   fi
 }
 
-resume_tmux_prompt () {
+resume_tmux_prompt_centered () {
   local center_line=$(get_line_number_for_vertical_center)
   local notice_line=$(( center_line - 1 ))
   local prompt_line=$(( center_line + 1 ))
 
   clear && reset_cursor && \
-  print_in_horizontal_center "$cute_tmux_prompt_notice" $notice_line
+  print_in_horizontal_center "$message_string_tmux_session_found" $notice_line
 
   reset_cursor && cursor_enable && \
-  tput cup $prompt_line $(get_cursor_pos_for_horizontal_centering "$cute_prompt") && \
-  read -qk "tmux_prompt_reply?$cute_prompt" 2> /dev/null
+  tput cup $prompt_line $(get_cursor_pos_for_horizontal_centering "$message_string_attach_prompt") && \
+  read -qk "tmux_prompt_reply?$message_string_attach_prompt" 2> /dev/null
+
+  # throw if we didn't reply yes
+  if [[ "$tmux_prompt_reply" != 'y' ]]; then
+    return 1
+  fi
+}
+
+resume_tmux_prompt () {
+  color_printf magenta "$message_string_tmux_session_found\n" && \
+  read -qk "tmux_prompt_reply?$message_string_attach_prompt" 2> /dev/null
 
   # throw if we didn't reply yes
   if [[ "$tmux_prompt_reply" != 'y' ]]; then
@@ -108,5 +120,5 @@ resume_tmux_prompt () {
 
 loading_message () {
   clear && reset_cursor && \
-  print_center_cuteness "$(random_from $expressions)"
+  print_center_decorations "$(random_from $message_string_loadings)"
 }

@@ -1,0 +1,38 @@
+#|-----------------------------------------------------------------------------|
+#| ZSH STARTUP FILE                                                            |
+#|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Run after:                                                                  |
+#|  - .zshenv                                                                  |
+#|  - .zshlogin                                                                |
+#|  - .zshprofile                                                              |
+#|                                                                             |
+#| Sourced by:                                                                 |
+#|  ✅ login shells                                                            |
+#|  ✅ non-login shells                                                        |
+#|  ✅ interactive        ←───── The focus of this script.                     |
+#|  ❌ non-interactive                                                         |
+#|                                                                             |
+#| Info: https://zsh.sourceforge.io/Intro/intro_3.html                         |
+#|-----------------------------------------------------------------------------|
+
+source "$ZDOTDIR/.zprofile" # Ensure consistency of startup across all OS's
+
+if [[ ! -o interactive ]]; then
+  return
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/plugins.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/plugins.zsh.tmpl
+  source "${ZSH_CONFIG_DIR}/init/plugins.zsh"
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/options.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/options.zsh.tmpl
+  source "${ZSH_CONFIG_DIR}/init/options.zsh"
+fi
+
+if [[ -f "${ZSH_CONFIG_DIR}/init/prompt.zsh" ]]; then
+  # shellcheck source=home/private_dot_config/exact_private_zsh/init/prompt.zsh.tmpl
+  source "${ZSH_CONFIG_DIR}/init/prompt.zsh"
+fi
