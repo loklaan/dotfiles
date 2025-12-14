@@ -26,9 +26,10 @@ fi
 #|------------------------------------------------------------|#
 #| Drop into tmux if it's up
 #|------------------------------------------------------------|#
-if should_attempt_resume_tmux_prompt; then
-	if resume_tmux_prompt; then
-		tmux new-session -A -s "main-session"
-	fi
-fi
+# Disable temporarily
+{{/*if should_attempt_resume_tmux_prompt; then*/}}
+{{/*	if resume_tmux_prompt; then*/}}
+{{/*		tmux new-session -A -s "main-session"*/}}
+{{/*	fi*/}}
+{{/*fi*/}}
 
