@@ -1,14 +1,31 @@
 #|-----------------------------------------------------------------------------|
-#| ENV                                                                         |
+#| ZSH STARTUP FILE                                                            |
 #|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Run first.                                                                  |
 #|                                                                             |
 #| Sourced by:                                                                 |
-#|  - all zsh invocations                                                      |
+#|  ✅ login shells                                                            |
+#|  ✅ non-login shells                                                        |
+#|  ✅ interactive                                                             |
+#|  ✅ non-interactive                                                         |
 #|                                                                             |
+#| Info: https://zsh.sourceforge.io/Intro/intro_3.html                         |
 #|-----------------------------------------------------------------------------|
+
+echo "Running .zshenv"
 
 ZSH_CONFIG_DIR="${HOME}/.config/zsh"
 export ZDOTDIR="${ZSH_CONFIG_DIR}"
+
+#|-------------------------------|#
+#| DEBUG TERM PERFORMANCE
+#|-------------------------------|#
+PROFILE_STARTUP=false # When true, the profile will be profiled.
+if [[ "$PROFILE_STARTUP" == true ]]; then
+  zmodload zsh/zprof
+fi
+#[ -f "$HOME/.config/zsh/lib/tracing.zsh" ] && source "$HOME/.config/zsh/lib/tracing.zsh"
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/env.zsh" ]]; then
   # shellcheck source=home/private_dot_config/exact_private_zsh/init/env.zsh.tmpl

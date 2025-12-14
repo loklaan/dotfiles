@@ -1,16 +1,21 @@
 #|-----------------------------------------------------------------------------|
-#| LOGIN PROFILE                                                               |
+#| ZSH STARTUP FILE                                                            |
 #|-----------------------------------------------------------------------------|
-#|                                                                             |
-#| Sourced by:                                                                 |
-#|  - login shells       ←──┐                                                  |
-#|  - interactive           │                                                  |
-#|  - non-interactive    ←──┴── The focus of this script.                      |
 #|                                                                             |
 #| Run after:                                                                  |
 #|  - .zshenv                                                                  |
+#|  - .zshlogin                                                                |
 #|                                                                             |
+#| Sourced by:                                                                 |
+#|  ✅ login shells       ←──┐                                                 |
+#|  ❌ non-login shells      │                                                 |
+#|  ✅ interactive           │                                                 |
+#|  ✅ non-interactive    ←──┴── The focus of this script.                     |
+#|                                                                             |
+#| Info: https://zsh.sourceforge.io/Intro/intro_3.html                         |
 #|-----------------------------------------------------------------------------|
+
+echo "Running .zshprofile"
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/login.zsh" ]]; then
   # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh.tmpl
