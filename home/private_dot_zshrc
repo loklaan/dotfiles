@@ -16,7 +16,7 @@
 #| Info: https://zsh.sourceforge.io/Intro/intro_3.html                         |
 #|-----------------------------------------------------------------------------|
 
-echo "Running .zshrc"
+source "$ZDOTDIR/.zprofile" # Ensure consistency of startup across all OS's
 
 if [[ ! -o interactive ]]; then
   return

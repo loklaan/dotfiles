@@ -50,23 +50,3 @@ _ssh_agent() {
 
   eval $(cat "$_SSH_AGENT_INFO_CACHE") >/dev/null
 }
-
-ssh() {
-  _ssh_add
-  command ssh "$@"
-}
-
-scp() {
-  _ssh_add
-  command scp "$@"
-}
-
-git() {
-  case $1 in
-      push|pull|fetch|clone)
-          _ssh_add
-          ;;
-  esac
-
-  command git "$@"
-}
