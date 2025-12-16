@@ -20,3 +20,7 @@ done.commit
 
 # Tool dependency management
 .mise.local.toml
+
+# LLM agents
+**/.claude/settings.local.json
+.claude
