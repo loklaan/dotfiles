@@ -58,14 +58,16 @@ _07/2025_
 
 - [x] Test to ensure all init modules are loaded correctly, for all shells; login/non-login, interactive/non-interactive
 
-6**Prompt Migration: Pure to Starship** TODO
+6. **Create bin stubs for MCP stdio tools** TODO
+
+7. **Prompt Migration: Pure to Starship** TODO
 
 - [] Replace the `pure` prompt with `starship`.
 - [] Install `starship` via `mise`.
 - [] Configure `starship` to match the existing `pure` prompt's look and feel.
 - [] Remove `pure` from `.chezmoiexternals/zsh.toml.tmpl`.
 
-7**Terminal History Improvement: Atuin** TODO
+8. **Terminal History Improvement: Atuin** TODO
 
 - [] Replace the default shell history with `atuin`.
 - [] Install `atuin` via `mise`.
