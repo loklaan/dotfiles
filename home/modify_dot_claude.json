@@ -1,0 +1,3 @@
+{{- /* chezmoi:modify-template */ -}}
+{{ $serversConfigDict := includeTemplate "mcp-servers-json-tmpl" . | fromJson }}
+{{ fromJson .chezmoi.stdin | setValueAtPath "mcpServers" $serversConfigDict | toPrettyJson }}

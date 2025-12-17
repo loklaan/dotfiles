@@ -1,0 +1,15 @@
+{
+  {{ if ne "" .emailWork -}}
+  "otter": {
+    "command": "otter",
+    "args": [
+      "mcp",
+      "serve"
+    ]
+  },
+  {{ end -}}
+  "effect-docs": {
+    "command": "npx", "args": ["-y", "effect-mcp@latest" ],
+    "env": {}
+  }
+}
