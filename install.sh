@@ -169,7 +169,7 @@ main() {
   info "▶ Installing templated dotfiles with 'chezmoi init'"
   BWS_ACCESS_TOKEN="$config_bw_access_token" exec chezmoi init "$config_github_user" \
     --apply \
-    --branch to-reproducible \
+    --branch main \
     --promptString email="$config_email" \
     --promptString emailWork="$config_email_work" \
     --promptString signingKey="$config_signing_key"
