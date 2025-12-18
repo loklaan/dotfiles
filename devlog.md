@@ -58,16 +58,21 @@ _07/2025_
 
 - [x] Test to ensure all init modules are loaded correctly, for all shells; login/non-login, interactive/non-interactive
 
-6. **Create bin stubs for MCP stdio tools** TODO
+6. **Ensure install.sh works on fresh systems** TODO
 
-7. **Prompt Migration: Pure to Starship** TODO
+- [] The curl install.sh | bash method should work e.g. fix BASH_SOURCE[0] error
+- [] Fix the readme (contains a typo for the curl example e.g. "^" instead of "_")
+
+7. **Create bin stubs for MCP stdio tools** TODO
+
+8. **Prompt Migration: Pure to Starship** TODO
 
 - [] Replace the `pure` prompt with `starship`.
 - [] Install `starship` via `mise`.
 - [] Configure `starship` to match the existing `pure` prompt's look and feel.
 - [] Remove `pure` from `.chezmoiexternals/zsh.toml.tmpl`.
 
-8. **Terminal History Improvement: Atuin** TODO
+9. **Terminal History Improvement: Atuin** TODO
 
 - [] Replace the default shell history with `atuin`.
 - [] Install `atuin` via `mise`.
