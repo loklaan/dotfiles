@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+#/ Usage: notify <message>
+#/ Description: Sends desktop notifications across different operating systems
+#/ Examples:
+#/   notify "Build complete"
+#/   notify "Tests passed"
+#/ Options:
+#/   --help: Display this help message
+usage() { grep '^#/' "$0" | cut -c4- ; exit 0 ; }
+expr "$*" : ".*--help" > /dev/null && usage
+
+main() {
+  local message="$1"
+
+  if [ -z "$message" ]; then
+    usage
+  fi
+
+  case "$OSTYPE" in
+    darwin*)
+      osascript -e "display notification \"$message\" with title \"Notification\""
+      ;;
+    linux*)
+      if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Notification" "$message"
+      else
+        echo "notify-send not found. Install libnotify-bin or similar package." >&2
+        exit 1
+      fi
+      ;;
+    cygwin*|msys*)
+      echo "Notifications not supported on $OSTYPE" >&2
+      exit 1
+      ;;
+    *)
+      echo "Platform $OSTYPE not supported" >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

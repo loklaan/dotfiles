@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(git mv:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(mkdir:*)",
+      "Bash(tail:*)",
+      "Skill(coding-error-messages)",
+      "Skill(coding-shell-scripts)",
+      "Skill(writing-claude-rules-or-skills-or-subagents)"
+    ]
+  }
+}

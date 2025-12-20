@@ -1,0 +1,3 @@
+{{- /* chezmoi:modify-template */ -}}
+{{ $serversConfigDict := includeTemplate "hooks-json-tmpl" . | fromJson }}
+{{ fromJson .chezmoi.stdin | setValueAtPath "hooks" $serversConfigDict | toPrettyJson }}
