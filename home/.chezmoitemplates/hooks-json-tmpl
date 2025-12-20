@@ -1,0 +1,40 @@
+{
+  "Notification": [
+    {
+      "matcher": "permission_prompt",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "notify 'Claude needs your permission'"
+        }
+      ]
+    },
+    {
+      "matcher": "idle_prompt",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "notify 'Claude is waiting for your input'"
+        }
+      ]
+    },
+    {
+      "matcher": "auth_success",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "notify 'Claude authentication successful'"
+        }
+      ]
+    },
+    {
+      "matcher": "elicitation_dialog",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "notify 'Claude needs more information'"
+        }
+      ]
+    }
+  ]
+}
