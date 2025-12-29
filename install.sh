@@ -203,8 +203,6 @@ get_linux_distro() {
   )
 }
 
-if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
-  trap cleanup EXIT
-  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
-  main "$@"
-fi
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"
