@@ -5,7 +5,7 @@ alias o="open_command"
 alias c="clear"
 alias headers="curl -I -s -X GET"
 alias gt="git"
-command -v otter >/dev/null 2>&1 && alias claude="otter claude-code"
+alias claude="otter claude-code"
 
 ## ls
 alias l="ls -lah"
