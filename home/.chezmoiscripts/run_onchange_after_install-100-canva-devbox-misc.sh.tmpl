@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
+#/ Usage:
+#/   canva-devbox-misc.sh
+#/
+#/ Description:
+#/   Installs Canva-specific quirks when running inside a Canva dev box.
+#/
+#/ Environment Variables:
+#/   DEVBOX_EMAIL:            Available in Canva dev boxes; if set to your work email, enables Canva-specific quirks.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+_print() {
+  case "$1" in
+    black) color="30" ;;
+    red) color="31" ;;
+    green) color="32" ;;
+    yellow) color="33" ;;
+    blue) color="34" ;;
+    magenta) color="35" ;;
+    cyan) color="36" ;;
+    white) color="37" ;;
+    *) echo "Unknown color: $1" >&2; return 1 ;;
+  esac
+
+  shift
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;;
+      italic) color="${color};3" ;;
+      underline) color="${color};4" ;;
+      dim) color="${color};2" ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  supported_colors=$(tput colors 2>/dev/null)
+  if [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%s\\033[0m\\n" "$1"
+  else
+    printf "%s\n" "$1"
+  fi
+}
+info() { _print cyan "[INFO] $@" >&2 ; }
+warning() { _print yellow "[WARNING] $@" >&2 ; }
+error() { _print red "[ERROR] $@" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" >&2 ; exit 1 ; }
+
+cleanup() {
+  echo "" >&2
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+
+  config_in_canva_devbox="false"
+  if [ "{{ .emailWork }}" != "" ] && [ "${DEVBOX_EMAIL:-}" = "{{ .emailWork }}" ]; then
+    config_in_canva_devbox="true"
+  fi
+}
+
+main() {
+  parse_args "$@"
+  if [ "$config_in_canva_devbox" = "true" ]; then
+    info "▶ Starting installation of canva dev box quirks!"
+
+    # 1. Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
+    cd ~/work/canva && mise trust --quiet .mise.local.toml && ln -s ../../dev/canva/canva/.mise.local.toml .  >/dev/null 2>&1 || true
+
+    # 2. ...
+
+    info "▶ Installed canva dev box quirks. Done."
+  fi
+}
+
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"
