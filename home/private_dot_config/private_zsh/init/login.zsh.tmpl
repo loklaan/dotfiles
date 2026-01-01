@@ -13,7 +13,7 @@
 #|  - Mise (full)
 #|  - Nix
 #|
-if [[ -o interactive ]] && which mise >/dev/null; then
+if [[ -o interactive ]] && command -v mise &> /dev/null; then
   eval "$(mise activate zsh)"
 fi
 [[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"

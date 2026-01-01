@@ -1,0 +1,7 @@
+{{- $fontDirs := dict "darwin" "Library/Fonts" "linux" ".local/share/fonts" -}}
+{{- $fontDir := get $fontDirs .chezmoi.os -}}
+
+["{{ $fontDir }}/NerdFonts/JetBrainsMono"]
+    type = "archive"
+    url = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/JetBrainsMono.tar.xz"
+    exact = true

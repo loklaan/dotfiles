@@ -14,6 +14,7 @@
 #|
 #|  Files for plugins are managed as chezmoi externals.
 #|
+CONFIG_PURE=${CONFIG_PURE:-"og"} # Default to false if not set
 export ZPLUG_HOME="$ZSH_CONFIG_DIR/zplug" # Added via .chezmoiexternals/zsh.toml
 export ZPLUG_LOG_LOAD_SUCCESS=false
 export ZPLUG_LOG_LOAD_FAILURE=false
@@ -28,9 +29,8 @@ zplug "$ZSH_CONFIG_DIR/plugins/zsh-history-substring-search", from:local, use:"*
 bindkey '^[[A' history-substring-search-up
 bindkey '^[[B' history-substring-search-down
 zplug "$ZSH_CONFIG_DIR/plugins/zsh-async", from:local, use:"*.plugin.zsh"
-# TODO: Fork this to get complete control over experience (e.g. quick git branch info)
-#       Or better yet, switch to https://starship.rs/guide/
-zplug "$ZSH_CONFIG_DIR/plugins/pure", from:local, use:"pure.zsh", as:theme
+zplug "$ZSH_CONFIG_DIR/plugins/pure", from:local, use:"pure.zsh", as:theme, if:"[[ $CONFIG_PURE == og ]]"
+zplug "$ZSH_CONFIG_DIR/plugins/starship", from:local, use:"*.plugin.zsh", as:theme, if:"[[ $CONFIG_PURE == starship ]]"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
@@ -50,7 +50,7 @@ zplug load
 #|
 autoload -Uz compinit; compinit # The completion.zh plugin handles bashcompinit.
 # AWS
-if [ -f {{ .brewprefix }}/bin/aws_completer ] && which aws >/dev/null; then
+if [ -f '{{ .brewprefix }}/bin/aws_completer' ] && which aws >/dev/null; then
   complete -C '{{ .brewprefix }}/bin/aws_completer' aws;
 fi
 # Google Cloud

@@ -5,10 +5,10 @@ IFS=$'\n\t'
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 #/ Usage:
-#/   guide-install-packages.sh
+#/   run_after_install-100-install-fonts.sh
 #/
 #/ Description:
-#/   Prints out a guide for installing packages.
+#/   Installs fonts from ~/.local/share/fonts to OS-specific font directories.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -51,19 +51,17 @@ error() { _print red "[ERROR] $@"; }
 fatal() { _print red bold "[FATAL] $@"; }
 
 cleanup() {
+  echo "" >&2
   return 0
 }
 
 main() {
-  info "▶ Done installing dotfiles!
-
-  Continue to install packages:
-
-    \$ install-my-packages         👈 ONLY programs & libraries.
-    \$ install-my-packages --gui   👈 Also UI apps.
-"
-
-  _print magenta dim "      See ${HOME}/.local/bin/install-my-packages for details."
+  if command -v font-install >/dev/null 2>&1; then
+    font-install
+  else
+    warning "font-install command not found in PATH"
+    warning "Expected location: ${HOME}/.local/bin/font-install"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
