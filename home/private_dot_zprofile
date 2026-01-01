@@ -15,9 +15,9 @@
 #| Info: https://zsh.sourceforge.io/Intro/intro_3.html                         |
 #|-----------------------------------------------------------------------------|
 
-export __ZPROFILE_RUN=0
+__ZPROFILE_RUN=${__ZPROFILE_RUN:-0}
 
-if [[ "$__ZPROFILE_RUN" != 1 && -o login ]]; then # Help avoid double-initialising .zprofile in different OS's
+if [[ "$__ZPROFILE_RUN" != 1 ]]; then # Help avoid double-initialising .zprofile in different OS's
 
   if [[ -f "${ZSH_CONFIG_DIR}/init/login.zsh" ]]; then
     # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh.tmpl

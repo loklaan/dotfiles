@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
+#/ Usage:
+#/   font-install
+#/
+#/ Description:
+#/   Updates font cache for newly installed fonts.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+_print() {
+  case "$1" in
+    black) color="30" ;;
+    red) color="31" ;;
+    green) color="32" ;;
+    yellow) color="33" ;;
+    blue) color="34" ;;
+    magenta) color="35" ;;
+    cyan) color="36" ;;
+    white) color="37" ;;
+    *) echo "Unknown color: $1" >&2; return 1 ;;
+  esac
+
+  shift
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;;
+      italic) color="${color};3" ;;
+      underline) color="${color};4" ;;
+      dim) color="${color};2" ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+
+  supported_colors=$(tput colors 2>/dev/null)
+  if [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%s\\033[0m\\n" "$1"
+  else
+    printf "%s\n" "$1"
+  fi
+}
+info() { _print cyan "[INFO] $@" ; }
+warning() { _print yellow "[WARNING] $@" ; }
+error() { _print red "[ERROR] $@" ; }
+fatal() { _print red bold "[FATAL] $@" ; exit 1 ; }
+
+cleanup() {
+  return 0
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  os_kind=$(get_os_kind)
+  case $os_kind in
+    windows|android)
+      fatal "Font installation for $os_kind is not supported."
+      ;;
+    macos)
+      info "▶ Done installing fonts! MacOS does not require font cache update."
+      ;;
+    linux)
+      info "▶ Updating font cache"
+      local font_dir="$HOME/.local/share/fonts"
+      if [ ! -d "$font_dir" ]; then
+        warning "Font directory does not exist: $font_dir"
+        return 0
+      fi
+
+      if command -v fc-cache >/dev/null 2>&1; then
+        fc-cache -f "$font_dir"
+        info "▶ Done installing fonts! Updated font cache with fc-cache."
+      else
+        warning "╍ fc-cache not found, font cache not updated"
+        warning "╍ Install fontconfig package to enable font cache updates"
+      fi
+      ;;
+    *)
+      fatal "Unknown OS: $os_kind"
+      ;;
+  esac
+}
+
+get_os_kind() {
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "${os}" in
+    cygwin_nt*) goos="windows" ;;
+    linux)
+      if command -v termux-info >/dev/null 2>&1; then
+        goos="android"
+      else
+        goos="linux"
+      fi
+      ;;
+    mingw*) goos="windows" ;;
+    msys_nt*) goos="windows" ;;
+    darwin*) goos="macos" ;;
+    *) goos="${os}" ;;
+  esac
+  printf '%s' "${goos}"
+}
+
+trap cleanup EXIT
+main "$@"
