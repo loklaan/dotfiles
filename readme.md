@@ -1,104 +1,186 @@
-# github.com/loklaan/dotfiles
-
-Lochy's dotfiles
-
-- Installable via `install.sh`
-- Managed with [`chezmoi`](https://www.chezmoi.io/)
-- Dependencies managed with [`mise`](https://mise.jdx.dev/)
-- Secrets are managed in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/)
-
-## Install
-
-```text
-Usage:
-  install.sh
-
-Description:
-  Installs dotfiles and packages.
-
-Environment Variables:
-  CONFIG_BWS_ACCESS_TOKEN: Required. For authentication—with Bitwarden Secrets.
-  CONFIG_SIGNING_KEY:      Required. The primary key of the signing GPG keypair; use `gpg -K` to find it.
-  CONFIG_GH_USER:          Dotfiles GitHub user.
-  CONFIG_EMAIL:            Personal email address for Git configuration.
-  CONFIG_EMAIL_WORK:       Work email address for Git configuration.
-
-Options:
-  --help:      Display this help message
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║       ✨ github.com/loklaan/dotfiles ✨                             ║
+║                                                                      ║
+║       Lochy's carefully curated, lovingly maintained,               ║
+║       definitely-not-over-engineered dotfiles                       ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
 ```
 
-### Full install
+<div align="center">
 
-_(inc. chezmoi, bitwarden, mise)_
+🏠 **Home is where the dotfiles are** 🏠
 
-```shell
+[![Made with ❤️](https://img.shields.io/badge/made%20with-%E2%9D%A4%EF%B8%8F-red.svg)](https://github.com/loklaan/dotfiles)
+[![Powered by chezmoi](https://img.shields.io/badge/powered%20by-chezmoi-blue)](https://www.chezmoi.io/)
+[![mise](https://img.shields.io/badge/dependencies-mise-orange)](https://mise.jdx.dev/)
+
+</div>
+
+---
+
+## 🎯 The Stack
+
+Built on the shoulders of giants (and some really clever CLIs):
+
+- 🚀 **[`chezmoi`](https://www.chezmoi.io/)** - Because manually symlinking dotfiles is so 2015
+- 📦 **[`mise`](https://mise.jdx.dev/)** - Dependencies that actually work across machines
+- 🔐 **[Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/)** - Secrets that stay secret
+- ⚡ **`install.sh`** - One script to rule them all
+
+## 📥 Installation
+
+> **Ready to rice your machine?** Let's go! 🚀
+
+### 🌟 The One-Liner (Full Install)
+
+For a fresh machine (includes chezmoi, bitwarden, mise, and everything else):
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/loklaan/dotfiles/main/install.sh | \
   CONFIG_SIGNING_KEY=... \
   CONFIG_BWS_ACCESS_TOKEN=... \
   bash
 ```
 
-### Update to latest
+**Pro tip:** You'll need those environment variables ready. See the reference below! 👇
 
-```shell
+### 📝 Environment Variables Reference
+
+| Variable | Required? | What's it for? |
+|----------|-----------|----------------|
+| `CONFIG_BWS_ACCESS_TOKEN` | ✅ Yes | Authenticating with Bitwarden Secrets Manager |
+| `CONFIG_SIGNING_KEY` | ✅ Yes | Your GPG signing key (find it with `gpg -K`) |
+| `CONFIG_GH_USER` | ⭐ Optional | Your GitHub username for dotfiles |
+| `CONFIG_EMAIL` | ⭐ Optional | Personal email for Git config |
+| `CONFIG_EMAIL_WORK` | ⭐ Optional | Work email for Git config |
+
+### 🔄 Keeping Things Fresh (Update)
+
+Already installed? Stay up to date:
+
+```bash
+# The quick way
 BWS_ACCESS_TOKEN=... chezmoi update
 
-# Or:
+# Or if you like to live dangerously
 chezmoi cd
 git pull
 BWS_ACCESS_TOKEN=... chezmoi apply
 ```
 
+### 🧪 Testing Before You Wreck
 
-### Testing the install
+Want to test the install without touching your pristine system?
 
-Validate installation in a clean environment:
-
-```shell
+```bash
 ./install.test.sh
 ```
 
-Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from `chezmoi.test.toml`.
+This spins up a Docker container (Alpine Linux) and runs the full installation with dummy data from `chezmoi.test.toml`. It's like a safety net, but for your dotfiles! 🎪
 
-## Features
+## ✨ Features (aka The Good Stuff)
 
-- Modular zsh configuration system (`init/` modules for env, login, options, plugins, prompt)
-- Custom utilities in `~/.local/bin/` (`notify`, `safe-rm`, `font-install`)
-- Chezmoi externals for pinned plugin archives (zsh plugins, tmux plugins, fonts)
-- Post-install automation via `.chezmoiscripts/`
-- Claude Code MCP server configuration (effect-docs, work-specific otter)
-- Automated end-to-end testing via Docker
+This isn't just another dotfiles repo. Here's what makes it special:
 
-## Structure
+### 🎨 Modular Zsh Configuration
+Clean, organized shell setup with separate `init/` modules for env, login, options, plugins, and prompt. No more 500-line `.zshrc` nightmares!
+
+### 🛠️ Custom Utilities
+Handcrafted tools living in `~/.local/bin/`:
+- 📢 `notify` - Desktop notifications that actually work
+- 🗑️ `safe-rm` - Because `rm -rf /` shouldn't be that easy
+- 🔤 `font-install` - Install fonts without the GUI hassle
+
+### 📦 Pinned Dependencies
+Chezmoi externals manage versioned archives for:
+- Zsh plugins (because breaking changes are a thing)
+- Tmux plugins (tabs within tabs within... you get it)
+- Fonts (because Comic Sans is never the answer)
+
+### 🤖 Automation Magic
+Post-install scripts in `.chezmoiscripts/` handle the boring stuff automatically. Set it and forget it!
+
+### 🧠 Claude Code Integration
+MCP server configs baked right in:
+- `effect-docs` for TypeScript wizardry
+- `otter` for work-specific goodness
+
+### 🐳 Docker Testing
+Full end-to-end testing in Docker means you can break things safely. Living on the edge, responsibly!
+
+## 🗂️ Structure (Where Everything Lives)
+
+Here's how this dotfiles kingdom is organized:
 
 ```
-home/
-├── .chezmoiexternals/          # External deps (plugins, fonts) via archives
-├── .chezmoiscripts/            # Pre & post-install automation scripts
-├── dev/                        # Code projects
-├── private_dot_config/
-│   ├── private_zsh/            # Modular zsh configuration
-│   │   ├── init/               # Startup modules (env, login, options, etc.)
-│   │   └── lib/                # Utility libraries (ai, ssh, tracing, etc.)
-│   └── ...                     # Other tool configs
-└── private_dot_local/bin/      # Custom utilities
+🏠 home/
+├── 📦 .chezmoiexternals/      # External deps (plugins, fonts) via archives
+├── 🤖 .chezmoiscripts/        # Pre & post-install automation scripts
+├── 💻 dev/                    # Code projects (work, personal, open source)
+├── ⚙️  private_dot_config/
+│   ├── 🐚 private_zsh/        # Modular zsh configuration
+│   │   ├── init/             # Startup modules (env, login, options, etc.)
+│   │   └── lib/              # Utility libraries (ai, ssh, tracing, etc.)
+│   └── ...                   # Other tool configs (git, tmux, nvim, etc.)
+└── 🛠️  private_dot_local/
+    └── bin/                  # Custom utilities (notify, safe-rm, etc.)
 ```
 
-## Code projects
+> **Note:** The `private_` prefix is chezmoi's way of saying "don't show this in the repo as a dot-prefixed file". It gets stripped when applied to your system!
 
-The `~/dev/` directory organizes projects by ownership and purpose:
+## 💼 Code Projects (Where the Magic Happens)
 
-- **`~/dev/canva/`** - Work projects—I work at Canva! [Come join!](http://lifeatcanva.com/)
-- **`~/dev/me/`** - Personal projects.
-- **`~/dev/open/`** - Open source projects. Others, usually.
+The `~/dev/` directory keeps things organized by ownership and purpose:
 
-In repos where I actively develop, I may include a `.me/` directory for helpful scripts, temporary data or jupyter notebooks, etc. These are not managed by chezmoi, and are gitignored globally.
+<div align="center">
 
-## Conventions
+### 🎨 [`~/dev/canva/`](http://lifeatcanva.com/) - Work Projects
+**I work at Canva, building tools that empower creativity!** 🚀
+We're hiring amazing engineers who want to make design accessible to everyone.
+[**Come build with us!** →](http://lifeatcanva.com/)
 
-Built for zsh. Useful docs:
+</div>
 
-- [Zsh options](https://zsh.sourceforge.io/Doc/Release/Options.html) - use `[[ -o option_name ]]` for checks
-- [Startup files](https://zsh.sourceforge.io/Intro/intro_3.html) - execution order
+---
 
-Bash scripts in `.chezmoiscripts/` follow patterns from [loklaan/knowledge](https://github.com/loklaan/knowledge/blob/master/shell/bash.md).
+- 🙋 **`~/dev/me/`** - Personal projects and experiments
+- 🌍 **`~/dev/open/`** - Open source projects (mostly contributions to others' work)
+
+### 📁 The `.me/` Convention
+
+In repos where I'm actively developing, you might find a `.me/` directory. This is my personal scratch space for:
+- 🔧 Helper scripts and utilities
+- 📊 Temporary data and analysis
+- 📓 Jupyter notebooks and experiments
+- 🗒️ Personal notes and TODOs
+
+These aren't managed by chezmoi and are gitignored globally. Your own private workspace within the repo!
+
+## 📚 Conventions (The Rules of Engagement)
+
+### 🐚 Shell Stuff
+
+Built with **zsh** in mind (because it's 2026, people). Here are the docs you'll actually need:
+
+- 📖 [**Zsh Options**](https://zsh.sourceforge.io/Doc/Release/Options.html) - All the knobs and switches (use `[[ -o option_name ]]` for runtime checks)
+- 🚀 [**Startup Files**](https://zsh.sourceforge.io/Intro/intro_3.html) - Understanding the zsh loading order (yes, it's complicated)
+
+### 🔨 Bash Scripts
+
+The automation scripts in `.chezmoiscripts/` follow battle-tested patterns from [loklaan/knowledge](https://github.com/loklaan/knowledge/blob/master/shell/bash.md). Because bash doesn't have to be chaotic!
+
+---
+
+<div align="center">
+
+### 🎉 That's it! Happy dotfiling!
+
+**Questions? Issues? PRs?**
+This is a personal repo, but feel free to open an issue or steal ideas!
+
+Made with ❤️ and way too much time in the terminal
+
+</div>
