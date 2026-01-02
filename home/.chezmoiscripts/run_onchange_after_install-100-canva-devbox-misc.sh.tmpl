@@ -3,6 +3,7 @@ set -euo pipefail
 
 IFS=$'\n\t'
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
 #/   canva-devbox-misc.sh
@@ -48,12 +49,13 @@ _print() {
     printf "%s\n" "$1"
   fi
 }
-info() { _print cyan "[INFO] $@" >&2 ; }
-warning() { _print yellow "[WARNING] $@" >&2 ; }
-error() { _print red "[ERROR] $@" >&2 ; }
-fatal() { _print red bold "[FATAL] $@" >&2 ; exit 1 ; }
+info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
+warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
+error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
+  _print white dim "Log: $LOG_FILE" >&2
   echo "" >&2
 }
 
@@ -87,9 +89,9 @@ main() {
 
     # 2. ...
 
-    info "▶ Installed canva dev box quirks. Done."
+    info "▶ Done installing canva dev box quirks. Ensured mise is set up for the pre-cloned canva monorepo."
   else
-    info "▶ No action required. Done."
+    info "▶ Done installing canva dev box quirks. No action required (not in a canva dev box)."
   fi
 }
 

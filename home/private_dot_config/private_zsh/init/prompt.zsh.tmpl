@@ -1,12 +1,18 @@
 #|-----------------------------------------------------------------------------|
 #| INIT MODULE: Prompt                                                         |
 #|-----------------------------------------------------------------------------|
-#|
-#| Purpose:
-#|   Configures the interactive shell's visual appearance and user experience.
-#|   Handles terminal initialization, clearing, cursor control, and displays
-#|   welcome messages for a pleasant shell startup experience.
-#|
+#|                                                                             |
+#| Purpose:                                                                    |
+#|   Configures the interactive shell's visual appearance and user experience. |
+#|   Handles terminal initialization, clearing, cursor control, and displays   |
+#|   welcome messages for a pleasant shell startup experience.                 |
+#|                                                                             |
+#| Responsibilities:                                                           |
+#|   - Initialize terminal display and cursor control                          |
+#|   - Display welcome messages and decorations                                |
+#|   - Handle startup profiling output                                         |
+#|   - Configure tmux session attachment prompts                               |
+#|                                                                             |
 #|-----------------------------------------------------------------------------|
 
 source "$ZSH_CONFIG_DIR/lib/term.zsh"

@@ -15,6 +15,7 @@
 
 export ZSH_CONFIG_DIR="${HOME}/.config/zsh"
 export ZDOTDIR="${HOME}"
+export CONFIG_PURE=${CONFIG_PURE:-"starship"} # Set to "og" to disable / fallback to original pure prompt.
 
 #|-------------------------------|#
 #| DEBUG TERM PERFORMANCE

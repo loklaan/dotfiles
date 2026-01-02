@@ -52,8 +52,8 @@ error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
 fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
-  echo "" >&2
   _print white dim "Log: $LOG_FILE" >&2
+  echo "" >&2
 }
 
 main() {
@@ -92,14 +92,12 @@ main() {
 
   # Change the default shell to zsh, if it isn't already the default
   info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
-  {{/*  $Sudo chsh -s "$zsh_shell"*/}}
-  chsh -s "$zsh_shell"
+  {{/*  $Sudo chsh -s "$zsh_shell" <user>*/}}
+  chsh -s "$zsh_shell" $(whoami)
 
   info "╍ Now, run 'zsh' to start a new term session"
 }
 
-if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
-  trap cleanup EXIT
-  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
-  main "$@"
-fi
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"
