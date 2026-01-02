@@ -1,15 +1,18 @@
 {
   "permissions": {
     "allow": [
+      "Bash(cat:*)",
       "Bash(find:*)",
       "Bash(git mv:*)",
       "Bash(grep:*)",
       "Bash(head:*)",
       "Bash(mkdir:*)",
       "Bash(tail:*)",
+      "Bash(tree:*)",
       "Skill(coding-error-messages)",
       "Skill(coding-shell-scripts)",
-      "Skill(writing-claude-rules-or-skills-or-subagents)"
+      "Skill(writing-claude-rules-or-skills-or-subagents)",
+      "WebFetch(domain:ghostty.org)"
     ]
   }
 }
