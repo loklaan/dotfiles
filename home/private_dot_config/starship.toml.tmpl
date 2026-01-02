@@ -125,6 +125,16 @@ c_git_info = '117'  # sky blue
 c_duration = 'yellow'
 c_context = 'bright-black'
 
+[username]
+format = "[$user]($style)"
+style_user = "dimmed red"
+style_root = "bold red"
+
+[hostname]
+ssh_symbol = "@"
+format = "[$ssh_symbol]($style)[$hostname]($style underline) in "
+style = "bold red"
+
 [directory]
 style = "c_dir_main"
 format = "[ $path ]($style)"
@@ -133,14 +143,13 @@ truncate_to_repo = true
 fish_style_pwd_dir_length = 1
 repo_root_style = "bold c_context bg:c_dir_main"
 
-[character]
-success_symbol = "[❯](c_char_success)"
-error_symbol = "[❯](c_char_error)"
-vimcmd_symbol = "[❮](c_char_vim)"
-
 [git_branch]
 format = "[$branch]($style)"
 style = "c_git_branch"
+
+[git_state]
+format = '\([$state( $progress_current/$progress_total)]($style)\) '
+style = "c_context"
 
 [git_status]
 format = "[[(*$conflicted$untracked$modified$staged$renamed$deleted)](c_git_changes) ($ahead_behind$stashed)]($style) "
@@ -153,10 +162,6 @@ renamed = "​"
 deleted = "​"
 stashed = "≡"
 
-[git_state]
-format = '\([$state( $progress_current/$progress_total)]($style)\) '
-style = "c_context"
-
 [hg_branch]
 symbol = "hg "
 truncation_symbol = "..."
@@ -165,13 +170,25 @@ truncation_symbol = "..."
 format = "[$duration]($style) "
 style = "c_duration"
 
-# Tool Symbols
+[shlvl]
+symbol = "shlvl "
 
-[aws]
-symbol = "aws "
+[kubernetes]
+symbol = "kubernetes "
 
-[azure]
-symbol = "az "
+[fossil_branch]
+symbol = "fossil "
+truncation_symbol = "..."
+
+[pijul_channel]
+symbol = "pijul "
+truncation_symbol = "..."
+
+[docker_context]
+symbol = "docker "
+
+[jobs]
+symbol = "*"
 
 [battery]
 full_symbol = "full "
@@ -180,154 +197,13 @@ discharging_symbol = "discharging "
 unknown_symbol = "unknown "
 empty_symbol = "empty "
 
-[buf]
-symbol = "buf "
-
-[bun]
-symbol = "bun "
-
-[c]
-symbol = "C "
-
-[cpp]
-symbol = "C++ "
-
-[cobol]
-symbol = "cobol "
-
-[conda]
-symbol = "conda "
-
-[container]
-symbol = "container "
-
-[crystal]
-symbol = "cr "
-
-[cmake]
-symbol = "cmake "
-
-[daml]
-symbol = "daml "
-
-[dart]
-symbol = "dart "
-
-[deno]
-symbol = "deno "
-
-[dotnet]
-format = "via [$symbol($version )(target $tfm )]($style)"
-symbol = ".NET "
-
-[docker_context]
-symbol = "docker "
-
-[elixir]
-symbol = "exs "
-
-[elm]
-symbol = "elm "
-
-[erlang]
-symbol = "erl "
-
-[fennel]
-symbol = "fnl "
-
-[fortran]
-symbol = "fortran "
-
-[fossil_branch]
-symbol = "fossil "
-truncation_symbol = "..."
-
-[gcloud]
-symbol = "gcp "
-
-[gleam]
-symbol = "gleam "
-
-[golang]
-symbol = "go "
-
-[gradle]
-symbol = "gradle "
-
-[guix_shell]
-symbol = "guix "
-
-[haskell]
-symbol = "haskell "
-
-[haxe]
-symbol = "hx "
-
-[helm]
-symbol = "helm "
-
-[hostname]
-ssh_symbol = "@"
-format = "[$ssh_symbol]($style)[$hostname]($style underline) in "
-style = "bold red"
-
-[java]
-symbol = "java "
-
-[jobs]
-symbol = "*"
-
-[julia]
-symbol = "jl "
-
-[kotlin]
-symbol = "kt "
-
-[kubernetes]
-symbol = "kubernetes "
-
-[lua]
-symbol = "lua "
-
-[nodejs]
-symbol = "nodejs "
-
-[memory_usage]
-symbol = "memory "
-
-[meson]
-symbol = "meson "
-truncation_symbol = "..."
-
-[mise]
+[status]
 disabled = false
-
-[mojo]
-symbol = "mojo "
-
-[nats]
-symbol = "nats "
-
-[netns]
-symbol = "netns "
-
-[nim]
-symbol = "nim "
-
-[nix_shell]
-symbol = "nix "
-
-[ocaml]
-symbol = "ml "
-
-[odin]
-symbol = "odin "
-
-[opa]
-symbol = "opa "
-
-[openstack]
-symbol = "openstack "
+symbol = "[x](bold red) "
+not_executable_symbol = "noexec"
+not_found_symbol = "notfound"
+sigint_symbol = "sigint"
+signal_symbol = "sig"
 
 [os.symbols]
 AIX = "aix "
@@ -389,22 +265,109 @@ Void = "void "
 Windows = "win "
 Zorin = "zorn "
 
+[container]
+symbol = "container "
+
+[netns]
+symbol = "netns "
+
 [package]
 symbol = "pkg "
 disabled = true
+
+[c]
+symbol = "C "
+
+[cpp]
+symbol = "C++ "
+
+[cmake]
+symbol = "cmake "
+
+[cobol]
+symbol = "cobol "
+
+[daml]
+symbol = "daml "
+
+[dart]
+symbol = "dart "
+
+[deno]
+symbol = "deno "
+
+[dotnet]
+format = "via [$symbol($version )(target $tfm )]($style)"
+symbol = ".NET "
+
+[elixir]
+symbol = "exs "
+
+[elm]
+symbol = "elm "
+
+[erlang]
+symbol = "erl "
+
+[fennel]
+symbol = "fnl "
+
+[fortran]
+symbol = "fortran "
+
+[gleam]
+symbol = "gleam "
+
+[golang]
+symbol = "go "
+
+[guix_shell]
+symbol = "guix "
+
+[haskell]
+symbol = "haskell "
+
+[haxe]
+symbol = "hx "
+
+[helm]
+symbol = "helm "
+
+[java]
+symbol = "java "
+
+[julia]
+symbol = "jl "
+
+[kotlin]
+symbol = "kt "
+
+[gradle]
+symbol = "gradle "
+
+[lua]
+symbol = "lua "
+
+[nim]
+symbol = "nim "
+
+[nodejs]
+symbol = "nodejs "
+
+[ocaml]
+symbol = "ml "
+
+[odin]
+symbol = "odin "
+
+[opa]
+symbol = "opa "
 
 [perl]
 symbol = "pl "
 
 [php]
 symbol = "php "
-
-[pijul_channel]
-symbol = "pijul "
-truncation_symbol = "..."
-
-[pixi]
-symbol = "pixi "
 
 [pulumi]
 symbol = "pulumi "
@@ -422,19 +385,14 @@ symbol = "py "
 [quarto]
 symbol = "quarto "
 
-[username]
-format = "[$user]($style)"
-style_user = "dimmed red"
-style_root = "bold red"
-
 [raku]
 symbol = "raku "
 
-[red]
-symbol = "red "
-
 [rlang]
 symbol = "r "
+
+[red]
+symbol = "red "
 
 [ruby]
 symbol = "rb "
@@ -445,28 +403,14 @@ symbol = "rs "
 [scala]
 symbol = "scala "
 
-[shlvl]
-symbol = "shlvl "
-
-[spack]
-symbol = "spack "
-
 [solidity]
 symbol = "solidity "
 
-[status]
-disabled = false
-symbol = "[x](bold red) "
-not_executable_symbol = "noexec"
-not_found_symbol = "notfound"
-sigint_symbol = "sigint"
-signal_symbol = "sig"
-
-[sudo]
-symbol = "sudo "
-
 [swift]
 symbol = "swift "
+
+[terraform]
+symbol = "terraform "
 
 [typst]
 symbol = "typst "
@@ -474,11 +418,65 @@ symbol = "typst "
 [vagrant]
 symbol = "vagrant "
 
-[terraform]
-symbol = "terraform "
+[zig]
+symbol = "zig "
+
+[buf]
+symbol = "buf "
+
+[bun]
+symbol = "bun "
+
+[nix_shell]
+symbol = "nix "
+
+[conda]
+symbol = "conda "
+
+[meson]
+symbol = "meson "
+truncation_symbol = "..."
+
+[spack]
+symbol = "spack "
+
+[memory_usage]
+symbol = "memory "
+
+[aws]
+symbol = "aws "
+
+[gcloud]
+symbol = "gcp "
+
+[openstack]
+symbol = "openstack "
+
+[azure]
+symbol = "az "
+
+[nats]
+symbol = "nats "
+
+[mise]
+disabled = false
+
+[mojo]
+symbol = "mojo "
+
+[pixi]
+symbol = "pixi "
+
+[crystal]
+symbol = "cr "
+
+[sudo]
+symbol = "sudo "
 
 [xmake]
 symbol = "xmake "
 
-[zig]
-symbol = "zig "
+[character]
+success_symbol = "[❯](c_char_success)"
+error_symbol = "[❯](c_char_error)"
+vimcmd_symbol = "[❮](c_char_vim)"
