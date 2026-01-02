@@ -267,7 +267,9 @@ symbol = "hx "
 symbol = "helm "
 
 [hostname]
-ssh_symbol = "ssh "
+ssh_symbol = "@"
+format = "[$ssh_symbol]($style)[$hostname]($style underline) in "
+style = "bold red"
 
 [java]
 symbol = "java "
@@ -419,6 +421,11 @@ symbol = "py "
 
 [quarto]
 symbol = "quarto "
+
+[username]
+format = "[$user]($style)"
+style_user = "dimmed red"
+style_root = "bold red"
 
 [raku]
 symbol = "raku "
