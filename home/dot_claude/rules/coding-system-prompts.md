@@ -26,7 +26,6 @@ Rule #1: If you want exception to ANY rule, YOU MUST STOP and get explicit permi
   together before implementation. Routine fixes and clear implementations don't need
   discussion.
 
-
 # Proactiveness
 
 When asked to do something, just do it - including obvious follow-up actions needed to complete the task properly.
@@ -63,8 +62,6 @@ Only pause to ask for confirmation when:
 - YOU MUST MATCH the style and formatting of surrounding code, even if it differs from standard style guides. Consistency within a file trumps external standards.
 - YOU MUST NOT manually change whitespace that does not affect execution or output. Otherwise, use a formatting tool.
 - Fix broken things immediately when you find them. Don't ask permission to fix bugs.
-
-
 
 ## Naming
 

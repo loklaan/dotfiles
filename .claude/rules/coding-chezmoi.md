@@ -105,8 +105,8 @@ error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
 fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
-  echo "" >&2
   _print white dim "Log: $LOG_FILE" >&2
+  echo "" >&2
 }
 
 parse_args() {
@@ -145,11 +145,9 @@ main() {
   # Main script logic here
 }
 
-if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
-  trap cleanup EXIT
-  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
-  main "$@"
-fi
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"
 ```
 
 ### Key Bash Conventions
@@ -161,7 +159,7 @@ fi
   - `▶` for major sections/tasks
   - `╍` for sub-tasks or details
 - All output goes to stderr (`>&2`) and is logged to `/tmp/script-name.TIMESTAMP.log`
-- Scripts are sourceable: main logic wrapped in `if [[ "${BASH_SOURCE[0]}" = "$0" ]]`
+- Runnable scripts aren't sourceable, so do not do something like wrapping runnable logic in `if [[ "${BASH_SOURCE[0]}" = "$0" ]]` since this will break for piping etc.
 - **ALWAYS** use `info`, `warning`, `error`, `fatal` for user messaging (NEVER use raw `echo`)
 - `cleanup()` function shows log file location on exit
 
@@ -182,7 +180,6 @@ For utility libraries and helper functions, use simple block-style headers above
 #| Optional multiline description
 #| explaining what this library provides
 #|
-
 function my_function() {
   # Implementation
 }
@@ -196,7 +193,6 @@ function my_function() {
 #| These functions wrap ssh, scp, and git commands to
 #| automatically add SSH keys before execution.
 #|
-
 function git() {
   add-ssh-keys
   command git "$@"

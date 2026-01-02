@@ -1,12 +1,18 @@
 #|-----------------------------------------------------------------------------|
 #| INIT MODULE: Plugins                                                        |
 #|-----------------------------------------------------------------------------|
-#|
-#| Purpose:
-#|   Manages zsh plugin loading and configuration through zplug, including
-#|   syntax highlighting, autosuggestions, completions, prompt themes, and
-#|   various tool-specific plugins.
-#|
+#|                                                                             |
+#| Purpose:                                                                    |
+#|   Manages zsh plugin loading and configuration through zplug, including     |
+#|   syntax highlighting, autosuggestions, completions, prompt themes, and     |
+#|   various tool-specific plugins.                                            |
+#|                                                                             |
+#| Responsibilities:                                                           |
+#|   - Initialize zplug plugin manager                                         |
+#|   - Load syntax highlighting and autosuggestions                            |
+#|   - Configure prompt themes (pure/starship)                                 |
+#|   - Load tool-specific completions (AWS, GCloud, etc.)                      |
+#|                                                                             |
 #|-----------------------------------------------------------------------------|
 
 #|------------------------------------------------------------|#
@@ -14,7 +20,7 @@
 #|
 #|  Files for plugins are managed as chezmoi externals.
 #|
-CONFIG_PURE=${CONFIG_PURE:-"og"} # Default to false if not set
+CONFIG_PURE=${CONFIG_PURE:-"og"} # Default to sindressorhus's original prompt
 export ZPLUG_HOME="$ZSH_CONFIG_DIR/zplug" # Added via .chezmoiexternals/zsh.toml
 export ZPLUG_LOG_LOAD_SUCCESS=false
 export ZPLUG_LOG_LOAD_FAILURE=false

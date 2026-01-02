@@ -3,6 +3,7 @@ set -euo pipefail
 
 IFS=$'\n\t'
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
 #/   guide-install-packages.sh
@@ -45,14 +46,14 @@ _print() {
     printf "%s\n" "$1"
   fi
 }
-info() { _print cyan "[INFO] $@"; }
-warning() { _print yellow "[WARNING] $@"; }
-error() { _print red "[ERROR] $@"; }
-fatal() { _print red bold "[FATAL] $@"; }
+info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
+warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
+error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
+  _print white dim "Log: $LOG_FILE" >&2
   echo "" >&2
-  return 0
 }
 
 main() {
@@ -67,8 +68,6 @@ main() {
   _print white dim "See ${HOME}/.local/bin/install-my-packages for details."
 }
 
-if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
-  trap cleanup EXIT
-  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
-  main "$@"
-fi
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"

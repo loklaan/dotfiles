@@ -53,8 +53,8 @@ error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
 fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
-  echo "" >&2
   _print white dim "Log: $LOG_FILE" >&2
+  echo "" >&2
 }
 
 parse_args() {
@@ -263,8 +263,6 @@ EOF
   {{ end }}
 }
 
-if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
-  trap cleanup EXIT
-  _print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
-  main "$@"
-fi
+trap cleanup EXIT
+_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+main "$@"
