@@ -2,8 +2,13 @@
 set -euo pipefail
 
 IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
+readonly LOG_FILE="${TMPDIR}/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
 #/   install.sh

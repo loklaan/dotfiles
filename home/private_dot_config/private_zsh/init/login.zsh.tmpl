@@ -29,7 +29,7 @@ fi
 #| Background Daemons / Agents
 #|  - SSH
 #|
-source "$ZSH_CONFIG_DIR/lib/ssh.zsh"
+source "${HOME}/.local/lib/ssh.sh"
 if typeset -f _ssh_agent > /dev/null; then
   _ssh_agent
 fi

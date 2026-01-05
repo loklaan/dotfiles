@@ -24,7 +24,7 @@ PROFILE_STARTUP=false # When true, the profile will be profiled.
 if [[ "$PROFILE_STARTUP" == true ]]; then
   zmodload zsh/zprof
 fi
-#[ -f "$ZSH_CONFIG_DIR/lib/tracing.zsh" ] && source "$ZSH_CONFIG_DIR/lib/tracing.zsh"
+#[ -f "${HOME}/.local/lib/tracing.sh" ] && source "${HOME}/.local/lib/tracing.sh"
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/env.zsh" ]]; then
   # shellcheck source=home/private_dot_config/exact_private_zsh/init/env.zsh.tmpl

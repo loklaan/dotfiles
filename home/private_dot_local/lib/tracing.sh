@@ -1,15 +1,21 @@
-#|------------------------------------------------------------|#
-#| Tracing functions                                          |#
-#|------------------------------------------------------------|#
-#|
-#| Unfinished, please don't use.
-#|
+#!/usr/bin/env bash
+
+#|-----------------------------------------------------------------------------|
+#| Tracing functions                                                           |
+#|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Provides OpenTelemetry tracing integration for shell commands using        |
+#| otel-desktop-viewer and otel-cli.                                           |
+#|                                                                             |
+#| NOTE: Unfinished, please don't use.                                        |
+#|                                                                             |
+#|-----------------------------------------------------------------------------|
 
 GOPATH="$HOME/.go"
 otel_viewer="$GOPATH/bin/otel-desktop-viewer"
 otel_cli="$GOPATH/bin/otel-cli"
 
-function _tracing_start_server() {
+_tracing_start_server() {
   if [ -x "$otel_viewer" ] && [ -x "$otel_cli" ]; then
     export _ZSH_BENCH_SERVER_HTTP_PORT=3333
     export _ZSH_BENCH_SERVER_OTPL_PORT=4318
@@ -31,7 +37,7 @@ function _tracing_start_server() {
   fi
 }
 
-function _tracing_span_exec() {
+_tracing_span_exec() {
   if [ -x "$otel_cli" ] && [ -n "$OTEL_EXPORTER_OTLP_ENDPOINT" ]; then
     "$otel_cli" exec "$@"
   fi

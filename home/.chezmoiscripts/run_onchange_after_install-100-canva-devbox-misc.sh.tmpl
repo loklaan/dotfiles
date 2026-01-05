@@ -2,8 +2,10 @@
 set -euo pipefail
 
 IFS=$'\n\t'
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   canva-devbox-misc.sh
@@ -17,47 +19,6 @@ readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 #/ Options:
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
-_print() {
-  case "$1" in
-    black) color="30" ;;
-    red) color="31" ;;
-    green) color="32" ;;
-    yellow) color="33" ;;
-    blue) color="34" ;;
-    magenta) color="35" ;;
-    cyan) color="36" ;;
-    white) color="37" ;;
-    *) echo "Unknown color: $1" >&2; return 1 ;;
-  esac
-
-  shift
-  while [ "$#" -gt 1 ]; do
-    case "$1" in
-      bold) color="${color};1" ;;
-      italic) color="${color};3" ;;
-      underline) color="${color};4" ;;
-      dim) color="${color};2" ;;
-      *) echo "Unknown option: $1" >&2; return 1 ;;
-    esac
-    shift
-  done
-
-  supported_colors=$(tput colors 2>/dev/null)
-  if [ "$supported_colors" -gt 8 ]; then
-    printf "\\033[${color}m%s\\033[0m\\n" "$1"
-  else
-    printf "%s\n" "$1"
-  fi
-}
-info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
-warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
-error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
-fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
-
-cleanup() {
-  _print white dim "Log: $LOG_FILE" >&2
-  echo "" >&2
-}
 
 parse_args() {
   while [ "$#" -gt 0 ]; do
@@ -95,6 +56,4 @@ main() {
   fi
 }
 
-trap cleanup EXIT
-_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
 main "$@"

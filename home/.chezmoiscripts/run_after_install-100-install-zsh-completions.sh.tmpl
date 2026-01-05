@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-100-install-zsh-completions.sh
+#/
+#/ Description:
+#/   Installs zsh completions by calling install-my-completions.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+main() {
+  if command -v install-my-completions >/dev/null 2>&1; then
+    install-my-completions
+    info "╍ Note: Completions available new term sessions (restart your terminal or run 'exec zsh')"
+  else
+    warning "install-my-completions command not found in PATH"
+    warning "Expected location: ${HOME}/.local/bin/install-my-completions"
+  fi
+}
+
+main "$@"

@@ -1,13 +1,16 @@
-#|------------------------------------------------------------|#
-#| SSH Automation
-#|
-#|  The following setup does the following:
-#|   1. Override common ssh enables commands
-#|   2. When any of them are used, ssh-add is lazily executed
-#|   3. Finally, we start ssh-agent which will enable ssh-add
-#|   4. Ensure GPG tty is configured
-#|
-#|------------------------------------------------------------|#
+#!/usr/bin/env bash
+
+#|-----------------------------------------------------------------------------|
+#| SSH Automation                                                              |
+#|-----------------------------------------------------------------------------|
+#|                                                                             |
+#| Provides automatic SSH agent management and key loading:                   |
+#|   1. Override common ssh enables commands                                  |
+#|   2. When any of them are used, ssh-add is lazily executed                 |
+#|   3. Finally, we start ssh-agent which will enable ssh-add                 |
+#|   4. Ensure GPG tty is configured                                          |
+#|                                                                             |
+#|-----------------------------------------------------------------------------|
 
 export _SSH_AGENT_INFO_CACHE=$HOME/.cache/ssh-agent-info
 

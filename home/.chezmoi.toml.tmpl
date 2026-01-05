@@ -15,3 +15,108 @@
   bwsIdNpmAuthToken = "302ba3e1-8fde-4c5d-8a1c-b37c01600278"
   bwsIdGithubAuthToken = "13a3305b-0c71-411c-89e3-b37c016033b5"
   bwsIdGithubAuthTokenCanvaOnly = "3e26117a-3676-4afd-814a-b37c0160543e"
+
+# Session logging hooks
+[hooks.apply.pre]
+  command = "bash"
+  args = ["-euo", "pipefail", "-c", '''
+# Normalize TMPDIR
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+SESSION_LOG="${TMPDIR}/chezmoi-session.${TIMESTAMP}.log"
+
+# Cleanup stale markers older than 24 hours
+if [ -f "$MARKER_FILE" ]; then
+  if [ "$(uname)" = "Darwin" ]; then
+    marker_age=$(($(date +%s) - $(stat -f %m "$MARKER_FILE")))
+  else
+    marker_age=$(($(date +%s) - $(stat -c %Y "$MARKER_FILE")))
+  fi
+
+  if [ "$marker_age" -gt 86400 ]; then
+    rm -f "$MARKER_FILE"
+  fi
+fi
+
+# Create session log
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting chezmoi session" > "$SESSION_LOG"
+echo "Log file: $SESSION_LOG" >> "$SESSION_LOG"
+echo "" >> "$SESSION_LOG"
+
+# Write marker file atomically
+MARKER_TEMP="${MARKER_FILE}.$$"
+echo "$SESSION_LOG" > "$MARKER_TEMP"
+mv "$MARKER_TEMP" "$MARKER_FILE"
+
+# Print to stderr using ANSI colors (white dim)
+printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
+''']
+[hooks.apply.post]
+  command = "bash"
+  args = ["-euo", "pipefail", "-c", '''
+# Normalize TMPDIR
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+
+if [ -f "$MARKER_FILE" ]; then
+  # Clean up marker file
+  rm -f "$MARKER_FILE"
+fi
+''']
+[hooks.update.pre]
+  command = "bash"
+  args = ["-euo", "pipefail", "-c", '''
+# Normalize TMPDIR
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+SESSION_LOG="${TMPDIR}/chezmoi-session.${TIMESTAMP}.log"
+
+# Cleanup stale markers older than 24 hours
+if [ -f "$MARKER_FILE" ]; then
+  if [ "$(uname)" = "Darwin" ]; then
+    marker_age=$(($(date +%s) - $(stat -f %m "$MARKER_FILE")))
+  else
+    marker_age=$(($(date +%s) - $(stat -c %Y "$MARKER_FILE")))
+  fi
+
+  if [ "$marker_age" -gt 86400 ]; then
+    rm -f "$MARKER_FILE"
+  fi
+fi
+
+# Create session log
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting chezmoi session" > "$SESSION_LOG"
+echo "Log file: $SESSION_LOG" >> "$SESSION_LOG"
+echo "" >> "$SESSION_LOG"
+
+# Write marker file atomically
+MARKER_TEMP="${MARKER_FILE}.$$"
+echo "$SESSION_LOG" > "$MARKER_TEMP"
+mv "$MARKER_TEMP" "$MARKER_FILE"
+
+# Print to stderr using ANSI colors (white dim)
+printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
+''']
+
+[hooks.update.post]
+  command = "bash"
+  args = ["-euo", "pipefail", "-c", '''
+# Normalize TMPDIR
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+
+if [ -f "$MARKER_FILE" ]; then
+  # Clean up marker file
+  rm -f "$MARKER_FILE"
+fi
+''']

@@ -1,0 +1,31 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $existing := default "" .chezmoi.stdin | trim -}}
+{{- $startMarker := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
+{{- $endMarker := "# --- END CHEZMOI MANAGED SECTION ---" -}}
+
+{{- /* Load cordoned section from shared template */ -}}
+{{- $ourSection := includeTemplate "git-config-tmpl" . | trim -}}
+
+{{- /* Check if our section already exists */ -}}
+{{- if contains $startMarker $existing -}}
+  {{- /* Section exists - replace it, preserve content before and after */ -}}
+  {{- $parts := splitList $startMarker $existing -}}
+  {{- $before := index $parts 0 | trim -}}
+  {{- $afterParts := splitList $endMarker (index $parts 1) -}}
+  {{- $after := "" -}}
+  {{- if gt (len $afterParts) 1 -}}
+    {{- $after = index $afterParts 1 | trim -}}
+  {{- end -}}
+
+  {{- /* Reconstruct: our section + before + after */ -}}
+{{ $ourSection }}
+
+{{ $before -}}
+
+{{- $after }}
+{{- else -}}
+  {{- /* First time - prepend our section to existing config */ -}}
+{{ $ourSection }}
+
+{{ $existing }}
+{{- end }}

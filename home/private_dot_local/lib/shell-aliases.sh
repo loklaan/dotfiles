@@ -1,4 +1,6 @@
-source "$ZSH_CONFIG_DIR/lib/ssh.zsh"
+#!/usr/bin/env bash
+
+source "${HOME}/.local/lib/ssh.sh"
 
 #|------------------------------------------------------------|#
 #| SSH & Git Wrapper Functions

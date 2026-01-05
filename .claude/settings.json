@@ -1,17 +1,24 @@
 {
   "permissions": {
     "allow": [
+      "Bash(bash:*)",
       "Bash(cat:*)",
+      "Bash(command -v:*)",
+      "Bash(echo:*)",
       "Bash(find:*)",
       "Bash(git mv:*)",
       "Bash(grep:*)",
       "Bash(head:*)",
+      "Bash(ls:*)",
       "Bash(mkdir:*)",
       "Bash(tail:*)",
+      "Bash(test:*)",
       "Bash(tree:*)",
+      "Bash(wc:*)",
       "Skill(coding-error-messages)",
       "Skill(coding-shell-scripts)",
       "Skill(writing-claude-rules-or-skills-or-subagents)",
+      "WebFetch(domain:www.chezmoi.io)",
       "WebFetch(domain:ghostty.org)"
     ]
   }
