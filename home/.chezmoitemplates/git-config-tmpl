@@ -1,0 +1,17 @@
+# --- BEGIN CHEZMOI MANAGED SECTION ---
+# This section is managed by chezmoi. Do not edit manually.
+# Personal git config and work includes are injected here.
+#
+# NOTE: Git config uses last-wins precedence. Settings below this section
+# (added by other tools) may override the included config.local values.
+
+[include]
+    path = ~/.config/git/config.local
+
+# Work-specific config
+[includeIf "gitdir:~/dev/canva/**"]
+    path = ~/.config/git/canva.config
+[includeIf "gitdir:~/work/canva/**"]
+    path = ~/.config/git/canva.config
+
+# --- END CHEZMOI MANAGED SECTION ---

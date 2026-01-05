@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
+
 IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
 TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-readonly LOG_FILE="/tmp/$(basename "$0").$(date +"%Y%m%d_%H%M%S").log"
+readonly LOG_FILE="${TMPDIR}/$(basename "$0").$(date +"%Y%m%d_%H%M%S").log"
 
 #/ Usage: ./install.test.sh
 #/ Description: Runs an end-to-end installation test for the dotfiles repository.

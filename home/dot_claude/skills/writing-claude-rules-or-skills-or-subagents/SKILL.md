@@ -1,6 +1,7 @@
 ---
 name: writing-claude-rules-skills-subagents
 description: Guidelines for creating custom rules, custom skills, and custom subagents for Claude.
+allowed-tools: Read
 ---
 
 # Writing Claude Rules, Skills, or Subagents

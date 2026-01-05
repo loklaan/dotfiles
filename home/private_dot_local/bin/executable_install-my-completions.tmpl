@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+
+readonly REL_COMPLETION_DIR=".local/share/zsh-completions"
+readonly COMPLETION_DIR="${HOME}/${REL_COMPLETION_DIR}"
+
+#/ Usage:
+#/   install-my-completions
+#/
+#/ Description:
+#/   Installs zsh completions for common CLI tools to ~/.local/share/zsh-completions.
+#/   The directory is already configured in fpath, so completions will be automatically
+#/   discovered by zsh's completion system after running this script.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+ensure_completion_dir() {
+  if [ ! -d "$COMPLETION_DIR" ]; then
+    info "╍ Creating completion directory: $COMPLETION_DIR"
+    if ! mkdir -p "$COMPLETION_DIR"; then
+      fatal "Failed to create completion directory at ${COMPLETION_DIR}. Check permissions and disk space."
+    fi
+  fi
+
+  if [ ! -d "$COMPLETION_DIR" ]; then
+    fatal "Completion directory does not exist at ${COMPLETION_DIR} after creation attempt. Check filesystem errors."
+  fi
+}
+
+install_completion() {
+  local tool_name="$1"
+  shift
+  local completion_command=("$@")
+
+  infof "╍ Installing completion for ${tool_name}"
+
+  # Check if tool is available
+  if ! command -v "$tool_name" >/dev/null 2>&1; then
+    warning "  Tool '${tool_name}' not found in PATH. Skipping completion installation."
+    return 1
+  fi
+
+  # Generate completion to temp file
+  local temp_file
+  temp_file=$(mktemp)
+
+  if ! "${completion_command[@]}" > "$temp_file"; then
+    error "  Failed to generate completion for ${tool_name}. Command '${completion_command[*]}' returned non-zero exit code."
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  # Check if output is non-empty
+  if [ ! -s "$temp_file" ]; then
+    warning "  Generated empty completion output for ${tool_name}. The tool may not support completion generation. Skipping."
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  # Install completion file
+  local completion_file="${COMPLETION_DIR}/_${tool_name}"
+  if mv "$temp_file" "$completion_file"; then
+    _print cyan "  ✓ Installed"
+    return 0
+  else
+    error "  Failed to install completion for ${tool_name} at ${completion_file}. Check directory permissions."
+    rm -f "$temp_file"
+    return 1
+  fi
+}
+
+install_mise_completion() {
+  local tool_name="$1"
+  local mise_tool_name="$2"
+  shift
+  shift
+  local completion_args=("$@")
+
+  infof "╍ Installing mise-managed completion for ${tool_name}"
+
+  # Check if mise is available
+  if ! command -v mise >/dev/null 2>&1; then
+    echo "" >&2
+    warning "  mise not found in PATH. Cannot install completion for mise-managed tool '${mise_tool_name}'. Install mise first: https://mise.jdx.dev"
+    return 1
+  fi
+
+  # Check if tool is installed in mise
+  if ! mise which "$mise_tool_name" >/dev/null 2>&1; then
+    echo "" >&2
+    warning "  Tool '${mise_tool_name}' not installed in mise. Run 'mise install' to install all configured tools. Skipping."
+    return 1
+  fi
+
+  # Generate completion via mise exec
+  local temp_file
+  temp_file=$(mktemp)
+
+  if ! mise exec -- "$mise_tool_name" "${completion_args[@]}" > "$temp_file"; then
+    echo "" >&2
+    error "  Failed to generate completion for ${tool_name}. Command 'mise exec -- ${mise_tool_name} ${completion_args[*]}' returned non-zero exit code."
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  # Check if output is non-empty
+  if [ ! -s "$temp_file" ]; then
+    echo "" >&2
+    warning "  Generated empty completion output for ${tool_name}. The tool may not support completion generation. Skipping."
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  # Install completion file
+  local completion_file="${COMPLETION_DIR}/_${tool_name}"
+  if mv "$temp_file" "$completion_file"; then
+    _print cyan "  ✓ Installed"
+    return 0
+  else
+    error "  Failed to install completion for ${tool_name} at ${completion_file}. Check directory permissions."
+    rm -f "$temp_file"
+    return 1
+  fi
+}
+
+main() {
+  info "▶ Installing zsh completions"
+
+  # Setup PATH to include mise shims and homebrew
+  export PATH="${HOME}/.local/bin:${PATH}"
+  export PATH="${HOME}/.local/share/mise/shims:${PATH}"
+{{ if eq .chezmoi.os "darwin" }}
+  export PATH="{{ .brewprefix }}/bin:${PATH}"
+{{ end }}
+
+  # Ensure completion directory exists
+  ensure_completion_dir
+
+  # Track results
+  local success_count=0
+  local skip_count=0
+
+  # Install mise completion (mise itself)
+  install_completion "mise" mise completion zsh && ((++success_count)) || ((++skip_count))
+
+  # Install completions for mise-managed tools
+  install_mise_completion "bws" bws completions zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "bw" bw completion --shell zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "chezmoi" chezmoi completion zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "delta" delta --generate-completion zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "deno" deno completions zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "fzf" fzf --zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "npm" npm completion && ((++success_count)) || ((++skip_count))
+  install_mise_completion "starship" starship completions zsh && ((++success_count)) || ((++skip_count))
+
+  # Install completions for rust tools (rustup manages both)
+  install_mise_completion "rustup" rustup completions zsh && ((++success_count)) || ((++skip_count))
+  install_mise_completion "cargo" rustup completions zsh cargo && ((++success_count)) || ((++skip_count))
+
+  # Install completions for additional tools (not in mise)
+  if command -v pnpm >/dev/null 2>&1; then
+    install_completion "pnpm" pnpm completion zsh && ((++success_count)) || ((++skip_count))
+  else
+    info "╍ pnpm not found in PATH, skipping"
+    ((++skip_count))
+  fi
+
+  # Summary
+  info "▶ Completion installation summary:"
+  info "  ✓ Installed: ${success_count}"
+  info "  ⊘ Skipped: ${skip_count}"
+  info "  Location: ${COMPLETION_DIR}"
+
+  if [ "$success_count" -eq 0 ]; then
+    warning "No completions were successfully installed. Check that mise and required tools are installed."
+  fi
+}
+
+main "$@"

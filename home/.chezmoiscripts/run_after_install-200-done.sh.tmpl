@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   done.sh
+#/
+#/ Description:
+#/   Prints out a guide for installing packages.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+main() {
+  info "▶ Done installing dotfiles!"
+  info "  Continue installing packages:"
+  info "   \$ install-my-packages               👈 ONLY programs & libraries."
+  info "   \$ install-my-packages --gui         👈 Also UI apps."
+  info "   \$ cat \$(which install-my-packages)  👈 See details of the install"
+}
+
+main "$@"

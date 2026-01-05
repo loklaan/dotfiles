@@ -86,7 +86,7 @@ Good names tell a story about the domain:
 - YOU MUST NEVER remove code comments unless you can PROVE they are actively false. Comments are important documentation and must be preserved.
 - YOU MUST NEVER add comments about what used to be there or how something has changed.
 - YOU MUST NEVER refer to temporal context in comments (like "recently refactored" "moved") or code. Comments should be evergreen and describe the code as it is. If you name something "new" or "enhanced" or "improved", you've probably made a mistake and MUST STOP and ask me what to do.
-- All code files MUST start with a multi-line comment using Taylor Otwell style (from Laravel): a header line approximately 74 characters long made of pipes and dashes, followed by description lines with pipes, ending with a closing line. The header should describe what the file does.
+- Unless otherwise directed, multi-line comments should be Taylor Otwell style (from Laravel): a header line approximately 74 characters long made of pipes and dashes, followed by description lines with pipes, ending with a closing line.
 
 Examples:
 // BAD: This uses Zod for validation instead of manual checking

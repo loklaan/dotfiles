@@ -44,7 +44,13 @@ For more complex scripts with logging, cleanup, and robust error handling:
 ```shell
 #!/usr/bin/env bash
 set -euo pipefail
+
 IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 #/ Usage:
@@ -55,7 +61,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 usage() { grep '^#/' "$0" | cut -c4- ; exit 0 ; }
 expr "$*" : ".*--help" > /dev/null && usage
 
-readonly LOG_FILE="/tmp/$(basename "$0").log"
+readonly LOG_FILE="${TMPDIR}/$(basename "$0").log"
 info()    { echo "[INFO]    $@" | tee -a "$LOG_FILE" >&2 ; }
 warning() { echo "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
 error()   { echo "[ERROR]   $@" | tee -a "$LOG_FILE" >&2 ; }
@@ -73,6 +79,72 @@ if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
   # ...
 fi
 ```
+
+## Script Validation
+
+**CRITICAL: Always validate shell scripts after creating or editing them.**
+
+### Required Validation Steps
+
+After creating or editing any shell script, you MUST run both validation tools:
+
+1. **Syntax Check with bash -n**
+   ```shell
+   bash -n script.sh
+   ```
+
+   Catches basic syntax errors:
+   - Missing closing quotes
+   - Unmatched brackets or braces
+   - Invalid command syntax
+
+2. **Static Analysis with shellcheck**
+   ```shell
+   shellcheck script.sh
+   ```
+
+   Catches deeper issues:
+   - Quoting problems (word splitting, glob expansion)
+   - Deprecated or unsafe syntax
+   - Common bugs and anti-patterns
+   - Unused or misspelled variables
+   - Portability issues
+
+### Validation Pattern
+
+Run both checks together:
+
+```shell
+bash -n script.sh && shellcheck script.sh
+```
+
+Only consider the script complete after both tools pass without errors.
+
+### Handling Shellcheck Warnings
+
+When shellcheck warnings are intentional, disable them with directives:
+
+```shell
+# Disable specific warning for one line
+# shellcheck disable=SC2086
+echo $unquoted_on_purpose
+
+# Disable multiple codes for entire file (at top)
+# shellcheck disable=SC2086,SC2181
+
+# Document why you're disabling
+# We want word splitting here for argument passing
+# shellcheck disable=SC2086
+command $args
+```
+
+**Common codes you might need to disable:**
+- `SC2086`: Word splitting/globbing (when intentional for argument passing)
+- `SC2181`: Testing `$?` explicitly (when needed for clarity)
+- `SC1090`: Dynamic source paths (shellcheck can't follow them)
+- `SC2034`: Unused variables (e.g., when reading into multiple vars)
+
+**Important:** Only disable shellcheck warnings when you understand why they're triggered and have a valid reason to ignore them. Document your reasoning in comments.
 
 ## Bash Constructs
 

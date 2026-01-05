@@ -4,10 +4,3 @@
 
 [maintenance]
   repo = ~/dev/canva
-
-[trace2]
-  # Send Git tracing debug information to Olly monitoring
-  # Ensure detailed Git command execution data is logged to Unix domain socket for performance analysis
-  # Data includes command timing, settings, errors, and process tree information
-  # Autoinjection to the main config is avoided with the env var GIT_TRACE2_CONFIG
-  eventTarget = af_unix:dgram:/tmp/olly-git-trace2.sock

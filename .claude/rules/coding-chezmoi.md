@@ -11,6 +11,39 @@ This is a chezmoi-managed dotfiles repository. It uses:
 - **Chezmoi source attributes** for controlling file permissions, naming, and behavior
 - **Special directories** for lifecycle scripts, external dependencies, and shared templates
 
+## Chezmoi Source Path Mapping
+
+When working with this repository, you must understand the mapping between target paths (in `~/`) and source paths (which use [chezmoi source state attributes](https://www.chezmoi.io/reference/source-state-attributes/) in the directory and file names):
+
+**Target Path → Chezmoi Source Path:**
+
+```
+~/.local/lib/              → home/private_dot_local/lib/
+~/.config/zsh/             → home/private_dot_config/private_zsh/
+~/.bashrc                  → home/dot_bashrc
+~/.ssh/config              → home/private_dot_ssh/config
+~/bin/script               → home/bin/executable_script
+```
+
+**Key Rules:**
+- `~/.` (dotfiles) → `home/dot_`
+- `~/` (regular files) → `home/`
+- Private directories/files → prefix with `private_`
+- Executable files → prefix with `executable_`
+- Templates → suffix with `.tmpl`
+
+**Examples:**
+
+| When asked to...                           | Create/edit in chezmoi source...                     |
+|--------------------------------------------|------------------------------------------------------|
+| "Add to `~/.local/lib/`"                   | `home/private_dot_local/lib/`                        |
+| "Create `~/.config/git/config`"            | `home/private_dot_config/git/config`                 |
+| "Add script to `~/.local/bin/`"            | `home/private_dot_local/bin/executable_scriptname`   |
+| "Update `~/.zshrc`"                        | `home/private_dot_zshrc`                             |
+| "Create templated `~/.npmrc`"              | `home/private_dot_npmrc.tmpl`                        |
+
+**IMPORTANT:** Always work in the chezmoi source directory (`/Users/lochlan/.local/share/chezmoi/`), never directly in `~/`. Chezmoi manages the target files.
+
 ## Documentation References
 
 ### Official Documentation
@@ -29,18 +62,25 @@ This is a chezmoi-managed dotfiles repository. It uses:
 
 ## Bash Script Conventions
 
+### Shared Logging Library
+
+All bash scripts use a shared logging library at `home/private_dot_local/lib/bash-logging.sh` that provides:
+- Colored logging functions (`info`, `warning`, `error`, `fatal`)
+- Session log file management (integrates with chezmoi hooks)
+- Automatic output redirection when `CHEZMOI_SESSION_LOG` is set
+- Consistent startup messages and formatting
+
 ### Standard Structure Requirements
 
 ALL bash scripts MUST include these elements in order:
 1. Shebang: `#!/usr/bin/env bash`
 2. Safety flags: `set -euo pipefail`
 3. IFS configuration: `IFS=$'\n\t'`
-4. Timestamp and log file setup
-5. Usage documentation (lines starting with `#/`)
-6. Helper functions (`_print`, `info`, `warning`, `error`, `fatal`)
-7. `cleanup()` function
-8. Main logic functions (`parse_args`, `main`, etc.)
-9. Trap setup and script invocation
+4. TMPDIR normalization: `TMPDIR="${TMPDIR:-/tmp}"` and `TMPDIR="${TMPDIR%/}"`
+5. Source shared logging library and setup session logging
+6. Usage documentation (lines starting with `#/`)
+7. Main logic functions (`parse_args`, `main`, etc.)
+8. Script invocation
 
 ### Complete Bash Script Boilerplate
 
@@ -49,8 +89,14 @@ ALL bash scripts MUST include these elements in order:
 set -euo pipefail
 
 IFS=$'\n\t'
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   script-name.sh [OPTIONS]
@@ -65,49 +111,6 @@ readonly LOG_FILE="/tmp/$(basename "$0").${TIMESTAMP}.log"
 #/   --option:    Description of option
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
-
-_print() {
-  case "$1" in
-    black) color="30" ;;
-    red) color="31" ;;
-    green) color="32" ;;
-    yellow) color="33" ;;
-    blue) color="34" ;;
-    magenta) color="35" ;;
-    cyan) color="36" ;;
-    white) color="37" ;;
-    *) echo "Unknown color: $1" >&2; return 1 ;;
-  esac
-
-  shift
-  while [ "$#" -gt 1 ]; do
-    case "$1" in
-      bold) color="${color};1" ;;
-      italic) color="${color};3" ;;
-      underline) color="${color};4" ;;
-      dim) color="${color};2" ;;
-      *) echo "Unknown option: $1" >&2; return 1 ;;
-    esac
-    shift
-  done
-
-  supported_colors=$(tput colors 2>/dev/null)
-  if [ "$supported_colors" -gt 8 ]; then
-    printf "\\033[${color}m%s\\033[0m\\n" "$1"
-  else
-    printf "%s\n" "$1"
-  fi
-}
-
-info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
-warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
-error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
-fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
-
-cleanup() {
-  _print white dim "Log: $LOG_FILE" >&2
-  echo "" >&2
-}
 
 parse_args() {
   # Validate required environment variables
@@ -145,8 +148,6 @@ main() {
   # Main script logic here
 }
 
-trap cleanup EXIT
-_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
 main "$@"
 ```
 
@@ -154,14 +155,28 @@ main "$@"
 
 - **ALWAYS** use `set -euo pipefail` (exit on error, undefined variables, pipe failures)
 - **ALWAYS** set `IFS=$'\n\t'` (safe word splitting)
+- **ALWAYS** normalize TMPDIR to strip trailing slashes: `TMPDIR="${TMPDIR:-/tmp}"` then `TMPDIR="${TMPDIR%/}"`
+- **ALWAYS** source the shared logging library: `source "${HOME}/.local/lib/bash-logging.sh"`
+- **ALWAYS** call `setup_session_logging "$(basename "$0")"` after sourcing the library
 - Usage documentation uses `#/` prefix, extracted by `usage()` function
 - Log messages use Unicode box drawing:
   - `▶` for major sections/tasks
   - `╍` for sub-tasks or details
-- All output goes to stderr (`>&2`) and is logged to `/tmp/script-name.TIMESTAMP.log`
-- Runnable scripts aren't sourceable, so do not do something like wrapping runnable logic in `if [[ "${BASH_SOURCE[0]}" = "$0" ]]` since this will break for piping etc.
 - **ALWAYS** use `info`, `warning`, `error`, `fatal` for user messaging (NEVER use raw `echo`)
-- `cleanup()` function shows log file location on exit
+- The logging library provides the `_print` function for colored output (available but typically not needed directly)
+- Runnable scripts aren't sourceable, so do not wrap runnable logic in `if [[ "${BASH_SOURCE[0]}" = "$0" ]]`
+
+### Session Logging Behavior
+
+The `setup_session_logging` function provides intelligent logging:
+- When run via chezmoi (with `CHEZMOI_SESSION_LOG` set by pre-apply hook):
+  - All output is redirected to both terminal and the session log file
+  - Multiple scripts append to the same session log for a complete operation history
+- When run standalone (without `CHEZMOI_SESSION_LOG`):
+  - Output goes to terminal only (no file logging)
+  - Useful for interactive debugging and manual script execution
+
+**Do NOT** manually create `LOG_FILE` variables or use `trap cleanup EXIT` - the library handles all logging setup.
 
 ---
 
@@ -169,16 +184,20 @@ main "$@"
 
 ### Two Header Styles
 
-#### Style 1: Simple Library Files (lib/*.zsh)
+#### Style 1: Function Comments
 
-For utility libraries and helper functions, use simple block-style headers above the function (NOT at the top of the file):
+For functions use simple block-style headers above the function (NOT at the top of the file):
+
+- Ensure the block has no space between it and the function.
+- First line should be #|-------|# line.
+- All other lines start with a #|, and DO NOT end with |.
 
 ```zsh
 #|------------------------------------------------------------|#
 #| Brief title describing the functionality
 #|
 #| Optional multiline description
-#| explaining what this library provides
+#| explaining what this function provides
 #|
 function my_function() {
   # Implementation
@@ -199,11 +218,20 @@ function git() {
 }
 ```
 
-#### Style 2: Init Modules (init/*.zsh.tmpl)
+#### Style 2: File Headers (init/*.zsh.tmpl)
 
-For initialization modules, use elaborate decorative headers at the root of the source with full documentation:
+For files/modules of significance & complexity, fully document it while also using decorative headers at the root of the source:
+
+- Ensure the header has a space before and after it.
+- All lines should have:
+  - Opening #|
+  - Content
+  - Closing | aligned to the right border
 
 ```zsh
+#!/usr/bin/env bash
+# ...Options like set -euo pipefail
+
 #|-----------------------------------------------------------------------------|
 #| INIT MODULE: Module Name                                                    |
 #|-----------------------------------------------------------------------------|
@@ -222,12 +250,9 @@ For initialization modules, use elaborate decorative headers at the root of the 
 #|   or special considerations.                                                |
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
+
+# ...Main logic of the init module
 ```
-
-### When to Use Which Style
-
-- **Simple style** (`#|---|#`): Library files in `lib/`, simple plugin configs
-- **Elaborate style** (`#|---|#` with full header): Init modules in `init/` that run at shell startup
 
 ---
 
