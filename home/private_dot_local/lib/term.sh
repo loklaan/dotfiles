@@ -86,15 +86,53 @@ welcome_message() {
   print_middle_decorations "$message_string_welcome"
 }
 
-should_attempt_resume_tmux_prompt() {
-  if ( ! echo "${TERMINAL_EMULATOR:-}" | grep -iq "jetbrains" \
-    && ! echo "${TERM_PROGRAM:-}" | grep -iq "vscode" \
-    && tmux has-session 2> /dev/null \
-    && [[ -z "$TMUX" ]]); then
-    return 0
-  else
+#|-------------------------------|#
+#| is_interactive_shell
+#|
+#| A more robust interactive check that also detects IDE/agent background shells.
+#| These tools often spawn shells to read environment but aren't truly interactive.
+#|
+#| Usage:
+#|   if is_interactive_shell; then
+#|     # Only run in truly interactive shells (not IDE env readers or AI agents)
+#|     eval "$(some-slow-tool init)"
+#|   fi
+#|
+#|   is_interactive_shell || return  # Early exit for non-interactive/background shells
+#|
+is_interactive_shell() {
+  # ZSH interactive check
+  if [[ -n "$ZSH_VERSION" ]] && [[ ! -o interactive ]]; then
     return 1
   fi
+  # Bash interactive check
+  if [[ -n "$BASH_VERSION" ]] && [[ $- != *i* ]]; then
+    return 1
+  fi
+  # JetBrains IDEs (IntelliJ, WebStorm, PyCharm, etc.)
+  [[ -n "$INTELLIJ_ENVIRONMENT_READER" ]] && return 1
+  # VS Code (environment resolver, shell injection, or spawned shell without terminal)
+  [[ -n "$VSCODE_RESOLVING_ENVIRONMENT" || -n "$VSCODE_INJECTION" ]] && return 1
+  [[ -n "$__CFBundleIdentifier" && "$__CFBundleIdentifier" == *"vscode"* && -z "$TERM_PROGRAM" ]] && return 1
+  # Cursor AI agent
+  [[ -n "$CURSOR_AGENT" ]] && return 1
+  # CI environments (GitHub Actions, generic CI)
+  [[ -n "$GITHUB_ACTIONS" || -n "$CI" ]] && return 1
+  # Dumb terminal (often used by Emacs, IDE integrations)
+  [[ "$TERM" == "dumb" ]] && return 1
+  return 0
+}
+
+should_attempt_resume_tmux_prompt() {
+  # Already in tmux
+  [[ -n "$TMUX" ]] && return 1
+  # No tmux sessions exist
+  ! tmux has-session 2> /dev/null && return 1
+  ! is_interactive_shell && return 1
+  # Exclude IDE terminals, they should not auto-attach to tmux, ever
+  [[ "${TERMINAL_EMULATOR:-}" == *"JetBrains"* ]] && return 1
+  [[ "${TERM_PROGRAM:-}" == *"vscode"* ]] && return 1
+  return 0
 }
 
 resume_tmux_prompt_centered() {
