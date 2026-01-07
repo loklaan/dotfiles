@@ -20,7 +20,8 @@
 #|  - Mise (full)
 #|  - Nix
 #|
-if [[ -o interactive ]] && command -v mise &> /dev/null; then
+source "${HOME}/.local/lib/term.sh"
+if is_interactive_shell && command -v mise &> /dev/null; then
   eval "$(mise activate zsh)"
 fi
 [[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"

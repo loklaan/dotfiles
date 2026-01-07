@@ -17,11 +17,10 @@
 #|-----------------------------------------------------------------------------|
 
 export __ZPROFILE_RUN=0
-source "$ZDOTDIR/.zprofile" # Ensure consistency of startup across all OS's
+source "${ZDOTDIR}/.zprofile" # Ensure consistency of startup across all OS's
+source "${HOME}/.local/lib/term.sh"
 
-if [[ ! -o interactive ]]; then
-  return
-fi
+is_interactive_shell || return;
 
 if [[ -f "${ZSH_CONFIG_DIR}/init/plugins.zsh" ]]; then
   # shellcheck source=home/private_dot_config/exact_private_zsh/init/plugins.zsh.tmpl

@@ -19,10 +19,10 @@ usage() { grep '^#/' "$0" | cut -c4-; }
 
 main() {
   info "▶ Done installing dotfiles!"
-  info "  Continue installing packages:"
-  info "   \$ install-my-packages               👈 ONLY programs & libraries."
-  info "   \$ install-my-packages --gui         👈 Also UI apps."
-  info "   \$ cat \$(which install-my-packages)  👈 See details of the install"
+  info "╍ Continue installing packages:"
+  info "  \$ install-my-packages               👈 ONLY programs & libraries."
+  info "  \$ install-my-packages --gui         👈 Also UI apps."
+  info "  \$ cat \$(which install-my-packages)  👈 See details of the install"
 }
 
 main "$@"
