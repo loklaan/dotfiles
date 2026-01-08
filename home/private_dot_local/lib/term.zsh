@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 
 #|-----------------------------------------------------------------------------|
 #| Cool greeting                                                               |
@@ -146,7 +146,8 @@ resume_tmux_prompt_centered() {
   reset_cursor && cursor_enable && \
   tput cup $prompt_line $(get_cursor_pos_for_horizontal_centering "$message_string_attach_prompt")
 
-  read -n 1 -s -r -p "$message_string_attach_prompt" tmux_prompt_reply 2> /dev/null
+  read -k 1 "?$message_string_attach_prompt" tmux_prompt_reply
+  echo  # newline after input
 
   # throw if we didn't reply yes
   if [[ "$tmux_prompt_reply" != 'y' ]]; then
@@ -156,7 +157,8 @@ resume_tmux_prompt_centered() {
 
 resume_tmux_prompt() {
   color_printf magenta "$message_string_tmux_session_found\n"
-  read -n 1 -s -r -p "$message_string_attach_prompt" tmux_prompt_reply 2> /dev/null
+  read -k 1 "?$message_string_attach_prompt" tmux_prompt_reply
+  echo  # newline after input
 
   # throw if we didn't reply yes
   if [[ "$tmux_prompt_reply" != 'y' ]]; then

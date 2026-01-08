@@ -18,7 +18,7 @@
 
 export __ZPROFILE_RUN=0
 source "${ZDOTDIR}/.zprofile" # Ensure consistency of startup across all OS's
-source "${HOME}/.local/lib/term.sh"
+source "${HOME}/.local/lib/term.zsh"
 
 is_interactive_shell || return;
 
