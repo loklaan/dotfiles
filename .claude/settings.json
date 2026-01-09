@@ -3,6 +3,7 @@
     "allow": [
       "Bash(bash:*)",
       "Bash(cat:*)",
+      "Bash(chezmoi apply:*)",
       "Bash(command -v:*)",
       "Bash(echo:*)",
       "Bash(find:*)",
@@ -18,8 +19,10 @@
       "Skill(coding-error-messages)",
       "Skill(coding-shell-scripts)",
       "Skill(writing-claude-rules-or-skills-or-subagents)",
-      "WebFetch(domain:www.chezmoi.io)",
-      "WebFetch(domain:ghostty.org)"
+      "WebFetch(domain:ghostty.org)",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:unix.stackexchange.com)",
+      "WebFetch(domain:www.chezmoi.io)"
     ]
   }
 }
