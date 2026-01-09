@@ -1,6 +1,9 @@
 ###--------------------------------------------------------------------------###
 ### Terminal Features
 
+## Default Shell
+set-option -g default-shell "{{ lookPath "zsh" }}"
+
 ## Available Colors
 set -g default-terminal "screen-256color"
 set -ga terminal-overrides ",xterm-256color:Tc"
