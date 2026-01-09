@@ -918,6 +918,25 @@ chezmoi apply
 
 ---
 
+## Known Quirks
+
+### mise Plugin Installation Fails with gix Panic
+
+When running `mise ls-remote <plugin>` or `mise install <plugin>`, you may encounter a panic:
+
+```
+Message:  remote was just created and must be visible in config: Find(RefSpec { ... NegativeGlobPattern ... })
+```
+
+**Workaround:** Disable git config for the mise invocation:
+
+```bash
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise ls-remote tmux
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise install tmux@3.6a
+```
+
+---
+
 ## Critical Rules
 
 1. **ALWAYS** use the bash boilerplate for new `.sh` scripts
