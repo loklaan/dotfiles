@@ -1,4 +1,9 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
-{{ $serversConfigDict := includeTemplate "hooks-json-tmpl" . | fromJson }}
-{{ $base | setValueAtPath "hooks" $serversConfigDict | toPrettyJson }}
+{{- $hooksConfig := includeTemplate "hooks-json-tmpl" . | fromJson -}}
+{{- $statusLineConfig := dict "type" "command" "command" (printf "%s/.claude/statusline.sh" .chezmoi.homeDir) "padding" 0 -}}
+{{- $attributionConfig := dict "commit" "" "pr" "" -}}
+{{- $base = $base | setValueAtPath "hooks" $hooksConfig -}}
+{{- $base = $base | setValueAtPath "statusLine" $statusLineConfig -}}
+{{- $base = $base | setValueAtPath "attribution" $attributionConfig -}}
+{{ $base | toPrettyJson }}
