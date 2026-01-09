@@ -34,8 +34,10 @@ set-option -g visual-silence off
 set-window-option -g monitor-activity off
 set-option -g bell-action none
 
-## iTerm Passthrough
-set-option -g allow-passthrough on
+## Terminal Passthrough (tmux 3.3+)
+# TODO: Remove version check once Ubuntu Jammy is deprecated for Coder
+if-shell '[ "$(tmux -V | cut -d" " -f2 | tr -d "a-z")" \> "3.2" ]' \
+  'set-option -g allow-passthrough on'
 
 ###--------------------------------------------------------------------------###
 ### Keybindings
