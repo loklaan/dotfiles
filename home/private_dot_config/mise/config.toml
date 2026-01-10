@@ -18,3 +18,4 @@ tmux = "3.6a"
 [settings]
 idiomatic_version_file_enable_tools = ["node"]
 experimental = true
+gix = false

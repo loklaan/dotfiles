@@ -920,15 +920,22 @@ chezmoi apply
 
 ## Known Quirks
 
-### mise Plugin Installation Fails with gix Panic
+### mise gix Panic with Git Operations
 
-When running `mise ls-remote <plugin>` or `mise install <plugin>`, you may encounter a panic:
+Mise uses gitoxide (gix) by default for git operations, which can panic with certain git configurations:
 
 ```
 Message:  remote was just created and must be visible in config: Find(RefSpec { ... NegativeGlobPattern ... })
 ```
 
-**Workaround:** Disable git config for the mise invocation:
+**Fix:** Disable gix in mise config (`~/.config/mise/config.toml`):
+
+```toml
+[settings]
+gix = false
+```
+
+**Alternative workaround:** If you can't modify the config, disable git config for the invocation:
 
 ```bash
 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise ls-remote tmux
