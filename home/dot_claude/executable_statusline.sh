@@ -14,11 +14,15 @@ input=$(cat)
 MODEL=$(echo "$input" | jq -r '.model.display_name // "Unknown"')
 CONTEXT_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 
-# Calculate context usage
-TOTAL_INPUT=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-CACHE_READ=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
-CURRENT_TOKENS=$((TOTAL_INPUT + CACHE_READ))
-PERCENT=$((CURRENT_TOKENS * 100 / CONTEXT_SIZE))
+# Calculate context usage from current_usage (actual context window state)
+USAGE=$(echo "$input" | jq '.context_window.current_usage')
+if [ "$USAGE" != "null" ]; then
+    CURRENT_TOKENS=$(echo "$USAGE" | jq '.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens')
+    PERCENT=$((CURRENT_TOKENS * 100 / CONTEXT_SIZE))
+else
+    CURRENT_TOKENS=0
+    PERCENT=0
+fi
 
 # Format tokens (e.g., "45.2K" or "1.2M")
 format_tokens() {

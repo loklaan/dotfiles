@@ -11,20 +11,24 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 readonly LOG_FILE="${TMPDIR}/$(basename "$0").${TIMESTAMP}.log"
 
 #/ Usage:
-#/   install.sh
+#/   install.sh [OPTIONS]
 #/
 #/ Description:
 #/   Installs dotfiles and packages.
 #/
 #/ Environment Variables:
-#/   CONFIG_BWS_ACCESS_TOKEN: Required. For authentication—with Bitwarden Secrets.
-#/   CONFIG_SIGNING_KEY:      Required. The primary key of the signing GPG keypair; use `gpg -K` to find it.
-#/   CONFIG_GH_USER:          Dotfiles GitHub user.
-#/   CONFIG_EMAIL:            Personal email address for Git configuration.
-#/   CONFIG_EMAIL_WORK:       Work email address for Git configuration.
+#/   CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
+#/                            When empty, templates using secrets output placeholders.
+#/   CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
+#/                            When empty, commit signing is disabled.
+#/   CONFIG_GH_USER:          Dotfiles GitHub user. (default: loklaan)
+#/   CONFIG_EMAIL:            Personal email for Git. (default: bunn@lochlan.io)
+#/   CONFIG_EMAIL_WORK:       Work email for Git. (default: lochlan@canva.com)
 #/
 #/ Options:
-#/   --help:      Display this help message
+#/   --skip-install-packages: Skip package installation (dotfiles only)
+#/   --gui:                   Include GUI app packages (macOS only)
+#/   --help:                  Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 _print() {
   case "$1" in
@@ -64,22 +68,27 @@ error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
 fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
-  echo "" >&2
   _print white dim "Log: $LOG_FILE" >&2
 }
 
 parse_args() {
-  if [ -z "${CONFIG_BWS_ACCESS_TOKEN:-}" ] || [ -z "${CONFIG_SIGNING_KEY:-}" ]; then
-    usage
-    echo "" >&2
-    fatal "Missing required environment variables."
-  fi
+  # Initialize flags with defaults
+  skip_packages=1  # 1 = false (install packages), 0 = true (skip)
+  install_gui=1    # 1 = false (no GUI), 0 = true (include GUI)
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --help)
         usage
         exit 0
+        ;;
+      --skip-install-packages)
+        skip_packages=0
+        shift
+        ;;
+      --gui)
+        install_gui=0
+        shift
         ;;
       *)
         usage
@@ -88,6 +97,7 @@ parse_args() {
     esac
   done
 
+  # Set config variables with defaults (all optional)
   config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
   config_signing_key="${CONFIG_SIGNING_KEY:-}"
   config_github_user="${CONFIG_GH_USER:-"loklaan"}"
@@ -167,19 +177,34 @@ main() {
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
   info "╍ Running mise for chezmoi and bitwarden"
-  _print white dim "Tip: Install non-critical packages anytime with \`install-my-packages\`"
-  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[tag_regex=^bws,exe=bws]@bws-v1.0.0'
+  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[tag_regex=^bws,exe=bws]@bws-v1.0.0' >/dev/null 2>&1
 
-  # Run chezmoi init
+  # Generate chezmoi config to bypass interactive prompts
+  generate_chezmoi_config
+
+  # Run chezmoi init (skip scripts - they run after packages are installed)
   info "▶ Installing templated dotfiles with 'chezmoi init'"
-  BWS_ACCESS_TOKEN="$config_bw_access_token" exec chezmoi init "$config_github_user" \
+  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi init "$config_github_user" \
     --apply \
-    --branch main \
-    --promptString email="$config_email" \
-    --promptString emailWork="$config_email_work" \
-    --promptString signingKey="$config_signing_key"
+    --exclude=scripts \
+    --branch main
 
-  info "▶ Installed dotfiles. Done."
+  # Install packages unless skipped
+  if [ "$skip_packages" -eq 1 ]; then
+    run_package_installation
+    info "▶ Dotfiles installed. Package installation skipped."
+    info "╍ Run 'install-my-packages --gui' to install UI apps."
+  else
+    info "▶ Dotfiles installed. Package installation skipped."
+    info "╍ Run 'install-my-packages' to install packages later."
+    info "  or  'install-my-packages --gui'"
+  fi
+
+  # Run lifecycle scripts (completions, fonts, etc.)
+  info "▶ Running chezmoi lifecycle scripts"
+  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply
+
+  info "▶ Installation complete."
 }
 
 get_os_kind() {
@@ -206,6 +231,56 @@ get_linux_distro() {
     . /etc/os-release
     echo "$ID"
   )
+}
+
+generate_chezmoi_config() {
+  local config_dir="${HOME}/.config/chezmoi"
+  local config_file="${config_dir}/chezmoi.toml"
+
+  # Preserve existing config if present
+  if [ -f "$config_file" ]; then
+    info "╍ Using existing chezmoi config at $config_file"
+    return 0
+  fi
+
+  info "╍ Pre-generating chezmoi config to bypass prompts"
+  mkdir -p "$config_dir"
+
+  # Determine brewprefix based on architecture
+  local brewprefix=""
+  if [ "$(get_os_kind)" = "macos" ]; then
+    if [ "$(uname -m)" = "arm64" ]; then
+      brewprefix="/opt/homebrew"
+    else
+      brewprefix="/usr/local"
+    fi
+  fi
+
+  cat > "$config_file" << EOF
+[data]
+  email = "$config_email"
+  emailWork = "$config_email_work"
+  signingKey = "$config_signing_key"
+  brewprefix = "$brewprefix"
+EOF
+  info "╍ Wrote config to $config_file"
+}
+
+run_package_installation() {
+  local install_script="${HOME}/.local/bin/install-my-packages"
+
+  if [ ! -x "$install_script" ]; then
+    fatal "Package installation script not found: $install_script"
+  fi
+
+  # Build arguments based on flags
+  local args=()
+  if [ "$install_gui" -eq 0 ]; then
+    args+=("--gui")
+  fi
+
+  # Run the installation script
+  "$install_script" "${args[@]}"
 }
 
 trap cleanup EXIT

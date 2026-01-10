@@ -1,5 +1,7 @@
-{{- if ne "" .emailWork -}}
+{{- if env "BWS_ACCESS_TOKEN" -}}
+{{-   if ne "" .emailWork -}}
 {{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly).value }}
-{{- else -}}
+{{-   else -}}
 {{ (bitwardenSecrets .bwsIdGithubAuthToken).value }}
+{{-   end -}}
 {{- end -}}

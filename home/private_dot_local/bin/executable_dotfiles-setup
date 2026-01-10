@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   dotfiles-setup [OPTIONS]
+#/
+#/ Description:
+#/   Checks dotfiles configuration status and provides instructions for
+#/   completing setup. Run this after initial dotfiles installation.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+readonly STATUS_FILE="${HOME}/.local/state/dotfiles/setup-status"
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+read_status() {
+  has_bws_env="false"
+  has_signing_key="false"
+
+  if [ -f "$STATUS_FILE" ]; then
+    # Source the status file to get variables
+    # shellcheck source=/dev/null
+    while IFS='=' read -r key value; do
+      case "$key" in
+        has_run_with_bws_env) has_bws_env="$value" ;;
+        has_run_with_signing_key) has_signing_key="$value" ;;
+      esac
+    done < <(grep -v '^#' "$STATUS_FILE" | grep -v '^$')
+  fi
+}
+
+print_status() {
+  info "▶ Dotfiles Configuration Status"
+  echo ""
+
+  if [ "$has_bws_env" = "true" ]; then
+    _print green "  ✓ BWS_ACCESS_TOKEN: applied"
+    _print white dim "    npm auth token, GITHUB_TOKEN, pr-train configured"
+  else
+    _print yellow "  ✗ BWS_ACCESS_TOKEN: not applied"
+    _print white dim "    Missing: npm auth token, GITHUB_TOKEN, pr-train"
+  fi
+
+  if [ "$has_signing_key" = "true" ]; then
+    _print green "  ✓ signingKey: applied"
+  else
+    _print yellow "  ✗ signingKey: not applied"
+    _print white dim "    Git commit signing disabled"
+  fi
+
+  echo ""
+}
+
+print_instructions() {
+  local missing_bws="$1"
+  local missing_key="$2"
+
+  if [ "$missing_bws" = "false" ] && [ "$missing_key" = "false" ]; then
+    info "▶ All configuration complete!"
+    return
+  fi
+
+  _print cyan bold "To complete setup:"
+  echo ""
+
+  if [ "$missing_bws" = "true" ]; then
+    echo "1. Get your BWS_ACCESS_TOKEN from Bitwarden Secrets Manager:"
+    echo "   https://vault.bitwarden.com → Secrets Manager → Machine accounts"
+    echo ""
+  fi
+
+  if [ "$missing_key" = "true" ]; then
+    echo "2. Get your signing key:"
+    echo "   GPG: Run 'gpg -K --keyid-format SHORT' to list keys"
+    echo "   SSH: Use path like '~/.ssh/id_ed25519.pub'"
+    echo ""
+  fi
+
+  echo "Then re-run install.sh with the missing values:"
+  echo ""
+
+  # Build the command
+  local cmd="  "
+  if [ "$missing_bws" = "true" ]; then
+    cmd+="CONFIG_BWS_ACCESS_TOKEN=<your-token> "
+  fi
+  if [ "$missing_key" = "true" ]; then
+    cmd+="CONFIG_SIGNING_KEY=<your-key> "
+  fi
+  cmd+="\$HOME/.local/share/chezmoi/install.sh"
+
+  _print red "$cmd"
+  echo ""
+
+  info "╍ This will re-apply all dotfiles with secrets populated"
+}
+
+main() {
+  parse_args "$@"
+
+  if [ ! -f "$STATUS_FILE" ]; then
+    warning "Status file not found: $STATUS_FILE"
+    info "╍ Run 'chezmoi apply' first to generate status"
+    exit 1
+  fi
+
+  read_status
+  print_status
+
+  local missing_bws="false"
+  local missing_key="false"
+
+  if [ "$has_bws_env" = "false" ]; then
+    missing_bws="true"
+  fi
+  if [ "$has_signing_key" = "false" ]; then
+    missing_key="true"
+  fi
+
+  print_instructions "$missing_bws" "$missing_key"
+}
+
+main "$@"
