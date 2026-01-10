@@ -200,8 +200,9 @@ main() {
     info "  or  'install-my-packages --gui'"
   fi
 
-  # Run lifecycle scripts (completions, fonts, etc.)
-  info "▶ Running chezmoi lifecycle scripts"
+  # Pull latest changes and run lifecycle scripts (completions, fonts, etc.)
+  info "▶ Pulling latest dotfiles and running lifecycle scripts"
+  chezmoi git pull
   BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply
 
   info "▶ Installation complete."
