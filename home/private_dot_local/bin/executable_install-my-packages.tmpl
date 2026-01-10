@@ -42,10 +42,8 @@ main() {
   parse_args "$@"
   info "▶ Installing non-critical packages"
 
-  info "╍ Running 'mise install'"
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
-  mise install
 
   {{ if eq .chezmoi.os "darwin" }}
   #
@@ -225,6 +223,9 @@ EOF
   fatal "Not implemented for this OS: {{ .chezmoi.os }}"
 
   {{ end }}
+
+  info "╍ Running 'mise install'"
+  mise install
 }
 
 main "$@"
