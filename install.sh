@@ -177,7 +177,7 @@ main() {
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
   info "╍ Running mise for chezmoi and bitwarden"
-  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[tag_regex=^bws,exe=bws]@bws-v1.0.0' >/dev/null 2>&1
+  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0' >/dev/null 2>&1
 
   # Generate chezmoi config to bypass interactive prompts
   generate_chezmoi_config
