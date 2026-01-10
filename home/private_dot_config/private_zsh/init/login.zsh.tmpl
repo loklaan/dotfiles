@@ -42,3 +42,21 @@ export GPG_TTY=$(tty)
 #|
 [ -e "$HOME/.coder.sh" ] && . "$HOME/.coder.sh"
 
+#|------------------------------------------------------------|#
+#| Dotfiles Setup Reminder
+#|
+#| Shows a reminder if secrets were not applied during chezmoi install.
+#|
+_dotfiles_status_file="$HOME/.local/state/dotfiles/setup-status"
+if [[ -f "$_dotfiles_status_file" ]]; then
+  _has_bws=$(grep '^has_run_with_bws_env=' "$_dotfiles_status_file" 2>/dev/null | cut -d= -f2)
+  _has_key=$(grep '^has_run_with_signing_key=' "$_dotfiles_status_file" 2>/dev/null | cut -d= -f2)
+  if [[ "$_has_bws" != "true" || "$_has_key" != "true" ]]; then
+    echo ""
+    print -P "%F{yellow}Dotfiles applied with incomplete configuration.%f"
+    print -P "Run %F{cyan}dotfiles-setup%f for instructions."
+    echo ""
+  fi
+  unset _has_bws _has_key
+fi
+unset _dotfiles_status_file

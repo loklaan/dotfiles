@@ -32,6 +32,15 @@ main() {
     fatal "You must manually install zsh and set it as the default shell.\n 1. Install \"zsh\"\n 2. Run: chsh -s \"$zsh_shell\""
   fi
 
+  # In Coder devbox, skip /etc/shells and sudo
+  if [[ -n "${CODER:-}" ]]; then
+    info "╍ Coder detected, skipping /etc/shells modification"
+    info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
+    chsh -s "$zsh_shell"
+    info "╍ Now, run 'zsh' to start a new term session"
+    return
+  fi
+
   if [ "$(id -u)" = "0" ]; then
     Sudo=''
     info "╍ Root user detected, skipping sudo for following commands"
@@ -46,14 +55,13 @@ main() {
   # Check if the zsh_shell exists in /etc/shells, if not just append it in
   if ! grep -q "^${zsh_shell}$" /etc/shells; then
     info "╍ Adding ${zsh_shell} to /etc/shells"
-    echo "$zsh_shell" | sudo tee -a /etc/shells >/dev/null
+    echo "$zsh_shell" | $Sudo tee -a /etc/shells >/dev/null
   else
     info "╍ ${zsh_shell} exists in /etc/shells"
   fi
 
   # Change the default shell to zsh, if it isn't already the default
   info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
-  {{/*  $Sudo chsh -s "$zsh_shell" <user>*/}}
   chsh -s "$zsh_shell" $(whoami)
 
   info "╍ Now, run 'zsh' to start a new term session"

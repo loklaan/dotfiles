@@ -126,7 +126,7 @@ main() {
   fi
 
   # Brew managed programs/libraries
-  brew bundle --no-lock --file=/dev/stdin <<EOF
+  brew bundle --file=/dev/stdin <<EOF
 {{ range ($brews | sortAlpha | uniq) -}}
 brew {{ . | quote }}
 {{ end -}}
@@ -134,7 +134,7 @@ EOF
 
   # Brew managed GUI
   if [ $gui -eq 0 ]; then
-    brew bundle --no-lock --file=/dev/stdin <<EOF
+    brew bundle --file=/dev/stdin <<EOF
 {{ range ($casks | sortAlpha | uniq) -}}
 cask {{ . | quote }}
 {{ end -}}
@@ -142,6 +142,7 @@ EOF
   fi
 
   # Go built binaries
+  info "╍ Running 'go install'"
   {{ range ($goget | sortAlpha | uniq) -}}
   mise x -- go install {{ . | quote }}
   {{ end -}}
