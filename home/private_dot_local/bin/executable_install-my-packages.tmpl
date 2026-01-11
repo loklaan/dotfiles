@@ -5,12 +5,16 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   install-my-packages [--gui]
 #/
 #/ Description:
 #/   Installs non-critical packages.
+#/
+#/ Environment Variables:
+#/   DEBUG=1      Enable command tracing (set -x) in logs
 #/
 #/ Options:
 #/   --gui:       Includes GUI app packages, like browsers etc.
@@ -120,7 +124,7 @@ main() {
        "github.com/equinix-labs/otel-cli@latest" -}}
 
   if ! command -v brew > /dev/null; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
   # Brew managed programs/libraries
@@ -225,7 +229,7 @@ EOF
   {{ end }}
 
   info "╍ Running 'mise install'"
-  mise install
+  mise install -y
 }
 
 main "$@"

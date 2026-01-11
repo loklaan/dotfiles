@@ -944,6 +944,34 @@ GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise install tmux@3.6a
 
 ---
 
+## Non-Interactive Script Execution
+
+Scripts in this repository may run in non-TTY environments like Docker, Devcontainers, or Coder—usually for chezmoi lifecycle hooks and automated installs. All commands that could prompt for user input MUST be forced to run non-interactively.
+
+**Scripts that require non-interactive mode:**
+- `install.sh` - standalone installer
+- `.chezmoiscripts/*` - chezmoi lifecycle scripts
+- `home/private_dot_local/bin/executable_*` - user bin scripts
+
+**Common commands and their non-interactive flags:**
+
+| Command | Non-Interactive Flag/Approach |
+|---------|------------------------------|
+| `mise use` | `-y` or `--yes` |
+| `mise install` | `-y` or `--yes` |
+| `chezmoi init` | `--force` |
+| `chezmoi apply` | `--force` |
+| `apt install` | `-y` |
+| `yum install` | `-y` |
+| `apk add` | (non-interactive by default) |
+| `brew bundle` | (non-interactive by default) |
+| Homebrew install script | `NONINTERACTIVE=1` env var |
+| `chsh` | Cannot be forced - will prompt for password |
+
+**When adding new commands:** Always check if the command can prompt for input and add the appropriate flag to suppress it. If a command cannot be made non-interactive (like `chsh`), document it clearly in a comment.
+
+---
+
 ## Critical Rules
 
 1. **ALWAYS** use the bash boilerplate for new `.sh` scripts

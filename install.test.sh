@@ -118,7 +118,7 @@ _printf() {
   done
 
   supported_colors=$(tput colors 2>/dev/null)
-  if [ "$supported_colors" -gt 8 ]; then
+  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
     printf "\033[${color}m%s\033[0m" "$1"
   else
     printf "%s" "$1"

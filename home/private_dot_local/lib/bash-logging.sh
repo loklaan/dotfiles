@@ -11,9 +11,14 @@
 #|   setup_session_logging "$(basename "$0")"                                |
 #|   info "Your message"                                                      |
 #|                                                                            |
-#| When run via chezmoi (with marker file at /tmp/.chezmoi-session-current), |
-#| all output is redirected to both terminal and the session log file.       |
-#| When running standalone, output goes to terminal only.                    |
+#| Logging behavior:                                                          |
+#|   - Via chezmoi (marker at /tmp/.chezmoi-session-current): uses session   |
+#|     log shared across all chezmoi scripts                                  |
+#|   - Standalone: creates /tmp/<script>.<timestamp>.log                     |
+#|                                                                            |
+#| Environment Variables:                                                     |
+#|   DEBUG=1              Enable command tracing (set -x) in logs            |
+#|   CHEZMOI_SESSION_LOG  Override log file path (legacy)                    |
 #|                                                                            |
 #|----------------------------------------------------------------------------|
 
@@ -43,7 +48,7 @@ color_printf() {
   done
 
   supported_colors=$(tput colors 2>/dev/null)
-  if [ "$supported_colors" -gt 8 ]; then
+  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
     printf "\\033[${color}m%b\\033[0m" "$1"
   else
     printf "%b" "$1"
@@ -75,43 +80,53 @@ setup_session_logging() {
   local marker_file="/tmp/.chezmoi-session-current"
   local session_log=""
 
+  # Normalize TMPDIR
+  local tmpdir="${TMPDIR:-/tmp}"
+  tmpdir="${tmpdir%/}"
+
   # Print startup message
   _print magenta dim "Script: $script_name"
 
-  # Check for marker file first
+  # Determine log file location (in priority order)
   if [ -f "$marker_file" ]; then
+    # Chezmoi session marker exists - use shared session log
     session_log=$(cat "$marker_file" 2>/dev/null | head -n 1 | tr -d '\n')
-
-    # Validate that the log file path is reasonable
-    if [ -n "$session_log" ] && [ -w "$(dirname "$session_log")" ]; then
-      # Log script boundary marker
-      echo "" >> "$session_log"
-      echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
-
-      # Redirect all output to both terminal and session log
-      exec > >(tee -a "$session_log")
-      exec 2>&1
-
-      return 0
-    else
+    if [ -z "$session_log" ] || [ ! -w "$(dirname "$session_log")" ]; then
       warning "Invalid log path in marker file: $session_log"
+      session_log=""
     fi
   fi
 
-  # Fallback to environment variable (backward compatibility)
-  if [ -n "${CHEZMOI_SESSION_LOG:-}" ]; then
+  if [ -z "$session_log" ] && [ -n "${CHEZMOI_SESSION_LOG:-}" ]; then
+    # Fallback to environment variable (legacy)
     session_log="$CHEZMOI_SESSION_LOG"
-
-    # Log script boundary marker
-    echo "" >> "$session_log"
-    echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
-
-    # Redirect all output to both terminal and session log
-    exec > >(tee -a "$session_log")
-    exec 2>&1
-
-    return 0
   fi
 
-  # No session logging available - standalone mode
+  if [ -z "$session_log" ]; then
+    # Standalone mode - create own log file
+    session_log="${tmpdir}/${script_name}.${timestamp}.log"
+  fi
+
+  # Log script boundary marker
+  echo "" >> "$session_log"
+  echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
+
+  # Redirect all output to both terminal and session log
+  exec > >(tee -a "$session_log")
+  exec 2>&1
+
+  # Enable debug tracing if requested
+  if [ "${DEBUG:-0}" = "1" ]; then
+    set -x
+    info "DEBUG mode enabled - command tracing active"
+  fi
+
+  # Store log path for reference
+  export BASH_LOGGING_FILE="$session_log"
+}
+
+print_log_path() {
+  if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+    _print white dim "Log: $BASH_LOGGING_FILE"
+  fi
 }

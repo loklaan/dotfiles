@@ -10,6 +10,14 @@ TMPDIR="${TMPDIR%/}"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 readonly LOG_FILE="${TMPDIR}/$(basename "$0").${TIMESTAMP}.log"
 
+# Redirect all output to both terminal and log file
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Enable debug tracing if requested
+if [ "${DEBUG:-0}" = "1" ]; then
+  set -x
+fi
+
 #/ Usage:
 #/   install.sh [OPTIONS]
 #/
@@ -17,6 +25,7 @@ readonly LOG_FILE="${TMPDIR}/$(basename "$0").${TIMESTAMP}.log"
 #/   Installs dotfiles and packages.
 #/
 #/ Environment Variables:
+#/   DEBUG:                   Set to 1 to enable command tracing (set -x) in logs.
 #/   CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
 #/                            When empty, templates using secrets output placeholders.
 #/   CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
@@ -55,17 +64,17 @@ _print() {
     shift
   done
 
-  supported_colors=$(tput colors 2>/dev/null)
-  if [ "$supported_colors" -gt 8 ]; then
+  supported_colors=$(tput colors 2>/dev/null || echo 0)
+  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
     printf "\\033[${color}m%s\\033[0m\\n" "$1"
   else
     printf "%s\n" "$1"
   fi
 }
-info() { _print cyan "[INFO] $@" | tee -a "$LOG_FILE" >&2 ; }
-warning() { _print yellow "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
-error() { _print red "[ERROR] $@" | tee -a "$LOG_FILE" >&2 ; }
-fatal() { _print red bold "[FATAL] $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+info() { _print cyan "[INFO] $@" >&2 ; }
+warning() { _print yellow "[WARNING] $@" >&2 ; }
+error() { _print red "[ERROR] $@" >&2 ; }
+fatal() { _print red bold "[FATAL] $@" >&2 ; exit 1 ; }
 
 cleanup() {
   _print white dim "Log: $LOG_FILE" >&2
@@ -177,7 +186,7 @@ main() {
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
   info "╍ Running mise for chezmoi and bitwarden"
-  mise use --global chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0' >/dev/null 2>&1
+  mise use --global -y chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0' >/dev/null 2>&1
 
   # Generate chezmoi config to bypass interactive prompts
   generate_chezmoi_config
@@ -186,14 +195,15 @@ main() {
   info "▶ Installing templated dotfiles with 'chezmoi init'"
   BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi init "$config_github_user" \
     --apply \
+    --force \
     --exclude=scripts \
     --branch main
 
   # Install packages unless skipped
   if [ "$skip_packages" -eq 1 ]; then
     run_package_installation
-    info "▶ Dotfiles installed. Package installation skipped."
-    info "╍ Run 'install-my-packages --gui' to install UI apps."
+    info "▶ Dotfiles and packages installed."
+    info "╍ Run 'install-my-packages --gui' to install GUI apps."
   else
     info "▶ Dotfiles installed. Package installation skipped."
     info "╍ Run 'install-my-packages' to install packages later."
@@ -203,7 +213,7 @@ main() {
   # Pull latest changes and run lifecycle scripts (completions, fonts, etc.)
   info "▶ Pulling latest dotfiles and running lifecycle scripts"
   chezmoi git pull
-  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply
+  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply --force
 
   info "▶ Installation complete."
 }
@@ -280,8 +290,12 @@ run_package_installation() {
     args+=("--gui")
   fi
 
-  # Run the installation script
-  "$install_script" "${args[@]}"
+  # Run the installation script (skip empty args)
+  if [ ${#args[@]} -eq 0 ]; then
+    "$install_script"
+  else
+    "$install_script" "${args[@]}"
+  fi
 }
 
 trap cleanup EXIT

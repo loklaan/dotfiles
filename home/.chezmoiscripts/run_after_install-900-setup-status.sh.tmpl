@@ -50,8 +50,6 @@ has_run_with_bws_env=$has_bws_env
 has_run_with_signing_key=$has_signing_key
 EOF
 
-  info "╍ Status written to $STATUS_FILE"
-
   # Show reminder if setup is incomplete
   if [ "$has_bws_env" = "false" ] || [ "$has_signing_key" = "false" ]; then
     echo ""
