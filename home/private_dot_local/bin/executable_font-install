@@ -5,6 +5,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   font-install

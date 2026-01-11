@@ -62,7 +62,7 @@ main() {
 
   # Change the default shell to zsh, if it isn't already the default
   info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
-  chsh -s "$zsh_shell" $(whoami)
+  chsh -s "$zsh_shell" "$(whoami)"
 
   info "╍ Now, run 'zsh' to start a new term session"
 }
