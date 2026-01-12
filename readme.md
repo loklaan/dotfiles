@@ -11,20 +11,23 @@ Lochy's dotfiles
 
 ```text
 Usage:
-  install.sh
+  install.sh [OPTIONS]
 
 Description:
   Installs dotfiles and packages.
 
 Environment Variables:
-  CONFIG_BWS_ACCESS_TOKEN: Required. For authentication—with Bitwarden Secrets.
-  CONFIG_SIGNING_KEY:      Required. The primary key of the signing GPG keypair; use `gpg -K` to find it.
-  CONFIG_GH_USER:          Dotfiles GitHub user.
-  CONFIG_EMAIL:            Personal email address for Git configuration.
-  CONFIG_EMAIL_WORK:       Work email address for Git configuration.
+  DEBUG:                   Set to 1 to enable command tracing (set -x) in logs.
+  CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
+                           When empty, templates using secrets output placeholders.
+  CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
+                           When empty, commit signing is disabled.
+  CONFIG_GH_USER:          Dotfiles GitHub user. (default: loklaan)
+  CONFIG_EMAIL:            Personal email for Git. (default: bunn@lochlan.io)
+  CONFIG_EMAIL_WORK:       Work email for Git. (default: lochlan@canva.com)
 
 Options:
-  --help:      Display this help message
+  --help:                  Display this help message
 ```
 
 ### Full install
