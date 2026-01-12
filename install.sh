@@ -35,8 +35,6 @@ fi
 #/   CONFIG_EMAIL_WORK:       Work email for Git. (default: lochlan@canva.com)
 #/
 #/ Options:
-#/   --skip-install-packages: Skip package installation (dotfiles only)
-#/   --gui:                   Include GUI app packages (macOS only)
 #/   --help:                  Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 _print() {
@@ -81,23 +79,11 @@ cleanup() {
 }
 
 parse_args() {
-  # Initialize flags with defaults
-  skip_packages=1  # 1 = false (install packages), 0 = true (skip)
-  install_gui=1    # 1 = false (no GUI), 0 = true (include GUI)
-
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --help)
         usage
         exit 0
-        ;;
-      --skip-install-packages)
-        skip_packages=0
-        shift
-        ;;
-      --gui)
-        install_gui=0
-        shift
         ;;
       *)
         usage
@@ -199,23 +185,13 @@ main() {
     --exclude=scripts \
     --branch main
 
-  # Install packages unless skipped
-  if [ "$skip_packages" -eq 1 ]; then
-    run_package_installation
-    info "▶ Dotfiles and packages installed."
-    info "╍ Run 'install-my-packages --gui' to install GUI apps."
-  else
-    info "▶ Dotfiles installed. Package installation skipped."
-    info "╍ Run 'install-my-packages' to install packages later."
-    info "  or  'install-my-packages --gui'"
-  fi
-
-  # Pull latest changes and run lifecycle scripts (completions, fonts, etc.)
+  # Pull latest changes and run lifecycle scripts (packages, completions, fonts, etc.)
   info "▶ Pulling latest dotfiles and running lifecycle scripts"
   chezmoi git pull
   BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply --force
 
   info "▶ Installation complete."
+  info "╍ Run 'install-my-packages --gui' to install GUI apps."
 }
 
 get_os_kind() {
@@ -242,27 +218,6 @@ get_linux_distro() {
     . /etc/os-release
     echo "$ID"
   )
-}
-
-run_package_installation() {
-  local install_script="${HOME}/.local/bin/install-my-packages"
-
-  if [ ! -x "$install_script" ]; then
-    fatal "Package installation script not found: $install_script"
-  fi
-
-  # Build arguments based on flags
-  local args=()
-  if [ "$install_gui" -eq 0 ]; then
-    args+=("--gui")
-  fi
-
-  # Run the installation script (skip empty args)
-  if [ ${#args[@]} -eq 0 ]; then
-    "$install_script"
-  else
-    "$install_script" "${args[@]}"
-  fi
 }
 
 trap cleanup EXIT

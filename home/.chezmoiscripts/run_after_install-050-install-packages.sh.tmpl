@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-050-install-packages.sh
+#/
+#/ Description:
+#/   Installs non-critical packages via install-my-packages.
+#/   GUI apps are not installed by this hook - run install-my-packages --gui manually.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+main() {
+  local install_script="${HOME}/.local/bin/install-my-packages"
+
+  if [ -x "$install_script" ]; then
+    "$install_script"
+  else
+    warning "install-my-packages not found or not executable"
+    warning "Expected location: $install_script"
+  fi
+}
+
+main "$@"
