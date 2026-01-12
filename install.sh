@@ -108,10 +108,6 @@ parse_args() {
 
   # Set config variables with defaults (all optional)
   config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
-  config_signing_key="${CONFIG_SIGNING_KEY:-}"
-  config_github_user="${CONFIG_GH_USER:-"loklaan"}"
-  config_email="${CONFIG_EMAIL:-"bunn@lochlan.io"}"
-  config_email_work="${CONFIG_EMAIL_WORK:-"lochlan@canva.com"}"
 }
 
 main() {
@@ -188,12 +184,16 @@ main() {
   info "╍ Running mise for chezmoi and bitwarden"
   mise use --global -y chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0' >/dev/null 2>&1
 
-  # Generate chezmoi config to bypass interactive prompts
-  generate_chezmoi_config
-
   # Run chezmoi init (skip scripts - they run after packages are installed)
+  #  - Prompts should be kept in-sync with .chezmoi.toml.tmpl config
   info "▶ Installing templated dotfiles with 'chezmoi init'"
+  config_github_user="${CONFIG_GH_USER:-"loklaan"}"
+  config_email="${CONFIG_EMAIL:-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
+  config_email_work="${CONFIG_EMAIL_WORK:-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
+  config_signing_key="${CONFIG_SIGNING_KEY:-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
   BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi init "$config_github_user" \
+    --data=false \
+    --promptString="Email for you=${config_email},Email for Canva=${config_email_work},Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
     --apply \
     --force \
     --exclude=scripts \
@@ -242,39 +242,6 @@ get_linux_distro() {
     . /etc/os-release
     echo "$ID"
   )
-}
-
-generate_chezmoi_config() {
-  local config_dir="${HOME}/.config/chezmoi"
-  local config_file="${config_dir}/chezmoi.toml"
-
-  # Preserve existing config if present
-  if [ -f "$config_file" ]; then
-    info "╍ Using existing chezmoi config at $config_file"
-    return 0
-  fi
-
-  info "╍ Pre-generating chezmoi config to bypass prompts"
-  mkdir -p "$config_dir"
-
-  # Determine brewprefix based on architecture
-  local brewprefix=""
-  if [ "$(get_os_kind)" = "macos" ]; then
-    if [ "$(uname -m)" = "arm64" ]; then
-      brewprefix="/opt/homebrew"
-    else
-      brewprefix="/usr/local"
-    fi
-  fi
-
-  cat > "$config_file" << EOF
-[data]
-  email = "$config_email"
-  emailWork = "$config_email_work"
-  signingKey = "$config_signing_key"
-  brewprefix = "$brewprefix"
-EOF
-  info "╍ Wrote config to $config_file"
 }
 
 run_package_installation() {
