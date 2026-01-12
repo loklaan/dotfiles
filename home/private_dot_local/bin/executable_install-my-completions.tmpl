@@ -24,8 +24,10 @@ readonly RESET='\033[0m'
 declare -A JOB_PIDS=()
 declare -A JOB_NAMES=()
 declare -A JOB_STATUS=()
+declare -A JOB_START_TIMES=()
 declare -a JOB_ORDER=()
 readonly JOB_TMPDIR="${TMPDIR}/install-completions-$$"
+readonly JOB_TIMEOUT_SECONDS=10
 
 #/ Usage:
 #/   install-my-completions
@@ -66,6 +68,7 @@ start_job() {
   JOB_PIDS["$job_id"]=$pid
   JOB_NAMES["$job_id"]="$job_name"
   JOB_STATUS["$job_id"]="running"
+  JOB_START_TIMES["$job_id"]=$(date +%s)
   JOB_ORDER+=("$job_id")
 }
 
@@ -85,6 +88,21 @@ check_job_status() {
     else
       JOB_STATUS["$job_id"]="failed"
     fi
+    return 0
+  fi
+
+  # Check for timeout
+  local start_time="${JOB_START_TIMES[$job_id]}"
+  local current_time
+  current_time=$(date +%s)
+  local elapsed=$((current_time - start_time))
+
+  if [ "$elapsed" -ge "$JOB_TIMEOUT_SECONDS" ]; then
+    kill "$pid" 2>/dev/null || true
+    # Also kill any child processes
+    pkill -P "$pid" 2>/dev/null || true
+    JOB_STATUS["$job_id"]="timeout"
+    echo "Killed after ${elapsed}s timeout" > "${result_file}.log"
     return 0
   fi
 
@@ -234,19 +252,31 @@ main() {
 
   local success_count=0
   local failed_count=0
+  local timeout_count=0
+  local timed_out_jobs=()
 
   for job_id in "${JOB_ORDER[@]}"; do
-    if [ "${JOB_STATUS[$job_id]}" = "success" ]; then
-      ((++success_count))
-    else
-      ((++failed_count))
-    fi
+    case "${JOB_STATUS[$job_id]}" in
+      success)
+        ((++success_count))
+        ;;
+      timeout)
+        ((++timeout_count))
+        timed_out_jobs+=("${JOB_NAMES[$job_id]}")
+        ;;
+      *)
+        ((++failed_count))
+        ;;
+    esac
   done
 
   info "▶ Completion installation summary:"
   info "  ✓ Installed: ${success_count}"
   if [ "$failed_count" -gt 0 ]; then
     info "  ✗ Failed: ${failed_count}"
+  fi
+  if [ "$timeout_count" -gt 0 ]; then
+    info "  ⏱ Timed out (>${JOB_TIMEOUT_SECONDS}s): ${timeout_count} (${timed_out_jobs[*]})"
   fi
 
   if [ "$success_count" -eq 0 ]; then
