@@ -47,7 +47,7 @@ color_printf() {
     shift
   done
 
-  supported_colors=$(tput colors 2>/dev/null)
+  supported_colors=$(tput colors 2>/dev/null || echo 0)
   if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
     printf "\\033[${color}m%b\\033[0m" "$1"
   else
