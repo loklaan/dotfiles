@@ -17,17 +17,21 @@ Description:
   Installs dotfiles and packages.
 
 Environment Variables:
-  DEBUG:                   Set to 1 to enable command tracing (set -x) in logs.
-  CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
-                           When empty, templates using secrets output placeholders.
-  CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
-                           When empty, commit signing is disabled.
-  CONFIG_GH_USER:          Dotfiles GitHub user. (default: loklaan)
-  CONFIG_EMAIL:            Personal email for Git. (default: bunn@lochlan.io)
-  CONFIG_EMAIL_WORK:       Work email for Git. (default: lochlan@canva.com)
+  DEBUG:                     Set to 1 to enable command tracing (set -x) in logs.
+  CONFIG_BWS_ACCESS_TOKEN:   Optional. BWS token to fetch age identity. Takes precedence over
+                             existing identity. Prompts interactively if empty (skips if non-TTY).
+  CONFIG_AGE_IDENTITY_TYPE:  Optional. Override auto-detected age identity type.
+                             Values: personal, work-machine, work-remote.
+                             Auto-detection: work-remote (Canva devbox), work-machine (MDM enrolled),
+                             otherwise personal.
+  CONFIG_SIGNING_KEY:        Optional. The primary key of the signing GPG keypair.
+                             When empty, commit signing is disabled.
+  CONFIG_GH_USER:            Dotfiles GitHub user. (default: loklaan)
+  CONFIG_EMAIL:              Personal email for Git. (default: bunn@lochlan.io)
+  CONFIG_EMAIL_WORK:         Work email for Git. (default: lochlan@canva.com)
 
 Options:
-  --help:                  Display this help message
+  --help:                    Display this help message
 ```
 
 ### Full install
@@ -35,21 +39,25 @@ Options:
 _(inc. chezmoi, bitwarden, mise)_
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/loklaan/dotfiles/main/install.sh | \
-  CONFIG_SIGNING_KEY=... \
-  CONFIG_BWS_ACCESS_TOKEN=... \
-  bash
+# Clone to chezmoi's source directory
+git clone https://github.com/loklaan/dotfiles.git ~/.local/share/chezmoi
+
+# Run install (will prompt for BWS token interactively)
+~/.local/share/chezmoi/install.sh
+
+# Or non-interactive (CI, Docker, etc.)
+CONFIG_BWS_ACCESS_TOKEN=... ~/.local/share/chezmoi/install.sh
 ```
 
 ### Update to latest
 
 ```shell
-BWS_ACCESS_TOKEN=... chezmoi update
+chezmoi update
 
 # Or:
 chezmoi cd
 git pull
-BWS_ACCESS_TOKEN=... chezmoi apply
+chezmoi apply
 ```
 
 
@@ -71,6 +79,16 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 - Post-install automation via `.chezmoiscripts/`
 - Claude Code MCP server configuration (effect-docs, work-specific otter)
 - Automated end-to-end testing via Docker
+
+## Secret Management
+
+Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. The BWS access token is [age](https://github.com/FiloSottile/age)-encrypted with multi-recipient support for different machine classes (personal, work-machine, work-remote).
+
+See `.claude/rules/secrets-architecture.md` for detailed architecture documentation.
+
+**Maintainer scripts:**
+- `./support/rotate-age-keys.sh` - Generate new age keypairs and update BWS
+- `./support/rotate-bws-access-token.sh` - Re-encrypt BWS token after rotation
 
 ## Structure
 

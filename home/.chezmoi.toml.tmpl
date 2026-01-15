@@ -2,16 +2,51 @@
 {{- $emailWork := promptStringOnce . "emailWork" "Email for Canva" -}}
 {{- $signingKey := promptStringOnce . "signingKey" "Your commit-signing key (e.g. public ssh/gpg key)" -}}
 
+{{- /* Age encryption - only configure if identity exists */ -}}
+{{- $identityPath := joinPath .chezmoi.homeDir ".config/chezmoi/secrets/age-key.txt" -}}
+{{- if stat $identityPath }}
+encryption = "age"
+[age]
+  identity = {{ $identityPath | quote }}
+  recipients = [
+{{- range (includeTemplate "age-recipients-tmpl" . | trim | splitList "\n") }}
+    {{ . | quote }},
+{{- end }}
+  ]
+
+{{- end }}
+
 [data]
   email = {{ $email | quote }}
   emailWork = {{ $emailWork | quote }}
   signingKey = {{ $signingKey | quote }}
   brewprefix = "{{ if eq .chezmoi.arch "arm64" }}/opt/homebrew{{ else }}/usr/local{{ end }}"
+  ageIdentityPath = {{ $identityPath | quote }}
 
-  {{/*
-     * Bitwarden Secrets - see:
-     * https://www.chezmoi.io/reference/templates/bitwarden-functions/bitwardenSecrets/
-     */}}
+  # BWS secret IDs for age identities (parsed from age-identity-uuids-tmpl)
+{{- range (includeTemplate "age-identity-uuids-tmpl" . | trim | splitList "\n") }}
+{{-   $parts := . | splitList "=" }}
+{{-   $key := index $parts 0 }}
+{{-   $value := index $parts 1 }}
+{{-   if eq $key "personal" }}
+  bwsIdAgeIdentityPersonal = {{ $value | quote }}
+{{-   else if eq $key "work-machine" }}
+  bwsIdAgeIdentityWorkMachine = {{ $value | quote }}
+{{-   else if eq $key "work-remote" }}
+  bwsIdAgeIdentityWorkRemote = {{ $value | quote }}
+{{-   end }}
+{{- end }}
+
+  # Encrypted BWS access token
+  bwsTokenEncrypted = """
+{{ includeTemplate "age-encrypted-token-tmpl" . -}}
+"""
+
+
+{{/*
+   * Bitwarden Secrets - see:
+   * https://www.chezmoi.io/reference/templates/bitwarden-functions/bitwardenSecrets/
+   */}}
   bwsIdNpmAuthToken = "302ba3e1-8fde-4c5d-8a1c-b37c01600278"
   bwsIdGithubAuthToken = "13a3305b-0c71-411c-89e3-b37c016033b5"
   bwsIdGithubAuthTokenCanvaOnly = "3e26117a-3676-4afd-814a-b37c0160543e"

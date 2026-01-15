@@ -1,7 +1,12 @@
-{{- if env "BWS_ACCESS_TOKEN" -}}
+{{- /* Decrypt BWS token if age identity exists */ -}}
+{{- $bwsToken := "" -}}
+{{- if stat .ageIdentityPath -}}
+{{-   $bwsToken = .bwsTokenEncrypted | decrypt | trim -}}
+{{- end -}}
+{{- if ne "" $bwsToken -}}
 {{-   if ne "" .emailWork -}}
-{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly).value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly $bwsToken).value }}
 {{-   else -}}
-{{ (bitwardenSecrets .bwsIdGithubAuthToken).value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthToken $bwsToken).value }}
 {{-   end -}}
 {{- end -}}

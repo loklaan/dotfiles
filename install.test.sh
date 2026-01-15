@@ -7,6 +7,10 @@ IFS=$'\n\t'
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
+# Source shared logging library for color_printf
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/home/private_dot_local/lib/bash-logging.sh"
+
 TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
 readonly LOG_FILE="${TMPDIR}/$(basename "$0").$(date +"%Y%m%d_%H%M%S").log"
 
@@ -92,43 +96,13 @@ relative_time() {
   fi
 }
 relative_time_from_start() { relative_time $TIMESTAMP; }
-_printf() {
-  case "$1" in
-    black) color="30" ;; 
-    red) color="31" ;; 
-    green) color="32" ;; 
-    yellow) color="33" ;; 
-    blue) color="34" ;; 
-    magenta) color="35" ;; 
-    cyan) color="36" ;; 
-    white) color="37" ;; 
-    *) echo "Unknown color: $1"; return 1 ;; 
-  esac
 
-  shift
-  while [ "$#" -gt 1 ]; do
-    case "$1" in
-      bold) color="${color};1" ;; 
-      italic) color="${color};3" ;; 
-      underline) color="${color};4" ;; 
-      dim) color="${color};2" ;; 
-      *) echo "Unknown option: $1"; return 1 ;; 
-    esac
-    shift
-  done
-
-  supported_colors=$(tput colors 2>/dev/null || echo 0)
-  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
-    printf "\033[${color}m%s\033[0m" "$1"
-  else
-    printf "%s" "$1"
-  fi
-}
-_print() { (_printf magenta dim "test_e2e"; _printf white dim " $@"; _printf magenta dim " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
-info() { (_printf magenta "test_e2e"; _printf cyan " info"; printf " %s" "$@"; _printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
-warning() { (_printf magenta "test_e2e"; _printf yellow " warn"; printf " %s" "$@"; _printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
-error() { (_printf magenta "test_e2e"; _printf red " error"; printf " %s" "$@"; _printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
-fatal() { (_printf magenta "test_e2e"; _printf red bold " fatal"; printf " %s" "$@"; _printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+# Custom logging with elapsed time (uses color_printf from shared library)
+_print() { (color_printf magenta dim "test_e2e"; color_printf white dim " $@"; color_printf magenta dim " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
+info() { (color_printf magenta "test_e2e"; color_printf cyan " info"; printf " %b" "$@"; color_printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
+warning() { (color_printf magenta "test_e2e"; color_printf yellow " warning"; printf " %b" "$@"; color_printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
+error() { (color_printf magenta "test_e2e"; color_printf red " error"; printf " %b" "$@"; color_printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; }
+fatal() { (color_printf magenta "test_e2e"; color_printf red bold " fatal"; printf " %b" "$@"; color_printf magenta " $(relative_time_from_start)"; printf "\n";) | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 image_base_id=-1
 image_dotfiles_id=-1
