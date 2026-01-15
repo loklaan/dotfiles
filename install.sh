@@ -3,20 +3,10 @@ set -euo pipefail
 
 IFS=$'\n\t'
 
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-readonly LOG_FILE="${TMPDIR}/$(basename "$0").${TIMESTAMP}.log"
-
-# Redirect all output to both terminal and log file
-exec > >(tee -a "$LOG_FILE") 2>&1
-
-# Enable debug tracing if requested
-if [ "${DEBUG:-0}" = "1" ]; then
-  set -x
-fi
+# Source shared logging library (from chezmoi source dir)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/home/private_dot_local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   install.sh [OPTIONS]
@@ -25,58 +15,22 @@ fi
 #/   Installs dotfiles and packages.
 #/
 #/ Environment Variables:
-#/   DEBUG:                   Set to 1 to enable command tracing (set -x) in logs.
-#/   CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
-#/                            When empty, templates using secrets output placeholders.
-#/   CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
-#/                            When empty, commit signing is disabled.
-#/   CONFIG_GH_USER:          Dotfiles GitHub user. (default: loklaan)
-#/   CONFIG_EMAIL:            Personal email for Git. (default: bunn@lochlan.io)
-#/   CONFIG_EMAIL_WORK:       Work email for Git. (default: lochlan@canva.com)
+#/   DEBUG:                     Set to 1 to enable command tracing (set -x) in logs.
+#/   CONFIG_BWS_ACCESS_TOKEN:   Optional. Bitwarden Secrets access token (used to fetch age identity).
+#/                              When empty, prompts interactively (or skips if non-TTY).
+#/   CONFIG_AGE_IDENTITY_TYPE:  Optional. Override auto-detected age identity type.
+#/                              Values: personal, work-machine, work-remote.
+#/                              Auto-detection: work-remote (Canva devbox), work-machine (MDM enrolled),
+#/                              otherwise personal.
+#/   CONFIG_SIGNING_KEY:        Optional. The primary key of the signing GPG keypair.
+#/                              When empty, commit signing is disabled.
+#/   CONFIG_GH_USER:            Dotfiles GitHub user. (default: loklaan)
+#/   CONFIG_EMAIL:              Personal email for Git. (default: bunn@lochlan.io)
+#/   CONFIG_EMAIL_WORK:         Work email for Git. (default: lochlan@canva.com)
 #/
 #/ Options:
-#/   --help:                  Display this help message
+#/   --help:                    Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
-_print() {
-  case "$1" in
-    black) color="30" ;;
-    red) color="31" ;;
-    green) color="32" ;;
-    yellow) color="33" ;;
-    blue) color="34" ;;
-    magenta) color="35" ;;
-    cyan) color="36" ;;
-    white) color="37" ;;
-    *) echo "Unknown color: $1" >&2; return 1 ;;
-  esac
-
-  shift
-  while [ "$#" -gt 1 ]; do
-    case "$1" in
-      bold) color="${color};1" ;;
-      italic) color="${color};3" ;;
-      underline) color="${color};4" ;;
-      dim) color="${color};2" ;;
-      *) echo "Unknown option: $1" >&2; return 1 ;;
-    esac
-    shift
-  done
-
-  supported_colors=$(tput colors 2>/dev/null || echo 0)
-  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
-    printf "\\033[${color}m%s\\033[0m\\n" "$1"
-  else
-    printf "%s\n" "$1"
-  fi
-}
-info() { _print cyan "[INFO] $@" >&2 ; }
-warning() { _print yellow "[WARNING] $@" >&2 ; }
-error() { _print red "[ERROR] $@" >&2 ; }
-fatal() { _print red bold "[FATAL] $@" >&2 ; exit 1 ; }
-
-cleanup() {
-  _print white dim "Log: $LOG_FILE" >&2
-}
 
 parse_args() {
   while [ "$#" -gt 0 ]; do
@@ -91,9 +45,6 @@ parse_args() {
         ;;
     esac
   done
-
-  # Set config variables with defaults (all optional)
-  config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
 }
 
 main() {
@@ -177,7 +128,62 @@ main() {
   config_email="${CONFIG_EMAIL:-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
   config_email_work="${CONFIG_EMAIL_WORK:-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
   config_signing_key="${CONFIG_SIGNING_KEY:-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
-  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi init "$config_github_user" \
+
+  # Age identity setup - fetch from BWS if token provided or identity not present
+  age_identity_path="${HOME}/.config/chezmoi/secrets/age-key.txt"
+  config_bws_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
+
+  if [ -n "$config_bws_token" ]; then
+    # Explicit token provided - always fetch (allows refresh/rotation)
+    info "╍ BWS token provided, fetching age identity"
+  elif [ -f "$age_identity_path" ]; then
+    # Existing identity found, no token provided - skip fetch
+    info "╍ Found existing age identity"
+    config_bws_token=""
+  elif [ -t 0 ]; then
+    # No identity, no token, interactive - prompt
+    read -rsp "BWS access token (to fetch age identity, or Enter to skip): " config_bws_token
+    echo
+  fi
+
+  if [ -n "$config_bws_token" ]; then
+    # Auto-detect identity type based on environment
+    if [[ "${CODER_AGENT_URL:-}" == *canva* ]] || [[ "${DEVBOX_EMAIL:-}" == *@canva.com ]]; then
+      detected_identity_type="work-remote"
+    elif profiles status -type enrollment 2>/dev/null | grep -q "MDM enrollment: Yes"; then
+      detected_identity_type="work-machine"
+    else
+      detected_identity_type="personal"
+    fi
+    identity_type="${CONFIG_AGE_IDENTITY_TYPE:-$detected_identity_type}"
+    if [ -n "${CONFIG_AGE_IDENTITY_TYPE:-}" ]; then
+      info "╍ Using identity type: $identity_type (override, detected: $detected_identity_type)"
+    else
+      info "╍ Using identity type: $identity_type (auto-detected)"
+    fi
+
+    # Read BWS secret ID from template file (format: identity_type=uuid)
+    identity_uuids_file="${SCRIPT_DIR}/home/.chezmoitemplates/age-identity-uuids-tmpl"
+    if [ ! -f "$identity_uuids_file" ]; then
+      fatal "Missing identity UUIDs file: $identity_uuids_file"
+    fi
+
+    bws_secret_id=$(grep "^${identity_type}=" "$identity_uuids_file" | cut -d= -f2)
+    if [ -z "$bws_secret_id" ]; then
+      fatal "Unknown identity type: $identity_type. Valid types: $(cut -d= -f1 "$identity_uuids_file" | tr '\n' ', ' | sed 's/,$//')"
+    fi
+
+    info "╍ Fetching age identity ($identity_type) from BWS"
+    mkdir -p "$(dirname "$age_identity_path")"
+    bws secret get "$bws_secret_id" --access-token "$config_bws_token" | jq -r '.value' > "$age_identity_path"
+    chmod 600 "$age_identity_path"
+    info "╍ Saved age identity to $age_identity_path"
+  else
+    warning "╍ No age identity found - secrets requiring decryption will not be available"
+    info "╍ To set up: provide CONFIG_BWS_ACCESS_TOKEN or manually create $age_identity_path"
+  fi
+
+  chezmoi init "$config_github_user" \
     --data=false \
     --promptString="Email for you=${config_email},Email for Canva=${config_email_work},Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
     --apply \
@@ -188,7 +194,7 @@ main() {
   # Pull latest changes and run lifecycle scripts (packages, completions, fonts, etc.)
   info "▶ Pulling latest dotfiles and running lifecycle scripts"
   chezmoi git pull
-  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply --force
+  chezmoi apply --force
 
   info "▶ Installation complete."
   info "╍ Run 'install-my-packages --gui' to install GUI apps."
@@ -220,6 +226,5 @@ get_linux_distro() {
   )
 }
 
-trap cleanup EXIT
-_print magenta dim "[$TIMESTAMP] Starting $(basename "$0")"
+trap print_log_path EXIT
 main "$@"

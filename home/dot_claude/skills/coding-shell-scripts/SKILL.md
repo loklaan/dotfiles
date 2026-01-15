@@ -62,10 +62,32 @@ usage() { grep '^#/' "$0" | cut -c4- ; exit 0 ; }
 expr "$*" : ".*--help" > /dev/null && usage
 
 readonly LOG_FILE="${TMPDIR}/$(basename "$0").log"
-info()    { echo "[INFO]    $@" | tee -a "$LOG_FILE" >&2 ; }
-warning() { echo "[WARNING] $@" | tee -a "$LOG_FILE" >&2 ; }
-error()   { echo "[ERROR]   $@" | tee -a "$LOG_FILE" >&2 ; }
-fatal()   { echo "[FATAL]   $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+_print() {
+  case "$1" in
+    black) color="30" ;; red) color="31" ;; green) color="32" ;;
+    yellow) color="33" ;; blue) color="34" ;; magenta) color="35" ;;
+    cyan) color="36" ;; white) color="37" ;;
+    *) echo "Unknown color: $1" >&2; return 1 ;;
+  esac
+  shift
+  while [ "$#" -gt 1 ]; do
+    case "$1" in
+      bold) color="${color};1" ;; dim) color="${color};2" ;;
+      *) echo "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+  supported_colors=$(tput colors 2>/dev/null || echo 0)
+  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
+    printf "\\033[${color}m%b\\033[0m\\n" "$1"
+  else
+    printf "%b\n" "$1"
+  fi
+}
+info()    { _print cyan "info $@" | tee -a "$LOG_FILE" >&2 ; }
+warning() { _print yellow "warning $@" | tee -a "$LOG_FILE" >&2 ; }
+error()   { _print red "error $@" | tee -a "$LOG_FILE" >&2 ; }
+fatal()   { _print red bold "fatal $@" | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
 
 cleanup() {
   # Remove temporary files

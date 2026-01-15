@@ -1,6 +1,7 @@
 [tools]
 # Global tools listed here will be automatically installed.
 "ubi:bitwarden/sdk" = { version = "bws-v1.0.0", exe = "bws", tag_regex = "^bws" }
+age = "latest"
 bitwarden = "2025.10.0"
 chezmoi = "2.67.0"
 delta = "0.18.2"
@@ -8,6 +9,7 @@ deno = "2.5.4"
 difftastic = "0.65.0"
 fzf = "0.66.0"
 go = "1.25.3"
+jq = "latest"
 node = "22.20.0"
 python = "3.13"
 rust = "1.90.0"

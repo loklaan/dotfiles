@@ -22,6 +22,8 @@
 #|
 source "${HOME}/.local/lib/term.zsh"
 if is_interactive_shell && command -v mise &> /dev/null; then
+  # Remove shims from path before full activation to avoid conflict
+  path=(${path:#$HOME/.local/share/mise/shims})
   eval "$(mise activate zsh)"
 fi
 [[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
@@ -47,16 +49,22 @@ export GPG_TTY=$(tty)
 #|
 #| Shows a reminder if secrets were not applied during chezmoi install.
 #|
-_dotfiles_status_file="$HOME/.local/state/dotfiles/setup-status"
-if [[ -f "$_dotfiles_status_file" ]]; then
-  _has_bws=$(grep '^has_run_with_bws_env=' "$_dotfiles_status_file" 2>/dev/null | cut -d= -f2)
-  _has_key=$(grep '^has_run_with_signing_key=' "$_dotfiles_status_file" 2>/dev/null | cut -d= -f2)
-  if [[ "$_has_bws" != "true" || "$_has_key" != "true" ]]; then
-    echo ""
-    print -P "%F{yellow}Dotfiles applied with incomplete configuration.%f"
-    print -P "Run %F{cyan}dotfiles-setup%f for instructions."
-    echo ""
-  fi
-  unset _has_bws _has_key
+_incomplete_setup=false
+
+# Check for age identity file
+if [[ ! -f "{{ .ageIdentityPath }}" ]]; then
+  _incomplete_setup=true
 fi
-unset _dotfiles_status_file
+
+# Check for signing key
+{{- if eq "" .signingKey }}
+_incomplete_setup=true
+{{- end }}
+
+if [[ "$_incomplete_setup" == "true" ]]; then
+  echo ""
+  print -P "%F{yellow}Dotfiles applied with incomplete configuration.%f"
+  print -P "Run %F{cyan}dotfiles-setup%f for instructions."
+  echo ""
+fi
+unset _incomplete_setup
