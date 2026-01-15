@@ -2,11 +2,28 @@
 {{- $emailWork := promptStringOnce . "emailWork" "Email for Canva" -}}
 {{- $signingKey := promptStringOnce . "signingKey" "Your commit-signing key (e.g. public ssh/gpg key)" -}}
 
+{{- /* Derive encryption passphrase from machine ID (no user prompt needed) */ -}}
+{{- $machineId := "" -}}
+{{- if eq .chezmoi.os "darwin" -}}
+{{-   $machineId = output "sh" "-c" "ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID | cut -d'\"' -f4" | trim -}}
+{{- else -}}
+{{-   $machineId = output "cat" "/etc/machine-id" | trim -}}
+{{- end -}}
+{{- $encryptionPassphrase := output "sh" "-c" (printf "printf '%%s' 'chezmoi-dotfiles-v1:%s' | shasum -a 256 | cut -d' ' -f1" $machineId) | trim -}}
+
+{{- /* GPG symmetric encryption using machine-derived passphrase */ -}}
+encryption = "gpg"
+[gpg]
+  symmetric = true
+  args = ["--batch", "--passphrase", {{ $encryptionPassphrase | quote }}, "--no-symkey-cache", "--quiet"]
+
 [data]
   email = {{ $email | quote }}
   emailWork = {{ $emailWork | quote }}
   signingKey = {{ $signingKey | quote }}
+  encryptionPassphrase = {{ $encryptionPassphrase | quote }}
   brewprefix = "{{ if eq .chezmoi.arch "arm64" }}/opt/homebrew{{ else }}/usr/local{{ end }}"
+  bwsTokenPath = "{{ .chezmoi.homeDir }}/.config/chezmoi/secrets/bws-access-token.gpg"
 
   {{/*
      * Bitwarden Secrets - see:

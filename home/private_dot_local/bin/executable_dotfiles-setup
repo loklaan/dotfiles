@@ -22,7 +22,11 @@ setup_session_logging "$(basename "$0")"
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-readonly STATUS_FILE="${HOME}/.local/state/dotfiles/setup-status"
+readonly STATE_DIR="${HOME}/.local/state/dotfiles"
+readonly STATE_FILE="${STATE_DIR}/chezmoi-state.boltdb"
+readonly STATE_BUCKET="dotfiles"
+readonly KEY_BWS="has_bws_env"
+readonly KEY_SIGNING="has_signing_key"
 
 parse_args() {
   while [ "$#" -gt 0 ]; do
@@ -39,20 +43,20 @@ parse_args() {
   done
 }
 
-read_status() {
-  has_bws_env="false"
-  has_signing_key="false"
-
-  if [ -f "$STATUS_FILE" ]; then
-    # Source the status file to get variables
-    # shellcheck source=/dev/null
-    while IFS='=' read -r key value; do
-      case "$key" in
-        has_run_with_bws_env) has_bws_env="$value" ;;
-        has_run_with_signing_key) has_signing_key="$value" ;;
-      esac
-    done < <(grep -v '^#' "$STATUS_FILE" | grep -v '^$')
+get_state() {
+  local key="$1"
+  local value
+  value=$(chezmoi state get --persistent-state "$STATE_FILE" --bucket "$STATE_BUCKET" --key "$key" 2>/dev/null || echo "")
+  if [ -z "$value" ]; then
+    echo "false"
+  else
+    echo "$value"
   fi
+}
+
+read_status() {
+  has_bws_env=$(get_state "$KEY_BWS")
+  has_signing_key=$(get_state "$KEY_SIGNING")
 }
 
 print_status() {
@@ -60,10 +64,10 @@ print_status() {
   echo ""
 
   if [ "$has_bws_env" = "true" ]; then
-    _print green "  ✓ BWS_ACCESS_TOKEN: applied"
+    _print green "  ✓ BWS encrypted token: applied"
     _print white dim "    npm auth token, GITHUB_TOKEN, pr-train configured"
   else
-    _print yellow "  ✗ BWS_ACCESS_TOKEN: not applied"
+    _print yellow "  ✗ BWS encrypted token: not applied"
     _print white dim "    Missing: npm auth token, GITHUB_TOKEN, pr-train"
   fi
 
@@ -90,8 +94,11 @@ print_instructions() {
   echo ""
 
   if [ "$missing_bws" = "true" ]; then
-    echo "1. Get your BWS_ACCESS_TOKEN from Bitwarden Secrets Manager:"
+    echo "1. Get your BWS access token from Bitwarden Secrets Manager:"
     echo "   https://vault.bitwarden.com → Secrets Manager → Machine accounts"
+    echo ""
+    echo "   The token will be encrypted and stored at:"
+    echo "   ~/.config/chezmoi/secrets/bws-access-token.gpg"
     echo ""
   fi
 
@@ -102,21 +109,25 @@ print_instructions() {
     echo ""
   fi
 
-  echo "Then re-run install.sh with the missing values:"
+  echo "Then re-run install.sh (you'll be prompted for missing values):"
   echo ""
 
   # Build the command
-  local cmd="  "
-  if [ "$missing_bws" = "true" ]; then
-    cmd+="CONFIG_BWS_ACCESS_TOKEN=<your-token> "
-  fi
-  if [ "$missing_key" = "true" ]; then
-    cmd+="CONFIG_SIGNING_KEY=<your-key> "
-  fi
-  cmd+="\$HOME/.local/share/chezmoi/install.sh"
-
+  local cmd="  \$HOME/.local/share/chezmoi/install.sh"
   _print red "$cmd"
   echo ""
+
+  if [ "$missing_bws" = "true" ]; then
+    echo "Or provide values via environment variables:"
+    echo ""
+    local env_cmd="  CONFIG_ENCRYPTION_PASSPHRASE=<passphrase> CONFIG_BWS_ACCESS_TOKEN=<token>"
+    if [ "$missing_key" = "true" ]; then
+      env_cmd+=" CONFIG_SIGNING_KEY=<key>"
+    fi
+    env_cmd+=" \$HOME/.local/share/chezmoi/install.sh"
+    _print white dim "$env_cmd"
+    echo ""
+  fi
 
   info "╍ This will re-apply all dotfiles with secrets populated"
 }
@@ -124,8 +135,8 @@ print_instructions() {
 main() {
   parse_args "$@"
 
-  if [ ! -f "$STATUS_FILE" ]; then
-    warning "Status file not found: $STATUS_FILE"
+  if [ ! -f "$STATE_FILE" ]; then
+    warning "State file not found: $STATE_FILE"
     info "╍ Run 'chezmoi apply' first to generate status"
     exit 1
   fi

@@ -2,6 +2,11 @@ init-author-name=Lochlan Bunn
 init-author-email=bunn@lochlan.io
 init-version=0.1.0
 init-license=MIT
-{{- if env "BWS_ACCESS_TOKEN" }}
-//registry.npmjs.org/:_authToken={{ (bitwardenSecrets .bwsIdNpmAuthToken).value }}
+{{- /* Decrypt BWS token if token file exists */ -}}
+{{- $bwsToken := "" -}}
+{{- if stat .bwsTokenPath -}}
+{{-   $bwsToken = include .bwsTokenPath | decrypt | trim -}}
+{{- end -}}
+{{- if ne "" $bwsToken }}
+//registry.npmjs.org/:_authToken={{ (bitwardenSecrets .bwsIdNpmAuthToken $bwsToken).value }}
 {{- end }}

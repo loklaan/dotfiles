@@ -1,7 +1,12 @@
-{{- if env "BWS_ACCESS_TOKEN" -}}
+{{- /* Decrypt BWS token if token file exists */ -}}
+{{- $bwsToken := "" -}}
+{{- if stat .bwsTokenPath -}}
+{{-   $bwsToken = include .bwsTokenPath | decrypt | trim -}}
+{{- end -}}
+{{- if ne "" $bwsToken -}}
 {{-   if ne "" .emailWork -}}
-{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly).value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthTokenCanvaOnly $bwsToken).value }}
 {{-   else -}}
-{{ (bitwardenSecrets .bwsIdGithubAuthToken).value }}
+{{ (bitwardenSecrets .bwsIdGithubAuthToken $bwsToken).value }}
 {{-   end -}}
 {{- end -}}

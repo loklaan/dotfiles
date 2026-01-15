@@ -26,7 +26,7 @@ fi
 #/
 #/ Environment Variables:
 #/   DEBUG:                   Set to 1 to enable command tracing (set -x) in logs.
-#/   CONFIG_BWS_ACCESS_TOKEN: Optional. For authentication with Bitwarden Secrets.
+#/   CONFIG_BWS_ACCESS_TOKEN: Optional. Bitwarden Secrets access token (encrypted on first use).
 #/                            When empty, templates using secrets output placeholders.
 #/   CONFIG_SIGNING_KEY:      Optional. The primary key of the signing GPG keypair.
 #/                            When empty, commit signing is disabled.
@@ -91,9 +91,24 @@ parse_args() {
         ;;
     esac
   done
+}
 
-  # Set config variables with defaults (all optional)
-  config_bw_access_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
+get_machine_encryption_passphrase() {
+  # Derive encryption passphrase from machine ID (deterministic, machine-specific)
+  local machine_id=""
+  if [ "$(uname)" = "Darwin" ]; then
+    machine_id=$(ioreg -rd1 -c IOPlatformExpertDevice | awk -F'"' '/IOPlatformUUID/{print $4}')
+  else
+    machine_id=$(cat /etc/machine-id 2>/dev/null || echo "")
+  fi
+
+  if [ -z "$machine_id" ]; then
+    warning "Could not determine machine ID, using hostname as fallback"
+    machine_id=$(hostname)
+  fi
+
+  # Hash with salt to create passphrase
+  printf '%s' "chezmoi-dotfiles-v1:${machine_id}" | shasum -a 256 | cut -d' ' -f1
 }
 
 main() {
@@ -177,7 +192,31 @@ main() {
   config_email="${CONFIG_EMAIL:-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
   config_email_work="${CONFIG_EMAIL_WORK:-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
   config_signing_key="${CONFIG_SIGNING_KEY:-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
-  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi init "$config_github_user" \
+
+  # Get machine-derived encryption passphrase (deterministic, no user input needed)
+  config_encryption_passphrase=$(get_machine_encryption_passphrase)
+  bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.gpg"
+
+  # Handle BWS token (TTY vs non-TTY)
+  if [ ! -f "$bws_token_path" ]; then
+    config_bws_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
+
+    if [ -t 0 ] && [ -z "$config_bws_token" ]; then
+      # TTY mode: can prompt user
+      read -rsp "BWS access token (will be encrypted, or press Enter to skip): " config_bws_token
+      echo
+    fi
+
+    if [ -n "$config_bws_token" ]; then
+      mkdir -p "$(dirname "$bws_token_path")"
+      echo -n "$config_bws_token" | gpg --batch --symmetric \
+        --passphrase "$config_encryption_passphrase" \
+        --armor --output "$bws_token_path" --quiet
+      info "╍ Encrypted BWS token to $bws_token_path"
+    fi
+  fi
+
+  chezmoi init "$config_github_user" \
     --data=false \
     --promptString="Email for you=${config_email},Email for Canva=${config_email_work},Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
     --apply \
@@ -188,7 +227,7 @@ main() {
   # Pull latest changes and run lifecycle scripts (packages, completions, fonts, etc.)
   info "▶ Pulling latest dotfiles and running lifecycle scripts"
   chezmoi git pull
-  BWS_ACCESS_TOKEN="$config_bw_access_token" chezmoi apply --force
+  chezmoi apply --force
 
   info "▶ Installation complete."
   info "╍ Run 'install-my-packages --gui' to install GUI apps."
