@@ -64,10 +64,10 @@ print_status() {
   echo ""
 
   if [ "$has_bws_env" = "true" ]; then
-    _print green "  ✓ age identity: configured"
+    _print green "  ✓ BWS token: configured"
     _print white dim "    npm auth token, GITHUB_TOKEN, pr-train configured"
   else
-    _print yellow "  ✗ age identity: not configured"
+    _print yellow "  ✗ BWS token: not configured"
     _print white dim "    Missing: npm auth token, GITHUB_TOKEN, pr-train"
   fi
 
@@ -97,8 +97,8 @@ print_instructions() {
     echo "1. Get your BWS access token from Bitwarden Secrets Manager:"
     echo "   https://vault.bitwarden.com → Secrets Manager → Machine accounts"
     echo ""
-    echo "   The age identity will be fetched and stored at:"
-    echo "   ~/.config/chezmoi/secrets/age-key.txt"
+    echo "   The token will be stored at:"
+    echo "   ~/.config/chezmoi/secrets/bws-access-token.txt"
     echo ""
   fi
 
@@ -126,8 +126,6 @@ print_instructions() {
     fi
     env_cmd+=" \$HOME/.local/share/chezmoi/install.sh"
     _print white dim "$env_cmd"
-    echo ""
-    echo "Optionally set CONFIG_AGE_IDENTITY_TYPE (personal, work-machine, work-remote)"
     echo ""
   fi
 

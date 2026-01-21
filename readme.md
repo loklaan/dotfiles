@@ -18,12 +18,8 @@ Description:
 
 Environment Variables:
   DEBUG:                     Set to 1 to enable command tracing (set -x) in logs.
-  CONFIG_BWS_ACCESS_TOKEN:   Optional. BWS token to fetch age identity. Takes precedence over
-                             existing identity. Prompts interactively if empty (skips if non-TTY).
-  CONFIG_AGE_IDENTITY_TYPE:  Optional. Override auto-detected age identity type.
-                             Values: personal, work-machine, work-remote.
-                             Auto-detection: work-remote (Canva devbox), work-machine (MDM enrolled),
-                             otherwise personal.
+  CONFIG_BWS_ACCESS_TOKEN:   Optional. Bitwarden Secrets access token.
+                             When empty, prompts interactively (or skips if non-TTY).
   CONFIG_SIGNING_KEY:        Optional. The primary key of the signing GPG keypair.
                              When empty, commit signing is disabled.
   CONFIG_GH_USER:            Dotfiles GitHub user. (default: loklaan)

@@ -2,10 +2,9 @@ init-author-name=Lochlan Bunn
 init-author-email=bunn@lochlan.io
 init-version=0.1.0
 init-license=MIT
-{{- /* Decrypt BWS token if age identity exists */ -}}
 {{- $bwsToken := "" -}}
-{{- if stat .ageIdentityPath -}}
-{{-   $bwsToken = .bwsTokenEncrypted | decrypt | trim -}}
+{{- if stat .bwsTokenPath -}}
+{{-   $bwsToken = include .bwsTokenPath | trim -}}
 {{- end -}}
 {{- if ne "" $bwsToken }}
 //registry.npmjs.org/:_authToken={{ (bitwardenSecrets .bwsIdNpmAuthToken $bwsToken).value }}

@@ -59,8 +59,8 @@ main() {
   has_signing_key=$(get_state "$KEY_SIGNING")
 
   # Update state if current run has capabilities
-  # Check for age identity file
-  if [ -f "{{ .ageIdentityPath }}" ]; then
+  # Check for BWS token file
+  if [ -f "{{ .bwsTokenPath }}" ]; then
     has_bws_env="true"
   fi
 
@@ -77,7 +77,7 @@ main() {
     echo ""
     warning "╍ Dotfiles setup incomplete"
     if [ "$has_bws_env" = "false" ]; then
-      info "╍ Missing: age identity (for npm auth, GITHUB_TOKEN, etc.)"
+      info "╍ Missing: BWS token (for npm auth, GITHUB_TOKEN, etc.)"
     fi
     if [ "$has_signing_key" = "false" ]; then
       info "╍ Missing: signingKey (for git commit signing)"

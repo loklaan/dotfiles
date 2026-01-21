@@ -16,12 +16,8 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Environment Variables:
 #/   DEBUG:                     Set to 1 to enable command tracing (set -x) in logs.
-#/   CONFIG_BWS_ACCESS_TOKEN:   Optional. Bitwarden Secrets access token (used to fetch age identity).
+#/   CONFIG_BWS_ACCESS_TOKEN:   Optional. Bitwarden Secrets access token.
 #/                              When empty, prompts interactively (or skips if non-TTY).
-#/   CONFIG_AGE_IDENTITY_TYPE:  Optional. Override auto-detected age identity type.
-#/                              Values: personal, work-machine, work-remote.
-#/                              Auto-detection: work-remote (Canva devbox), work-machine (MDM enrolled),
-#/                              otherwise personal.
 #/   CONFIG_SIGNING_KEY:        Optional. The primary key of the signing GPG keypair.
 #/                              When empty, commit signing is disabled.
 #/   CONFIG_GH_USER:            Dotfiles GitHub user. (default: loklaan)
@@ -129,58 +125,27 @@ main() {
   config_email_work="${CONFIG_EMAIL_WORK:-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
   config_signing_key="${CONFIG_SIGNING_KEY:-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
 
-  # Age identity setup - fetch from BWS if token provided or identity not present
-  age_identity_path="${HOME}/.config/chezmoi/secrets/age-key.txt"
+  # BWS token setup - save to file if provided
+  bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
   config_bws_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
 
   if [ -n "$config_bws_token" ]; then
-    # Explicit token provided - always fetch (allows refresh/rotation)
-    info "╍ BWS token provided, fetching age identity"
-  elif [ -f "$age_identity_path" ]; then
-    # Existing identity found, no token provided - skip fetch
-    info "╍ Found existing age identity"
-    config_bws_token=""
+    info "╍ BWS token provided, saving to $bws_token_path"
+    mkdir -p "$(dirname "$bws_token_path")"
+    printf '%s' "$config_bws_token" > "$bws_token_path"
+    chmod 600 "$bws_token_path"
+  elif [ -f "$bws_token_path" ]; then
+    info "╍ Found existing BWS token"
   elif [ -t 0 ]; then
-    # No identity, no token, interactive - prompt
-    read -rsp "BWS access token (to fetch age identity, or Enter to skip): " config_bws_token
+    read -rsp "BWS access token (or Enter to skip): " config_bws_token
     echo
-  fi
-
-  if [ -n "$config_bws_token" ]; then
-    # Auto-detect identity type based on environment
-    if [[ "${CODER_AGENT_URL:-}" == *canva* ]] || [[ "${DEVBOX_EMAIL:-}" == *@canva.com ]]; then
-      detected_identity_type="work-remote"
-    elif profiles status -type enrollment 2>/dev/null | grep -q "MDM enrollment: Yes"; then
-      detected_identity_type="work-machine"
-    else
-      detected_identity_type="personal"
+    if [ -n "$config_bws_token" ]; then
+      mkdir -p "$(dirname "$bws_token_path")"
+      printf '%s' "$config_bws_token" > "$bws_token_path"
+      chmod 600 "$bws_token_path"
     fi
-    identity_type="${CONFIG_AGE_IDENTITY_TYPE:-$detected_identity_type}"
-    if [ -n "${CONFIG_AGE_IDENTITY_TYPE:-}" ]; then
-      info "╍ Using identity type: $identity_type (override, detected: $detected_identity_type)"
-    else
-      info "╍ Using identity type: $identity_type (auto-detected)"
-    fi
-
-    # Read BWS secret ID from template file (format: identity_type=uuid)
-    identity_uuids_file="${SCRIPT_DIR}/home/.chezmoitemplates/age-identity-uuids-tmpl"
-    if [ ! -f "$identity_uuids_file" ]; then
-      fatal "Missing identity UUIDs file: $identity_uuids_file"
-    fi
-
-    bws_secret_id=$(grep "^${identity_type}=" "$identity_uuids_file" | cut -d= -f2)
-    if [ -z "$bws_secret_id" ]; then
-      fatal "Unknown identity type: $identity_type. Valid types: $(cut -d= -f1 "$identity_uuids_file" | tr '\n' ', ' | sed 's/,$//')"
-    fi
-
-    info "╍ Fetching age identity ($identity_type) from BWS"
-    mkdir -p "$(dirname "$age_identity_path")"
-    bws secret get "$bws_secret_id" --access-token "$config_bws_token" | jq -r '.value' > "$age_identity_path"
-    chmod 600 "$age_identity_path"
-    info "╍ Saved age identity to $age_identity_path"
   else
-    warning "╍ No age identity found - secrets requiring decryption will not be available"
-    info "╍ To set up: provide CONFIG_BWS_ACCESS_TOKEN or manually create $age_identity_path"
+    warning "╍ No BWS token found - secrets will not be available"
   fi
 
   chezmoi init "$config_github_user" \
