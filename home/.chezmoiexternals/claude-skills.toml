@@ -1,0 +1,13 @@
+[".claude/skills/skill-creator"]
+    type = "archive"
+    url = "https://github.com/anthropics/skills/archive/refs/heads/main.tar.gz"
+    exact = true
+    stripComponents = 3
+    include = ["*/skills/skill-creator/**"]
+
+[".claude/skills/doc-coauthoring"]
+    type = "archive"
+    url = "https://github.com/anthropics/skills/archive/refs/heads/main.tar.gz"
+    exact = true
+    stripComponents = 3
+    include = ["*/skills/doc-coauthoring/**"]
