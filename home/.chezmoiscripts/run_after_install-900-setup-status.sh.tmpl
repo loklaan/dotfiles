@@ -16,8 +16,7 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Description:
 #/   Records the setup status after chezmoi apply completes.
-#/   Tracks which secrets/config were available during any apply.
-#/   State rolls forward: once a capability is unlocked, it stays unlocked.
+#/   Tracks which secrets/config are currently available.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -52,18 +51,16 @@ set_state() {
 main() {
   info "▶ Recording dotfiles setup status"
 
-  # Read previous state (rolls forward - once true, stays true)
-  local has_bws_env
-  local has_signing_key
-  has_bws_env=$(get_state "$KEY_BWS")
-  has_signing_key=$(get_state "$KEY_SIGNING")
+  # Check current state (not historical)
+  local has_bws_env="false"
+  local has_signing_key="false"
 
-  # Update state if current run has capabilities
   # Check for BWS token file
   if [ -f "{{ .bwsTokenPath }}" ]; then
     has_bws_env="true"
   fi
 
+  # Check for signing key (template-time)
   {{- if ne "" .signingKey }}
   has_signing_key="true"
   {{- end }}
