@@ -51,8 +51,8 @@ export GPG_TTY=$(tty)
 #|
 _incomplete_setup=false
 
-# Check for age identity file
-if [[ ! -f "{{ .ageIdentityPath }}" ]]; then
+# Check for BWS token file
+if [[ ! -f "{{ .bwsTokenPath }}" ]]; then
   _incomplete_setup=true
 fi
 

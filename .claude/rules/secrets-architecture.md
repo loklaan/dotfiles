@@ -2,48 +2,31 @@
 
 ## Model
 
-```
-BWS token → age-encrypted (multi-recipient) → repo
-         ↓
-Identity classes (each has keypair in BWS):
-  - personal
-  - work-machine
-  - work-remote
-         ↓
-Machine decrypts with: ~/.config/chezmoi/secrets/age-key.txt
-```
-
-## Bootstrap Flow
+Each machine stores its BWS access token directly:
 
 ```
-install.sh + BWS token
-  → fetch age identity from BWS (by CONFIG_AGE_IDENTITY_TYPE)
-  → save to age-key.txt
-  → chezmoi decrypts bwsTokenEncrypted
-  → templates fetch secrets via BWS
-  → subsequent runs: identity exists, no token needed
+~/.config/chezmoi/secrets/bws-access-token.txt (mode 0600, not in repo)
 ```
 
-## Automated Installs
+Templates read the token file and call `bitwardenSecrets` to fetch secrets at apply time.
 
-| Env Var | Purpose |
-|---------|---------|
-| `CONFIG_BWS_ACCESS_TOKEN` | One-time bootstrap token |
-| `CONFIG_AGE_IDENTITY_TYPE` | Identity class (default: `personal`) |
+## Bootstrap
+
+```
+install.sh
+  ├─ CONFIG_BWS_ACCESS_TOKEN set? → Write to file
+  ├─ File exists? → Continue
+  └─ Interactive? → Prompt, else warn and continue
+```
 
 ## Revocation
 
-1. Generate new keypair for compromised class
-2. Update identity in BWS
-3. Remove old recipient, re-encrypt token
-4. Commit → old identity can't decrypt
+Rotate the BWS token in Bitwarden Secrets Manager, then update each machine's token file.
 
 ## Files
 
-| Path | Contents |
-|------|----------|
-| `home/.chezmoitemplates/age-encrypted-token-tmpl` | Encrypted BWS token |
-| `home/.chezmoitemplates/age-recipients-tmpl` | Public keys (all classes) |
-| `home/.chezmoitemplates/age-identity-uuids-tmpl` | BWS secret IDs per class |
-| `support/rotate-age-keys.sh` | Rotate keypairs |
-| `support/rotate-bws-access-token.sh` | Re-encrypt after BWS rotation |
+| Path | Purpose |
+|------|---------|
+| `~/.config/chezmoi/secrets/bws-access-token.txt` | BWS token (per-machine, gitignored) |
+| `home/.chezmoi.toml.tmpl` | Sets `bwsTokenPath` data variable |
+| Templates using `bitwardenSecrets` | Read token via `include .bwsTokenPath` |
