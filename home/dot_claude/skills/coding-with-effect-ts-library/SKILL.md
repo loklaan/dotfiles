@@ -1,6 +1,6 @@
 ---
 name: coding-with-effect-libraries
-description: Basic practices and guidelines for writing typescript code using that Effect TypeScript libraries (`effect`, `@effect/platform`, `@effect/cli`, `@effect/ai`).
+description: Basic practices and guidelines for writing typescript code using that Effect TypeScript libraries (`effect`, `@effect/sql`, `@effect/platform`, `@effect/cli`, `@effect/ai`).
 ---
 
 # Coding in Typescript with the Effect libraries
@@ -8,13 +8,55 @@ description: Basic practices and guidelines for writing typescript code using th
 ## Pre-requisites
 
 - Have the Effect MCP server installed and running.
-    - `npx -y effect-mcp@latest`
+  - `npx -y effect-mcp@latest`
 
 ## Critical information
 
 **Important**: When requiring more information about Effect, use the `effect_docs_search` MCP
 tool. It is an authoritative source of information about Effect and its
 ecosystem.
+
+## Using the Effect docs MCP tools
+
+Two MCP tools are available for accessing Effect documentation:
+
+### `effect_docs_search`
+
+Search the Effect documentation for relevant information.
+
+```
+effect_docs_search(query: string)
+```
+
+Returns a list of matching documents with their `documentId` values. Use descriptive
+queries like "Schema validation", "Layer composition", or "HttpClient usage".
+
+### `get_effect_doc`
+
+Retrieve the full content of a specific document by its ID.
+
+```
+get_effect_doc(documentId: number, page?: number)
+```
+
+The content may be paginated. If so, use the `page` parameter to retrieve additional pages.
+
+### Workflow
+
+1. Search for documentation using `effect_docs_search` with your query
+2. Review the returned document summaries and IDs
+3. Use `get_effect_doc` with the relevant `documentId` to read the full content
+4. If the document is paginated, call `get_effect_doc` again with incrementing `page` values
+
+## Using the Effect Solutions CLI
+
+The Effect Solutions CLI provides curated best practices and patterns. Check for relevant topics before working on Effect code.
+
+```
+npx -y effect-solutions list          # list all available topics
+npx -y effect-solutions show <slug>   # read one or more topics
+npx -y effect-solutions search <term> # search topics by keyword
+```
 
 ## Writing basic Effect's
 
@@ -454,9 +496,9 @@ describe('My Effect tests', () => {
   Search for the `@effect/platform` README with the `effect_docs_search` MCP
   tool for more information.
 - `@effect/sql` package: Write SQL queries using Effect
-    - `@effect/sql-pg` package: Write SQL queries using Effect and PostgreSQL.
-    - `@effect/sql-sqlite` package: Write SQL queries using Effect and SQLite.
-    - `@effect/sql-mysql2` package: Write SQL queries using Effect and MySQL.
+  - `@effect/sql-pg` package: Write SQL queries using Effect and PostgreSQL.
+  - `@effect/sql-sqlite` package: Write SQL queries using Effect and SQLite.
+  - `@effect/sql-mysql2` package: Write SQL queries using Effect and MySQL.
 - `ManagedRuntime` from `effect`: Integrate Effect with 3rd party frameworks like
   React. Search for `ManagedRuntime` with the `effect_docs_search` MCP tool
   for more information.
