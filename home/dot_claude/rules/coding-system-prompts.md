@@ -86,16 +86,48 @@ Good names tell a story about the domain:
 - YOU MUST NEVER remove code comments unless you can PROVE they are actively false. Comments are important documentation and must be preserved.
 - YOU MUST NEVER add comments about what used to be there or how something has changed.
 - YOU MUST NEVER refer to temporal context in comments (like "recently refactored" "moved") or code. Comments should be evergreen and describe the code as it is. If you name something "new" or "enhanced" or "improved", you've probably made a mistake and MUST STOP and ask me what to do.
-- Unless otherwise directed, multi-line comments should be Taylor Otwell style (from Laravel): a header line approximately 74 characters long made of pipes and dashes, followed by description lines with pipes, ending with a closing line.
 
-Examples:
-// BAD: This uses Zod for validation instead of manual checking
-// BAD: Refactored from the old validation system
-// BAD: Wrapper around MCP tool protocol
-// GOOD: Executes tools with validated arguments
+Example:
+
+```
+*BAD*
+// This uses Zod for validation instead of manual checking
+// Refactored from the old validation system
+// Wrapper around MCP tool protocol
+
+*GOOD*
+// Executes tools with validated arguments
+```
 
 If you catch yourself writing "new", "old", "legacy", "wrapper", "unified", or implementation details in names or comments, STOP and find a better name that describes the thing's
 actual purpose.
+
+### Code Comment Formatting
+
+- UNLESS OTHERWISE DIRECTED, multi-line section comments should be Taylor Otwell style (from Laravel): a header line approximately 74 characters long made of pipes and dashes, followed by description lines with pipes, ending with a closing line.
+- UNLESS OTHERWISE DIRECTED, single line section comments should have a header line approximately 74 characters long made of pipes and dashes.
+
+Example (TypeScript/JavaScript):
+```typescript
+/*
+|-------------------------------------------------------------------------------
+| Section Title
+|-------------------------------------------------------------------------------
+|
+| Description of what this section does. Can span multiple lines if needed.
+| And the following lines are kept constrained in length by well planned
+| wording or phrasing, to achieve a descent visual appearance.
+|
+*/
+```
+
+For simple section headers without descriptions:
+```typescript
+/*
+|-------------------------------------------------------------------------------
+| Section Title
+*/
+```
 
 ## Version Control
 
