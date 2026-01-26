@@ -1,8 +1,9 @@
 ###--------------------------------------------------------------------------###
 ### Terminal Features
 
-## Default Shell
+## Default Shell (login shell for proper zsh initialization)
 set-option -g default-shell "{{ lookPath "zsh" }}"
+set-option -g default-command "zsh -l"
 
 ## Available Colors
 set -g default-terminal "screen-256color"

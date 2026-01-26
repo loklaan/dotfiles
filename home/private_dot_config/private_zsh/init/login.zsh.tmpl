@@ -22,9 +22,11 @@
 #|
 source "${HOME}/.local/lib/term.zsh"
 if is_interactive_shell && command -v mise &> /dev/null; then
-  # Remove shims from path before full activation to avoid conflict
-  path=(${path:#$HOME/.local/share/mise/shims})
-  eval "$(mise activate zsh)"
+  # Only activate if not already activated (hook function not defined)
+  if ! typeset -f _mise_hook &> /dev/null; then
+    path=(${path:#$HOME/.local/share/mise/shims})
+    eval "$(mise activate zsh)"
+  fi
 fi
 [[ ! $(command -v nix) && -e "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" ]] && source "/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh"
 
