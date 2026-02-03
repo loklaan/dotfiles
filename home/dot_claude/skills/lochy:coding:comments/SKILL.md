@@ -1,5 +1,5 @@
 ---
-name: coding-comments
+name: lochy:coding:comments
 description: My personal best practices for writing clear and effective code comments.
 ---
 

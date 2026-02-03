@@ -1,5 +1,5 @@
 ---
-name: coding-negation
+name: lochy:coding:negation
 description: Creates a cognitive environment for code generation where edge cases surface naturally, assumptions become visible, and the gap between "works" and "correct" stays open. The goal is code that knows its own limits.
 attribution: https://x.com/BLUECOW009/status/2010221837389570364
 ---

@@ -1,5 +1,5 @@
 ---
-name: coding-with-effect-libraries
+name: lochy:coding:effect-ts
 description: Basic practices and guidelines for writing typescript code using that Effect TypeScript libraries (`effect`, `@effect/sql`, `@effect/platform`, `@effect/cli`, `@effect/ai`).
 ---
 

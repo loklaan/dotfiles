@@ -1,0 +1,71 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-060-patch-external-skills.sh
+#/
+#/ Description:
+#/   Patches external skills downloaded from Anthropic's repo to use the
+#/   lochy: naming convention. Runs after chezmoi applies externals.
+#/
+#/ Patches Applied:
+#/   skill-creator    → lochy:meta:skill-creator
+#/   doc-coauthoring  → lochy:writing:doc-coauthoring
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+patch_skill_name() {
+  local skill_path="$1"
+  local old_name="$2"
+  local new_name="$3"
+  local skill_md="${skill_path}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then
+    warning "╍ Skill not found: $skill_md"
+    return 0
+  fi
+
+  # Check if already patched
+  if grep -q "^name: ${new_name}$" "$skill_md" 2>/dev/null; then
+    info "╍ Already patched: ${new_name}"
+    return 0
+  fi
+
+  # Apply patch using sed
+  if sed -i '' "s/^name: ${old_name}$/name: ${new_name}/" "$skill_md"; then
+    info "╍ Patched: ${old_name} → ${new_name}"
+  else
+    warning "╍ Failed to patch: ${skill_md}"
+  fi
+}
+
+main() {
+  info "▶ Patching external skills to lochy: naming convention"
+
+  local skills_dir="${HOME}/.claude/skills"
+
+  # Patch skill-creator
+  patch_skill_name "${skills_dir}/skill-creator" \
+    "skill-creator" \
+    "lochy:meta:skill-creator"
+
+  # Patch doc-coauthoring
+  patch_skill_name "${skills_dir}/doc-coauthoring" \
+    "doc-coauthoring" \
+    "lochy:writing:doc-coauthoring"
+
+  info "▶ External skills patching complete"
+}
+
+main "$@"
+{{ end -}}

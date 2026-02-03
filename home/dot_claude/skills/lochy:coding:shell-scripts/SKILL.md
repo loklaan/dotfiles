@@ -1,5 +1,5 @@
 ---
-name: coding-shell-scripts
+name: lochy:coding:shell-scripts
 description: Guidelines and patterns for writing bash/shell scripts. Use when creating new shell scripts, bin scripts, or bash utilities. Includes script templates, header comments, error handling, and common patterns.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: coding-error-messages
+name: lochy:coding:error-messages
 description: Best practices for writing clear, actionable error messages in code.
 ---
 
