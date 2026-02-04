@@ -5,8 +5,9 @@ alias o="open_command"
 alias c="clear"
 alias headers="curl -I -s -X GET"
 alias gt="git"
+alias cc="otter claude-code"
 alias claude="otter claude-code"
-alias clyolo="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-5-20251101-v1:0"
+alias ccyolo="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-5-20251101-v1:0"
 
 ## ls
 alias l="ls -lah"
