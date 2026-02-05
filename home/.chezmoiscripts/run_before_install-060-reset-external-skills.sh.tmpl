@@ -1,0 +1,64 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_before_install-060-reset-external-skills.sh
+#/
+#/ Description:
+#/   Resets external skill names back to upstream values before chezmoi
+#/   applies externals. This prevents chezmoi from detecting a diff and
+#/   prompting for confirmation. The run_after script re-applies patches.
+#/
+#/ Resets Applied:
+#/   lochy:meta:skill-creator    → skill-creator
+#/   lochy:writing:doc-coauthoring → doc-coauthoring
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+reset_skill_name() {
+  local skill_path="$1"
+  local patched_name="$2"
+  local original_name="$3"
+  local skill_md="${skill_path}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then
+    return 0
+  fi
+
+  # Check if patched (needs reset)
+  if grep -q "^name: ${patched_name}$" "$skill_md" 2>/dev/null; then
+    sed -i '' "s/^name: ${patched_name}$/name: ${original_name}/" "$skill_md"
+    info "╍ Reset: ${patched_name} → ${original_name}"
+  fi
+}
+
+main() {
+  info "▶ Resetting external skills to upstream names"
+
+  local skills_dir="${HOME}/.claude/skills"
+
+  # Reset skill-creator
+  reset_skill_name "${skills_dir}/skill-creator" \
+    "lochy:meta:skill-creator" \
+    "skill-creator"
+
+  # Reset doc-coauthoring
+  reset_skill_name "${skills_dir}/doc-coauthoring" \
+    "lochy:writing:doc-coauthoring" \
+    "doc-coauthoring"
+
+  info "▶ External skills reset complete"
+}
+
+main "$@"
+{{ end -}}
