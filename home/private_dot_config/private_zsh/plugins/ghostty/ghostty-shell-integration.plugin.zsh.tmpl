@@ -1,5 +1,11 @@
 ## Ghostty
-# Load shell integration
+# Load shell integration (we manage titles ourselves via init/title.zsh)
 if [[ -n $GHOSTTY_RESOURCES_DIR ]]; then
+  # Remove 'title' from features before sourcing - we use custom title handling
+  GHOSTTY_SHELL_FEATURES="${GHOSTTY_SHELL_FEATURES//title/}"
+  # Clean up any double commas or leading/trailing commas
+  GHOSTTY_SHELL_FEATURES="${GHOSTTY_SHELL_FEATURES//,,/,}"
+  GHOSTTY_SHELL_FEATURES="${GHOSTTY_SHELL_FEATURES#,}"
+  GHOSTTY_SHELL_FEATURES="${GHOSTTY_SHELL_FEATURES%,}"
   source "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration"
 fi

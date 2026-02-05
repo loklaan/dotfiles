@@ -1,9 +1,11 @@
 # Documentation: https://ghostty.org/docs/config
 
+# Disable built-in title feature - we use custom title.zsh for tmux session names
+shell-integration-features = cursor,sudo
+
 font-family = "JetbrainsMono Nerd Font Mono"
 font-size = 15
 adjust-cell-height = "20%"
-title = " "
 theme = "Catppuccin Mocha"
 macos-titlebar-proxy-icon = hidden
 macos-icon = retro
