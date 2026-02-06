@@ -1,3 +1,4 @@
+{{- if ne "" .emailWork -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -8,13 +9,14 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   canva-devbox-misc.sh
+#/   canva-misc.sh
 #/
 #/ Description:
-#/   Installs Canva-specific quirks when running inside a Canva dev box.
+#/   Installs Canva-specific quirks. Some actions are scoped to dev boxes
+#/   via the DEVBOX_EMAIL environment variable.
 #/
 #/ Environment Variables:
-#/   DEVBOX_EMAIL:            Available in Canva dev boxes; if set to your work email, enables Canva-specific quirks.
+#/   DEVBOX_EMAIL:            Available in Canva dev boxes; if set to your work email, enables dev box quirks.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -42,13 +44,18 @@ parse_args() {
 
 main() {
   parse_args "$@"
+
+  # 1. Update Claude Code
+  info "╍ Updating Claude Code"
+  otter claude-code update >/dev/null 2>&1
+
   if [ "$config_in_canva_devbox" = "true" ]; then
     info "▶ Starting installation of canva dev box quirks!"
 
-    # 1. Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
+    # 2. Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
     cd ~/work/canva && mise trust --quiet .mise.local.toml && ln -s ../../dev/canva/canva/.mise.local.toml .  >/dev/null 2>&1 || true
 
-    # 2. ...
+    # 3. ...
 
     info "▶ Done installing canva dev box quirks. Ensured mise is set up for the pre-cloned canva monorepo."
   else
@@ -57,3 +64,4 @@ main() {
 }
 
 main "$@"
+{{ end -}}
