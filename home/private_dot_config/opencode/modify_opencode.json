@@ -1,0 +1,27 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+
+{{- /* Load MCP servers from template */ -}}
+{{- $mcpServers := includeTemplate "mcp-servers-opencode-json-tmpl" . | fromJson -}}
+
+{{- /* Configure instructions to reference shared Claude rules */ -}}
+{{- $instructions := list (printf "%s/.claude/rules/coding-system-prompts.md" .chezmoi.homeDir) -}}
+
+{{- /* Build OpenCode config */ -}}
+{{- $config := $base -}}
+{{- $config = $config | setValueAtPath "mcp" $mcpServers -}}
+{{- $config = $config | setValueAtPath "instructions" $instructions -}}
+
+{{- /* Set schema for editor validation */ -}}
+{{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
+
+{{- /* Set OpenCode-specific defaults (only if not already set by OpenCode) */ -}}
+{{- if not (hasKey $base "autoupdate") -}}
+{{-   $config = $config | setValueAtPath "autoupdate" true -}}
+{{- end -}}
+
+{{- if not (hasKey $base "share") -}}
+{{-   $config = $config | setValueAtPath "share" "manual" -}}
+{{- end -}}
+
+{{ $config | toPrettyJson }}
