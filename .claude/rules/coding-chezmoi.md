@@ -356,7 +356,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]` section:
 
 ```go
 {{- $content := includeTemplate "template-name" . -}}
-{{ includeTemplate "mcp-servers-json-tmpl" . }}
+{{ includeTemplate "some-kind-of-json-tmpl" . }}
 ```
 
 **Note:** Template files in `.chezmoitemplates/` do NOT have `.tmpl` suffix.
@@ -525,12 +525,12 @@ For `modify_` templates that transform existing files:
 {{ $base | setValueAtPath "key.path" $newData | toPrettyJson }}
 ```
 
-**Example:** `/home/modify_dot_claude.json`
+**Example:** `/home/modify_dot_mytool.json`
 ```go
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
-{{ $serversConfigDict := includeTemplate "mcp-servers-json-tmpl" . | fromJson }}
-{{ $base | setValueAtPath "mcpServers" $serversConfigDict | toPrettyJson }}
+{{ $someDict := includeTemplate "some-kind-of-json-tmpl" . | fromJson }}
+{{ $base | setValueAtPath "someKey" $someDict | toPrettyJson }}
 ```
 
 ---
@@ -717,14 +717,14 @@ Template files that can be included in other templates using `includeTemplate`.
 
 ```
 .chezmoitemplates/
-├── mcp-servers-json-tmpl      # ← No .tmpl suffix
+├── mcp-servers-claude-json-tmpl      # ← No .tmpl suffix
 ├── hooks-json-tmpl            # ← No .tmpl suffix
 └── shared-config-tmpl         # ← No .tmpl suffix
 ```
 
 #### Usage Pattern
 
-**Define template** in `.chezmoitemplates/mcp-servers-json-tmpl`:
+**Define template** in `.chezmoitemplates/mcp-servers-claude-json-tmpl`:
 ```json
 {
   "server1": { "command": "cmd1" },
@@ -734,7 +734,7 @@ Template files that can be included in other templates using `includeTemplate`.
 
 **Use template** in another file:
 ```go
-{{- $servers := includeTemplate "mcp-servers-json-tmpl" . | fromJson -}}
+{{- $servers := includeTemplate "mcp-servers-claude-json-tmpl" . | fromJson -}}
 {{ $servers | toPrettyJson }}
 ```
 
@@ -829,16 +829,16 @@ sudo apt-get install -y {{ . | quote }}
 
 ### Modify Pattern: Merge JSON Configuration
 
-**File:** `modify_dot_claude.json`
+**File:** `modify_dot_mytool.json`
 
 ```go
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
-{{- $servers := includeTemplate "mcp-servers-json-tmpl" . | fromJson -}}
-{{ $base | setValueAtPath "mcpServers" $servers | toPrettyJson }}
+{{- $someDict := includeTemplate "some-kind-of-json-tmpl" . | fromJson -}}
+{{ $base | setValueAtPath "someKey" $someDict | toPrettyJson }}
 ```
 
-This reads `~/.claude.json`, adds/updates the `mcpServers` key, and writes it back formatted.
+This reads `~/.mytool.json`, adds/updates the `someKey` key, and writes it all back including the prior existing fields.
 
 ### Multi-Platform Path Selection
 
