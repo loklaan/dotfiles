@@ -2,6 +2,6 @@
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
 {{- $serversConfigDict := includeTemplate "mcp-servers-claude-json-tmpl" . | fromJson -}}
-{{- $envDict := dict "CLAUDE_CODE_DISABLE_TERMINAL_TITLE" "1" -}}
+{{- $envDict := dict "CLAUDE_CODE_DISABLE_TERMINAL_TITLE" "1" "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "1" -}}
 
 {{ $base | setValueAtPath "mcpServers" $serversConfigDict | setValueAtPath "env" $envDict | toPrettyJson }}
