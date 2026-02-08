@@ -247,6 +247,7 @@ main() {
   start_job "job-$((job_num++))" "rustup" install_mise_completion "rustup" rustup completions zsh
   start_job "job-$((job_num++))" "cargo" install_mise_completion "cargo" rustup completions zsh cargo
   start_job "job-$((job_num++))" "pnpm" install_completion "pnpm" pnpm completion zsh
+  start_job "job-$((job_num++))" "opencode" install_completion "opencode" opencode completion
 
   wait_for_jobs
 
