@@ -1,0 +1,149 @@
+{{- if and (eq .chezmoi.os "linux") (ne "" .emailWork) -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   jetbrains-settings.sh
+#/
+#/ Description:
+#/   Pre-seeds IntelliJ IDEA configuration for Coder workspaces. Creates
+#/   version-specific config directories with symlinks to shared defaults
+#/   (VM options, properties). Also creates a CLI symlink for git merge
+#/   tool integration.
+#/
+#/   Detection strategies:
+#/     1. Runtime: scans /opt/intellij/*/ for installed versions
+#/     2. API: queries JetBrains product API for released versions
+#/     3. RemoteDev: scans existing RemoteDev-IU-* directories
+#/
+#/ Environment Variables:
+#/   DEVBOX_EMAIL:  Available in Canva dev boxes; gates execution.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+DEFAULTS_DIR="${HOME}/.config/JetBrains/defaults"
+JETBRAINS_CONFIG_DIR="${HOME}/.config/JetBrains"
+API_URL="https://data.services.jetbrains.com/products?code=IIU"
+VERSION_FILTER="{{ .jetbrainsVersionFilter }}"
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+setup_config_symlinks() {
+  local config_dir="$1"
+  mkdir -p "$config_dir"
+
+  for file in idea64.vmoptions idea.properties; do
+    local target="${config_dir}/${file}"
+    if [ ! -e "$target" ]; then
+      ln -s "../defaults/${file}" "$target"
+      info "╍ Symlinked ${target}"
+    fi
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if [ "${DEVBOX_EMAIL:-}" != "{{ .emailWork }}" ]; then
+    info "▶ Skipping JetBrains settings (not in a Canva dev box)."
+    return
+  fi
+
+  info "▶ Pre-seeding IntelliJ IDEA configuration"
+
+  if [ ! -d "$DEFAULTS_DIR" ]; then
+    fatal "Defaults directory missing: $DEFAULTS_DIR"
+  fi
+
+  local -a collect_versions=()
+
+  # Strategy 1: Runtime detection from install path
+  if [ -d "/opt/intellij" ]; then
+    for dir in /opt/intellij/*/; do
+      [ -d "$dir" ] || continue
+      local version
+      version="$(basename "$dir")"
+      collect_versions+=("$version")
+      info "╍ Detected installed version: ${version}"
+
+      # Create CLI symlink for git merge tool integration
+      local idea_bin="${dir}bin/idea64.sh"
+      if [ -x "$idea_bin" ]; then
+        mkdir -p "${HOME}/.local/bin"
+        local cli_link="${HOME}/.local/bin/idea"
+        if [ ! -e "$cli_link" ] || [ -L "$cli_link" ]; then
+          ln -sf "$idea_bin" "$cli_link"
+          info "╍ CLI symlink: ${cli_link} → ${idea_bin}"
+        fi
+      fi
+    done
+  else
+    info "╍ /opt/intellij not found, skipping runtime detection"
+  fi
+
+  # Strategy 2: JetBrains product API
+  local api_response
+  if api_response=$(curl -sf --max-time 10 "$API_URL"); then
+    local api_versions
+    api_versions=$(echo "$api_response" | jq -r '[.[0].releases[].majorVersion] | unique[]')
+    for v in $api_versions; do
+      # shellcheck disable=SC2254
+      if [[ "$v" == $VERSION_FILTER ]]; then
+        collect_versions+=("$v")
+        info "╍ API version matching filter: ${v}"
+      fi
+    done
+  else
+    warning "JetBrains API unreachable, skipping API version detection"
+  fi
+
+  # Strategy 3: Existing RemoteDev-IU-* directories (created by JetBrains Gateway)
+  for dir in "${JETBRAINS_CONFIG_DIR}"/RemoteDev-IU-*/; do
+    [ -d "$dir" ] || continue
+    setup_config_symlinks "$dir"
+    info "╍ Configured RemoteDev directory: $(basename "$dir")"
+  done
+
+  # Deduplicate and apply versioned config
+  if [ ${#collect_versions[@]} -eq 0 ]; then
+    info "▶ No IntelliJ versions detected. Nothing to configure."
+    return
+  fi
+
+  local -a unique_versions
+  IFS=$'\n' read -r -d '' -a unique_versions < <(printf '%s\n' "${collect_versions[@]}" | sort -uV && printf '\0') || true
+
+  for version in "${unique_versions[@]}"; do
+    setup_config_symlinks "${JETBRAINS_CONFIG_DIR}/IntelliJIdea${version}"
+  done
+
+  info "▶ Done pre-seeding IntelliJ IDEA configuration (${#unique_versions[@]} version(s))."
+}
+
+main "$@"
+{{ end -}}
