@@ -159,6 +159,16 @@ Use distinct trigger terms in descriptions to help Claude choose correctly.
 4. **Document versions** - Track changes in SKILL.md content
 5. **Use allowed-tools** - Restrict capabilities when appropriate
 
+<!-- lochy:writing namespace
+     Writing skills that apply Lochy's tone of voice belong under the
+     `lochy:writing` skill, NOT as separate skills. The tone of voice
+     reference (references/tone-of-voice.md) is the shared constant;
+     new formats (articles, blog posts, presentations, etc.) should be
+     added as new sections in lochy:writing/SKILL.md with their own
+     format-specific reference file under references/. Do not create
+     separate lochy:writing-articles or lochy:ghostwriting skills. -->
+
+
 ## Examples
 
 ### Simple Skill (single file)
