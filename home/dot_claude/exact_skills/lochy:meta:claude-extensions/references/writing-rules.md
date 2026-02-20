@@ -24,7 +24,8 @@ Rules can be scoped to specific files using YAML frontmatter with the `paths` fi
 
 ```yaml
 ---
-paths: src/api/**/*.ts
+paths:
+  - "src/api/**/*.ts"
 ---
 
 # API Development Rules
@@ -40,29 +41,34 @@ Rules without a `paths` field are loaded unconditionally and apply to all files.
 
 The `paths` field supports standard glob patterns:
 
-| Pattern | Matches |
-|---------|---------|
-| `**/*.ts` | All TypeScript files in any directory |
-| `src/**/*` | All files under `src/` directory |
-| `*.md` | Markdown files in the project root |
+| Pattern                | Matches                                  |
+|------------------------|------------------------------------------|
+| `**/*.ts`              | All TypeScript files in any directory    |
+| `src/**/*`             | All files under `src/` directory         |
+| `*.md`                 | Markdown files in the project root       |
 | `src/components/*.tsx` | React components in a specific directory |
 
-You can use braces to match multiple patterns efficiently:
+You can specify multiple patterns as a list:
 
 ```yaml
 ---
-paths: src/**/*.{ts,tsx}
+paths:
+  - "src/**/*.ts"
+  - "lib/**/*.ts"
+  - "tests/**/*.test.ts"
+---
+```
+
+Brace expansion is supported for matching multiple extensions or directories:
+
+```yaml
+---
+paths:
+  - "src/**/*.{ts,tsx}"
+  - "{src,lib}/**/*.ts"
 ---
 
 # TypeScript/React Rules
-```
-
-Or combine multiple patterns with commas:
-
-```yaml
----
-paths: {src,lib}/**/*.ts, tests/**/*.test.ts
----
 ```
 
 ## Subdirectories

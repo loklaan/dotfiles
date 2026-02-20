@@ -49,21 +49,32 @@ Your subagent's system prompt goes here...
 
 ### File Locations
 
-| Type | Location | Scope | Priority |
-|------|----------|-------|----------|
-| **Project subagents** | `.claude/agents/` | Current project | Highest |
-| **User subagents** | `~/.claude/agents/` | All projects | Lower |
+| Type        | Location              | Scope                   | Priority    |
+|-------------|-----------------------|-------------------------|-------------|
+| **CLI**     | `--agents` flag JSON  | Current session only    | 1 (highest) |
+| **Project** | `.claude/agents/`     | Current project         | 2           |
+| **User**    | `~/.claude/agents/`   | All your projects       | 3           |
+| **Plugin**  | Plugin `agents/` dir  | Where plugin is enabled | 4 (lowest)  |
+
+When multiple subagents share the same name, the higher-priority location wins.
 
 ### Configuration Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Unique identifier (lowercase + hyphens) |
-| `description` | Yes | When/why to invoke this subagent |
-| `tools` | No | Comma-separated tool list; omit to inherit all |
-| `model` | No | Model alias (`sonnet`, `opus`, `haiku`) or `'inherit'` |
-| `permissionMode` | No | `default`, `acceptEdits`, `bypassPermissions`, `plan`, `ignore` |
-| `skills` | No | Comma-separated skill names to auto-load |
+| Field             | Required | Description                                                                          |
+|-------------------|----------|--------------------------------------------------------------------------------------|
+| `name`            | Yes      | Unique identifier (lowercase letters and hyphens)                                    |
+| `description`     | Yes      | When/why to invoke this subagent                                                     |
+| `tools`           | No       | Comma-separated tool list; omit to inherit all                                       |
+| `disallowedTools` | No       | Comma-separated tools to deny, removed from inherited or specified list              |
+| `model`           | No       | Model alias (`sonnet`, `opus`, `haiku`) or `inherit`. Default: `inherit`             |
+| `permissionMode`  | No       | `default`, `acceptEdits`, `dontAsk`, `bypassPermissions`, or `plan`                  |
+| `maxTurns`        | No       | Maximum agentic turns before the subagent stops                                      |
+| `skills`          | No       | Skills to load into the subagent's context at startup (full content injected)        |
+| `mcpServers`      | No       | MCP servers available to this subagent (names or inline definitions)                 |
+| `hooks`           | No       | Lifecycle hooks scoped to this subagent                                              |
+| `memory`          | No       | Persistent memory scope: `user`, `project`, or `local`. Enables cross-session learning |
+| `background`      | No       | `true` to always run as a background task. Default: `false`                          |
+| `isolation`       | No       | `worktree` to run in a temporary git worktree for isolation                          |
 
 ## CLI-Based Configuration
 
@@ -102,14 +113,14 @@ To encourage proactive use, include phrases like "use PROACTIVELY" or "MUST BE U
 ## Built-in Subagents
 
 ### 1. General-Purpose Subagent
-- **Model**: Sonnet for complex reasoning
+- **Model**: Inherits from main conversation
 - **Tools**: All tools available
 - **Purpose**: Complex research tasks, multi-step operations, code modifications
 - **When used**: Tasks requiring both exploration and modification with complex reasoning
 
 ### 2. Plan Subagent
-- **Model**: Sonnet for capable analysis
-- **Tools**: Read, Glob, Grep, Bash
+- **Model**: Inherits from main conversation
+- **Tools**: Read-only tools (denied Write and Edit)
 - **Purpose**: Researches codebase and gathers context before presenting plans
 - **When used**: Automatically in plan mode when Claude needs to research codebase
 
