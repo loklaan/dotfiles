@@ -121,6 +121,12 @@ Guidance for Claude goes here.
 | `agent`                    | No          | Which subagent type to use when `context: fork` is set                   |
 | `hooks`                    | No          | Lifecycle hooks scoped to this skill                                     |
 
+**Local conventions** (not part of either spec — used in this repo only):
+
+| Field           | Required | Description                                                        |
+|-----------------|----------|--------------------------------------------------------------------|
+| `attribution`   | No       | URL crediting the source methodology or inspiration                |
+
 Note: The Agent Skills standard makes `name` and `description` required. Claude Code relaxes both — `name` defaults to the directory name and `description` falls back to the first paragraph. For clarity, always set both explicitly.
 
 **Description tips:**
@@ -261,7 +267,8 @@ Use distinct trigger terms in descriptions to help Claude choose correctly.
 3. **Use `references/`** — supporting files always go in `references/`, never at root
 4. **Hub-and-spoke for complexity** — SKILL.md delegates, reference files contain depth
 5. **Only restrict tools when needed** — omit `allowed-tools` unless the skill must be limited
-6. **Check the namespace registry** — before creating a skill, check if it belongs under an existing namespace
+6. **Attribute sources** — use the `attribution` field for methodologies from external sources
+7. **Check the namespace registry** — before creating a skill, check if it belongs under an existing namespace
 
 ## Updating and Removing Skills
 
