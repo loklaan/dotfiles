@@ -852,6 +852,38 @@ This reads `~/.mytool.json`, adds/updates the `someKey` key, and writes it all b
 Font directory: ~/{{ $fontDir }}
 ```
 
+### Content-Hash Embedding for `run_onchange_` Scripts
+
+When a `run_onchange_` script depends on files outside its own content (e.g., it processes
+skill directories or external archives), embed a composite hash of those dependencies as a
+template comment. Chezmoi tracks the rendered script content — when the hash changes, the
+script re-runs.
+
+**Pattern:**
+
+```go
+{{- /* Compute composite hash of source files for run_onchange_ gate */ -}}
+{{- $filesGlob := joinPath .chezmoi.sourceDir "path/to/sources" "**" -}}
+{{- $hash := include ".chezmoiexternals/relevant-file.toml" | sha256sum -}}
+{{- $srcPrefix := printf "%s/" .chezmoi.sourceDir -}}
+{{- range (glob $filesGlob | sortAlpha) -}}
+{{-   if stat . -}}
+{{-     if not (stat .).isDir -}}
+{{-       $hash = printf "%s%s" $hash (include (trimPrefix $srcPrefix .) | sha256sum) -}}
+{{-     end -}}
+{{-   end -}}
+{{- end }}
+#!/usr/bin/env bash
+# content-hash: {{ $hash | sha256sum }}
+```
+
+**Key details:**
+- `glob` returns absolute paths; strip the `.chezmoi.sourceDir` + `/` prefix to get paths relative to the source root for `include`
+- Use `stat` to filter out directories (glob `**` matches both files and dirs)
+- Use `sortAlpha` to ensure deterministic ordering across runs
+- The hash comment becomes part of the rendered script, so chezmoi detects the change
+- Combine with per-item runtime hashing inside the script for granular skip logic
+
 ---
 
 ## Working with This Repository
