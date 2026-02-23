@@ -72,10 +72,14 @@ lochy:writing/
 ├── SKILL.md
 └── references/
     ├── tone-of-voice.md
-    └── slack-comms.md
+    ├── technical-writing-voice.md
+    ├── slack-comms.md
+    └── doc-coauthoring.md
 ```
 
 **Convention:** All supporting files go in subdirectories — never loose alongside SKILL.md. The Agent Skills standard defines `references/`, `scripts/`, and `assets/` as optional directories. Claude Code allows any directory structure. This guide uses `references/` for documentation files.
+
+**Do not include** extraneous files like README.md, CHANGELOG.md, INSTALLATION_GUIDE.md, or QUICK_REFERENCE.md. Skills are for an AI agent to do a job — not for user-facing documentation, setup procedures, or process history. These should exist within the skill's parent project directory!
 
 ### SKILL.md Format
 
@@ -133,7 +137,7 @@ Note: The Agent Skills standard makes `name` and `description` required. Claude 
 - State what the skill does, then when to use it
 - Include specific trigger terms users would mention
 - Bad: `Helps with documents`
-- Good: `Extract text and tables from PDF files. Use when working with PDFs or when the user mentions document extraction.`
+- Good: `Generate TypeScript mapper functions for CMS content models. Use when creating BFF mappers or when the user mentions content type mapping.`
 
 #### Content Patterns
 
@@ -154,6 +158,51 @@ is the constant; the format determines structure and length.
 ### Slack & Informal Comms
 See [slack-comms.md](references/slack-comms.md) for format-specific guidance.
 ```
+
+#### Design Principles
+
+**The context window is a public good.** Skills share it with the system prompt, conversation history, other skills' metadata, and the user's request. Default assumption: Claude is already smart — only add context it doesn't have. Challenge each piece of information: "Does this paragraph justify its token cost?"
+
+**Match specificity to fragility.** Not all instructions need the same level of prescription:
+
+- **High freedom** (prose instructions) — multiple approaches are valid, decisions depend on context. Example: "Write a clear error message explaining what went wrong."
+- **Medium freedom** (pseudocode, parameterised templates) — a preferred pattern exists but some variation is acceptable. Example: a report template with flexible sections.
+- **Low freedom** (exact scripts, strict templates) — operations are fragile, consistency is critical, or a specific sequence must be followed. Example: a CMS content model migration pipeline with schema validation steps.
+
+Think of it as: a narrow bridge with cliffs needs guardrails; an open field allows many routes.
+
+#### Instruction Patterns
+
+**Sequential workflows** — break multi-step processes into numbered steps:
+
+```markdown
+Adding a content block involves these steps:
+
+1. Define the schema (edit src/schemas/block.proto)
+2. Generate types (run npx codegen)
+3. Create the mapper (edit src/mappers/block.ts)
+4. Run tests (run npm test)
+```
+
+**Conditional workflows** — guide through decision points:
+
+```markdown
+1. Determine the task type:
+   **Creating new content?** → Follow "Creation workflow" below
+   **Editing existing content?** → Follow "Editing workflow" below
+```
+
+**Output templates** — provide format examples when consistent output matters. Use strict templates (`ALWAYS use this structure`) for fragile formats, flexible templates (`sensible default, use your judgment`) when adaptation is useful.
+
+**Input/output examples** — when output quality depends on style or nuance, show pairs:
+
+```markdown
+**Example:**
+Input: Added user authentication with JWT tokens
+Output: feat(auth): implement JWT-based authentication
+```
+
+Examples communicate desired style more effectively than descriptions alone.
 
 ### Reference Files
 
@@ -193,7 +242,11 @@ When a domain grows to contain multiple related skills, use a single skill with 
      new formats (articles, blog posts, presentations, etc.) should be
      added as new sections in lochy:writing/SKILL.md with their own
      format-specific reference file under references/. Do not create
-     separate lochy:writing-articles or lochy:ghostwriting skills. -->
+     separate lochy:writing-articles or lochy:ghostwriting skills.
+
+     Current formats:
+       - Slack & informal comms (references/slack-comms.md)
+       - Documentation & long-form (references/doc-coauthoring.md) -->
 
 <!-- lochy:coding namespace
      Coding skills are separate per topic (comments, effect-ts,
@@ -230,7 +283,7 @@ cat ~/.claude/skills/my-skill/SKILL.md
 
 Test by asking questions matching your description:
 ```
-Can you help me extract text from this PDF?
+Can you help me create a renderer for this content block?
 ```
 
 Claude autonomously decides to use the Skill — no explicit invocation needed.
