@@ -1,5 +1,5 @@
 ---
-name: lochy:compressing-info
+name: lochy:compress
 description: Semantic lossless compression of content using U-Turn methodology. Use when asked to compress, distill, summarize for memory, condense context, or create compact representations of information while preserving semantic meaning.
 attribution: https://arxiv.org/abs/2601.02553
 ---

@@ -1,5 +1,5 @@
 ---
-name: lochy:project-management:organising-work
+name: lochy:pm:organising-work
 description: Techniques for organising project work — naming milestones and writing task tickets. Use when naming milestones, writing task tickets, or planning project deliverables.
 ---
 

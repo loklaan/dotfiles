@@ -1,5 +1,5 @@
 ---
-name: lochy:architecting-systems
+name: lochy:architecture
 description: Best practices and rules for architecting scalable, maintainable systems.
 ---
 
