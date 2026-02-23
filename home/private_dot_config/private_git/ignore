@@ -23,4 +23,3 @@ done.commit
 
 # LLM agents
 **/.claude/settings.local.json
-.claude
