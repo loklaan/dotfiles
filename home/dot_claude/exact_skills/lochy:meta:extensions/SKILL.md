@@ -1,5 +1,5 @@
 ---
-name: lochy:meta:claude-extensions
+name: lochy:meta:extensions
 description: Guidelines for creating custom rules, custom skills, and custom subagents for Claude.
 allowed-tools: Read
 ---

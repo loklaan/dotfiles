@@ -32,7 +32,7 @@ owner:domain:skill-name
 ```
 
 - **Owner** — who the skill belongs to (e.g., `lochy`, a team name)
-- **Domain** — the broad category (e.g., `coding`, `meta`, `project-management`)
+- **Domain** — the broad category (e.g., `coding`, `meta`, `pm`)
 - **Skill name** — the specific capability
 
 The directory name MUST match the `name:` field in frontmatter exactly.
@@ -43,11 +43,11 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 |--------------------------------------------|--------------------|----------------------------|
 | `lochy:coding:comments`                    | coding             | Comment conventions        |
 | `lochy:coding:effect-ts`                   | coding             | Effect TypeScript patterns |
-| `lochy:coding:shell-scripts`               | coding             | Bash script patterns       |
-| `lochy:meta:claude-extensions`             | meta               | Claude Code extensibility  |
-| `lochy:project-management:organising-work` | project-management | Milestones and tickets     |
+| `lochy:coding:shell`                       | coding             | Bash script patterns       |
+| `lochy:meta:extensions`                    | meta               | Claude Code extensibility  |
+| `lochy:pm:organising-work`                 | pm                 | Milestones and tickets     |
 | `lochy:writing`                            | (top-level)        | Tone of voice for writing  |
-| `lochy:compressing-info`                   | (top-level)        | Information compression    |
+| `lochy:compress`                           | (top-level)        | Information compression    |
 
 **Rules:**
 - The Agent Skills standard allows lowercase letters, numbers, and hyphens only — no colons, no consecutive hyphens, must not start or end with a hyphen
@@ -87,7 +87,7 @@ SKILL.md uses YAML frontmatter followed by markdown content:
 
 ```yaml
 ---
-name: lochy:coding:error-messages
+name: lochy:coding:errors
 description: Best practices for writing clear, actionable error messages in code.
 ---
 
@@ -220,7 +220,7 @@ By default, skills have access to all tools. Only add `allowed-tools` when you n
 
 ```yaml
 ---
-name: lochy:meta:claude-extensions
+name: lochy:meta:extensions
 description: Guidelines for creating custom rules, custom skills, and custom subagents for Claude.
 allowed-tools: Read
 ---
@@ -250,13 +250,13 @@ When a domain grows to contain multiple related skills, use a single skill with 
 
 <!-- lochy:coding namespace
      Coding skills are separate per topic (comments, effect-ts,
-     error-messages, negation, shell-scripts) because each is a
+     errors, negation, shell) because each is a
      distinct, self-contained concern. New coding skills should follow
      the lochy:coding:topic-name pattern. -->
 
 <!-- lochy:meta namespace
      Reserved for skills about Claude Code extensibility itself.
-     Currently only lochy:meta:claude-extensions. -->
+     Currently only lochy:meta:extensions. -->
 
 ## Using and Managing Skills
 
