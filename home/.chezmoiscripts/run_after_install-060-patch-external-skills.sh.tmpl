@@ -20,8 +20,7 @@ setup_session_logging "$(basename "$0")"
 #/   lochy: naming convention. Runs after chezmoi applies externals.
 #/
 #/ Patches Applied:
-#/   skill-creator    → lochy:meta:skill-creator
-#/   doc-coauthoring  → lochy:writing:doc-coauthoring
+#/   (none currently — all dormant)
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 patch_skill_name() {
@@ -54,15 +53,10 @@ main() {
 
   local skills_dir="${HOME}/.claude/skills"
 
-  # Patch skill-creator
-  patch_skill_name "${skills_dir}/skill-creator" \
-    "skill-creator" \
-    "lochy:meta:skill-creator"
-
-  # Patch doc-coauthoring
-  patch_skill_name "${skills_dir}/doc-coauthoring" \
-    "doc-coauthoring" \
-    "lochy:writing:doc-coauthoring"
+  # Dormant — methodology folded into lochy:writing
+  # patch_skill_name "${skills_dir}/doc-coauthoring" \
+  #   "doc-coauthoring" \
+  #   "lochy:writing:doc-coauthoring"
 
   info "▶ External skills patching complete"
 }

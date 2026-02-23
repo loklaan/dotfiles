@@ -1,6 +1,8 @@
 ---
 name: lochy:writing
-description: Write in Lochy's personal tone of voice. Currently supports Slack DMs, help channel replies, stakeholder updates, and other informal comms. Use when asked to write, draft, or help compose a message, reply, or written communication as Lochy.
+description: Write in Lochy's personal tone of voice. Supports Slack DMs, help channel replies, stakeholder updates, and collaborative document authoring (specs, proposals, decision docs). Use when asked to write, draft, compose, or co-author a message, document, or written communication as Lochy.
+attribution:
+  - https://github.com/anthropics/skills/tree/main/skills/doc-coauthoring
 ---
 
 # Writing as Lochy
@@ -36,6 +38,12 @@ For Slack DMs, help channel replies, stakeholder updates, and thread responses. 
 **Format rules:**
 - Short paragraphs and bullet lists. Bold sparingly for key nouns. Inline URLs.
 - Loop-closing: "Looping back—[status]" when following up.
+
+### Documentation & Long-form
+
+For specs, proposals, decision docs, RFCs, and similar structured content. See [doc-coauthoring.md](references/doc-coauthoring.md) for the full three-stage co-authoring workflow (context gathering → section-by-section building → reader testing).
+
+Use the [technical writing voice](references/technical-writing-voice.md) instead of the conversational tone — the core personality carries over but the colloquialisms and casual energy drop.
 
 ## Do
 

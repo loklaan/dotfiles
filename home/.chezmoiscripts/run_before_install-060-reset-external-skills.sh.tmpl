@@ -21,8 +21,7 @@ setup_session_logging "$(basename "$0")"
 #/   prompting for confirmation. The run_after script re-applies patches.
 #/
 #/ Resets Applied:
-#/   lochy:meta:skill-creator    → skill-creator
-#/   lochy:writing:doc-coauthoring → doc-coauthoring
+#/   (none currently — all dormant)
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 reset_skill_name() {
@@ -47,15 +46,10 @@ main() {
 
   local skills_dir="${HOME}/.claude/skills"
 
-  # Reset skill-creator
-  reset_skill_name "${skills_dir}/skill-creator" \
-    "lochy:meta:skill-creator" \
-    "skill-creator"
-
-  # Reset doc-coauthoring
-  reset_skill_name "${skills_dir}/doc-coauthoring" \
-    "lochy:writing:doc-coauthoring" \
-    "doc-coauthoring"
+  # Dormant — methodology folded into lochy:writing
+  # reset_skill_name "${skills_dir}/doc-coauthoring" \
+  #   "lochy:writing:doc-coauthoring" \
+  #   "doc-coauthoring"
 
   info "▶ External skills reset complete"
 }
