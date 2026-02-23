@@ -1,0 +1,329 @@
+{{- if or (eq .chezmoi.os "darwin") (and (eq .chezmoi.os "linux") (or (env "DISPLAY") (env "WAYLAND_DISPLAY"))) -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-070-pack-claude-skills.sh
+#/
+#/ Description:
+#/   Packs Claude skills and rules into individual zip files for drag-and-drop
+#/   installation into Claude Desktop's capabilities panel. Rules must have
+#/   YAML frontmatter (name, description) and are copied as SKILL.md in the
+#/   zip. Only repacks items whose content has changed since the last run.
+#/   Opens the output directory when complete.
+#/
+#/ Output Directory:
+#/   ~/.cache/claude-skill-packs/
+#/
+#/ Claude Desktop Skill Zip Requirements:
+#/   - Zip internal paths must not contain colons or other special characters.
+#/     macOS renders ':' as '/' in Finder, and Desktop rejects both outright.
+#/   - SKILL.md frontmatter allows only these keys:
+#/       name, description, license, allowed-tools, compatibility, metadata
+#/     Any other key (e.g. attribution) causes an import error.
+#/   - The 'name' field must contain only lowercase letters, numbers, and
+#/     hyphens. Colons, underscores, and uppercase are rejected.
+#/   - The 'name' field must not contain reserved words like 'claude'.
+#/
+#/   These requirements are undocumented and discovered via whack-a-mole.
+#/   This script handles all of the above by staging a sanitized copy of each
+#/   skill before zipping: directory names are cleaned, unsupported frontmatter
+#/   fields are stripped, the name value is rewritten, and reserved words are
+#/   replaced with abbreviations (e.g. 'claude' → 'cc').
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+SKILLS_DIR="${HOME}/.claude/skills"
+RULES_DIR="${HOME}/.claude/rules"
+OUTPUT_DIR="${HOME}/.cache/claude-skill-packs"
+MANIFEST_FILE="${OUTPUT_DIR}/.skill-hashes"
+
+sanitize_name() {
+  local name="${1#lochy:}"
+  name="$(printf '%s' "$name" | tr ':' '-')"
+  name="${name//claude/cc}"
+  printf '%s' "$name"
+}
+
+strip_unsupported_frontmatter() {
+  local file="$1"
+  awk '
+    BEGIN { in_fm = 0; fm_started = 0; keep = 1 }
+    /^---[[:space:]]*$/ {
+      if (!fm_started) { fm_started = 1; in_fm = 1; print; next }
+      else { in_fm = 0; print; next }
+    }
+    in_fm {
+      if (/^[^[:space:]]/) {
+        key = $0; sub(/:.*/, "", key)
+        keep = (key == "name" || key == "description" || key == "license" || \
+                key == "allowed-tools" || key == "compatibility" || key == "metadata")
+      }
+      if (keep) {
+        if (key == "name" && /^name:/) {
+          val = $0; sub(/^name:[[:space:]]*/, "", val)
+          sub(/^lochy:/, "", val); gsub(/:/, "-", val); gsub(/claude/, "cc", val)
+          print "name: " val
+        } else {
+          print
+        }
+      }
+      next
+    }
+    { print }
+  ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+}
+
+hash_skill() {
+  local skill_dir="$1"
+  find "$skill_dir" -type f \
+    -not -name '.DS_Store' \
+    -not -name '.skills-cli.json' \
+    -not -name '.git*' \
+    -not -path '*/.git/*' \
+    | sort \
+    | xargs shasum -a 256 \
+    | shasum -a 256 \
+    | cut -d' ' -f1
+}
+
+get_stored_hash() {
+  local skill_name="$1"
+  if [ -f "$MANIFEST_FILE" ]; then
+    grep "  ${skill_name}$" "$MANIFEST_FILE" | cut -d' ' -f1 || true
+  fi
+}
+
+pack_skill() {
+  local skill_dir="$1"
+  local skill_name
+  skill_name="$(basename "$skill_dir")"
+  local safe_name
+  safe_name="$(sanitize_name "$skill_name")"
+  local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
+
+  rm -f "$zip_path"
+
+  # Stage into a temp dir with the sanitized name so internal zip paths are clean
+  local staging_dir
+  staging_dir="$(mktemp -d "${TMPDIR}/skill-pack.XXXXXX")"
+  cp -R "$skill_dir" "${staging_dir}/${safe_name}"
+
+  if [ -f "${staging_dir}/${safe_name}/SKILL.md" ]; then
+    strip_unsupported_frontmatter "${staging_dir}/${safe_name}/SKILL.md"
+  fi
+
+  (cd "$staging_dir" && zip -r "$zip_path" "$safe_name/" \
+    -x '*/.git*' \
+    -x '*/.DS_Store' \
+    -x '*/.skills-cli.json' \
+  ) > /dev/null
+
+  rm -rf "$staging_dir"
+}
+
+extract_frontmatter_name() {
+  local file="$1"
+  awk '
+    /^---[[:space:]]*$/ { if (started) exit; started = 1; next }
+    started && /^name:[[:space:]]*/ { sub(/^name:[[:space:]]*/, ""); gsub(/"/, ""); print; exit }
+  ' "$file"
+}
+
+pack_rule() {
+  local rule_file="$1"
+  local pack_name="$2"
+  local zip_path="${OUTPUT_DIR}/${pack_name}.zip"
+
+  rm -f "$zip_path"
+
+  local staging_dir
+  staging_dir="$(mktemp -d "${TMPDIR}/skill-pack.XXXXXX")"
+  mkdir -p "${staging_dir}/${pack_name}"
+
+  cp "$rule_file" "${staging_dir}/${pack_name}/SKILL.md"
+  strip_unsupported_frontmatter "${staging_dir}/${pack_name}/SKILL.md"
+
+  (cd "$staging_dir" && zip -r "$zip_path" "$pack_name/" \
+  ) > /dev/null
+
+  rm -rf "$staging_dir"
+}
+
+clean_stale_zips() {
+  local valid_zip_names=("$@")
+
+  for zip_file in "$OUTPUT_DIR"/*.zip; do
+    [ -f "$zip_file" ] || continue
+    local zip_name
+    zip_name="$(basename "$zip_file" .zip)"
+
+    local found=false
+    for name in "${valid_zip_names[@]}"; do
+      if [ "$zip_name" = "$name" ]; then
+        found=true
+        break
+      fi
+    done
+
+    if [ "$found" = false ]; then
+      rm -f "$zip_file"
+      info "╍ Removed stale zip: ${zip_name}.zip"
+    fi
+  done
+}
+
+main() {
+  mkdir -p "$OUTPUT_DIR"
+
+  # Discover skills
+  local all_skills=()
+  if [ -d "$SKILLS_DIR" ]; then
+    for skill_dir in "$SKILLS_DIR"/*/; do
+      [ -d "$skill_dir" ] || continue
+      [ -f "${skill_dir}SKILL.md" ] || continue
+      all_skills+=("$(basename "$skill_dir")")
+    done
+  fi
+
+  # Discover rules (must have frontmatter with name field)
+  local all_rule_files=()
+  local all_rule_pack_names=()
+  if [ -d "$RULES_DIR" ]; then
+    for rule_file in "$RULES_DIR"/*.md; do
+      [ -f "$rule_file" ] || continue
+      local pack_name
+      pack_name="$(extract_frontmatter_name "$rule_file")"
+      if [ -z "$pack_name" ]; then
+        warning "╍ Rule '$(basename "$rule_file")' has no frontmatter name, skipping"
+        continue
+      fi
+      all_rule_files+=("$rule_file")
+      all_rule_pack_names+=("$pack_name")
+    done
+  fi
+
+  local total=$(( ${#all_skills[@]} + ${#all_rule_files[@]} ))
+
+  if [ "$total" -eq 0 ]; then
+    info "╍ No skills or rules found"
+    return 0
+  fi
+
+  # Collect all zip names and check for collisions
+  local all_zip_names=()
+  local seen_names=""
+
+  for skill_name in "${all_skills[@]}"; do
+    local safe
+    safe="$(sanitize_name "$skill_name")"
+    if printf '%s\n' "$seen_names" | grep -qx "$safe"; then
+      fatal "Name collision: '${skill_name}' sanitizes to '${safe}' which is already taken"
+    fi
+    seen_names="${seen_names}${safe}"$'\n'
+    all_zip_names+=("$safe")
+  done
+
+  for pack_name in "${all_rule_pack_names[@]}"; do
+    local safe
+    safe="$(sanitize_name "$pack_name")"
+    if printf '%s\n' "$seen_names" | grep -qx "$safe"; then
+      fatal "Name collision: rule '${pack_name}' sanitizes to '${safe}' which is already taken"
+    fi
+    seen_names="${seen_names}${safe}"$'\n'
+    all_zip_names+=("$safe")
+  done
+
+  local changed=()
+  local changed_zip_names=()
+  local new_manifest=""
+
+  # Pack skills
+  for skill_name in "${all_skills[@]}"; do
+    local skill_dir="${SKILLS_DIR}/${skill_name}"
+    local safe_name
+    safe_name="$(sanitize_name "$skill_name")"
+    local current_hash
+    current_hash="$(hash_skill "$skill_dir")"
+    local stored_hash
+    stored_hash="$(get_stored_hash "$skill_name")"
+    local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
+
+    new_manifest="${new_manifest}${current_hash}  ${skill_name}"$'\n'
+
+    if [ "$current_hash" = "$stored_hash" ] && [ -f "$zip_path" ]; then
+      continue
+    fi
+
+    pack_skill "$skill_dir"
+    changed+=("$skill_name")
+    changed_zip_names+=("$safe_name")
+  done
+
+  # Pack rules
+  for i in "${!all_rule_files[@]}"; do
+    local rule_file="${all_rule_files[$i]}"
+    local pack_name="${all_rule_pack_names[$i]}"
+    local safe_name
+    safe_name="$(sanitize_name "$pack_name")"
+    local rule_key
+    rule_key="$(basename "$rule_file" .md)"
+    local current_hash
+    current_hash="$(shasum -a 256 "$rule_file" | cut -d' ' -f1)"
+    local stored_hash
+    stored_hash="$(get_stored_hash "$rule_key")"
+    local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
+
+    new_manifest="${new_manifest}${current_hash}  ${rule_key}"$'\n'
+
+    if [ "$current_hash" = "$stored_hash" ] && [ -f "$zip_path" ]; then
+      continue
+    fi
+
+    pack_rule "$rule_file" "$safe_name"
+    changed+=("$rule_key")
+    changed_zip_names+=("$safe_name")
+  done
+
+  clean_stale_zips "${all_zip_names[@]}"
+
+  # Save manifest (sorted by name)
+  printf '%s' "$new_manifest" | sort -t' ' -k3 > "$MANIFEST_FILE"
+
+  local changed_count=${#changed[@]}
+
+  if [ "$changed_count" -eq 0 ]; then
+    info "▶ Packing for Claude Desktop"
+    info "╍ All ${total} items up to date"
+    return 0
+  fi
+
+  info "▶ Packing for Claude Desktop (${changed_count} of ${total} changed)"
+  info ""
+  info "$(printf '  %-40s %s' "Source" "Zip")"
+  info "$(printf '  %-40s %s' "──────" "───")"
+  for i in "${!changed[@]}"; do
+    info "$(printf '  %-40s %s' "${changed[$i]}" "${changed_zip_names[$i]}.zip")"
+  done
+  info ""
+  info "  → ${OUTPUT_DIR}/"
+
+  # Open output directory in system file manager
+  if [ "$(uname)" = "Darwin" ]; then
+    open "$OUTPUT_DIR"
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$OUTPUT_DIR"
+  fi
+}
+
+main "$@"
+{{ end -}}
