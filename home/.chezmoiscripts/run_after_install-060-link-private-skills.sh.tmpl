@@ -1,0 +1,83 @@
+{{- if ne "" .privateSkillsRepo -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-060-link-private-skills.sh
+#/
+#/ Description:
+#/   Symlinks private Claude skills from the staging directory into
+#/   ~/.claude/skills/. The staging directory is populated by a chezmoi
+#/   git-repo external. Each subdirectory containing a SKILL.md is
+#/   linked as a sibling of the public skills managed by chezmoi source.
+#/
+#/   Runs at priority 060, before the skill-packing script at 070.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+STAGING_DIR="${HOME}/.local/share/private-claude-skills"
+SKILLS_DIR="${HOME}/.claude/skills"
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if [ ! -d "$STAGING_DIR" ]; then
+    info "▶ Linking private skills"
+    info "╍ Staging directory not found, skipping (next chezmoi apply should clone it)"
+    return 0
+  fi
+
+  local linked=0
+
+  for skill_dir in "$STAGING_DIR"/*/; do
+    [ -d "$skill_dir" ] || continue
+    [ -f "${skill_dir}SKILL.md" ] || continue
+
+    local skill_name
+    skill_name="$(basename "$skill_dir")"
+    local target="${SKILLS_DIR}/${skill_name}"
+
+    # Skip if a non-symlink entry already exists (chezmoi-managed skill)
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      warning "╍ Skipping '${skill_name}': already exists as a chezmoi-managed skill"
+      continue
+    fi
+
+    ln -sfn "$skill_dir" "$target"
+    linked=$((linked + 1))
+  done
+
+  if [ "$linked" -gt 0 ]; then
+    info "▶ Linking private skills (${linked} linked)"
+  fi
+}
+
+main "$@"
+{{ end -}}

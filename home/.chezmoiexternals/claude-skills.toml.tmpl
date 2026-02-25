@@ -1,0 +1,23 @@
+# Dormant — methodology folded into lochy:writing/references/doc-coauthoring.md
+# [".claude/skills/doc-coauthoring"]
+#     type = "archive"
+#     url = "https://github.com/anthropics/skills/archive/refs/heads/main.tar.gz"
+#     exact = true
+#     stripComponents = 3
+#     include = ["*/skills/doc-coauthoring/**"]
+
+{{- if ne "" .privateSkillsRepo }}
+
+# Private skills repo — cloned to a staging location, then symlinked into
+# ~/.claude/skills/ by run_after_install-060-link-private-skills.sh.
+# We stage here rather than targeting .claude/skills/ directly because
+# chezmoi's git-repo external maps a whole repo to a single directory,
+# and skills need to be individual sibling directories under .claude/skills/.
+[".local/share/private-claude-skills"]
+    type = "git-repo"
+    url = {{ .privateSkillsRepo | quote }}
+    refreshPeriod = "168h"
+    [".local/share/private-claude-skills".pull]
+        args = ["--ff-only"]
+
+{{- end }}

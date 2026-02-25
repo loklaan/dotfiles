@@ -1,0 +1,60 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_once_after_install-055-setup-peon-ping.sh
+#/
+#/ Description:
+#/   Runs peon-ping-setup to download sound packs and create runtime
+#/   config files. Hooks and skills are managed declaratively by chezmoi
+#/   templates, so this script only handles the one-time setup tasks
+#/   that peon-ping-setup performs (pack downloads, config creation,
+#/   compiled binary, OpenCode config).
+#/
+#/   Runs at priority 055, before skill linking at 060.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if ! command -v peon-ping-setup >/dev/null 2>&1; then
+    info "▶ Peon-ping setup"
+    info "╍ peon-ping-setup not found, skipping (install via: brew install PeonPing/tap/peon-ping)"
+    return 0
+  fi
+
+  info "▶ Running peon-ping-setup"
+  peon-ping-setup
+}
+
+main "$@"
+{{ end -}}
