@@ -840,6 +840,53 @@ sudo apt-get install -y {{ . | quote }}
 
 This reads `~/.mytool.json`, adds/updates the `someKey` key, and writes it all back including the prior existing fields.
 
+### Modify Pattern: Entry-Level Merge for Shared JSON Arrays
+
+When chezmoi shares ownership of a JSON object with external tools (e.g. `~/.claude/settings.json`
+where chezmoi owns some hook entries and `peon-ping-setup` owns others), `setValueAtPath` is
+destructive — it replaces the entire value, nuking entries created by external tools.
+
+Instead, merge at the **entry level** using a field as identity key (e.g. `matcher` for hooks):
+
+```go
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $existing := dict -}}
+{{- if hasKey $base "hooks" -}}
+{{-   $existing = get $base "hooks" -}}
+{{- end -}}
+{{- $ours := includeTemplate "hooks-json-tmpl" . | fromJson -}}
+{{- $merged := merge (dict) $existing -}}
+{{- range $event, $ourEntries := $ours -}}
+{{-   $prev := list -}}
+{{-   if hasKey $existing $event -}}
+{{-     $prev = get $existing $event -}}
+{{-   end -}}
+{{-   $result := list -}}
+{{-   $matchers := list -}}
+{{-   range $ourEntries -}}
+{{-     $matchers = append $matchers .matcher -}}
+{{-     $result = append $result . -}}
+{{-   end -}}
+{{-   range $prev -}}
+{{-     if not (has .matcher $matchers) -}}
+{{-       $result = append $result . -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $merged = set $merged $event $result -}}
+{{- end -}}
+{{- $base = $base | setValueAtPath "hooks" $merged -}}
+```
+
+**How it works:**
+1. Copy all existing events into a merged dict (preserves events chezmoi doesn't define)
+2. For each event chezmoi defines: our entries go first by identity key, then append existing entries with non-matching keys
+3. Events chezmoi doesn't define pass through untouched
+
+**When to use:** Any `modify_` template where chezmoi shares ownership of a JSON object with
+external tools that also write to it. The identity key depends on context (`matcher` for hooks,
+`name` for plugins, etc.).
+
 ### Multi-Platform Path Selection
 
 ```go
