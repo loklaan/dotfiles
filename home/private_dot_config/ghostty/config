@@ -1,7 +1,9 @@
 # Documentation: https://ghostty.org/docs/config
 
-# Disable built-in title feature - we use custom title.zsh for tmux session names
-shell-integration-features = cursor,sudo
+# We manage titles ourselves via init/title.zsh so 'title' is excluded.
+# ssh-terminfo auto-installs xterm-ghostty terminfo on remote hosts via infocmp/tic.
+# ssh-env falls back to TERM=xterm-256color and propagates COLORTERM=truecolor.
+shell-integration-features = cursor,sudo,ssh-terminfo,ssh-env
 
 font-family = "JetbrainsMono Nerd Font Mono"
 font-size = 15
