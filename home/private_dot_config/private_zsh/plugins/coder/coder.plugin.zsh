@@ -145,5 +145,3 @@ _coder-workspace() {
   esac
 }
 
-compdef _coder-workspace coder-workspace
-compdef _coder-workspace cw

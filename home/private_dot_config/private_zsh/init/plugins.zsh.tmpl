@@ -47,6 +47,7 @@ zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugi
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/fzf", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
+zplug "$ZSH_CONFIG_DIR/plugins/coder", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
 zplug load
@@ -63,6 +64,9 @@ fi
 if [ -f "{{ .brewprefix }}/share/google-cloud-sdk/completion.zsh.inc" ] && which gcloud >/dev/null; then
   source "{{ .brewprefix }}/share/google-cloud-sdk/completion.zsh.inc"
 fi
+# Coder workspace
+compdef _coder-workspace coder-workspace
+compdef _coder-workspace cw
 zstyle ':completion:*' completer _complete _ignored
 zstyle ':completion:*' format 'Completing %d...'
 zstyle ':completion:*' group-name ''
