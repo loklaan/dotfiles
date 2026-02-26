@@ -19,6 +19,11 @@ __ZPROFILE_RUN=${__ZPROFILE_RUN:-0}
 
 if [[ "$__ZPROFILE_RUN" != 1 ]]; then # Help avoid double-initialising .zprofile in different OS's
 
+  # Re-assert PATH prefix after macOS path_helper (/etc/zprofile) reorders PATH
+  if [[ -n "${__PATH_PREFIX:-}" ]]; then
+    export PATH="${__PATH_PREFIX}:${PATH}"
+  fi
+
   if [[ -f "${ZSH_CONFIG_DIR}/init/login.zsh" ]]; then
     # shellcheck source=home/private_dot_config/exact_private_zsh/init/login.zsh.tmpl
     source "${ZSH_CONFIG_DIR}/init/login.zsh"

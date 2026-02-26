@@ -25,6 +25,7 @@ if is_interactive_shell && command -v mise &> /dev/null; then
   # Only activate if not already activated (hook function not defined)
   if ! typeset -f _mise_hook &> /dev/null; then
     path=(${path:#$HOME/.local/share/mise/shims})
+    unset __MISE_ORIG_PATH
     eval "$(mise activate zsh)"
   fi
 fi
