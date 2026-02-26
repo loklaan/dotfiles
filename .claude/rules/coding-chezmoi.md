@@ -42,7 +42,8 @@ When working with this repository, you must understand the mapping between targe
 | "Update `~/.zshrc`"                        | `home/private_dot_zshrc`                             |
 | "Create templated `~/.npmrc`"              | `home/private_dot_npmrc.tmpl`                        |
 
-**IMPORTANT:** Always work in the chezmoi source directory (`/Users/lochlan/.local/share/chezmoi/`), never directly in `~/`. Chezmoi manages the target files.
+**CRITICAL — DO NOT EDIT TARGET FILES:**
+YOU MUST NEVER directly create, edit, or modify files under `~/` (the home directory). Chezmoi owns those files. ALL changes MUST be made to the corresponding source files in this repository (`/Users/lochlan/.local/share/chezmoi/`). If you need to find the source path for a target file, run `chezmoi source-path <target-path>`. Editing target files directly will cause chezmoi to overwrite your changes and is always wrong.
 
 ## Documentation References
 
@@ -1053,13 +1054,14 @@ Scripts in this repository may run in non-TTY environments like Docker, Devconta
 
 ## Critical Rules
 
-1. **ALWAYS** use the bash boilerplate for new `.sh` scripts
-2. **ALWAYS** use the appropriate zsh header style for new `.zsh` files
-3. **ALWAYS** use `{{-` and `-}}` to control whitespace in templates
-4. **NEVER** add `.tmpl` suffix to files in `.chezmoitemplates/`
-5. **ALWAYS** include `{{- /* chezmoi:modify-template */ -}}` comment in `modify_` templates
-6. **ALWAYS** test with `chezmoi apply --dry-run` before committing
-7. **NEVER** hardcode OS-specific paths - use templates with `.chezmoi.os` checks
-8. **ALWAYS** use `sortAlpha | uniq` when processing package lists
-9. **NEVER** skip the `usage()` function in bash scripts
-10. **ALWAYS** match the existing code style and conventions
+1. **NEVER** edit files directly under `~/` — ALL changes go through chezmoi source files in this repo
+2. **ALWAYS** use the bash boilerplate for new `.sh` scripts
+3. **ALWAYS** use the appropriate zsh header style for new `.zsh` files
+4. **ALWAYS** use `{{-` and `-}}` to control whitespace in templates
+5. **NEVER** add `.tmpl` suffix to files in `.chezmoitemplates/`
+6. **ALWAYS** include `{{- /* chezmoi:modify-template */ -}}` comment in `modify_` templates
+7. **ALWAYS** test with `chezmoi apply --dry-run` before committing
+8. **NEVER** hardcode OS-specific paths - use templates with `.chezmoi.os` checks
+9. **ALWAYS** use `sortAlpha | uniq` when processing package lists
+10. **NEVER** skip the `usage()` function in bash scripts
+11. **ALWAYS** match the existing code style and conventions
