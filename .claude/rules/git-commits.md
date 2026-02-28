@@ -40,19 +40,23 @@ These have strict semantic boundaries — `add` is never used for changes to exi
 - `+` to bundle distinct unrelated changes: `fix tmux resurrect + mise double activation`
 - Commas for 3+ items: `add ghostty config, fonts, and opt-in starship prompt`
 
-## Body (Optional)
+## Body
 
-Include a body for non-trivial changes where the "why" is not obvious from the subject.
+Almost never include a body. The subject line should stand alone. Only add a body when the
+commit touches more than ~7 files and a short summary of scope would genuinely help a future
+reader understand the change at a glance.
+
+When you do include a body:
 
 - Blank line between subject and body
-- Short prose explaining "why" or summarising scope
-- Sentence case, periods, ~72 character line width
+- Short prose summarising scope — 1-3 sentences max
+- All lowercase, ~72 character line width
 - Bullet lists with `- ` prefix
 
 ```
 restructure effect-ts skill for v3/v4 with external docs
 
-Splits version-specific patterns into separate references and pulls
+splits version-specific patterns into separate references and pulls
 v4 documentation from external sources at apply time rather than
 maintaining a static copy.
 ```
