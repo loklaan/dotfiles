@@ -25,6 +25,31 @@ _coder_is_running() {
 }
 
 #|------------------------------------------------------------|#
+#| _coder_gpg_setup
+#|
+#| Prepares GPG agent forwarding for SSH connections to Coder
+#| workspaces. Sets _gpg_ssh_opts (array) and _gpg_remote_prefix
+#| (string) for use in ssh commands. Silently no-ops if gpg is
+#| unavailable locally.
+#|
+_coder_gpg_setup() {
+  _gpg_ssh_opts=()
+  _gpg_remote_prefix=""
+
+  command -v gpgconf >/dev/null 2>&1 || return 0
+
+  local local_socket
+  local_socket=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null) || return 0
+  [[ -n "$local_socket" ]] || return 0
+
+  gpgconf --launch gpg-agent 2>/dev/null
+
+  local fwd="/tmp/.gpg-fwd-${RANDOM}${RANDOM}.sock"
+  _gpg_ssh_opts=(-o StreamLocalBindUnlink=yes -R "${fwd}:${local_socket}")
+  _gpg_remote_prefix="gpgconf --kill gpg-agent 2>/dev/null; _gs=\$(gpgconf --list-dirs agent-socket 2>/dev/null) && rm -f \"\$_gs\" && ln -sf '${fwd}' \"\$_gs\" && trap 'rm -f \"\$_gs\"' EXIT; "
+}
+
+#|------------------------------------------------------------|#
 #| coder-workspace (aliased as cw)
 #|
 #| Connect to a Coder workspace in various modes.
@@ -74,13 +99,14 @@ coder-workspace() {
 
   local host="coder.${ws}"
 
+  _coder_gpg_setup
+
   case "$mode" in
     ssh)
-      if [[ -n "$folder" ]]; then
-        ssh -t "$host" "cd ${folder} && exec /usr/bin/zsh -l"
-      else
-        ssh -t "$host" "exec /usr/bin/zsh -l"
-      fi
+      local cmd="${_gpg_remote_prefix}"
+      [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      cmd+="/usr/bin/zsh -l"
+      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     ide)
@@ -95,19 +121,17 @@ coder-workspace() {
       ;;
 
     claude)
-      local cmd="otter claude-code"
-      if [[ -n "$folder" ]]; then
-        cmd="cd ${folder} && ${cmd}"
-      fi
-      ssh -t "$host" "$cmd"
+      local cmd="${_gpg_remote_prefix}"
+      [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      cmd+="otter claude-code"
+      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     ccyolo)
-      local cmd="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
-      if [[ -n "$folder" ]]; then
-        cmd="cd ${folder} && ${cmd}"
-      fi
-      ssh -t "$host" "$cmd"
+      local cmd="${_gpg_remote_prefix}"
+      [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
+      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     *)
