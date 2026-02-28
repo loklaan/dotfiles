@@ -15,72 +15,36 @@ setup_session_logging "$(basename "$0")"
 #/   run_after_install-900-setup-status.sh
 #/
 #/ Description:
-#/   Records the setup status after chezmoi apply completes.
-#/   Tracks which secrets/config are currently available.
+#/   Checks setup status after chezmoi apply and reminds about
+#/   incomplete configuration.
 #/
 #/ Options:
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-readonly STATE_DIR="${HOME}/.local/state/dotfiles"
-readonly STATE_FILE="${STATE_DIR}/chezmoi-state.boltdb"
-readonly STATE_BUCKET="dotfiles"
-readonly KEY_BWS="has_bws_env"
-readonly KEY_SIGNING="has_signing_key"
-
-get_state() {
-  local key="$1"
-  local value
-  # Use separate state file to avoid lock contention with parent chezmoi process
-  value=$(chezmoi state get --persistent-state "$STATE_FILE" --bucket "$STATE_BUCKET" --key "$key" 2>/dev/null || echo "")
-  # Default to "false" if empty or missing
-  if [ -z "$value" ]; then
-    echo "false"
-  else
-    echo "$value"
-  fi
-}
-
-set_state() {
-  local key="$1"
-  local value="$2"
-  mkdir -p "$STATE_DIR"
-  chezmoi state set --persistent-state "$STATE_FILE" --bucket "$STATE_BUCKET" --key "$key" --value "$value"
-}
-
 main() {
-  info "▶ Recording dotfiles setup status"
+  local has_bws="false"
+  local has_signing="false"
 
-  # Check current state (not historical)
-  local has_bws_env="false"
-  local has_signing_key="false"
-
-  # Check for BWS token file
   if [ -f "{{ .bwsTokenPath }}" ]; then
-    has_bws_env="true"
+    has_bws="true"
   fi
 
-  # Check for signing key (template-time)
   {{- if ne "" .signingKey }}
-  has_signing_key="true"
+  has_signing="true"
   {{- end }}
 
-  # Persist state
-  set_state "$KEY_BWS" "$has_bws_env"
-  set_state "$KEY_SIGNING" "$has_signing_key"
-
-  # Show reminder if setup has never been completed
-  if [ "$has_bws_env" = "false" ] || [ "$has_signing_key" = "false" ]; then
+  if [ "$has_bws" = "false" ] || [ "$has_signing" = "false" ]; then
     echo ""
     warning "╍ Dotfiles setup incomplete"
-    if [ "$has_bws_env" = "false" ]; then
-      info "╍ Missing: BWS token (for npm auth, GITHUB_TOKEN, etc.)"
+    if [ "$has_bws" = "false" ]; then
+      info "╍ Missing: BWS token (for npm auth, GitHub tokens)"
     fi
-    if [ "$has_signing_key" = "false" ]; then
-      info "╍ Missing: signingKey (for git commit signing)"
+    if [ "$has_signing" = "false" ]; then
+      info "╍ Missing: Signing key (for git commit signing)"
     fi
     echo ""
-    info "╍ Run 'dotfiles-setup' for instructions on completing setup"
+    info "╍ Run 'dotfiles-setup' for instructions"
   fi
 }
 
