@@ -11,13 +11,13 @@ Before writing Effect code, determine the project's Effect version from
 `package.json`:
 
 - **v3** (`effect@^3.x`): Use v3 patterns from `references/v3-patterns.md`
-- **v4** (`effect@^4.x`): Use v4 patterns from `~/.local/share/effect-v4-docs/LLMS.md`
+- **v4** (`effect@^4.x`): Use v4 patterns from `references/v4-patterns.md`
 
 If the version is ambiguous, check `node_modules/effect/package.json`.
 
 **IMPORTANT**: The Effect docs MCP tools (`effect_docs_search`, `get_effect_doc`)
 serve **v3 content only**. For v4 work, **do NOT use them** — they will suggest
-wrong patterns. Read the files under `~/.local/share/effect-v4-docs/` instead.
+wrong patterns. Read `references/v4-patterns.md` instead.
 
 ## Effect docs MCP tools (v3 only)
 
@@ -76,22 +76,5 @@ For v3 projects, combine this reference with the MCP docs tools above.
 
 ## v4 patterns
 
-Read `~/.local/share/effect-v4-docs/LLMS.md` — the primary v4 reference
-maintained by the Effect team.
-
-Additional v4 resources under `~/.local/share/effect-v4-docs/`:
-
-- `ai-docs/src/**/*.ts` — annotated TypeScript examples linked from LLMS.md
-- `packages/effect/SCHEMA.md` — Schema module deep dive
-- `packages/effect/HTTPAPI.md` — HTTP API module deep dive
-- `packages/effect/MCP.md` — MCP server module docs
-- `packages/effect/CONFIG.md` — Configuration module docs
-- `packages/effect/OPTIC.md` — Optics module docs
-
-## Migrating v3 to v4
-
-Read `~/.local/share/effect-v4-docs/MIGRATION.md` for the migration overview.
-Detailed per-topic migration guides are in `~/.local/share/effect-v4-docs/migration/`:
-
-- `services.md`, `error-handling.md`, `generators.md`, `forking.md`,
-  `runtime.md`, `scope.md`, and more
+Read `references/v4-patterns.md` for the full v4 reference, including
+annotated examples, module deep dives, and v3 migration guides.
