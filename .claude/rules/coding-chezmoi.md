@@ -1041,7 +1041,7 @@ Scripts in this repository may run in non-TTY environments like Docker, Devconta
 | `mise install` | `-y` or `--yes` |
 | `chezmoi init` | `--force` |
 | `chezmoi apply` | `--force` |
-| `apt install` | `-y` |
+| `apt-get install` | `-y` |
 | `yum install` | `-y` |
 | `apk add` | (non-interactive by default) |
 | `brew bundle` | (non-interactive by default) |

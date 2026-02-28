@@ -86,9 +86,9 @@ main() {
             $Sudo yum install -y git zsh
           ;;
           ubuntu|debian)
-            info "╍ Running 'apt install git zsh locales'"
-            $Sudo apt update
-            $Sudo apt --no-install-recommends -y install git zsh locales
+            info "╍ Running 'apt-get install git zsh locales'"
+            $Sudo apt-get update
+            $Sudo apt-get --no-install-recommends -y install git zsh locales
 
             info "╍ Running 'locale-gen en_US.UTF-8'"
             $Sudo locale-gen en_US.UTF-8

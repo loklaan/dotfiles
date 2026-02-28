@@ -209,9 +209,9 @@ EOF
       bash -c "$Sudo yum install -y $(echo "$packages" | xargs)"
     ;;
     ubuntu|debian)
-      info "╍ Running 'apt install \$packages'"
-      $Sudo apt update
-      bash -c "$Sudo apt install --no-install-recommends -y $(echo "$packages" | xargs)"
+      info "╍ Running 'apt-get install \$packages'"
+      $Sudo apt-get update
+      bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages" | xargs)"
     ;;
     *)
       fatal "The \"$linux_distro\" is not supported yet. Full release details from /etc/os-release:\n$(cat /etc/os-release)\n\nAdd '$linux_distro' and it's package manager to this script."
