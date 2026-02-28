@@ -28,8 +28,10 @@
   commit-done = commit -eF done.commit
   mergein = merge --no-ff
   who = !git-who
-  # Do it once for new remote branches
-  track = "!git push -u origin `git symbolic-ref --short HEAD`"
+  # Push current branch to origin with upstream tracking
+  up = "!git push -u origin `git symbolic-ref --short HEAD`"
+  # Fetch and check out a remote branch, bypassing restrictive fetch refspecs
+  down = "!git fetch origin \"+refs/heads/$1:refs/remotes/origin/$1\" && git switch -c \"$1\" --track \"origin/$1\" #"
 
 [user]
   name = Lochlan Bunn
