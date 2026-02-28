@@ -59,7 +59,7 @@ _coder_preflight() {
       pubkeys_b64=$(gpg --armor --export 2>/dev/null | base64 | tr -d '\n') || true
       ownertrust_b64=$(gpg --export-ownertrust 2>/dev/null | base64 | tr -d '\n') || true
       if [[ -n "$pubkeys_b64" ]]; then
-        echo "🔑 Forwarding GPG agent…" >&2
+        echo "🔑  Forwarding GPG agent…" >&2
         script+='(
 gpg_socket=$(gpgconf --list-dirs agent-socket 2>/dev/null) || exit 0
 gpgconf --kill gpg-agent 2>/dev/null || true
