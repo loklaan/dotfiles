@@ -25,28 +25,94 @@ _coder_is_running() {
 }
 
 #|------------------------------------------------------------|#
-#| _coder_gpg_setup
+#| _coder_preflight
 #|
-#| Prepares GPG agent forwarding for SSH connections to Coder
-#| workspaces. Sets _gpg_ssh_opts (array) and _gpg_remote_prefix
-#| (string) for use in ssh commands. Silently no-ops if gpg is
-#| unavailable locally.
+#| Single pre-flight SSH that handles all remote setup for
+#| Coder workspace connections. Each module prepares local
+#| data, contributes a subshell to the remote script, and
+#| parses its results from labeled output lines. The combined
+#| script is piped to /bin/sh via stdin.
 #|
-_coder_gpg_setup() {
+#| Modules:
+#|   GPG      — imports keys, returns socket path for forwarding
+#|   Terminfo — installs xterm-ghostty via Homebrew ncurses
+#|
+#| Outputs (set as side-effects):
+#|   _gpg_ssh_opts  — SSH opts for GPG agent reverse tunnel
+#|   _term_env      — TERM override for the remote command
+#|
+_coder_preflight() {
+  local host="${1:?host required}"
+
   _gpg_ssh_opts=()
-  _gpg_remote_prefix=""
+  _term_env=""
 
-  command -v gpgconf >/dev/null 2>&1 || return 0
+  local script=""
+  local gpg_local_socket=""
 
-  local local_socket
-  local_socket=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null) || return 0
-  [[ -n "$local_socket" ]] || return 0
+  # ── GPG: prepare keys for agent forwarding ──
+  if command -v gpgconf >/dev/null 2>&1 && command -v gpg >/dev/null 2>&1; then
+    gpg_local_socket=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null) || true
+    if [[ -n "$gpg_local_socket" ]]; then
+      gpgconf --launch gpg-agent 2>/dev/null
+      local pubkeys_b64 ownertrust_b64
+      pubkeys_b64=$(gpg --armor --export 2>/dev/null | base64 | tr -d '\n') || true
+      ownertrust_b64=$(gpg --export-ownertrust 2>/dev/null | base64 | tr -d '\n') || true
+      if [[ -n "$pubkeys_b64" ]]; then
+        echo "🔑 Forwarding GPG agent…" >&2
+        script+='(
+gpg_socket=$(gpgconf --list-dirs agent-socket 2>/dev/null) || exit 0
+gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+sleep 1
+'
+        script+="printf '%s' '${pubkeys_b64}' | base64 -d | gpg --batch --import 2>/dev/null || true
+printf '%s' '${ownertrust_b64}' | base64 -d | gpg --batch --import-ownertrust 2>/dev/null || true
+"
+        script+='gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+echo "GPG_SOCKET:${gpg_socket}"
+)
+'
+      fi
+    fi
+  fi
 
-  gpgconf --launch gpg-agent 2>/dev/null
+  # ── Terminfo: install xterm-ghostty ──
+  if [[ -n "${GHOSTTY_RESOURCES_DIR:-}" ]]; then
+    local infocmp="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/ncurses/bin/infocmp"
+    if [[ -x "$infocmp" ]]; then
+      local terminfo_b64
+      terminfo_b64=$("$infocmp" -x xterm-ghostty 2>/dev/null | base64 | tr -d '\n') || true
+      if [[ -n "$terminfo_b64" ]]; then
+        echo "🖥️  Installing xterm-ghostty terminfo…" >&2
+        script+="(printf '%s' '${terminfo_b64}' | base64 -d | tic -x - 2>/dev/null && echo 'TERMINFO_OK:1' || echo 'TERMINFO_OK:0')
+"
+      fi
+    fi
+  fi
 
-  local fwd="/tmp/.gpg-fwd-${RANDOM}${RANDOM}.sock"
-  _gpg_ssh_opts=(-o StreamLocalBindUnlink=yes -R "${fwd}:${local_socket}")
-  _gpg_remote_prefix="gpgconf --kill gpg-agent 2>/dev/null; _gs=\$(gpgconf --list-dirs agent-socket 2>/dev/null) && rm -f \"\$_gs\" && ln -sf '${fwd}' \"\$_gs\" && trap 'rm -f \"\$_gs\"' EXIT; "
+  [[ -n "$script" ]] || return 0
+
+  # Execute single preflight SSH
+  local output
+  output=$(printf '%s' "$script" | ssh -o ConnectTimeout=10 "$host" /bin/sh 2>/dev/null) || return 0
+
+  # Parse labeled output
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      GPG_SOCKET:*)
+        local remote_socket="${line#GPG_SOCKET:}"
+        if [[ -n "$remote_socket" && -n "$gpg_local_socket" ]]; then
+          _gpg_ssh_opts=(-o StreamLocalBindUnlink=yes -R "${remote_socket}:${gpg_local_socket}")
+        fi
+        ;;
+      TERMINFO_OK:1)
+        _term_env="TERM=xterm-ghostty"
+        ;;
+    esac
+  done <<< "$output"
 }
 
 #|------------------------------------------------------------|#
@@ -99,14 +165,15 @@ coder-workspace() {
 
   local host="coder.${ws}"
 
-  _coder_gpg_setup
+  _coder_preflight "$host"
 
   case "$mode" in
     ssh)
-      local cmd="${_gpg_remote_prefix}"
+      local cmd=""
       [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      [[ -n "$_term_env" ]] && cmd+="$_term_env "
       cmd+="/usr/bin/zsh -l"
-      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
+      exec ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     ide)
@@ -121,17 +188,19 @@ coder-workspace() {
       ;;
 
     claude)
-      local cmd="${_gpg_remote_prefix}"
+      local cmd=""
       [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      [[ -n "$_term_env" ]] && cmd+="$_term_env "
       cmd+="otter claude-code"
-      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
+      exec ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     ccyolo)
-      local cmd="${_gpg_remote_prefix}"
+      local cmd=""
       [[ -n "$folder" ]] && cmd+="cd ${folder} && "
+      [[ -n "$_term_env" ]] && cmd+="$_term_env "
       cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
-      ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
+      exec ssh -t "${_gpg_ssh_opts[@]}" "$host" "$cmd"
       ;;
 
     *)
