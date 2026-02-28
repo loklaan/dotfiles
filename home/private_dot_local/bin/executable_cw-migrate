@@ -1,0 +1,471 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   cw-migrate [OPTIONS]
+#/
+#/ Description:
+#/   Migrates working state from an old devbox to a new one.
+#/   Run on the DESTINATION (new) devbox — it pulls from the source via SSH.
+#/
+#/   Transfers small repos, shell history, tool configs, and editor state.
+#/   Large repos should be re-cloned on the new devbox.
+#/
+#/   Before transferring, audits source repos for unpushed branches to
+#/   prevent data loss.
+#/
+#/ Default Migration Paths:
+#/   dev/             Small git repos
+#/   .claude/         Claude Code state
+#/   .claude.json     Claude Code config
+#/   .zsh_history     Shell history
+#/   .z               Directory jump history
+#/
+#/ Default Audit Paths:
+#/   dev/             Scanned recursively for git repos
+#/
+#/ Options:
+#/   --manifest PATH:  Custom manifest file (default: ~/.config/cw-migrate/manifest)
+#/   --help:           Display this help message
+#/
+#/ Manifest Format (~/.config/cw-migrate/manifest):
+#/   # Paths relative to $HOME
+#/   [migrate]
+#/   dev
+#/   .claude
+#/   .claude.json
+#/
+#/   [audit]
+#/   dev
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+readonly DEFAULT_MANIFEST="${HOME}/.config/cw-migrate/manifest"
+
+MANIFEST_PATH=""
+SOURCE_HOST=""
+MIGRATION_PATHS=()
+AUDIT_PATHS=()
+EXISTING_PATHS=()
+
+DEFAULT_MIGRATION_PATHS=(
+  "dev"
+  ".claude"
+  ".claude.json"
+  ".zsh_history"
+  ".z"
+)
+
+DEFAULT_AUDIT_PATHS=(
+  "dev"
+)
+
+parse_args() {
+  MANIFEST_PATH="${DEFAULT_MANIFEST}"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --manifest)
+        if [ -z "${2:-}" ]; then
+          fatal "--manifest requires a path argument"
+        fi
+        MANIFEST_PATH="$2"
+        shift 2
+        ;;
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+load_manifest() {
+  if [ ! -f "${MANIFEST_PATH}" ]; then
+    if [ "${MANIFEST_PATH}" = "${DEFAULT_MANIFEST}" ]; then
+      info "╍ No manifest found, using defaults"
+      MIGRATION_PATHS=("${DEFAULT_MIGRATION_PATHS[@]}")
+      AUDIT_PATHS=("${DEFAULT_AUDIT_PATHS[@]}")
+      return
+    else
+      fatal "Manifest not found: ${MANIFEST_PATH}"
+    fi
+  fi
+
+  info "╍ Loading manifest from ${MANIFEST_PATH}"
+
+  local section=""
+  MIGRATION_PATHS=()
+  AUDIT_PATHS=()
+
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" ]] && continue
+
+    if [[ "${line}" =~ ^\[(.+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    case "${section}" in
+      migrate) MIGRATION_PATHS+=("${line}") ;;
+      audit) AUDIT_PATHS+=("${line}") ;;
+      *) warning "Unknown manifest section: [${section}]" ;;
+    esac
+  done < "${MANIFEST_PATH}"
+
+  if [ ${#MIGRATION_PATHS[@]} -eq 0 ]; then
+    fatal "Manifest has no [migrate] entries"
+  fi
+}
+
+connect_source() {
+  echo ""
+  _print cyan bold "Source devbox"
+  echo ""
+  _print white dim "Enter the SSH host of the OLD devbox to pull from."
+  _print white dim "  - Coder devbox:  coder.<workspace-name>"
+  _print white dim "  - Any SSH host:  user@hostname"
+  echo ""
+  read -rp "Source host: " SOURCE_HOST
+
+  if [[ -z "${SOURCE_HOST}" ]]; then
+    fatal "No source host specified"
+  fi
+
+  info "▶ Testing SSH connection to ${SOURCE_HOST}"
+  if ! ssh -o ConnectTimeout=10 "${SOURCE_HOST}" "echo ok" &>/dev/null; then
+    error "Cannot connect to ${SOURCE_HOST}"
+    _print white dim "Try: coder config-ssh"
+    exit 1
+  fi
+  info "╍ Connection OK"
+}
+
+audit_repos() {
+  if [ ${#AUDIT_PATHS[@]} -eq 0 ]; then
+    info "╍ No audit paths configured, skipping repo check"
+    return
+  fi
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${AUDIT_PATHS[@]}")
+
+  echo ""
+  _print cyan bold "Checking source repos for unpushed branches..."
+  echo ""
+
+  local audit_output
+  audit_output=$(ssh "${SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+
+    audit_paths=()
+    while IFS= read -r p; do
+      [[ -z "\${p}" ]] && continue
+      audit_paths+=("\${p}")
+    done <<< '${paths_str}'
+
+    for audit_path in "\${audit_paths[@]}"; do
+      full_path="\${HOME}/\${audit_path}"
+      if [[ ! -d "\${full_path}" ]]; then
+        continue
+      fi
+
+      while IFS= read -r git_dir; do
+        [[ -z "\${git_dir}" ]] && continue
+        repo_dir=\$(dirname "\${git_dir}")
+        repo_rel="\${repo_dir#\${HOME}/}"
+
+        has_issues=false
+        while IFS= read -r branch; do
+          [[ -z "\${branch}" ]] && continue
+
+          upstream_ref=\$(git -C "\${repo_dir}" rev-parse --abbrev-ref "\${branch}@{upstream}" 2>/dev/null || true)
+
+          if [[ -z "\${upstream_ref}" ]]; then
+            echo "ISSUE|\${repo_rel}|\${branch} (no remote tracking branch)"
+            has_issues=true
+          else
+            ahead_count=\$(git -C "\${repo_dir}" rev-list --count "\${upstream_ref}..\${branch}" 2>/dev/null || echo "0")
+            if [[ "\${ahead_count}" -gt 0 ]]; then
+              echo "ISSUE|\${repo_rel}|\${branch} (\${ahead_count} unpushed commit(s))"
+              has_issues=true
+            fi
+          fi
+        done < <(git -C "\${repo_dir}" for-each-ref --format='%(refname:short)' refs/heads/)
+
+        if [[ "\${has_issues}" == "false" ]]; then
+          echo "OK|\${repo_rel}"
+        fi
+      done < <(find "\${full_path}" -name .git -type d 2>/dev/null)
+    done
+REMOTE_SCRIPT
+  )
+
+  if [[ -z "${audit_output}" ]]; then
+    info "╍ No git repos found in audit paths"
+    return
+  fi
+
+  local has_unpushed=false
+  local current_repo=""
+
+  while IFS='|' read -r status repo_path detail; do
+    [[ -z "${status}" ]] && continue
+    case "${status}" in
+      OK)
+        _print green "  ~/${repo_path} — all branches pushed"
+        ;;
+      ISSUE)
+        if [[ "${repo_path}" != "${current_repo}" ]]; then
+          _print red "  ~/${repo_path}"
+          current_repo="${repo_path}"
+        fi
+        _print yellow "    [ ] ${detail}"
+        has_unpushed=true
+        ;;
+    esac
+  done <<< "${audit_output}"
+
+  echo ""
+  if ${has_unpushed}; then
+    warning "Unpushed branches found! Push them first or they will be lost."
+    echo ""
+    read -rp "Continue anyway? [y/N]: " confirm
+    if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+      info "Aborted. Push branches on the source and re-run."
+      exit 0
+    fi
+  else
+    info "╍ All repo branches are pushed"
+  fi
+}
+
+validate_paths() {
+  local paths_str
+  paths_str=$(printf '%s\n' "${MIGRATION_PATHS[@]}")
+
+  local check_output
+  check_output=$(ssh "${SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      if [[ -e "\${HOME}/\${path}" ]]; then
+        echo "EXISTS|\${path}"
+      else
+        echo "MISSING|\${path}"
+      fi
+    done <<< '${paths_str}'
+REMOTE_SCRIPT
+  )
+
+  EXISTING_PATHS=()
+
+  while IFS='|' read -r status path; do
+    case "${status}" in
+      EXISTS) EXISTING_PATHS+=("${path}") ;;
+      MISSING) warning "Not found on source: ~/${path}" ;;
+    esac
+  done <<< "${check_output}"
+
+  local found=${#EXISTING_PATHS[@]}
+  info "╍ Found ${found}/${#MIGRATION_PATHS[@]} items to migrate"
+
+  if [[ ${found} -eq 0 ]]; then
+    fatal "Nothing to migrate!"
+  fi
+}
+
+show_summary() {
+  echo ""
+  _print cyan bold "Items to migrate:"
+  echo ""
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${EXISTING_PATHS[@]}")
+
+  local size_output
+  size_output=$(ssh "${SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    size_args=()
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      size=\$(du -sh "\${HOME}/\${path}" 2>/dev/null | cut -f1)
+      echo "\${path}|\${size}"
+      size_args+=("\${HOME}/\${path}")
+    done <<< '${paths_str}'
+    total=\$(du -shc "\${size_args[@]}" 2>/dev/null | tail -1 | cut -f1)
+    echo "TOTAL|\${total}"
+REMOTE_SCRIPT
+  )
+
+  while IFS='|' read -r path size; do
+    if [[ "${path}" == "TOTAL" ]]; then
+      echo ""
+      _print white bold "  Total: ${size}"
+    else
+      printf "  %-45s %s\n" "~/${path}" "${size}"
+    fi
+  done <<< "${size_output}"
+
+  echo ""
+}
+
+do_rsync() {
+  echo ""
+  warning "This will overwrite matching paths locally. Continue? [y/N]"
+  read -rn 1 confirm
+  echo ""
+  if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+    info "Aborted"
+    exit 0
+  fi
+
+  info "▶ Creating local directory structure"
+  for path in "${EXISTING_PATHS[@]}"; do
+    local parent
+    parent=$(dirname "${path}")
+    if [[ "${parent}" != "." ]]; then
+      mkdir -p "${HOME}/${parent}"
+    fi
+  done
+
+  local failed=0
+  for path in "${EXISTING_PATHS[@]}"; do
+    local parent
+    parent=$(dirname "${path}")
+    local local_dir="${HOME}/"
+    if [[ "${parent}" != "." ]]; then
+      local_dir="${HOME}/${parent}/"
+    fi
+
+    info "╍ Pulling ~/${path}"
+    if rsync -az "${SOURCE_HOST}:~/${path}" "${local_dir}"; then
+      _print white dim "    done"
+    else
+      error "Failed to pull ~/${path}"
+      ((failed++)) || true
+    fi
+  done
+
+  echo ""
+  if [[ ${failed} -eq 0 ]]; then
+    info "▶ Migration complete! All ${#EXISTING_PATHS[@]} items pulled."
+  else
+    warning "Migration finished with ${failed} failure(s)"
+  fi
+}
+
+do_tar() {
+  local archive_name="devbox-migration-$(date +%Y%m%d_%H%M%S).tar.gz"
+  local remote_archive="/tmp/${archive_name}"
+
+  echo ""
+  _print cyan bold "Creating tar archive on source"
+  echo ""
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${EXISTING_PATHS[@]}")
+
+  info "▶ Creating archive on ${SOURCE_HOST}"
+  ssh "${SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    paths=()
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      paths+=("\${path}")
+    done <<< '${paths_str}'
+    tar -czf "${remote_archive}" -C "\${HOME}" "\${paths[@]}"
+REMOTE_SCRIPT
+
+  info "╍ Pulling archive"
+  scp "${SOURCE_HOST}:${remote_archive}" "/tmp/${archive_name}"
+
+  local archive_size
+  archive_size=$(du -sh "/tmp/${archive_name}" | cut -f1)
+
+  info "╍ Archive saved: /tmp/${archive_name} (${archive_size})"
+  echo ""
+  _print white dim "To extract:"
+  _print white dim "  cd ~ && tar -xzf /tmp/${archive_name}"
+  echo ""
+
+  info "╍ Cleaning up remote archive"
+  ssh "${SOURCE_HOST}" "rm -f ${remote_archive}"
+}
+
+do_checklist() {
+  echo ""
+  _print cyan bold "Migration Checklist"
+  echo ""
+  _print white dim "Pull these paths from ${SOURCE_HOST}:~ to local ~:"
+  echo ""
+
+  for path in "${EXISTING_PATHS[@]}"; do
+    printf "  [ ] ~/%s\n" "${path}"
+  done
+
+  echo ""
+  _print white dim "Example for each:"
+  _print white dim "  rsync -az ${SOURCE_HOST}:~/PATH ~/PATH"
+  echo ""
+  _print white dim "After copying:"
+  echo ""
+  printf "  [ ] Run chezmoi apply to restore dotfiles\n"
+  printf "  [ ] Verify git repos have correct remotes\n"
+  echo ""
+}
+
+main() {
+  parse_args "$@"
+
+  echo ""
+  _print cyan bold "Devbox Migration"
+  echo ""
+
+  load_manifest
+  connect_source
+  audit_repos
+  validate_paths
+  show_summary
+
+  _print cyan bold "Transfer method"
+  echo ""
+  echo "  1) rsync  — pull directly over SSH"
+  echo "  2) tar    — archive on source, pull here, extract manually"
+  echo "  3) list   — just show what to copy"
+  echo ""
+  read -rp "Choose [1/2/3]: " choice
+
+  case "${choice}" in
+    1) do_rsync ;;
+    2) do_tar ;;
+    3) do_checklist ;;
+    *)
+      fatal "Invalid choice: ${choice}"
+      ;;
+  esac
+
+  echo ""
+  warning "Credentials are NOT included — migrate these yourself:"
+  _print white dim "  ~/.ssh/  ~/.aws/  ~/.gnupg/  ~/.npmrc"
+  echo ""
+  warning "Run chezmoi apply on this devbox to restore dotfiles."
+  echo ""
+}
+
+main "$@"
