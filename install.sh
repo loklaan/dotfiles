@@ -163,6 +163,11 @@ main() {
 
   info "▶ Installation complete."
   info "╍ Run 'install-my-packages --gui' to install GUI apps."
+
+  # Show setup status and instructions for anything still missing
+  if command -v dotfiles-setup >/dev/null 2>&1; then
+    dotfiles-setup
+  fi
 }
 
 get_os_kind() {
