@@ -25,11 +25,12 @@ setup_session_logging "$(basename "$0")"
 #/   prevent data loss.
 #/
 #/ Default Migration Paths:
-#/   dev/             Small git repos
-#/   .claude/         Claude Code state
-#/   .claude.json     Claude Code config
-#/   .zsh_history     Shell history
-#/   .z               Directory jump history
+#/   dev/                          Small git repos
+#/   .claude/                      Claude Code state
+#/   .claude.json                  Claude Code config
+#/   .zsh_history                  Shell history
+#/   .z                            Directory jump history
+#/   .local/share/tmux/resurrect   Tmux resurrect session snapshots
 #/
 #/ Default Audit Paths:
 #/   dev/             Scanned recursively for git repos
@@ -63,6 +64,7 @@ DEFAULT_MIGRATION_PATHS=(
   ".claude.json"
   ".zsh_history"
   ".z"
+  ".local/share/tmux/resurrect"
 )
 
 DEFAULT_AUDIT_PATHS=(
