@@ -136,6 +136,7 @@ main() {
     chmod 600 "$bws_token_path"
   elif [ -f "$bws_token_path" ]; then
     info "╍ Found existing BWS token"
+    chmod 600 "$bws_token_path"
   elif [ -t 0 ]; then
     read -rsp "BWS access token (or Enter to skip): " config_bws_token
     echo

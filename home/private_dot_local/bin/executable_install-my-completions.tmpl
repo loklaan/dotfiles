@@ -235,19 +235,21 @@ main() {
 
   local job_num=0
 
-  start_job "job-$((job_num++))" "mise" install_completion "mise" mise completion zsh
-  start_job "job-$((job_num++))" "bws" install_mise_completion "bws" bws completions zsh
   start_job "job-$((job_num++))" "bw" install_mise_completion "bw" bw completion --shell zsh
+  start_job "job-$((job_num++))" "bws" install_mise_completion "bws" bws completions zsh
+  start_job "job-$((job_num++))" "cargo" install_mise_completion "cargo" rustup completions zsh cargo
   start_job "job-$((job_num++))" "chezmoi" install_mise_completion "chezmoi" chezmoi completion zsh
+  start_job "job-$((job_num++))" "coder" install_completion "coder" coder completion zsh
+  start_job "job-$((job_num++))" "cw" install_completion "cw" cw completion zsh
   start_job "job-$((job_num++))" "delta" install_mise_completion "delta" delta --generate-completion zsh
   start_job "job-$((job_num++))" "deno" install_mise_completion "deno" deno completions zsh
   start_job "job-$((job_num++))" "fzf" install_mise_completion "fzf" fzf --zsh
+  start_job "job-$((job_num++))" "mise" install_completion "mise" mise completion zsh
   start_job "job-$((job_num++))" "npm" install_mise_completion "npm" npm completion
-  start_job "job-$((job_num++))" "starship" install_mise_completion "starship" starship completions zsh
-  start_job "job-$((job_num++))" "rustup" install_mise_completion "rustup" rustup completions zsh
-  start_job "job-$((job_num++))" "cargo" install_mise_completion "cargo" rustup completions zsh cargo
-  start_job "job-$((job_num++))" "pnpm" install_completion "pnpm" pnpm completion zsh
   start_job "job-$((job_num++))" "opencode" install_completion "opencode" opencode completion
+  start_job "job-$((job_num++))" "pnpm" install_completion "pnpm" pnpm completion zsh
+  start_job "job-$((job_num++))" "rustup" install_mise_completion "rustup" rustup completions zsh
+  start_job "job-$((job_num++))" "starship" install_mise_completion "starship" starship completions zsh
 
   wait_for_jobs
 
