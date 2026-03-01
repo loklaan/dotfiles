@@ -2,6 +2,12 @@
 
 Summary line only. Add a body when >~7 files touched.
 
+## Linear History
+
+- Main branch must stay linear — no merge commits
+- Always rebase onto main before merging (`git rebase main`)
+- Use fast-forward merges only (`git merge --ff-only`)
+
 ## Subject Line
 
 - Lowercase imperative verb, no trailing punctuation, no leading articles
