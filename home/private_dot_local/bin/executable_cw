@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library (session logging deferred to connect path)
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   cw <workspace> [mode] [directory]
+#/   cw completion zsh
+#/
+#/ Description:
+#/   Connect to a Coder workspace in various modes. Built-in modes handle
+#/   SSH, VSCode, and Claude Code sessions. Any other mode is passed through to
+#/   the `coder open app` as a workspace app slug (so like: intellij, cursor).
+#/
+#/ Arguments:
+#/   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
+#/   mode         ssh (default), vscode, claude, cursor, intellij, or any app
+#/                slug available on the coder box
+#/   directory    Project path on the remote (~/dev/me/<project>)
+#/
+#/ Subcommands:
+#/   completion zsh    Output zsh completion script
+#/
+#/ Examples:
+#/   cw for-tasks                # SSH into for-tasks
+#/   cw for-tasks-2 vscode       # Open in VS Code
+#/   cw for-tasks-2 cursor       # Open Cursor via coder
+#/   cw for-tasks-2 intellij     # Open IntelliJ via coder
+#/   cw for-tasks code-server    # Open code-server in browser
+#/   cw for-tasks claude         # SSH + Claude Code
+#/   cw for-prs ccyolo           # YOLO mode
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# ── Workspace helpers ────────────────────────────────────────
+
+coder_is_running() {
+  local name="$1"
+  coder list -o json 2>/dev/null \
+    | jq -e --arg ws "$name" '.[] | select(.name == $ws and .latest_build.status == "running")' \
+    >/dev/null 2>&1
+}
+
+# ── Preflight SSH ────────────────────────────────────────────
+#
+# Single pre-flight SSH that handles all remote setup for Coder
+# workspace connections. Each module prepares local data,
+# contributes a subshell to the remote script, and parses its
+# results from labeled output lines.
+#
+# Modules:
+#   GPG      — imports keys, returns socket path for forwarding
+#   Terminfo — installs xterm-ghostty via Homebrew ncurses
+#
+# Outputs (set as side-effects):
+#   GPG_SSH_OPTS  — SSH opts for GPG agent reverse tunnel
+#   TERM_ENV      — TERM override for the remote command
+
+GPG_SSH_OPTS=()
+TERM_ENV=""
+
+coder_preflight() {
+  local host="$1"
+
+  GPG_SSH_OPTS=()
+  TERM_ENV=""
+
+  local script=""
+  local gpg_local_socket=""
+
+  # ── GPG: prepare keys for agent forwarding ──
+  if command -v gpgconf >/dev/null 2>&1 && command -v gpg >/dev/null 2>&1; then
+    gpg_local_socket=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null) || true
+    if [[ -n "$gpg_local_socket" ]]; then
+      gpgconf --launch gpg-agent 2>/dev/null
+      local pubkeys_b64 ownertrust_b64
+      pubkeys_b64=$(gpg --armor --export 2>/dev/null | base64 | tr -d '\n') || true
+      ownertrust_b64=$(gpg --export-ownertrust 2>/dev/null | base64 | tr -d '\n') || true
+      if [[ -n "$pubkeys_b64" ]]; then
+        info "🔑  Forwarding GPG agent…"
+        script+='(
+gpg_socket=$(gpgconf --list-dirs agent-socket 2>/dev/null) || exit 0
+gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+sleep 1
+'
+        script+="printf '%s' '${pubkeys_b64}' | base64 -d | gpg --batch --import 2>/dev/null || true
+printf '%s' '${ownertrust_b64}' | base64 -d | gpg --batch --import-ownertrust 2>/dev/null || true
+"
+        script+='gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+echo "GPG_SOCKET:${gpg_socket}"
+)
+'
+      fi
+    fi
+  fi
+
+  # ── Terminfo: install xterm-ghostty ──
+  if [[ -n "${GHOSTTY_RESOURCES_DIR:-}" ]]; then
+    local infocmp="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/ncurses/bin/infocmp"
+    if [[ -x "$infocmp" ]]; then
+      local terminfo_b64
+      terminfo_b64=$("$infocmp" -x xterm-ghostty 2>/dev/null | base64 | tr -d '\n') || true
+      if [[ -n "$terminfo_b64" ]]; then
+        info "🖥️  Installing xterm-ghostty terminfo…"
+        script+="(printf '%s' '${terminfo_b64}' | base64 -d | tic -x - 2>/dev/null && echo 'TERMINFO_OK:1' || echo 'TERMINFO_OK:0')
+"
+      fi
+    fi
+  fi
+
+  [[ -n "$script" ]] || return 0
+
+  # Execute single preflight SSH
+  local output
+  output=$(printf '%s' "$script" | ssh -o ConnectTimeout=10 "$host" /bin/sh 2>/dev/null) || return 0
+
+  # Parse labeled output
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      GPG_SOCKET:*)
+        local remote_socket="${line#GPG_SOCKET:}"
+        if [[ -n "$remote_socket" && -n "$gpg_local_socket" ]]; then
+          GPG_SSH_OPTS=(-o StreamLocalBindUnlink=yes -R "${remote_socket}:${gpg_local_socket}")
+        fi
+        ;;
+      TERMINFO_OK:1)
+        TERM_ENV="TERM=xterm-ghostty"
+        ;;
+    esac
+  done <<< "$output"
+}
+
+# ── Completion output ────────────────────────────────────────
+
+completion_zsh() {
+  cat <<'ZSH_COMPLETION'
+#compdef cw
+
+_cw() {
+  case $CURRENT in
+    2) # workspace name
+      local -a workspaces
+      if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        workspaces=("${(@f)$(coder list -o json 2>/dev/null | jq -r '.[].name')}")
+      fi
+      _describe 'workspace' workspaces
+      ;;
+    3) # mode or app slug
+      local -a modes=(
+        'ssh:SSH into workspace'
+        'vscode:Open in VS Code'
+        'claude:SSH + Claude Code'
+        'ccyolo:SSH + Claude Code YOLO mode'
+      )
+      if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        local ws="$words[2]"
+        local -a apps
+        apps=("${(@f)$(coder list -o json 2>/dev/null | jq -r --arg ws "$ws" '
+          .[] | select(.name == $ws)
+          | .latest_build.resources[].agents[]?.apps[]?
+          | .slug + ":" + .display_name
+        ' 2>/dev/null)}")
+        [[ ${#apps} -gt 0 && -n "${apps[1]}" ]] && modes+=("${apps[@]}")
+      fi
+      _describe 'mode' modes
+      ;;
+    4) # directory - no completion (remote path)
+      _message 'remote directory path (optional)'
+      ;;
+  esac
+}
+
+_cw "$@"
+ZSH_COMPLETION
+}
+
+# ── Connect to workspace ─────────────────────────────────────
+
+connect() {
+  setup_session_logging "cw"
+
+  local ws="$1"
+  local mode="${2:-ssh}"
+  local directory="${3:-}"
+
+  if ! command -v coder >/dev/null 2>&1; then
+    fatal "coder CLI not found"
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    fatal "jq not found"
+  fi
+
+  if ! coder_is_running "$ws"; then
+    fatal "workspace '${ws}' is not running. Start it with: coder start ${ws}"
+  fi
+
+  local host="coder.${ws}"
+
+  # Preflight SSH setup (only for modes that SSH directly)
+  case "$mode" in
+    ssh|claude|ccyolo) coder_preflight "$host" ;;
+  esac
+
+  case "$mode" in
+    ssh)
+      local cmd=""
+      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
+      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
+      cmd+="/usr/bin/zsh -l"
+      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ;;
+
+    vscode)
+      local vscode_args=("$ws")
+      [[ -n "$directory" ]] && vscode_args+=("$directory")
+      info "Opening VS Code: ${ws}${directory:+ at ${directory}}"
+      coder open vscode --generate-token "${vscode_args[@]}"
+      ;;
+
+    claude)
+      local cmd=""
+      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
+      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
+      cmd+="otter claude-code"
+      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ;;
+
+    ccyolo)
+      local cmd=""
+      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
+      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
+      cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
+      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ;;
+
+    *)
+      info "Opening ${mode}: ${ws}"
+      coder open app "$ws" "$mode"
+      ;;
+  esac
+}
+
+# ── Main ─────────────────────────────────────────────────────
+
+main() {
+  if [[ $# -lt 1 ]]; then
+    usage
+    exit 1
+  fi
+
+  case "$1" in
+    --help)
+      usage
+      exit 0
+      ;;
+    completion)
+      if [[ "${2:-}" == "zsh" ]]; then
+        completion_zsh
+      else
+        usage >&2
+        fatal "Unknown completion shell: ${2:-}. Supported: zsh"
+      fi
+      ;;
+    *)
+      connect "$@"
+      ;;
+  esac
+}
+
+main "$@"

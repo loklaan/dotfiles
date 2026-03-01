@@ -78,13 +78,9 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 
 ## Secret Management
 
-Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. The BWS access token is [age](https://github.com/FiloSottile/age)-encrypted with multi-recipient support for different machine classes (personal, work-machine, work-remote).
+Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates read the token and call `bitwardenSecrets` to resolve secret values during `chezmoi apply`.
 
 See `.claude/rules/secrets-architecture.md` for detailed architecture documentation.
-
-**Maintainer scripts:**
-- `./support/rotate-age-keys.sh` - Generate new age keypairs and update BWS
-- `./support/rotate-bws-access-token.sh` - Re-encrypt BWS token after rotation
 
 ## Structure
 

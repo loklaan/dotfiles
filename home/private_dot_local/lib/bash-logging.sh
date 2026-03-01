@@ -85,7 +85,7 @@ setup_session_logging() {
   tmpdir="${tmpdir%/}"
 
   # Print startup message
-  _print magenta dim "Script: $script_name"
+  _print magenta dim "Script: $script_name" >&2
 
   # Determine log file location (in priority order)
   if [ -f "$marker_file" ]; then
@@ -127,6 +127,6 @@ setup_session_logging() {
 
 print_log_path() {
   if [ -n "${BASH_LOGGING_FILE:-}" ]; then
-    _print white dim "Log: $BASH_LOGGING_FILE"
+    _print white dim "Log: $BASH_LOGGING_FILE" >&2
   fi
 }
