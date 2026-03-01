@@ -323,6 +323,31 @@ Use distinct trigger terms in descriptions to help Claude choose correctly.
 6. **Attribute sources** — use the `attribution` field for methodologies from external sources
 7. **Check the namespace registry** — before creating a skill, check if it belongs under an existing namespace
 
+## Completion Summary
+
+After creating or updating a skill, ALWAYS print a summary table showing every file in the skill and its line count. Include the rules file if one was created/updated, and a total row.
+
+```
+  ┌────────────────────────┬───────┬─────────┐
+  │          File          │ Lines │ ~Tokens │
+  ├────────────────────────┼───────┼─────────┤
+  │ SKILL.md               │ 24    │ 250     │
+  ├────────────────────────┼───────┼─────────┤
+  │ doc-coauthoring.md     │ 63    │ 660     │
+  ├────────────────────────┼───────┼─────────┤
+  │ slack-comms.md         │ 45    │ 470     │
+  ├────────────────────────┼───────┼─────────┤
+  │ tone-of-voice.md       │ 87    │ 900     │
+  ├────────────────────────┼───────┼─────────┤
+  │ Total                  │ 219   │ 2,280   │
+  └────────────────────────┴───────┴─────────┘
+```
+
+- List each file on its own row: SKILL.md first, then each reference file alphabetically
+- **Lines** — `wc -l` count for each file
+- **~Tokens** — estimated context window cost, computed as `wc -c / 3.5` (rounded to nearest 10). See `check-refs/references/skill-token-estimates.md` for the empirical basis of this divisor
+- The final row sums all lines and tokens across the skill
+
 ## Updating and Removing Skills
 
 **Update**: Edit SKILL.md directly; changes take effect on next Claude Code restart
