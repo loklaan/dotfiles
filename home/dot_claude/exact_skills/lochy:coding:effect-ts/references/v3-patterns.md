@@ -1,7 +1,7 @@
 # Effect v3 Patterns Reference
 
 These patterns apply to projects using `effect@^3.x`. For v4 patterns, see
-`~/.local/share/effect-v4-docs/LLMS.md`.
+`v4-patterns.md`.
 
 ## Writing basic Effects
 

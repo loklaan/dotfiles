@@ -5,14 +5,14 @@ These patterns apply to projects using `effect@^4.x`. For v3 patterns, see
 
 ## Primary reference
 
-Read `~/.local/share/effect-v4-docs/LLMS.md` — an LLM-optimized guide
-maintained by the Effect team covering services, error handling,
-observability, testing, HTTP APIs, child processes, CLI, AI, and more.
+Read `~/.claude/skills/lochy:coding:effect-ts/v4-docs/LLMS.md` — an
+LLM-optimized guide maintained by the Effect team covering services, error
+handling, observability, testing, HTTP APIs, child processes, CLI, AI, and more.
 
 ## Annotated examples
 
-The `~/.local/share/effect-v4-docs/ai-docs/src/` directory contains
-TypeScript examples linked from LLMS.md, organized by topic:
+The `~/.claude/skills/lochy:coding:effect-ts/v4-docs/ai-docs/src/` directory
+contains TypeScript examples linked from LLMS.md, organized by topic:
 
 - `01_effect/` — basics, services, errors, resources, running, pubsub
 - `02_stream/` — creating and consuming streams
@@ -30,16 +30,18 @@ TypeScript examples linked from LLMS.md, organized by topic:
 
 ## Module deep dives
 
-- `~/.local/share/effect-v4-docs/packages/effect/SCHEMA.md` — Schema module
-- `~/.local/share/effect-v4-docs/packages/effect/HTTPAPI.md` — HTTP API module
-- `~/.local/share/effect-v4-docs/packages/effect/MCP.md` — MCP server module
-- `~/.local/share/effect-v4-docs/packages/effect/CONFIG.md` — Configuration module
-- `~/.local/share/effect-v4-docs/packages/effect/OPTIC.md` — Optics module
+- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/SCHEMA.md` — Schema module
+- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/HTTPAPI.md` — HTTP API module
+- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/MCP.md` — MCP server module
+- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/CONFIG.md` — Configuration module
+- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/OPTIC.md` — Optics module
 
 ## Migrating from v3
 
-Read `~/.local/share/effect-v4-docs/MIGRATION.md` for the migration overview.
-Detailed per-topic guides are in `~/.local/share/effect-v4-docs/migration/`:
+Read `~/.claude/skills/lochy:coding:effect-ts/v4-docs/MIGRATION.md` for the
+migration overview. Detailed per-topic guides are in
+`~/.claude/skills/lochy:coding:effect-ts/v4-docs/migration/`:
 
-- `services.md`, `error-handling.md`, `generators.md`, `forking.md`,
-  `runtime.md`, `scope.md`, and more
+- `cause.md`, `equality.md`, `error-handling.md`, `fiber-keep-alive.md`,
+  `fiberref.md`, `forking.md`, `generators.md`, `layer-memoization.md`,
+  `runtime.md`, `scope.md`, `services.md`, `yieldable.md`
