@@ -203,7 +203,8 @@ connect() {
   fi
 
   if ! coder_is_running "$ws"; then
-    fatal "workspace '${ws}' is not running. Start it with: coder start ${ws}"
+    info "workspace '${ws}' is not running — starting it…"
+    coder start "$ws"
   fi
 
   local host="coder.${ws}"
