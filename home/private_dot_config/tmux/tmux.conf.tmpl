@@ -61,6 +61,10 @@ bind-key m set -g mouse \; display "Toggle mouse"
 ## Sync typing for panes
 bind-key / set -w synchronize-panes \; display "Toggles synchronised panes"
 
+## Move window position
+bind-key < swap-window -t -1 \; select-window -t -1
+bind-key > swap-window -t +1 \; select-window -t +1
+
 ## Mouse to copy highlighted text
 bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
 
