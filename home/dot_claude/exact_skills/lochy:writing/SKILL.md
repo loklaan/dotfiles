@@ -36,7 +36,8 @@ For Slack DMs, help channel replies, stakeholder updates, and thread responses. 
 5. **Links/artifacts** — drop PRs, docs, CMS links where they accelerate action
 
 **Format rules:**
-- Short paragraphs and bullet lists. Bold sparingly for key nouns. Inline URLs.
+- Slack uses `mrkdwn`, not Markdown — see [slack-comms.md](references/slack-comms.md) for the full syntax table.
+- Short paragraphs and bullet lists. `*Bold*` sparingly for key nouns. Links as `<url|label>`.
 - Loop-closing: "Looping back—[status]" when following up.
 
 ### Documentation & Long-form
