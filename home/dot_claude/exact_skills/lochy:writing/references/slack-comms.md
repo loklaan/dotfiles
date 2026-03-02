@@ -2,6 +2,24 @@
 
 Format-specific guidance for Slack DMs, help channel replies, stakeholder updates, and thread responses.
 
+## Slack Formatting (mrkdwn, not Markdown)
+
+Slack uses its own markup called `mrkdwn`. Key differences from Markdown:
+
+| Element | Slack mrkdwn | NOT Markdown |
+|---|---|---|
+| Bold | `*bold*` | ~~`**bold**`~~ |
+| Italic | `_italic_` | same |
+| Strikethrough | `~struck~` | ~~`~~struck~~`~~ |
+| Code | `` `code` `` | same |
+| Code block | ` ```code``` ` | same |
+| Blockquote | `> quote` | same |
+| Link | `<https://url\|label>` | ~~`[label](url)`~~ |
+| List | `• item` or `1. item` | no nested lists |
+| Heading | not supported | ~~`# heading`~~ |
+
+Always output Slack messages in mrkdwn. Never use `**`, `~~`, `[text](url)`, or `#` headings — they render as literal characters in Slack.
+
 ## Channel-Specific Color
 
 - **#help channels**: concise approvals and clear shipping signals ("Absolutely!", "LGTM!", "It's live"), plus concrete links and timing
