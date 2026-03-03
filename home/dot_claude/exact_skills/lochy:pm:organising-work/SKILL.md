@@ -20,3 +20,9 @@ See [references/naming-milestones.md](references/naming-milestones.md) for princ
 Write clear, complete task tickets that give the assignee everything they need to start work. Covers context, action items, impact, and success criteria. Includes Jira field mapping and persistence via Otter MCP.
 
 See [references/writing-task-tickets.md](references/writing-task-tickets.md) for template, principles, Jira field mapping, and examples.
+
+### Otter Jira Markdown
+
+Reference for what Markdown features the Otter MCP tool supports when converting to Atlassian Document Format (ADF) for Jira descriptions. Covers supported syntax, unsupported syntax, panel blockquotes, checkbox limitations, and a safe formatting template.
+
+See [references/otter-jira-markdown.md](references/otter-jira-markdown.md) for the full reference.
