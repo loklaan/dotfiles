@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   github-token
+#/
+#/ Description:
+#/   Prints a GitHub API token to stdout for use by tools that need
+#/   authenticated GitHub access (brew, gh, scripts, etc.).
+#/
+{{ if ne "" .emailWork -}}
+#/   On work machines, fetches a short-lived token from the git
+#/   credential agent (requires `gh auth login`).
+{{ else -}}
+#/   On personal machines, prints the static GITHUB_TOKEN from the
+#/   shell environment (sourced from Bitwarden Secrets).
+{{- end }}
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+{{ if ne "" .emailWork }}
+  local token
+  token=$(echo "url=https://github.com" | git credential fill 2>/dev/null | sed -n 's/^password=//p')
+
+  if [ -z "${token:-}" ]; then
+    fatal "No GitHub credential found. Run 'gh auth login' first."
+  fi
+
+  echo "$token"
+{{ else }}
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    fatal "GITHUB_TOKEN is not set. Check BWS configuration with 'dotfiles-setup'."
+  fi
+
+  echo "$GITHUB_TOKEN"
+{{- end }}
+}
+
+main "$@"

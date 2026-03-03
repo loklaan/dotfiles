@@ -15,9 +15,6 @@ done.commit
 # When you want some of your own files in a project
 .me
 
-# PR Train tool
-.pr-train
-
 # Tool dependency management
 .mise.local.toml
 

@@ -18,13 +18,14 @@ that rule files reflect the actual codebase conventions.
 
 ## Prerequisites
 
-- `gh` CLI must be available and authenticated (uses `GITHUB_TOKEN` env var
-  from Bitwarden secrets — already set in the shell environment)
+- `gh` CLI must be available and authenticated
+- `github-token` helper must be available (provides GitHub API tokens — via
+  git credential agent on work machines, via `$GITHUB_TOKEN` on personal machines)
 - `chezmoi apply` should have been run recently so local files reflect the
   current external state
 
 If `gh` is not available, fall back to `WebFetch` against the GitHub API with
-the `GITHUB_TOKEN` env var as a Bearer token.
+the output of `github-token` as a Bearer token.
 
 ## Available checks
 

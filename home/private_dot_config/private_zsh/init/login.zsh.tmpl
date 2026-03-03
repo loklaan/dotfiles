@@ -64,6 +64,13 @@ fi
 _incomplete_setup=true
 {{- end }}
 
+{{ if ne "" .emailWork -}}
+# Check for GitHub CLI auth (credential agent for short-lived tokens)
+if ! gh auth status 2>&1 | grep -q "Logged in.*keyring"; then
+  _incomplete_setup=true
+fi
+{{- end }}
+
 if [[ "$_incomplete_setup" == "true" ]]; then
   echo ""
   print -P "%F{yellow}Dotfiles applied with incomplete configuration.%f"
