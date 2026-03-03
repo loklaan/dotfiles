@@ -193,6 +193,35 @@ The description body contains everything from the template **except** Success Cr
 
 Success Criteria goes into the **Acceptance Criteria** custom field, not into the description. This is a separate textarea field. Write the criteria as a bulleted list.
 
+### Formatting Tips
+
+When passing the `description` value to `jira_update`, use actual newlines inside the quoted string — not `\n` escape sequences. The tool passes the string through to the Jira API verbatim, so `\n` renders as literal characters rather than line breaks.
+
+Wrong — renders as flat text:
+
+```
+description="Context paragraph\n\n🚀 Action Items\n\n- Step one"
+```
+
+Correct — renders with proper formatting:
+
+```
+description="Context paragraph
+
+🚀 Action Items
+
+- Step one"
+```
+
+### Known Limitations (Otter MCP)
+
+The `jira_update` tool uses a flat `key=value` string format for fields. This cannot express structured JSON payloads, which means these field types cannot be set via the tool:
+
+- **Option/select fields** (e.g., Category of Work) — Jira API requires `{"id": "10198"}` but the tool only passes strings
+- **Atlassian Document Format fields** (e.g., Acceptance Criteria) — requires ADF JSON, not plain text
+
+These fields must be set manually in the Jira UI after ticket creation.
+
 ### Instance Field IDs
 
 Custom field IDs and select values vary by Jira instance. Look up IDs for your instance using the `jira-search-fields` tool, or add a new section here.
