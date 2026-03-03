@@ -1,6 +1,3 @@
-[tools]
-dotslash = "latest"
-
 [env]
 # Use monorepo bin stubs, which in turn use dotslash
 _.path = { path = ["tools/dotslash/bin"], tools = true }
