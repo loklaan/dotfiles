@@ -1,0 +1,12 @@
+{{ if and (eq .chezmoi.os "darwin") (ne "" .emailWork) -}}
+#|------------------------------------------------------------|#
+#| Brew Wrapper
+#|
+#| Injects a short-lived GitHub API token from the git
+#| credential agent so brew can authenticate without a
+#| static token in the environment.
+#|
+brew() {
+  HOMEBREW_GITHUB_API_TOKEN="$(github-token)" command brew "$@"
+}
+{{ end -}}

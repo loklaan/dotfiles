@@ -45,13 +45,22 @@ check_bws_token() {
 
 check_signing_key() {
   local key
-  key=$(chezmoi execute-template '{{ .signingKey }}' 2>/dev/null || echo "")
+  key=$(chezmoi execute-template '{{ "{{" }} .signingKey {{ "}}" }}' 2>/dev/null || echo "")
   [ -n "$key" ]
 }
+{{- if ne "" .emailWork }}
+
+check_gh_auth() {
+  gh auth status 2>&1 | grep -q "Logged in.*keyring"
+}
+{{- end }}
 
 print_status() {
   local has_bws="$1"
   local has_signing="$2"
+{{- if ne "" .emailWork }}
+  local has_gh_auth="$3"
+{{- end }}
 
   echo ""
   _print white bold "  Dotfiles Configuration Status"
@@ -74,6 +83,18 @@ print_status() {
     _print yellow "  ✗ Signing key"
     _print white dim "    Git commits will not be signed"
   fi
+{{- if ne "" .emailWork }}
+
+  echo ""
+
+  if [ "$has_gh_auth" = "true" ]; then
+    _print green "  ✓ GitHub CLI auth"
+    _print white dim "    Short-lived tokens available via git credential agent"
+  else
+    _print yellow "  ✗ GitHub CLI auth"
+    _print white dim "    Tools needing GitHub access will fail (brew, github-token)"
+  fi
+{{- end }}
 
   echo ""
 }
@@ -81,8 +102,13 @@ print_status() {
 print_instructions() {
   local has_bws="$1"
   local has_signing="$2"
+{{- if ne "" .emailWork }}
+  local has_gh_auth="$3"
 
+  if [ "$has_bws" = "true" ] && [ "$has_signing" = "true" ] && [ "$has_gh_auth" = "true" ]; then
+{{- else }}
   if [ "$has_bws" = "true" ] && [ "$has_signing" = "true" ]; then
+{{- end }}
     _print green bold "  All configuration complete!"
     echo ""
     return
@@ -115,6 +141,17 @@ print_instructions() {
     echo ""
     step=$((step + 1))
   fi
+{{- if ne "" .emailWork }}
+
+  if [ "$has_gh_auth" = "false" ]; then
+    _print white bold "  ${step}. Authenticate GitHub CLI"
+    echo ""
+    _print white dim "     Run:"
+    echo "     gh auth login"
+    echo ""
+    step=$((step + 1))
+  fi
+{{- end }}
 
   _print white bold "  ${step}. Re-apply dotfiles"
   echo ""
@@ -149,6 +186,9 @@ main() {
 
   local has_bws="false"
   local has_signing="false"
+{{- if ne "" .emailWork }}
+  local has_gh_auth="false"
+{{- end }}
 
   if check_bws_token; then
     has_bws="true"
@@ -157,9 +197,18 @@ main() {
   if check_signing_key; then
     has_signing="true"
   fi
+{{- if ne "" .emailWork }}
 
+  if check_gh_auth; then
+    has_gh_auth="true"
+  fi
+
+  print_status "$has_bws" "$has_signing" "$has_gh_auth"
+  print_instructions "$has_bws" "$has_signing" "$has_gh_auth"
+{{- else }}
   print_status "$has_bws" "$has_signing"
   print_instructions "$has_bws" "$has_signing"
+{{- end }}
 }
 
 main "$@"

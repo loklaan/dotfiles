@@ -41,7 +41,6 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .bwsTokenPath                     // Absolute path to BWS access token file
 .bwsIdNpmAuthToken                // Bitwarden secret ID for npm auth
 .bwsIdGithubAuthToken             // Bitwarden secret ID for GitHub (personal)
-.bwsIdGithubAuthTokenCanvaOnly    // Bitwarden secret ID for GitHub (work-scoped)
 .privateSkillsRepo                // Git URL for private Claude skills repo
 ```
 
