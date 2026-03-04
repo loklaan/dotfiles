@@ -1,4 +1,7 @@
 .local/share/fonts/**/.uuid
+{{ if not (stat (joinPath .chezmoi.homeDir "work/canva/tools/dotslash/bin/gh")) }}
+.local/bin/gh
+{{ end }}
 {{ if ne .chezmoi.os "darwin" }}
 Library/**
 {{ end }}
