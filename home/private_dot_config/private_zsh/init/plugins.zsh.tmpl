@@ -47,7 +47,7 @@ zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugi
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/fzf", from:local, use:"*.plugin.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"clipboard.zsh"
+zplug "$ZSH_CONFIG_DIR/plugins", from:local, use:"clipboard.zsh"
 zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
 zplug load
 
