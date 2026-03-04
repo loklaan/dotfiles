@@ -63,16 +63,11 @@ coder_is_running() {
 #
 # Outputs (set as side-effects):
 #   GPG_SSH_OPTS  — SSH opts for GPG agent reverse tunnel
-#   TERM_ENV      — TERM override for the remote command
 
 GPG_SSH_OPTS=()
-TERM_ENV=""
 
 coder_preflight() {
   local host="$1"
-
-  GPG_SSH_OPTS=()
-  TERM_ENV=""
 
   local script=""
   local gpg_local_socket=""
@@ -139,11 +134,12 @@ echo "GPG_SOCKET:${gpg_socket}"
       GPG_SOCKET:*)
         local remote_socket="${line#GPG_SOCKET:}"
         if [[ -n "$remote_socket" && -n "$gpg_local_socket" ]]; then
-          GPG_SSH_OPTS=(-o StreamLocalBindUnlink=yes -o "RemoteForward ${remote_socket}:${gpg_local_socket}")
+          GPG_SSH_OPTS+=(-o StreamLocalBindUnlink=yes)
+          GPG_SSH_OPTS+=(-o "RemoteForward ${remote_socket}:${gpg_local_socket}")
         fi
         ;;
       TERMINFO_OK:1)
-        TERM_ENV="TERM=xterm-ghostty"
+        GPG_SSH_OPTS+=("-o SendEnv TERM_PROGRAM -o SendEnv TERM_PROGRAM_VERSION -o SendEnv COLORTERM")
         ;;
     esac
   done <<< "$output"
@@ -221,13 +217,16 @@ connect() {
     ssh|claude|ccyolo) coder_preflight "$host" ;;
   esac
 
+  # Don't exec ssh — this process may hold sockets (e.g. Roo / GPG forwarding)
+  # that would be closed if the process were replaced. Ensure -tt for
+  # interactive sessions that require a TTY (e.g. everything).
   case "$mode" in
     ssh)
-      [[ -n "$TERM_ENV" ]] && export "${TERM_ENV}"
       local cmd=""
       [[ -n "$directory" ]] && cmd+="cd ${directory} && "
       cmd+="/usr/bin/zsh -l"
-      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      exit $?
       ;;
 
     vscode)
@@ -240,17 +239,17 @@ connect() {
     claude)
       local cmd=""
       [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
       cmd+="otter claude-code"
-      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "/usr/bin/zsh -lc '${cmd}'"
+      exit $?
       ;;
 
     ccyolo)
       local cmd=""
       [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
       cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
-      exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
+      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "/usr/bin/zsh -lc '${cmd}'"
+      exit $?
       ;;
 
     *)
