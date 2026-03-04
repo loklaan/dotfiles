@@ -121,9 +121,16 @@ echo "GPG_SOCKET:${gpg_socket}"
 
   [[ -n "$script" ]] || return 0
 
-  # Execute single preflight SSH
+  # On machines with coder.conf.sh, the SSH config includes a LocalCommand
+  # that regenerates port/socket assignments and RemoteForward for roo. Suppress
+  # both during preflight so they don't interfere with the main SSH session.
+  local preflight_opts=(-o ConnectTimeout=10)
+  if [[ -x "$HOME/.ssh/coder.conf.sh" ]]; then
+    preflight_opts+=(-o PermitLocalCommand=no -o ClearAllForwardings=yes)
+  fi
+
   local output
-  output=$(printf '%s' "$script" | ssh -o ConnectTimeout=10 "$host" /bin/sh 2>/dev/null) || return 0
+  output=$(printf '%s' "$script" | ssh "${preflight_opts[@]}" "$host" /bin/sh 2>/dev/null) || return 0
 
   # Parse labeled output
   local line
@@ -132,7 +139,7 @@ echo "GPG_SOCKET:${gpg_socket}"
       GPG_SOCKET:*)
         local remote_socket="${line#GPG_SOCKET:}"
         if [[ -n "$remote_socket" && -n "$gpg_local_socket" ]]; then
-          GPG_SSH_OPTS=(-o StreamLocalBindUnlink=yes -R "${remote_socket}:${gpg_local_socket}")
+          GPG_SSH_OPTS=(-o StreamLocalBindUnlink=yes -o "RemoteForward ${remote_socket}:${gpg_local_socket}")
         fi
         ;;
       TERMINFO_OK:1)
@@ -216,9 +223,9 @@ connect() {
 
   case "$mode" in
     ssh)
+      [[ -n "$TERM_ENV" ]] && export "${TERM_ENV}"
       local cmd=""
       [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      [[ -n "$TERM_ENV" ]] && cmd+="$TERM_ENV "
       cmd+="/usr/bin/zsh -l"
       exec ssh -t "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
       ;;
