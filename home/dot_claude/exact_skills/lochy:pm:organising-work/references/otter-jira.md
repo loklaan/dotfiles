@@ -130,9 +130,40 @@ description="Context paragraph
 
 ### Custom field value types
 
-The `jira_update` tool uses a flat `key=value` string format for fields. The tool auto-coerces numeric-looking values to JSON numbers — so `customfield_10020=23107` sends the number `23107`, not the string `"23107"`. This means numeric fields (sprint IDs, story points, etc.) work correctly without any special handling.
+The `jira_update` tool uses a flat `key=value` string format for fields. Three value patterns cover all field types:
 
-**Option/select fields** (e.g., Category of Work) still cannot be set via the tool. Jira's API requires structured payloads like `{"id": "10198"}` which the flat key=value format cannot express. These fields must be set manually in the Jira UI after ticket creation.
+**Numeric values** auto-coerce to JSON numbers — `customfield_10020=23107` sends the number `23107`, not the string. Sprint IDs, story points, etc. work without special handling.
+
+**Inline JSON** works for fields that require structured objects. Pass the JSON directly in the value position (no spaces around `=`):
+
+```
+parent={"key":"EXS-1024"}
+customfield_10107={"id":"10201"}
+```
+
+Plain string values like `parent=EXS-1024` or `parent="EXS-1024"` are rejected as "data was not an object". The `parent` field is also available at creation time via `jira_create`'s `parent_key` parameter.
+
+**Escaped JSON** is required for complex/nested JSON values (e.g., ADF documents for rich-text fields like Acceptance Criteria). The tool's field parser splits on commas, so unescaped nested JSON breaks the parser. The fix: escape internal double quotes and wrap the entire value in outer quotes so the parser treats it as a single value.
+
+Use `json-escape` (available in `~/.local/bin/`) to produce the escaped string:
+
+```bash
+echo '{"version":1,"type":"doc","content":[...]}' | json-escape
+# Output: "{\"version\":1,\"type\":\"doc\",\"content\":[...]}"
+```
+
+When constructing ADF programmatically, pipe the output of a Node script through `json-escape`:
+
+```bash
+node -e '
+const adf = { version: 1, type: "doc", content: [/* ... */] };
+process.stdout.write(JSON.stringify(adf));
+' | json-escape
+```
+
+The escaped output can be used directly as the field value: `customfield_10263=<escaped output>`. The outer quotes prevent comma-splitting, and the tool parses the inner JSON correctly as an ADF object.
+
+**The `description` field** gets automatic markdown-to-ADF conversion. Use markdown by default. If you need ADF features the converter doesn't support (see [What doesn't work](#what-doesnt-work)), set `description` as escaped inline ADF JSON instead.
 
 ### Instance field IDs
 

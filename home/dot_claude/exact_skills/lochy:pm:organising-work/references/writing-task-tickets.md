@@ -50,9 +50,26 @@ incident, ad-hoc request, etc.]
 
 | Field | Required | Description |
 |---|---|---|
-| `category` | Yes | One of: `KTLO`, `Efficiency`, `New Capability`, `Quality Improvements` |
+| `category` | Yes | One of: `KTLO`, `Efficiency`, `New Capability`, `Quality Improvements` (see guidance below) |
 | `parent` | No | Ticket key of the parent issue (epic, milestone, team goal, etc.) |
 | `labels` | No | Array of labels for categorisation and origin tracking |
+
+#### Category of Work
+
+Choose based on the primary intent of the work, not its size or difficulty.
+
+| Category | Intent | Examples |
+|---|---|---|
+| **KTLO** | Keep the lights on — maintaining existing systems, compliance, and operational health | Accessibility fixes, locale/i18n hookups, dependency upgrades, security patches, incident follow-ups, on-call/COP duties, fixing broken builds, rotating credentials |
+| **Efficiency** | Make the team faster — reduce toil, improve workflows, accelerate development | CI/CD improvements, developer tooling, test infrastructure, automation of manual processes, documentation that unblocks others, reducing build times |
+| **New Capability** | Deliver something that didn't exist before — new user-facing features or platform capabilities | New page types, new content blocks, new API endpoints, new integrations, launching a new product surface |
+| **Quality Improvements** | Make existing things better — not broken, just not good enough | Performance optimisation, UX polish, refactoring for maintainability, reducing tech debt, improving error messages, design system alignment, locale rollout (extending coverage to more markets) |
+
+**Edge cases:**
+
+- A bug fix is **KTLO** (restoring expected behaviour), not Quality Improvements
+- A refactor that unblocks a new feature is still **Quality Improvements** — categorise by what the work itself does, not what it enables
+- Compliance work (accessibility, legal, regulatory) is **KTLO** — it's an operational requirement, not an improvement
 
 ## Title Convention
 
