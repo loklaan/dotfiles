@@ -1,11 +1,31 @@
-# github.com/loklaan/dotfiles
+<p align="center">
+  <h1 align="center">loklaan/dotfiles</h1>
+  <p align="center">
+    Cross-platform dev environment, one script away.<br>
+    Managed with <a href="https://www.chezmoi.io/">chezmoi</a> · versioned with <a href="https://mise.jdx.dev/">mise</a> · secrets via <a href="https://bitwarden.com/help/secrets-manager-cli/">Bitwarden</a>
+  </p>
+  <p align="center">
+    <img src="https://img.shields.io/badge/shell-zsh-blue?style=flat-square" alt="zsh">
+    <img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20WSL-green?style=flat-square" alt="platform">
+    <img src="https://img.shields.io/badge/secrets-Bitwarden-purple?style=flat-square" alt="secrets">
+    <img src="https://img.shields.io/badge/ai-Claude%20Code-orange?style=flat-square" alt="claude">
+  </p>
+</p>
 
-Lochy's dotfiles
+---
 
-- Installable via `install.sh`
-- Managed with [`chezmoi`](https://www.chezmoi.io/)
-- Dependencies managed with [`mise`](https://mise.jdx.dev/)
-- Secrets are managed in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/)
+A single `install.sh` bootstraps a complete development environment from a clean machine — shell, git, dev tools, secrets, and AI assistant configuration. Everything is templated, idempotent, and version-locked so the same setup reproduces identically across personal laptops, work machines, and ephemeral dev containers.
+
+Chezmoi manages the file lifecycle: Go templates resolve per-machine configuration at apply time, externals pin plugin archives to exact versions, and numbered scripts handle post-install automation in dependency order. Secrets never touch the repo — Bitwarden Secrets Manager provides them at render time through a token-gated guard pattern that degrades gracefully when credentials aren't available.
+
+## Features
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="support/diagram-dark.svg">
+    <img src="support/diagram-light.svg" alt="dotfiles architecture" width="800">
+  </picture>
+</p>
 
 ## Install
 
@@ -42,7 +62,7 @@ git clone https://github.com/loklaan/dotfiles.git ~/.local/share/chezmoi
 ~/.local/share/chezmoi/install.sh
 
 # Or non-interactive (CI, Docker, etc.)
-CONFIG_BWS_ACCESS_TOKEN=... ~/.local/share/chezmoi/install.sh
+CONFIG_BWS_ACCESS_TOKEN=... CONFIG_SIGNING_KEY=... ~/.local/share/chezmoi/install.sh
 ```
 
 ### Update to latest
@@ -52,10 +72,8 @@ chezmoi update
 
 # Or:
 chezmoi cd
-git pull
-chezmoi apply
+./install.sh
 ```
-
 
 ### Testing the install
 
@@ -66,15 +84,6 @@ Validate installation in a clean environment:
 ```
 
 Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from `chezmoi.test.toml`.
-
-## Features
-
-- Modular zsh configuration system (`init/` modules for env, login, options, plugins, prompt)
-- Custom utilities in `~/.local/bin/` (`notify`, `safe-rm`, `font-install`)
-- Chezmoi externals for pinned plugin archives (zsh plugins, tmux plugins, fonts)
-- Post-install automation via `.chezmoiscripts/`
-- Claude Code MCP server configuration (effect-docs, work-specific otter)
-- Automated end-to-end testing via Docker
 
 ## Secret Management
 
@@ -106,12 +115,3 @@ The `~/dev/` directory organizes projects by ownership and purpose:
 - **`~/dev/open/`** - Open source projects. Others, usually.
 
 In repos where I actively develop, I may include a `.me/` directory for helpful scripts, temporary data or jupyter notebooks, etc. These are not managed by chezmoi, and are gitignored globally.
-
-## Conventions
-
-Built for zsh. Useful docs:
-
-- [Zsh options](https://zsh.sourceforge.io/Doc/Release/Options.html) - use `[[ -o option_name ]]` for checks
-- [Startup files](https://zsh.sourceforge.io/Intro/intro_3.html) - execution order
-
-Bash scripts in `.chezmoiscripts/` follow patterns from [loklaan/knowledge](https://github.com/loklaan/knowledge/blob/master/shell/bash.md).
