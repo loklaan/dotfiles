@@ -193,42 +193,9 @@ The description body contains everything from the template **except** Success Cr
 
 Success Criteria goes into the **Acceptance Criteria** custom field, not into the description. This is a separate textarea field. Write the criteria as a bulleted list.
 
-### Formatting Tips
+### Otter MCP Details
 
-The `jira_update` tool accepts Markdown for text fields (description, acceptance criteria, comments). The Otter MCP layer converts Markdown to Atlassian Document Format before sending to the Jira API. Use standard Markdown formatting — headings, bullet lists, bold, code blocks, etc.
-
-Use actual newlines inside the quoted string — not `\n` escape sequences. The tool passes the string verbatim, so `\n` renders as literal characters rather than line breaks.
-
-Wrong — renders as flat text:
-
-```
-description="Context paragraph\n\n🚀 Action Items\n\n- Step one"
-```
-
-Correct — renders with proper formatting:
-
-```
-description="Context paragraph
-
-🚀 Action Items
-
-- Step one"
-```
-
-### Known Limitations (Otter MCP)
-
-The `jira_update` tool uses a flat `key=value` string format for fields. This cannot express structured JSON payloads, which means **option/select fields** (e.g., Category of Work) cannot be set via the tool — Jira API requires `{"id": "10198"}` but the tool only passes strings. These fields must be set manually in the Jira UI after ticket creation.
-
-### Instance Field IDs
-
-Custom field IDs and select values vary by Jira instance. Look up IDs for your instance using the `jira-search-fields` tool, or add a new section here.
-
-#### Canva
-
-| Jira Field | Field ID | Select Value Keys |
-|---|---|---|
-| Category of Work | `customfield_10107` | Efficiency (`11581`), KTLO (`10201`), New Capability (`10198`), Quality Improvements (`11459`) |
-| Acceptance Criteria | `customfield_10263` | — |
+See [otter-jira.md](otter-jira.md) for Markdown-to-ADF conversion rules, string escaping, custom field value types, and instance field IDs.
 
 ### Creation Steps
 

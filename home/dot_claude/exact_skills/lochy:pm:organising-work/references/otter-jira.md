@@ -1,10 +1,12 @@
-# Otter Jira Markdown Reference
+# Otter MCP Jira Reference
 
-How the Otter MCP `jira_create` and `jira_update` tools convert Markdown to Atlassian Document Format (ADF) before sending to the Jira API.
+Behaviour and quirks of the Otter MCP `jira_create` and `jira_update` tools.
 
-The converter uses [goldmark](https://github.com/yuin/goldmark) with the **Table** extension. No other extensions are enabled. This means some common Markdown features have no effect.
+## Markdown to ADF Conversion
 
-## What works
+The tools convert Markdown to Atlassian Document Format (ADF) before sending to the Jira API. The converter uses [goldmark](https://github.com/yuin/goldmark) with the **Table** extension. No other extensions are enabled — some common Markdown features have no effect.
+
+### What works
 
 | Markdown | ADF Node | Notes |
 |---|---|---|
@@ -22,7 +24,7 @@ The converter uses [goldmark](https://github.com/yuin/goldmark) with the **Table
 | `> blockquote` | `blockquote` | Unless it matches a panel pattern (see below) |
 | `<br>` | `hardBreak` | Raw HTML tag |
 
-## What doesn't work
+### What doesn't work
 
 | Markdown | Why |
 |---|---|
@@ -31,7 +33,7 @@ The converter uses [goldmark](https://github.com/yuin/goldmark) with the **Table
 | `~~strikethrough~~` | Strikethrough extension not enabled. |
 | Nested emphasis (`***bold italic***`) | Only one mark level applied per emphasis node. |
 
-## Panels via blockquotes
+### Panels via blockquotes
 
 Blockquotes are checked for emoji + keyword patterns. If matched, the blockquote becomes an ADF `panel` node instead. The first paragraph (containing the indicator) is stripped from the panel content.
 
@@ -47,7 +49,7 @@ Alternative emoji set: `📘 info`, `📙 warning`, `📕 error`, `📗 success`
 
 Detection is case-insensitive and checks for both the emoji and the keyword anywhere in the blockquote text. The keyword does not need to be on the same line as the emoji, but both must be present.
 
-## Checkboxes / action items
+### Checkboxes / action items
 
 **The `- [ ]` syntax does not produce Jira checkboxes.** The goldmark parser treats it as a regular list item with literal bracket characters because the TaskList extension is not loaded.
 
@@ -65,7 +67,7 @@ The converter does have a code path for `<input type="checkbox">` raw HTML, whic
 
 Or accept that checkboxes are set manually in Jira after creation, and keep the success criteria as plain bullets in the Markdown description.
 
-## Unsupported nodes
+### Unsupported nodes
 
 Any goldmark AST node type not explicitly handled falls through to a default handler that:
 
@@ -75,7 +77,7 @@ Any goldmark AST node type not explicitly handled falls through to a default han
 
 Warnings are collected but not surfaced to the user through the Otter tool interface — they're only available in the `MD2ADFResult` struct.
 
-## Practical formatting template
+### Practical formatting template
 
 Based on the above, this is the safest Markdown structure for Jira ticket descriptions via Otter:
 
@@ -103,3 +105,42 @@ Impact statement here.
 ```
 
 Use `###` (h3) for section headers to match Jira's visual hierarchy within a ticket description. Avoid h1/h2 which render oversized in the description context.
+
+## Field Value Handling
+
+### String escaping
+
+Use actual newlines inside the quoted string — not `\n` escape sequences. The tool passes the string verbatim, so `\n` renders as literal characters rather than line breaks.
+
+Wrong — renders as flat text:
+
+```
+description="Context paragraph\n\n🚀 Action Items\n\n- Step one"
+```
+
+Correct — renders with proper formatting:
+
+```
+description="Context paragraph
+
+🚀 Action Items
+
+- Step one"
+```
+
+### Custom field value types
+
+The `jira_update` tool uses a flat `key=value` string format for fields. The tool auto-coerces numeric-looking values to JSON numbers — so `customfield_10020=23107` sends the number `23107`, not the string `"23107"`. This means numeric fields (sprint IDs, story points, etc.) work correctly without any special handling.
+
+**Option/select fields** (e.g., Category of Work) still cannot be set via the tool. Jira's API requires structured payloads like `{"id": "10198"}` which the flat key=value format cannot express. These fields must be set manually in the Jira UI after ticket creation.
+
+### Instance field IDs
+
+Custom field IDs and select values vary by Jira instance. Look up IDs for your instance using the `jira-search-fields` tool, or add a new section here.
+
+#### Canva
+
+| Jira Field | Field ID | Select Value Keys |
+|---|---|---|
+| Category of Work | `customfield_10107` | Efficiency (`11581`), KTLO (`10201`), New Capability (`10198`), Quality Improvements (`11459`) |
+| Acceptance Criteria | `customfield_10263` | — |
