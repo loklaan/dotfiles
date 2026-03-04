@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   json-escape [OPTIONS] [FILE]
+#/
+#/ Description:
+#/   Escapes a JSON value for embedding in a quoted key=value field string.
+#/   Reads JSON from a file argument or stdin. Outputs the escaped string
+#/   with internal double quotes backslash-escaped, wrapped in outer quotes.
+#/
+#/   Designed for use with tools that parse flat key=value field formats
+#/   (e.g., Jira API tools) where nested JSON in the value position would
+#/   otherwise break the field parser's comma-splitting.
+#/
+#/ Examples:
+#/   echo '{"type":"doc","version":1}' | json-escape
+#/   json-escape adf.json
+#/   json-escape <<< '{"id":"10201"}'
+#/
+#/ Options:
+#/   --help:    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  INPUT_FILE=""
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      -*)
+        usage
+        echo "" >&2
+        fatal "Unknown option: $1"
+        ;;
+      *)
+        INPUT_FILE="$1"
+        shift
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  local json
+  if [ -n "${INPUT_FILE:-}" ]; then
+    json=$(cat "$INPUT_FILE")
+  else
+    json=$(cat)
+  fi
+
+  node -e "
+    const json = process.argv[1];
+    JSON.parse(json);
+    const escaped = json.replace(/\"/g, '\\\\\"');
+    process.stdout.write('\"' + escaped + '\"');
+  " "$json"
+}
+
+main "$@"
