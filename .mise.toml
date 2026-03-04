@@ -1,2 +1,2 @@
 [tools]
-d2 = "0.7.1"
+"github:terrastruct/d2" = "0.7.1"
