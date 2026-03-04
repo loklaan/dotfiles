@@ -114,6 +114,22 @@ echo "GPG_SOCKET:${gpg_socket}"
     fi
   fi
 
+  # ── SSH pubkey: write agent keys to disk for tools that expect key files ──
+  if ssh-add -L >/dev/null 2>&1; then
+    info "🔑  Forwarding SSH public key…"
+    script+='(
+mkdir -p ~/.ssh
+if ssh-add -L > ~/.ssh/id_rsa.pub 2>/dev/null; then
+  chmod 644 ~/.ssh/id_rsa.pub
+  echo "SSH_PUBKEY_OK:1"
+else
+  rm -f ~/.ssh/id_rsa.pub
+  echo "SSH_PUBKEY_OK:0"
+fi
+)
+'
+  fi
+
   [[ -n "$script" ]] || return 0
 
   # On machines with coder.conf.sh, the SSH config includes a LocalCommand
