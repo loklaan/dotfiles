@@ -21,8 +21,8 @@ Write clear, complete task tickets that give the assignee everything they need t
 
 See [references/writing-task-tickets.md](references/writing-task-tickets.md) for template, principles, Jira field mapping, and examples.
 
-### Otter Jira Markdown
+### Otter MCP Jira Reference
 
-Reference for what Markdown features the Otter MCP tool supports when converting to Atlassian Document Format (ADF) for Jira descriptions. Covers supported syntax, unsupported syntax, panel blockquotes, checkbox limitations, and a safe formatting template.
+Behaviour and quirks of the Otter MCP Jira tools — Markdown-to-ADF conversion (supported/unsupported syntax, panels, checkboxes), string escaping, custom field value types (numeric coercion, select field limitations), and instance-specific field IDs.
 
-See [references/otter-jira-markdown.md](references/otter-jira-markdown.md) for the full reference.
+See [references/otter-jira.md](references/otter-jira.md) for the full reference.
