@@ -48,6 +48,12 @@ See [references/skill-token-estimates.md](references/skill-token-estimates.md)
 for the full procedure. Validates the `wc -c / 3.5` token estimation heuristic
 against calibration data measured from real skill files.
 
+### D2 diagram freshness
+
+See [references/d2-diagram.md](references/d2-diagram.md) for the full
+procedure. Checks that the rendered SVGs in `support/` are up-to-date with
+the `support/diagram.d2` source and that the README references them correctly.
+
 ## Execution
 
 The checks are independent and should be run in parallel. Collect all SARIF

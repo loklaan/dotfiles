@@ -1,0 +1,92 @@
+direction: right
+
+install.shape: rectangle
+install.style.3d: true
+install: |md
+  ## Install.sh
+
+  Automated devbox bootstrapping.
+
+  > _macOS · Linux · WSL_
+|
+
+chezmoi.shape: rectangle
+chezmoi.style.multiple: true
+chezmoi: |md
+  ## Chezmoi
+
+  templating · lifecycle engine
+|
+
+install -- chezmoi
+install -- codeagent
+
+shell.shape: rectangle
+shell: |md
+  **Shell**
+
+  zsh · spaceship.rs · interactive · non-interactive · fine-tuned git
+|
+
+tools.shape: rectangle
+tools: |md
+  **Dev Tools**
+
+  mise-managed languages & cli's · brew fallback · linux pkg mngr fallback
+|
+
+secrets.shape: rectangle
+secrets: |md
+  **Secrets**
+
+  bitwarden · non-interactive application
+|
+
+utilities.shape: rectangle
+utilities: |md
+  **Utilities**
+
+  non-critical pkg installer · coder devboxes · safe rm
+|
+
+lifecycle.shape: rectangle
+lifecycle: |md
+  **Lifecycle**
+
+  scripts · fonts · shell completions
+|
+
+codeagent.shape: rectangle
+codeagent.style.multiple: true
+codeagent: |md
+  ## Code Agents
+
+  Either Claude Chat, Claude Code, or OpenCode.
+|
+skills.shape: rectangle
+skills: |md
+  **Skills / rules**
+
+  Writing, coding, organising work, and more.
+|
+mcp.shape: rectangle
+mcp: |md
+  **MCP Servers**
+
+  Also work-only MCPs.
+|
+packs.shape: rectangle
+packs: |md
+  **Auto-packing for Chat**
+
+  Creation of .zip's for Claude Chat.
+|
+codeagent -> skills
+codeagent -> mcp
+codeagent -> packs
+
+chezmoi -> lifecycle
+chezmoi -> secrets
+chezmoi -> shell
+chezmoi -> tools
+chezmoi -> utilities
