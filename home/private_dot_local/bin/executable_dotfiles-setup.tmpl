@@ -51,7 +51,7 @@ check_signing_key() {
 {{- if ne "" .emailWork }}
 
 check_gh_auth() {
-  gh auth status 2>&1 | grep -q "Logged in.*keyring"
+  gh auth status 2>&1 | grep -q "Logged in"
 }
 {{- end }}
 
