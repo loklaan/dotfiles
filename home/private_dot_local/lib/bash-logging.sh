@@ -74,6 +74,24 @@ warningf() { color_printf yellow "warning $@" >&2 ; }
 errorf() { color_printf red "error $@" >&2 ; }
 fatalf() { color_printf red bold "fatal $@" >&2 ; exit 1 ; }
 
+# Run a command quietly, showing output only on failure.
+# On success, output is appended to the session log (if active) but hidden from terminal.
+# On failure, all captured stdout and stderr is shown on stderr.
+run_quiet() {
+  local output rc
+  output=$(mktemp)
+  "$@" > "$output" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+      cat "$output" >> "$BASH_LOGGING_FILE"
+    fi
+  else
+    cat "$output" >&2
+  fi
+  rm -f "$output"
+  return "$rc"
+}
+
 setup_session_logging() {
   local script_name="${1:-unknown}"
   local timestamp=$(date +"%Y%m%d_%H%M%S")
