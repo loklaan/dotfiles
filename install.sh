@@ -60,7 +60,7 @@ main() {
         if ! command -v brew >/dev/null 2>&1; then
           fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"
         fi
-        brew install git zsh
+        run_quiet brew install git zsh
         ;;
       linux)
         if [ "$(id -u)" = "0" ]; then
@@ -78,20 +78,20 @@ main() {
         case $linux_distro in
           alpine)
             info "╍ Running 'apk add git zsh'"
-            $Sudo apk add --update --no-cache git zsh
+            run_quiet $Sudo apk add --update --no-cache git zsh
           ;;
           amzn|rhel|fedora|rocky)
             info "╍ Running 'yum install git zsh'"
-            $Sudo yum update -y
-            $Sudo yum install -y git zsh
+            run_quiet $Sudo yum update -y
+            run_quiet $Sudo yum install -y git zsh
           ;;
           ubuntu|debian)
             info "╍ Running 'apt-get install git zsh locales'"
-            $Sudo apt-get update
-            $Sudo apt-get --no-install-recommends -y install git zsh locales
+            run_quiet $Sudo apt-get update
+            run_quiet $Sudo apt-get --no-install-recommends -y install git zsh locales
 
             info "╍ Running 'locale-gen en_US.UTF-8'"
-            $Sudo locale-gen en_US.UTF-8
+            run_quiet $Sudo locale-gen en_US.UTF-8
           ;;
           *)
             fatal "The \"$linux_distro\" is not supported yet. Add '$linux_distro' and it's package manager to \`install.sh\`."
@@ -105,17 +105,17 @@ main() {
   if ! command -v mise >/dev/null 2>&1; then
     info "▶ Installing critical packages (mise , chezmoi, bitwarden)"
     info "╍ Running 'gpg --recv-keys' for install script verification"
-    gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D >/dev/null 2>&1
+    run_quiet gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D
     tmp_mise_install_sh=$(mktemp)
     info "╍ Running 'curl mise.jdx.dev' for install script"
-    curl https://mise.jdx.dev/install.sh.sig 2>/dev/null | gpg --decrypt 2>/dev/null > "$tmp_mise_install_sh"
+    run_quiet bash -c 'curl -fsSL https://mise.jdx.dev/install.sh.sig | gpg --decrypt > "$1"' _ "$tmp_mise_install_sh"
     info "╍ Running downloaded install script"
-    sh "$tmp_mise_install_sh" 2>/dev/null
+    run_quiet sh "$tmp_mise_install_sh"
   fi
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
   info "╍ Running mise for chezmoi and bitwarden"
-  mise use --global -y chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0' >/dev/null 2>&1
+  run_quiet mise use --global -y chezmoi@2.67.0 'ubi:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v1.0.0'
 
   # Run chezmoi init (skip scripts - they run after packages are installed)
   #  - Prompts should be kept in-sync with .chezmoi.toml.tmpl config

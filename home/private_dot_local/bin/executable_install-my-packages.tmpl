@@ -120,16 +120,13 @@ main() {
        "sublime-text"
        "visual-studio-code"
        "vlc" -}}
-  {{ $goget := list
-       "github.com/CtrlSpice/otel-desktop-viewer@latest"
-       "github.com/equinix-labs/otel-cli@latest" -}}
 
   if ! command -v brew > /dev/null; then
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
   # Brew managed programs/libraries
-  brew bundle --file=/dev/stdin <<EOF
+  run_quiet brew bundle --file=/dev/stdin <<EOF
 {{ range ($brews | sortAlpha | uniq) -}}
 brew {{ . | quote }}
 {{ end -}}
@@ -137,18 +134,12 @@ EOF
 
   # Brew managed GUI
   if [ $gui -eq 0 ]; then
-    brew bundle --file=/dev/stdin <<EOF
+    run_quiet brew bundle --file=/dev/stdin <<EOF
 {{ range ($casks | sortAlpha | uniq) -}}
 cask {{ . | quote }}
 {{ end -}}
 EOF
   fi
-
-  # Go built binaries
-  info "╍ Running 'go install'"
-  {{ range ($goget | sortAlpha | uniq) -}}
-  mise x -- go install {{ . | quote }}
-  {{ end -}}
 
   {{ else if eq .chezmoi.os "linux" -}}
   #
@@ -201,17 +192,17 @@ EOF
   case $linux_distro in
     alpine)
       info "╍ Running 'apk add \$packages'"
-      bash -c "$Sudo apk add --update $(echo "$packages" | xargs)"
+      run_quiet bash -c "$Sudo apk add --update $(echo "$packages" | xargs)"
     ;;
     amzn|rhel|fedora|rocky)
       info "╍ Running 'yum install \$packages'"
-      $Sudo yum update -y
-      bash -c "$Sudo yum install -y $(echo "$packages" | xargs)"
+      run_quiet $Sudo yum update -y
+      run_quiet bash -c "$Sudo yum install -y $(echo "$packages" | xargs)"
     ;;
     ubuntu|debian)
       info "╍ Running 'apt-get install \$packages'"
-      $Sudo apt-get update
-      bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages" | xargs)"
+      run_quiet $Sudo apt-get update
+      run_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages" | xargs)"
     ;;
     *)
       fatal "The \"$linux_distro\" is not supported yet. Full release details from /etc/os-release:\n$(cat /etc/os-release)\n\nAdd '$linux_distro' and it's package manager to this script."
@@ -230,7 +221,7 @@ EOF
   {{ end }}
 
   info "╍ Running 'mise install'"
-  mise install -y
+  run_quiet mise install -y
 }
 
 main "$@"
