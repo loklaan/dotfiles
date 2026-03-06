@@ -23,12 +23,12 @@ The tools convert Markdown to Atlassian Document Format (ADF) before sending to 
 | Pipe tables | `table` > `tableRow` > `tableCell`/`tableHeader` | Full table support |
 | `> blockquote` | `blockquote` | Unless it matches a panel pattern (see below) |
 | `<br>` | `hardBreak` | Raw HTML tag |
+| `- [ ] task` / `- [x] task` | `taskList` > `taskItem` | Unchecked = `TODO`, checked = `DONE` |
 
 ### What doesn't work
 
 | Markdown | Why |
 |---|---|
-| `- [ ] task` / `- [x] task` | goldmark TaskList extension is **not enabled**. Renders as a plain bullet with literal `[ ]` text. |
 | `![alt](url)` | No image handling. Falls through to default text extraction. |
 | `~~strikethrough~~` | Strikethrough extension not enabled. |
 | Nested emphasis (`***bold italic***`) | Only one mark level applied per emphasis node. |
@@ -48,24 +48,6 @@ Blockquotes are checked for emoji + keyword patterns. If matched, the blockquote
 Alternative emoji set: `📘 info`, `📙 warning`, `📕 error`, `📗 success`, `📔 note`
 
 Detection is case-insensitive and checks for both the emoji and the keyword anywhere in the blockquote text. The keyword does not need to be on the same line as the emoji, but both must be present.
-
-### Checkboxes / action items
-
-**The `- [ ]` syntax does not produce Jira checkboxes.** The goldmark parser treats it as a regular list item with literal bracket characters because the TaskList extension is not loaded.
-
-The converter does have a code path for `<input type="checkbox">` raw HTML, which creates `taskItem` ADF nodes. However:
-
-1. The generated `state` attribute uses `{"checked": true/false}` instead of Jira's expected `"TODO"` / `"DONE"` string — this may not render correctly.
-2. The `taskItem` nodes are created inside a `bulletList` > `listItem` structure rather than a proper `taskList` wrapper — Jira expects `taskList` > `taskItem`.
-
-**Workaround:** Until the converter adds TaskList support, use plain bullet lists with emoji indicators for visual checkboxes:
-
-```markdown
-- ⬜ Criterion not yet met
-- ✅ Criterion met
-```
-
-Or accept that checkboxes are set manually in Jira after creation, and keep the success criteria as plain bullets in the Markdown description.
 
 ### Unsupported nodes
 
@@ -99,9 +81,9 @@ Impact statement here.
 
 ### ✅ Success Criteria
 
-- Criterion one
-- Criterion two
-- Criterion three
+- [ ] Criterion one
+- [ ] Criterion two
+- [ ] Criterion three
 ```
 
 Use `###` (h3) for section headers to match Jira's visual hierarchy within a ticket description. Avoid h1/h2 which render oversized in the description context.
