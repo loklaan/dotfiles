@@ -10,5 +10,10 @@
     "type": "local",
     "enabled": true,
     "command": ["npx", "-y", "effect-mcp@latest" ]
+  },
+  "figma-desktop": {
+    "type": "remote",
+    "enabled": true,
+    "url": "http://127.0.0.1:3845/mcp"
   }
 }

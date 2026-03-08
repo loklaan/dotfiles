@@ -11,5 +11,9 @@
   "effect-docs": {
     "command": "npx", "args": ["-y", "effect-mcp@latest" ],
     "env": {}
+  },
+  "figma-desktop": {
+    "type": "http",
+    "url": "http://127.0.0.1:3845/mcp"
   }
 }
