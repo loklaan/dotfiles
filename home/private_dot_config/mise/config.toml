@@ -5,6 +5,7 @@
 age = "latest"
 bitwarden = "2025.10.0"
 chezmoi = "2.67.0"
+codex = "latest"
 delta = "0.18.2"
 deno = "2.5.4"
 difftastic = "0.65.0"
