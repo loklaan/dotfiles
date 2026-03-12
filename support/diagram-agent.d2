@@ -8,84 +8,35 @@ claude-code: |md
   Primary code agent for all repos.
 |
 
-project: {
-  label: |md
-    ## Project Extensions
+project.shape: rectangle
+project.style.multiple: true
+project: |md
+  ## Project Extensions `.claude/`
 
-    Per-repo rules and skills in `.claude/`.
-  |
-  style.multiple: true
+  **4 rules** coding conventions · commit style · privacy · secrets
 
-  rules.shape: rectangle
-  rules: |md
-    **Rules**
-
-    coding-chezmoi · git-commits · privacy · secrets-architecture
-  |
-
-  skills.shape: rectangle
-  skills: |md
-    **Skills**
-
-    coding-chezmoi · check-refs · update-deps
-  |
-}
-
-global: {
-  label: |md
-    ## Global Extensions
-
-    Personal rules and skills via `~/.claude/`.
-  |
-  style.multiple: true
-
-  rules.shape: rectangle
-  rules: |md
-    **Rules**
-
-    coding-system-prompts · prompt-output
-  |
-
-  skills.shape: rectangle
-  skills: |md
-    **Skills**
-
-    architecture · coding:comments · coding:effect-ts · coding:errors · coding:negation · coding:shell · compress · meta:extensions · pm:organising-work · pm:self-interview · prompts · writing
-  |
-}
-
-external: {
-  label: |md
-    ## External Skills
-
-    Installed via Homebrew or cloned from a private repo.
-  |
-
-  brew.shape: rectangle
-  brew: |md
-    **Homebrew**
-
-    peon-ping-config · peon-ping-log · peon-ping-toggle · peon-ping-use
-  |
-
-  private.shape: rectangle
-  private: |md
-    **Private Repo**
-
-    Cloned to staging, symlinked into ~/.claude/skills/.
-  |
-}
-
-claude-code -> project: .claude/
-project -> global: ~/.claude/
-global -> external
-
-lifecycle.shape: rectangle
-lifecycle: |md
-  **Lifecycle Scripts**
-
-  link-private-skills (060) · pack-claude-skills (070)
+  **3 skills** chezmoi conventions · reference checks · dep updates
 |
 
-lifecycle -> external.private: symlinks
-lifecycle -> global.skills: zips for Chat
+global.shape: rectangle
+global.style.multiple: true
+global: |md
+  ## Global Extensions `~/.claude/`
+
+  **2 rules** system prompts · prompt output
+
+  **12 skills** coding · architecture · writing · project management · compression · prompt engineering · extensions
+|
+
+external.shape: rectangle
+external: |md
+  ## External Skills
+
+  **Homebrew** peon-ping (4 skills)
+
+  **Private repo** cloned to staging, symlinked by lifecycle scripts
+|
+
+claude-code -> project
+claude-code -> global
+global -> external
