@@ -65,7 +65,7 @@ Generate options at each decision point and present them for human judgment. Nev
    - What depends on it (downstream impact)
    - What it depends on (upstream dependencies)
    - Why it is a distinct cluster (what would break if it were merged with an adjacent cluster)
-3. **Generate naming options** — 2-3 options per milestone or artefact, following established naming principles. If the `lochy:pm:organising-work` skill is available, use its naming workflow.
+3. **Generate naming options** — 2-3 options per milestone or artefact, following established naming principles. Follow the naming milestones workflow in [naming-milestones.md](naming-milestones.md).
 4. **Present via Question tool** — with clear labels, descriptions, and trade-off annotations. When context unambiguously dictates a single answer, state what you chose and why so the human can override.
 
 ### Presenting options with Question tool

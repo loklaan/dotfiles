@@ -1,4 +1,4 @@
-# Writing Task Tickets
+# Writing a Jira Task
 
 ## Workflow
 
@@ -17,6 +17,7 @@ Ticket markdown files use YAML frontmatter for metadata that maps to Jira fields
 category: KTLO | Efficiency | New Capability | Quality Improvements
 parent: TEAM-123
 labels: [label-one, label-two]
+priority: Must have | Should have | Nice to have | Someday
 ---
 
 [Context — situation, relevance, scope boundaries, key dependencies if any]
@@ -53,6 +54,7 @@ incident, ad-hoc request, etc.]
 | `category` | Yes | One of: `KTLO`, `Efficiency`, `New Capability`, `Quality Improvements` (see guidance below) |
 | `parent` | No | Ticket key of the parent issue (epic, milestone, team goal, etc.) |
 | `labels` | No | Array of labels for categorisation and origin tracking |
+| `priority` | No | One of: `Must have`, `Should have`, `Nice to have`, `Someday` |
 
 #### Category of Work
 
@@ -148,6 +150,7 @@ Title: `[Atlas] Organise team merch`
 category: KTLO
 parent: TEAM-456
 labels: [retro-action-item]
+priority: Nice to have
 ---
 
 Now that the team branding has been finalised we can start looking
@@ -180,11 +183,7 @@ merch reinforces belonging and gives the team something to rally around.
 
 ## Persisting to Jira
 
-Jira operations use the **Otter MCP** tools (`jira-create`, `jira-search-fields`, etc.), an internal Canva tool available on every developer's machine.
-
-**Before attempting any Jira operation**, verify that the Otter MCP tools are available. If they are not (e.g. the MCP server is disabled or not responding), stop and ask the user to enable Otter MCP before proceeding. Do not attempt to work around a missing Otter MCP connection.
-
-When the user wants to create the ticket in Jira, map the drafted content to Jira fields as described below.
+When the user wants to create the ticket in Jira, map the drafted content to Jira fields. For technical details on Markdown-to-ADF conversion, string escaping, custom field value types, and instance-specific field IDs, see [using-jira.md](using-jira.md).
 
 ### Field Mapping
 
@@ -194,9 +193,10 @@ The ticket content splits across Jira fields from two sources — the frontmatte
 
 | Frontmatter Field | Jira Field | Notes |
 |---|---|---|
-| `category` | Category of Work | Select field; values and field IDs are instance-specific (see below) |
+| `category` | Category of Work | Select field; values and field IDs are instance-specific (see [using-jira.md](using-jira.md)) |
 | `parent` | Parent | Standard field (`parent`); ticket key of the parent issue (epic, milestone, team goal, company strategy, etc.) |
 | `labels` | Labels | Array of strings |
+| `priority` | Priority | Cannot be set at creation time; set via `jira_update` after creation (see [using-jira.md](using-jira.md)) |
 
 **From body:**
 
@@ -204,21 +204,19 @@ The ticket content splits across Jira fields from two sources — the frontmatte
 |---|---|---|
 | Title (from title convention) | Summary | Standard field |
 | Context, Origin, Action Items, Impact | Description | Standard field |
-| Success Criteria | Acceptance Criteria | Custom textarea; field ID is instance-specific (see below) |
+| Success Criteria | Acceptance Criteria | Custom textarea; field ID is instance-specific (see [using-jira.md](using-jira.md)) |
 
 The description body contains everything from the template **except** Success Criteria. Format it with the emoji headers as written in the template — Jira renders markdown/rich text.
 
 Success Criteria goes into the **Acceptance Criteria** custom field, not into the description. This is a separate textarea field. Write the criteria as a bulleted list.
 
-### Otter MCP Details
-
-See [otter-jira.md](otter-jira.md) for Markdown-to-ADF conversion rules, string escaping, custom field value types, and instance field IDs.
-
 ### Creation Steps
 
-1. **Parse frontmatter** — Extract category, parent, and labels from the YAML frontmatter
+1. **Parse frontmatter** — Extract category, parent, labels, and priority from the YAML frontmatter
 2. **Compose the description** — Assemble Context, Origin, Action Items, and Impact sections into a single formatted string using the emoji headers
 3. **Extract acceptance criteria** — Pull the Success Criteria section out as a separate value for the Acceptance Criteria field
-4. **Ask for remaining metadata** — Ask the user for issue type and priority if not already known. Default to `Task` type if not specified.
+4. **Ask for remaining metadata** — Ask the user for issue type if not already known. Default to `Task`. If `parent` is blank, search for recent epics in the target project and let the user pick one (or proceed without)
 5. **Create the ticket** — Use the `jira-create` tool with the project key, summary, description, acceptance criteria, category, parent, labels, and any other metadata
-6. **Confirm** — Return the created ticket key and URL to the user
+6. **Set priority** — If priority is specified, update the ticket via `jira_update` immediately after creation
+7. **Link dependencies** — If creating multiple tickets with dependencies between them, link them (see [using-jira.md](using-jira.md))
+8. **Confirm** — Return the created ticket key and URL to the user
