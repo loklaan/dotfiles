@@ -1,6 +1,6 @@
-# Otter MCP Jira Reference
+# Using Jira
 
-Behaviour and quirks of the Otter MCP `jira_create` and `jira_update` tools.
+Behaviour and quirks of the Jira tools available through Otter MCP — Markdown-to-ADF conversion (supported/unsupported syntax, panels, checkboxes), string escaping, custom field value types (numeric coercion, select field limitations), instance-specific field IDs, and operational patterns for creation workflows.
 
 ## Markdown to ADF Conversion
 
@@ -57,11 +57,11 @@ Any goldmark AST node type not explicitly handled falls through to a default han
 2. Attempts to extract plain text from the node
 3. Returns `nil` if no text can be extracted
 
-Warnings are collected but not surfaced to the user through the Otter tool interface — they're only available in the `MD2ADFResult` struct.
+Warnings are collected but not surfaced to the user through the tool interface — they're only available in the `MD2ADFResult` struct.
 
 ### Practical formatting template
 
-Based on the above, this is the safest Markdown structure for Jira ticket descriptions via Otter:
+Based on the above, this is the safest Markdown structure for Jira ticket descriptions:
 
 ```markdown
 Context paragraph here. Second sentence with **bold** and *italic* as needed.
@@ -147,13 +147,35 @@ The escaped output can be used directly as the field value: `customfield_10263=<
 
 **The `description` field** gets automatic markdown-to-ADF conversion. Use markdown by default. If you need ADF features the converter doesn't support (see [What doesn't work](#what-doesnt-work)), set `description` as escaped inline ADF JSON instead.
 
-### Instance field IDs
+## Priority
+
+The `jira_create` tool does not support setting priority. Set it immediately after creation via `jira_update`:
+
+```bash
+jira_update --ticket_id="PROJ-123" --fields="priority=\"<priority value>\""
+```
+
+For batch creation, create all tickets first, then update priorities in a second pass.
+
+## Issue Linking
+
+After creating related tickets, link them to express dependency or relationship:
+
+```bash
+jira_link_issues --inward_issue="PROJ-123" --outward_issue="PROJ-456" --link_type="Blocks"
+# PROJ-123 blocks PROJ-456
+```
+
+Available link types: `Blocks`, `Depends`, `Relates`, `Duplicate`, `Contributes`, `Controls`, `Action`, `Impact`
+
+## Instance Field IDs
 
 Custom field IDs and select values vary by Jira instance. Look up IDs for your instance using the `jira-search-fields` tool, or add a new section here.
 
-#### Canva
+### Canva
 
 | Jira Field | Field ID | Select Value Keys |
 |---|---|---|
 | Category of Work | `customfield_10107` | Efficiency (`11581`), KTLO (`10201`), New Capability (`10198`), Quality Improvements (`11459`) |
 | Acceptance Criteria | `customfield_10263` | — |
+| Priority | `priority` | `Must have`, `Should have`, `Nice to have`, `Someday` |
