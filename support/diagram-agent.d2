@@ -12,7 +12,7 @@ rules: {
   label: Rules
   style.multiple: true
 
-  coding-system-prompts
+  coding
   prompt-output
 }
 
@@ -21,12 +21,18 @@ skills: {
   style.multiple: true
   grid-columns: 2
 
-  coding: {
+  env: {
+    label: Environment
+    coding
+    architecture
+    devil
+  }
+
+  coding-topic: {
     label: Coding
     comments
     effect-ts
     errors
-    negation
     shell
   }
 
@@ -39,13 +45,10 @@ skills: {
 
   pm: {
     label: Project Management
-    organising-work
-    self-interview
   }
 
   meta: {
     label: Meta
-    architecture
     extensions
   }
 
@@ -55,7 +58,7 @@ skills: {
     style.opacity: 0.7
     style.font-color: "#888888"
 
-    subtitle: "(Homebrew)"
+    subtitle: "(Vendored/External)"
     subtitle.style.font-size: 13
     subtitle.style.font-color: "#888888"
     subtitle.shape: text
