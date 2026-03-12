@@ -8,24 +8,55 @@ claude-code: |md
   Primary code agent for all repos.
 |
 
-global.shape: rectangle
-global.style.multiple: true
-global: |md
-  ## Global Extensions `~/.claude/`
+rules: {
+  label: Rules
+  style.multiple: true
 
-  **2 rules** system prompts · prompt output
+  coding-system-prompts
+  prompt-output
+}
 
-  **12 skills** coding · architecture · writing · project management · compression · prompt engineering · extensions
-|
+skills: {
+  label: Skills
+  style.multiple: true
+  grid-columns: 2
 
-external.shape: rectangle
-external: |md
-  ## External Skills
+  coding: {
+    label: Coding
+    comments
+    effect-ts
+    errors
+    negation
+    shell
+  }
 
-  **Homebrew** peon-ping (4 skills)
+  writing-group: {
+    label: Writing
+    writing
+    prompts
+    compress
+  }
 
-  **Private repo** cloned to staging, symlinked by lifecycle scripts
-|
+  pm: {
+    label: Project Management
+    organising-work
+    self-interview
+  }
 
-claude-code -> global
-global -> external
+  meta: {
+    label: Meta
+    architecture
+    extensions
+  }
+
+  peon-ping: {
+    label: Peon Ping
+    config
+    log
+    toggle
+    use
+  }
+}
+
+claude-code -> rules
+claude-code -> skills
