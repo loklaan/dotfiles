@@ -41,11 +41,14 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 
 | Name                                       | Domain             | Purpose                    |
 |--------------------------------------------|--------------------|----------------------------|
+| `lochy:env:coding`                         | env                | Coding conventions and practices |
+| `lochy:env:architecture`                   | env                | System design environment  |
+| `lochy:env:devil`                          | env                | Devil's advocate frame     |
 | `lochy:coding:comments`                    | coding             | Comment conventions        |
 | `lochy:coding:effect-ts`                   | coding             | Effect TypeScript patterns |
 | `lochy:coding:shell`                       | coding             | Bash script patterns       |
 | `lochy:meta:extensions`                    | meta               | Claude Code extensibility  |
-| `lochy:pm:organising-work`                 | pm                 | Milestones and tickets     |
+| `lochy:pm`                                 | pm                 | Milestones, tickets, and facilitated scoping |
 | `lochy:writing`                            | (top-level)        | Tone of voice for writing  |
 | `lochy:compress`                           | (top-level)        | Information compression    |
 
@@ -62,7 +65,7 @@ Every skill has one required file (`SKILL.md`) and an optional `references/` sub
 
 **Simple skill** (single file):
 ```
-lochy:coding:negation/
+lochy:env:devil/
 └── SKILL.md
 ```
 
@@ -246,13 +249,29 @@ When a domain grows to contain multiple related skills, use a single skill with 
 
      Current formats:
        - Slack & informal comms (references/slack-comms.md)
+       - Pull request descriptions (references/pull-requests.md)
        - Documentation & long-form (references/doc-coauthoring.md) -->
+
+<!-- lochy:env namespace
+     Cognitive environment skills that set up *how* Claude should
+     think for a session. Each is a distinct frame: coding
+     (conventions and practices), architecture (system design),
+     devil (devil's advocate / edge-case surfacing). New env
+     skills should follow the lochy:env:topic-name pattern. The
+     coding env is loaded by default via the lochy:coding rule. -->
 
 <!-- lochy:coding namespace
      Coding skills are separate per topic (comments, effect-ts,
-     errors, negation, shell) because each is a
-     distinct, self-contained concern. New coding skills should follow
-     the lochy:coding:topic-name pattern. -->
+     errors, shell) because each is a distinct, self-contained
+     concern. New coding skills should follow the
+     lochy:coding:topic-name pattern. -->
+
+<!-- lochy:pm namespace
+     Project management skills live under the single `lochy:pm`
+     hub skill. New PM capabilities (e.g., estimation, retros)
+     should be added as sections in lochy:pm/SKILL.md with their
+     own reference file under references/. Do not create separate
+     lochy:pm:topic-name skills. -->
 
 <!-- lochy:meta namespace
      Reserved for skills about Claude Code extensibility itself.

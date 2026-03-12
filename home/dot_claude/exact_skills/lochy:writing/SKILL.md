@@ -1,6 +1,6 @@
 ---
 name: lochy:writing
-description: Write in Lochy's personal tone of voice. Supports Slack DMs, help channel replies, stakeholder updates, and collaborative document authoring (specs, proposals, decision docs). Use when asked to write, draft, compose, or co-author a message, document, or written communication as Lochy.
+description: Write in Lochy's personal tone of voice. Supports Slack DMs, help channel replies, stakeholder updates, PR descriptions, and collaborative document authoring (specs, proposals, decision docs). Use when asked to write, draft, compose, or co-author a message, document, PR description, or written communication as Lochy.
 attribution:
   - https://github.com/anthropics/skills/tree/main/skills/doc-coauthoring
 ---
@@ -39,6 +39,12 @@ For Slack DMs, help channel replies, stakeholder updates, and thread responses. 
 - Slack uses `mrkdwn`, not Markdown — see [slack-comms.md](references/slack-comms.md) for the full syntax table.
 - Short paragraphs and bullet lists. `*Bold*` sparingly for key nouns. Links as `<url|label>`.
 - Loop-closing: "Looping back—[status]" when following up.
+
+### Pull Request Descriptions
+
+For GitHub PR descriptions — feature work, bug fixes, hookups, and operational changes. See [pull-requests.md](references/pull-requests.md) for structure, calibration rules, and examples.
+
+**Tone shift:** slightly more casual than Slack comms. Self-deprecating, honest about unknowns, concise. Opens with "Hey folks," (or variant), leads with *what* and *why*, never *how*.
 
 ### Documentation & Long-form
 
