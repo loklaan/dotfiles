@@ -8,16 +8,6 @@ claude-code: |md
   Primary code agent for all repos.
 |
 
-project.shape: rectangle
-project.style.multiple: true
-project: |md
-  ## Project Extensions `.claude/`
-
-  **4 rules** coding conventions · commit style · privacy · secrets
-
-  **3 skills** chezmoi conventions · reference checks · dep updates
-|
-
 global.shape: rectangle
 global.style.multiple: true
 global: |md
@@ -37,6 +27,5 @@ external: |md
   **Private repo** cloned to staging, symlinked by lifecycle scripts
 |
 
-claude-code -> project
 claude-code -> global
 global -> external
