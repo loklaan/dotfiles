@@ -108,7 +108,7 @@ home/
 
 ## Code agent adoption
 
-Claude Code is the primary AI assistant across all repos. Rules and skills are layered: project-level extensions live in `.claude/` (checked into each repo), global extensions in `~/.claude/` (managed by chezmoi), and external skills arrive via Homebrew or a private git repo. Lifecycle scripts handle symlinking private skills and packing everything into zips for Claude Chat.
+Claude Code is the primary AI assistant across all repos. Global rules and skills live in `~/.claude/` (managed by chezmoi), and external skills arrive via Homebrew or a private git repo. Lifecycle scripts handle symlinking private skills and packing everything into zips for Claude Chat.
 
 <p align="center">
   <picture>
