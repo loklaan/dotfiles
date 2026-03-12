@@ -106,6 +106,17 @@ home/
 └── private_dot_local/bin/      # Custom utilities
 ```
 
+## Code agent adoption
+
+Claude Code is the primary AI assistant across all repos. Rules and skills are layered: project-level extensions live in `.claude/` (checked into each repo), global extensions in `~/.claude/` (managed by chezmoi), and external skills arrive via Homebrew or a private git repo. Lifecycle scripts handle symlinking private skills and packing everything into zips for Claude Chat.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="support/diagram-agent-dark.svg">
+    <img src="support/diagram-agent-light.svg" alt="agent rules and skills" width="800">
+  </picture>
+</p>
+
 ## Code projects
 
 The `~/dev/` directory organizes projects by ownership and purpose:
