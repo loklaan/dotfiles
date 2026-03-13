@@ -12,6 +12,10 @@
     "command": "npx", "args": ["-y", "effect-mcp@latest" ],
     "env": {}
   },
+  "pdf-tools": {
+    "command": "uvx", "args": ["mcp-pdf"],
+    "env": {}
+  },
   "figma-desktop": {
     "type": "http",
     "url": "http://127.0.0.1:3845/mcp"
