@@ -11,6 +11,11 @@
     "enabled": true,
     "command": ["npx", "-y", "effect-mcp@latest" ]
   },
+  "pdf-tools": {
+    "type": "local",
+    "enabled": true,
+    "command": ["uvx", "mcp-pdf"]
+  },
   "figma-desktop": {
     "type": "remote",
     "enabled": true,
