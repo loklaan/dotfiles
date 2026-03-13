@@ -1,0 +1,3 @@
+{{- range glob (printf "%s/dot_claude/exact_rules/*.md" .chezmoi.sourceDir) }}
+{{ include . }}
+{{ end -}}

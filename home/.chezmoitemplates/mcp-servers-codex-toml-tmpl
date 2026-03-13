@@ -1,0 +1,16 @@
+{{ if ne "" .emailWork -}}
+[mcp_servers.otter]
+command = "otter"
+args = ["mcp", "serve"]
+
+{{ end -}}
+[mcp_servers.effect-docs]
+command = "npx"
+args = ["-y", "effect-mcp@latest"]
+
+[mcp_servers.pdf-tools]
+command = "uvx"
+args = ["mcp-pdf"]
+
+[mcp_servers.figma-desktop]
+url = "http://127.0.0.1:3845/mcp"
