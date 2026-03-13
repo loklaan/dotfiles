@@ -16,11 +16,10 @@ setup_session_logging "$(basename "$0")"
 #/   run_after_install-070-pack-claude-skills.sh
 #/
 #/ Description:
-#/   Packs Claude skills and rules into individual zip files for drag-and-drop
-#/   installation into Claude Desktop's capabilities panel. Rules must have
-#/   YAML frontmatter (name, description) and are copied as SKILL.md in the
-#/   zip. Only repacks items whose content has changed since the last run.
-#/   Opens the output directory when complete.
+#/   Packs Claude skills into individual zip files for drag-and-drop
+#/   installation into Claude Desktop's capabilities panel. Only repacks
+#/   items whose content has changed since the last run. Opens the output
+#/   directory when complete.
 #/
 #/ Output Directory:
 #/   ~/.cache/claude-skill-packs/
@@ -43,7 +42,6 @@ setup_session_logging "$(basename "$0")"
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 SKILLS_DIR="${HOME}/.claude/skills"
-RULES_DIR="${HOME}/.claude/rules"
 OUTPUT_DIR="${HOME}/.cache/claude-skill-packs"
 MANIFEST_FILE="${OUTPUT_DIR}/.skill-hashes"
 
@@ -131,34 +129,6 @@ pack_skill() {
   rm -rf "$staging_dir"
 }
 
-extract_frontmatter_name() {
-  local file="$1"
-  awk '
-    /^---[[:space:]]*$/ { if (started) exit; started = 1; next }
-    started && /^name:[[:space:]]*/ { sub(/^name:[[:space:]]*/, ""); gsub(/"/, ""); print; exit }
-  ' "$file"
-}
-
-pack_rule() {
-  local rule_file="$1"
-  local pack_name="$2"
-  local zip_path="${OUTPUT_DIR}/${pack_name}.zip"
-
-  rm -f "$zip_path"
-
-  local staging_dir
-  staging_dir="$(mktemp -d "${TMPDIR}/skill-pack.XXXXXX")"
-  mkdir -p "${staging_dir}/${pack_name}"
-
-  cp "$rule_file" "${staging_dir}/${pack_name}/SKILL.md"
-  strip_unsupported_frontmatter "${staging_dir}/${pack_name}/SKILL.md"
-
-  (cd "$staging_dir" && zip -r "$zip_path" "$pack_name/" \
-  ) > /dev/null
-
-  rm -rf "$staging_dir"
-}
-
 clean_stale_zips() {
   local valid_zip_names=("$@")
 
@@ -195,27 +165,10 @@ main() {
     done
   fi
 
-  # Discover rules (must have frontmatter with name field)
-  local all_rule_files=()
-  local all_rule_pack_names=()
-  if [ -d "$RULES_DIR" ]; then
-    for rule_file in "$RULES_DIR"/*.md; do
-      [ -f "$rule_file" ] || continue
-      local pack_name
-      pack_name="$(extract_frontmatter_name "$rule_file")"
-      if [ -z "$pack_name" ]; then
-        warning "╍ Rule '$(basename "$rule_file")' has no frontmatter name, skipping"
-        continue
-      fi
-      all_rule_files+=("$rule_file")
-      all_rule_pack_names+=("$pack_name")
-    done
-  fi
-
-  local total=$(( ${#all_skills[@]} + ${#all_rule_files[@]} ))
+  local total=${#all_skills[@]}
 
   if [ "$total" -eq 0 ]; then
-    info "╍ No skills or rules found"
+    info "╍ No skills found"
     return 0
   fi
 
@@ -228,16 +181,6 @@ main() {
     safe="$(sanitize_name "$skill_name")"
     if printf '%s\n' "$seen_names" | grep -qx "$safe"; then
       fatal "Name collision: '${skill_name}' sanitizes to '${safe}' which is already taken"
-    fi
-    seen_names="${seen_names}${safe}"$'\n'
-    all_zip_names+=("$safe")
-  done
-
-  for pack_name in "${all_rule_pack_names[@]}"; do
-    local safe
-    safe="$(sanitize_name "$pack_name")"
-    if printf '%s\n' "$seen_names" | grep -qx "$safe"; then
-      fatal "Name collision: rule '${pack_name}' sanitizes to '${safe}' which is already taken"
     fi
     seen_names="${seen_names}${safe}"$'\n'
     all_zip_names+=("$safe")
@@ -266,31 +209,6 @@ main() {
 
     pack_skill "$skill_dir"
     changed+=("$skill_name")
-    changed_zip_names+=("$safe_name")
-  done
-
-  # Pack rules
-  for i in "${!all_rule_files[@]}"; do
-    local rule_file="${all_rule_files[$i]}"
-    local pack_name="${all_rule_pack_names[$i]}"
-    local safe_name
-    safe_name="$(sanitize_name "$pack_name")"
-    local rule_key
-    rule_key="$(basename "$rule_file" .md)"
-    local current_hash
-    current_hash="$(shasum -a 256 "$rule_file" | cut -d' ' -f1)"
-    local stored_hash
-    stored_hash="$(get_stored_hash "$rule_key")"
-    local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
-
-    new_manifest="${new_manifest}${current_hash}  ${rule_key}"$'\n'
-
-    if [ "$current_hash" = "$stored_hash" ] && [ -f "$zip_path" ]; then
-      continue
-    fi
-
-    pack_rule "$rule_file" "$safe_name"
-    changed+=("$rule_key")
     changed_zip_names+=("$safe_name")
   done
 
