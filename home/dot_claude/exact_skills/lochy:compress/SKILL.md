@@ -46,6 +46,13 @@ Produce compressed output that:
 - Preserves all essential semantics from the original
 - Uses structural hierarchy (indentation, bullets, groupings)
 
+## Anti-Patterns
+
+- NEVER drop attribution or ownership — who said, decided, or owns something must survive compression
+- NEVER merge distinct decisions into a single bullet — each decision is a separate atom
+- NEVER compress proper nouns, identifiers, or specific values (dates, amounts, IDs)
+- NEVER strip actionable items (owners, deadlines, dependencies, next steps)
+
 ## Methodology Reference
 
 For detailed stage breakdowns, see [references/methodology.md](references/methodology.md).
