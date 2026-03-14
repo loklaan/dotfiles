@@ -44,4 +44,4 @@ migration overview. Detailed per-topic guides are in
 
 - `cause.md`, `equality.md`, `error-handling.md`, `fiber-keep-alive.md`,
   `fiberref.md`, `forking.md`, `generators.md`, `layer-memoization.md`,
-  `runtime.md`, `scope.md`, `services.md`, `yieldable.md`
+  `runtime.md`, `schema.md`, `scope.md`, `services.md`, `yieldable.md`

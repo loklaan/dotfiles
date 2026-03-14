@@ -18,12 +18,21 @@ Verified against the Bedrock converse API on 2026-03-01. Baseline message
 overhead: **7 tokens**. All token counts below have the overhead subtracted.
 
 - **Calibration model:** `global.anthropic.claude-haiku-4-5-20251001-v1:0`
-- **Calibration date:** 2026-03-01
+- **Calibration date:** 2026-03-14
 
 To recalibrate, send each file's content as a single user message via the
-Bedrock converse API (authenticate with `otter bedrock-bearer-token`, use Haiku
-with `maxTokens: 1`). Subtract the baseline overhead from the response's
-`usage.inputTokens`. Update the tables below.
+Bedrock converse API. Subtract the baseline overhead (7 tokens) from the
+response's `usage.inputTokens`. Update the tables below.
+
+```bash
+jq -Rs '{messages: [{role: "user", content: [{text: .}]}],
+  anthropic_version: "bedrock-2023-05-31", max_tokens: 1}' "$FILE" \
+| curl -s https://bedrock-runtime.ap-southeast-2.amazonaws.com/model/global.anthropic.claude-haiku-4-5-20251001-v1:0/converse \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $(otter bedrock-bearer-token)" \
+    -d @- \
+| jq '.usage.inputTokens - 7'   # subtract baseline overhead
+```
 
 ### Content type profiles
 
@@ -61,11 +70,11 @@ for the check procedure.
 
 | File                    | Lines | Chars | Words | Tokens | c/t  | /3.5 drift |
 |-------------------------|------:|------:|------:|-------:|-----:|-----------:|
-| writing-skills.md       |   363 | 17302 |  2107 |   4023 | 4.30 |      -5.8% |
+| writing-skills.md       |   491 | 25064 |  3245 |   5860 | 4.28 |     +22.2% |
 | writing-rules.md        |   122 |  3579 |   456 |    896 | 3.99 |     -14.0% |
-| writing-subagents.md    |   253 |  9266 |  1264 |   2274 | 4.07 |     -16.4% |
-| meta:extensions SKILL.md|    27 |   880 |    86 |    249 | 3.53 |      +1.0% |
-| check-refs SKILL.md     |   107 |  3554 |   422 |   1059 | 3.35 |      -4.1% |
+| writing-subagents.md    |   453 | 19203 |  2640 |   4501 | 4.27 |     +21.9% |
+| agent-authoring SKILL.md|    30 |  1318 |   127 |    363 | 3.63 |      +3.9% |
+| check-refs SKILL.md     |   154 |  5021 |   639 |   1464 | 3.43 |      -2.0% |
 | coding-chezmoi.md       |    72 |  2459 |   307 |    706 | 3.48 |      -0.5% |
 | effect-v4-docs.md       |    86 |  3569 |   425 |   1069 | 3.33 |      -4.4% |
 
@@ -77,9 +86,10 @@ for the check procedure.
   operators, braces, and short identifiers each become separate tokens.
 - **Skill files** (a mix of prose, code blocks, tables, and frontmatter) land
   at **3.3–4.3 c/t** depending on the prose-to-code ratio.
-- **`/ 3.5`** keeps all real skill files within ~16% drift. Code-heavy files
-  are slightly overestimated (safe); prose-heavy files are slightly
-  underestimated but within tolerance.
+- **`/ 3.5`** keeps most real skill files within ~15% drift. Code-heavy files
+  are slightly overestimated (safe). Prose-heavy files (writing-skills,
+  writing-subagents) overshoot by ~22% — acceptable since overestimation is
+  the safe direction for context window budgeting.
 - Single digits (`0`–`9`) cost **2 tokens** each — double the cost of letters.
 
 ## Procedure
