@@ -49,14 +49,6 @@ Generate clustered, labelled options at each decision point — with enough cont
 
 Detect and persist overlaps, tensions, and dependency risks that emerge during the interview. These are recorded in the appropriate tracking document rather than mentioned once and forgotten.
 
-### When to Use
-
-- Scoping milestones or epics from a program document or strategy brief
-- Breaking down a broad enabler into concrete deliverables
-- Drafting tickets where the scope, boundaries, or ownership is ambiguous
-- Making design decisions that affect multiple artefacts or teams
-- Any situation where the human has context that needs to be drawn out and structured
-
 ### Workflow
 
 See [references/self-interview-workflow.md](references/self-interview-workflow.md) for the five-phase process, principles, tool usage patterns, and an example interaction flow.

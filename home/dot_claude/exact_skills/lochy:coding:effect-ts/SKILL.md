@@ -1,6 +1,11 @@
 ---
 name: lochy:coding:effect-ts
-description: Practices and guidelines for writing TypeScript with the Effect libraries (v3 and v4).
+description: >-
+  Write TypeScript with the Effect libraries (v3 and v4). Covers Effect.gen,
+  Effect.fn, Effect.Service, Schema, Layer composition, error handling,
+  observability, and testing with @effect/vitest. Use when writing Effect
+  code, using pipe/gen patterns, defining services or schemas, or working
+  with @effect/platform, @effect/sql, or @effect/ai.
 ---
 
 # Coding in TypeScript with the Effect libraries

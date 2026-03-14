@@ -9,13 +9,6 @@ attribution: https://ampcode.com
 
 Generate a handoff document that preserves this session's accumulated context for a future session. The goal is continuity — the next session should be able to pick up exactly where this one leaves off without re-discovering anything.
 
-## When to Use
-
-- Session ending (natural stopping point, context getting long)
-- Pivoting to a new branch of related work
-- Handing off to a different agent or tool
-- Lochy asks to "wrap up", "save progress", "hand off", or "pick this up later"
-
 ## Process
 
 1. **Review** the full conversation to identify what matters for continuity
@@ -80,6 +73,8 @@ The **Context** section is the highest-value section for the resuming session. I
 - **Actionable next steps** — each item should be executable without re-reading the conversation.
 - **No narrative** — this isn't a story of what happened. It's a state snapshot plus a todo list.
 - **Git-aware** — always include branch name, commit status, and whether there's uncommitted work.
+- NEVER include full file contents — reference paths instead.
+- NEVER exceed ~500 tokens — the next session can always read files for detail.
 
 ## File Naming
 

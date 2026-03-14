@@ -78,8 +78,8 @@ it's probably too short.
 **Trivial fix (no structure):**
 
 ```markdown
-While Sergio out, this should help keep PRs flowing / takes review
-pressure down for Danyon & Kris
+While John's out, this should help keep PRs flowing / takes review
+pressure down for the rest of the team
 ```
 
 **Simple hookup (~6 lines):**

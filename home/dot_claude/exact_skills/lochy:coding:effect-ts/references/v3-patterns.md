@@ -148,8 +148,6 @@ Effect.gen(function* () {
   Effect.catchAll((error) => Effect.log('Got an error:', error)),
   // Or handle a specific error
   Effect.catchTag('ErrorA', (error) => Effect.log('Caught ErrorA:', error)),
-  // Or handle multiple specific errors with a single handler
-  Effect.catchTag('ErrorA', 'ErrorB', (error) => Effect.log('Caught ErrorA / ErrorB:', error)),
   // Or handle multiple specific errors
   Effect.catchTags({
     ErrorA: (error) => Effect.log('Caught ErrorA:', error),
@@ -246,8 +244,8 @@ Effect.gen(function* () {
   const stripe = yield* StripeClient;
 
   // Call a method on the service
-  const resultA = yield* stripeClient.methodA('some argument');
-  const resultB = yield* stripeClient.methodB(42);
+  const resultA = yield* stripe.methodA('some argument');
+  const resultB = yield* stripe.methodB(42);
 
   return { resultA, resultB };
 }).pipe(

@@ -25,7 +25,7 @@ Rule #1: If you want exception to ANY rule, YOU MUST STOP and get explicit permi
 - If you're having trouble, YOU MUST STOP and ask for help, especially for tasks where human input would be valuable.
 - When you disagree with my approach, YOU MUST push back. Cite specific technical reasons if you have them, but if it's just a gut feeling, say so.
 - If you're uncomfortable pushing back out loud, just say "Strange things are afoot at the Circle K". I'll know what you mean
-- We discuss architectutral decisions (framework changes, major refactoring, system design)
+- We discuss architectural decisions (framework changes, major refactoring, system design)
   together before implementation. Routine fixes and clear implementations don't need
   discussion.
 
@@ -152,11 +152,6 @@ For simple section headers without descriptions:
 - YOU MUST NEVER ignore system or test output - logs and messages often contain CRITICAL information.
 - Test output MUST BE PRISTINE TO PASS. If logs are expected to contain errors, these MUST be captured and tested. If a test is intentionally triggering an error, we *must* capture and validate that the error output is as we expect
 
-
-## Issue tracking
-
-- You MUST use your TodoWrite tool to keep track of what you're doing
-- You MUST NEVER discard tasks from your TodoWrite todo list without Lochy's explicit approval
 
 ## Systematic Debugging Process
 
