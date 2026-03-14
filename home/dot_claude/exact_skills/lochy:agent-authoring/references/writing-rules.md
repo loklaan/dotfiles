@@ -1,4 +1,4 @@
-# Modular Rules with `.claude/rules/`
+# Writing Rules
 
 Claude Code supports organizing project instructions into multiple modular files using the `.claude/rules/` directory, allowing teams to maintain focused, well-organized rule files instead of one large CLAUDE.md.
 

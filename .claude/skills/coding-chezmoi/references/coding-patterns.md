@@ -251,18 +251,24 @@ When chezmoi shares ownership of a JSON object with external tools, `setValueAtP
 
 Use for any `modify_` template where chezmoi shares ownership with external tools. The identity key depends on context (`matcher` for hooks, `name` for plugins, etc.).
 
-### Section Markers for Plain Text
+### Section Markers for Plain Text and TOML
 
-When a `modify_` template manages plain text (not JSON), use markers to cordon off chezmoi's section:
+When a `modify_` template manages plain text or TOML (not JSON), use markers to cordon off chezmoi's section. This is the recommended pattern for TOML files because chezmoi has no built-in TOML parse/serialize functions (`fromToml`/`toToml` do not exist).
+
+**Important:** `modify_` files must NOT use the `.tmpl` suffix. The `chezmoi:modify-template` annotation handles template rendering. Adding `.tmpl` causes chezmoi to treat the rendered output as literal file content rather than processing it as a modify template.
 
 ```go
 {{- /* chezmoi:modify-template */ -}}
 {{- $existing := default "" .chezmoi.stdin | trim -}}
 {{- $startMarker := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
 {{- $endMarker := "# --- END CHEZMOI MANAGED SECTION ---" -}}
-{{- $ourSection := includeTemplate "some-config-tmpl" . | trim -}}
+
+{{- /* Build the managed section with markers */ -}}
+{{- $content := includeTemplate "some-config-tmpl" . | trim -}}
+{{- $ourSection := printf "%s\n%s\n\n%s\n%s" $startMarker "# This section is managed by chezmoi. Do not edit manually." $content $endMarker -}}
 
 {{- if contains $startMarker $existing -}}
+  {{- /* Section exists — replace it, preserve content before and after */ -}}
   {{- $parts := splitList $startMarker $existing -}}
   {{- $before := index $parts 0 | trim -}}
   {{- $afterParts := splitList $endMarker (index $parts 1) -}}
@@ -272,16 +278,23 @@ When a `modify_` template manages plain text (not JSON), use markers to cordon o
   {{- end -}}
 {{ $ourSection }}
 
-{{ $before -}}
-{{- $after }}
-{{- else -}}
+{{ if ne "" $before -}}
+{{ $before }}
+
+{{ end -}}
+{{ $after }}
+{{- else if ne "" $existing -}}
+  {{- /* First time — prepend our section to existing config */ -}}
 {{ $ourSection }}
 
 {{ $existing }}
+{{- else -}}
+  {{- /* No existing file */ -}}
+{{ $ourSection }}
 {{- end }}
 ```
 
-Use for non-JSON config files where chezmoi owns a section but other tools may add content outside it.
+Use for non-JSON config files (TOML, INI, gitconfig, etc.) where chezmoi owns a section but other tools may add content outside it. On first apply, existing keys that overlap with chezmoi's managed section will be duplicated — clean them up manually once.
 
 ## Content-Hash Embedding
 
