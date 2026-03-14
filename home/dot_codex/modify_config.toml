@@ -1,0 +1,37 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $existing := default "" .chezmoi.stdin | trim -}}
+{{- $startMarker := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
+{{- $endMarker := "# --- END CHEZMOI MANAGED SECTION ---" -}}
+
+{{- /* Render chezmoi-owned keys */ -}}
+{{- $ourSection := "" -}}
+{{- $ourSection = printf "%s\n%s\n%s\n%s" $startMarker "# This section is managed by chezmoi. Do not edit manually." "# Keys set by Codex CLI (model, projects, notice, etc.) are preserved" "# outside this section and will not be overwritten." -}}
+{{- $ourSection = printf "%s\n\n%s" $ourSection (print `model_instructions_file = "` .chezmoi.homeDir `/.codex/instructions.md"`) -}}
+{{- $ourSection = printf "%s\n\n%s" $ourSection (includeTemplate "mcp-servers-codex-toml-tmpl" . | trim) -}}
+{{- $ourSection = printf "%s\n%s" $ourSection $endMarker -}}
+
+{{- if contains $startMarker $existing -}}
+  {{- /* Section exists — replace it, preserve content before and after */ -}}
+  {{- $parts := splitList $startMarker $existing -}}
+  {{- $before := index $parts 0 | trim -}}
+  {{- $afterParts := splitList $endMarker (index $parts 1) -}}
+  {{- $after := "" -}}
+  {{- if gt (len $afterParts) 1 -}}
+    {{- $after = index $afterParts 1 | trim -}}
+  {{- end -}}
+{{ $ourSection }}
+
+{{ if ne "" $before -}}
+{{ $before }}
+
+{{ end -}}
+{{ $after }}
+{{- else if ne "" $existing -}}
+  {{- /* First time — prepend our section to existing config */ -}}
+{{ $ourSection }}
+
+{{ $existing }}
+{{- else -}}
+  {{- /* No existing file */ -}}
+{{ $ourSection }}
+{{- end }}
