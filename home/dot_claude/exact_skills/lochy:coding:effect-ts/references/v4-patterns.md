@@ -5,13 +5,13 @@ These patterns apply to projects using `effect@^4.x`. For v3 patterns, see
 
 ## Primary reference
 
-Read `~/.claude/skills/lochy:coding:effect-ts/v4-docs/LLMS.md` — an
+Read [`v4-docs/LLMS.md`](../v4-docs/LLMS.md) — an
 LLM-optimized guide maintained by the Effect team covering services, error
 handling, observability, testing, HTTP APIs, child processes, CLI, AI, and more.
 
 ## Annotated examples
 
-The `~/.claude/skills/lochy:coding:effect-ts/v4-docs/ai-docs/src/` directory
+The [`v4-docs/ai-docs/src/`](../v4-docs/ai-docs/src/) directory
 contains TypeScript examples linked from LLMS.md, organized by topic:
 
 - `01_effect/` — basics, services, errors, resources, running, pubsub
@@ -30,17 +30,17 @@ contains TypeScript examples linked from LLMS.md, organized by topic:
 
 ## Module deep dives
 
-- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/SCHEMA.md` — Schema module
-- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/HTTPAPI.md` — HTTP API module
-- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/MCP.md` — MCP server module
-- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/CONFIG.md` — Configuration module
-- `~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/OPTIC.md` — Optics module
+- [`v4-docs/packages/effect/SCHEMA.md`](../v4-docs/packages/effect/SCHEMA.md) — Schema module
+- [`v4-docs/packages/effect/HTTPAPI.md`](../v4-docs/packages/effect/HTTPAPI.md) — HTTP API module
+- [`v4-docs/packages/effect/MCP.md`](../v4-docs/packages/effect/MCP.md) — MCP server module
+- [`v4-docs/packages/effect/CONFIG.md`](../v4-docs/packages/effect/CONFIG.md) — Configuration module
+- [`v4-docs/packages/effect/OPTIC.md`](../v4-docs/packages/effect/OPTIC.md) — Optics module
 
 ## Migrating from v3
 
-Read `~/.claude/skills/lochy:coding:effect-ts/v4-docs/MIGRATION.md` for the
+Read [`v4-docs/MIGRATION.md`](../v4-docs/MIGRATION.md) for the
 migration overview. Detailed per-topic guides are in
-`~/.claude/skills/lochy:coding:effect-ts/v4-docs/migration/`:
+[`v4-docs/migration/`](../v4-docs/migration/):
 
 - `cause.md`, `equality.md`, `error-handling.md`, `fiber-keep-alive.md`,
   `fiberref.md`, `forking.md`, `generators.md`, `layer-memoization.md`,
