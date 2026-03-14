@@ -50,7 +50,7 @@ Options:
   --help:                    Display this help message
 ```
 
-### Full install
+### Full Install
 
 _(inc. chezmoi, bitwarden, mise)_
 
@@ -65,17 +65,17 @@ git clone https://github.com/loklaan/dotfiles.git ~/.local/share/chezmoi
 CONFIG_BWS_ACCESS_TOKEN=... CONFIG_SIGNING_KEY=... ~/.local/share/chezmoi/install.sh
 ```
 
-### Update to latest
+### Update to Latest
 
 ```shell
-chezmoi update
+# Safe for re-runs, to keep devbox provisioning idempotent:
+~/.local/share/chezmoi/install.sh
 
 # Or:
-chezmoi cd
-./install.sh
+chezmoi update
 ```
 
-### Testing the install
+### Testing the Install
 
 Validate installation in a clean environment:
 
@@ -106,7 +106,7 @@ home/
 └── private_dot_local/bin/      # Custom utilities
 ```
 
-## Code agent adoption
+## Code Agent Adoption
 
 Claude Code is the primary code agent, extended with [Agent Skills](https://agentskills.io) managed by chezmoi. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port to OpenCode and Codex.
 
@@ -117,7 +117,7 @@ Claude Code is the primary code agent, extended with [Agent Skills](https://agen
   </picture>
 </p>
 
-## Code projects
+## Code Projects
 
 The `~/dev/` directory organizes projects by ownership and purpose:
 
