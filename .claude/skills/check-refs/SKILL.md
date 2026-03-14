@@ -78,7 +78,42 @@ a temp file first so the user can also inspect or upload it.
 1. Build the SARIF JSON in memory with all results.
 2. Write it to `$TMPDIR/check-refs-<timestamp>.sarif`.
 3. Pipe through `sarif-fmt` for coloured terminal output.
-4. Print the temp file path so the user can access the raw SARIF.
+4. Print a summary (see below), then the temp file path.
+
+### Summary format
+
+The summary printed after `sarif-fmt` output must be **actionable only**. Report
+the total warning and error counts, then list each warning and error with a
+one-line description. Do NOT include:
+
+- Passing checks or "all clear" statements
+- Counts of items that were checked
+- Descriptions of what was validated
+- Context about what a check does
+
+**Good:**
+```
+## Results: 2 warnings, 0 errors
+
+- **warning**: `mcp-servers-json-tmpl` in chezmoi-framework.md:139 no longer exists (replaced by 3 files)
+- **warning**: writing-skills.md stale calibration (17302 → 25064 bytes)
+```
+
+**Bad:**
+```
+## Results: 2 warnings, 0 errors
+
+### Effect v4 docs
+- **Allowlist vs upstream**: All include patterns match upstream. No stale entries.
+- **v4-patterns.md vs disk**: One warning — ...
+
+### coding-chezmoi skill accuracy
+- **Data variables**: All 8 variables synced.
+...
+```
+
+The bad example buries two actionable warnings in a wall of passing checks. The
+user wants to know what is broken, not what is fine.
 
 ### Example
 

@@ -137,9 +137,11 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 
 ```
 .chezmoitemplates/
-├── git-config-tmpl           ← No .tmpl suffix
-├── hooks-json-tmpl           ← No .tmpl suffix
-└── mcp-servers-json-tmpl     ← No .tmpl suffix
+├── git-config-tmpl               ← No .tmpl suffix
+├── hooks-json-tmpl               ← No .tmpl suffix
+├── mcp-servers-claude-json-tmpl  ← No .tmpl suffix
+├── mcp-servers-codex-toml-tmpl   ← No .tmpl suffix
+└── mcp-servers-opencode-json-tmpl ← No .tmpl suffix
 ```
 
 Usage:
