@@ -8,6 +8,8 @@ alias gt="git"
 alias cc="otter claude-code"
 alias claude="otter claude-code"
 alias ccyolo="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
+alias cxyolo="codex --dangerously-bypass-approvals-and-sandbox"
+alias ocyolo="opencode --agent yolo"
 
 ## ls
 alias l="ls -lah"
