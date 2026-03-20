@@ -155,10 +155,10 @@ clean_stale_zips() {
 main() {
   mkdir -p "$OUTPUT_DIR"
 
-  # Discover skills
+  # Discover own skills (lochy:* prefix only — skip org-provisioned skills)
   local all_skills=()
   if [ -d "$SKILLS_DIR" ]; then
-    for skill_dir in "$SKILLS_DIR"/*/; do
+    for skill_dir in "$SKILLS_DIR"/lochy:*/; do
       [ -d "$skill_dir" ] || continue
       [ -f "${skill_dir}SKILL.md" ] || continue
       all_skills+=("$(basename "$skill_dir")")
