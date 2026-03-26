@@ -1,0 +1,32 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $statusLineConfig := dict "type" "command" "command" (printf "%s/.claude/statusline.sh" .chezmoi.homeDir) "padding" 0 -}}
+{{- $attributionConfig := dict "commit" "" "pr" "" -}}
+{{- $existingHooks := dict -}}
+{{- if hasKey $base "hooks" -}}
+{{-   $existingHooks = get $base "hooks" -}}
+{{- end -}}
+{{- $ourHooks := includeTemplate "hooks-json-tmpl" . | fromJson -}}
+{{- $merged := merge (dict) $existingHooks -}}
+{{- range $event, $ourEntries := $ourHooks -}}
+{{-   $existing := list -}}
+{{-   if hasKey $existingHooks $event -}}
+{{-     $existing = get $existingHooks $event -}}
+{{-   end -}}
+{{-   $result := list -}}
+{{-   $matchers := list -}}
+{{-   range $ourEntries -}}
+{{-     $matchers = append $matchers .matcher -}}
+{{-     $result = append $result . -}}
+{{-   end -}}
+{{-   range $existing -}}
+{{-     if not (has .matcher $matchers) -}}
+{{-       $result = append $result . -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $merged = set $merged $event $result -}}
+{{- end -}}
+{{- $base = $base | setValueAtPath "hooks" $merged -}}
+{{- $base = $base | setValueAtPath "statusLine" $statusLineConfig -}}
+{{- $base = $base | setValueAtPath "attribution" $attributionConfig -}}
+{{ $base | toPrettyJson }}
