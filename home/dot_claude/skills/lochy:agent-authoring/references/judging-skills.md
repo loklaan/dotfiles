@@ -104,13 +104,11 @@ Is specificity matched to fragility?
 
 Does it follow an established Skill pattern?
 
-| Pattern | Typical Size |
-|---------|-------------|
-| Mindset | ~50 lines |
-| Navigation | ~30 lines |
-| Philosophy | ~150 lines |
-| Process | ~200 lines |
-| Tool | ~300 lines |
+| Type | Purpose | Typical Size |
+|------|---------|-------------|
+| Technique | Concrete method with repeatable steps | ~200-300 lines |
+| Pattern | Mental model for a class of problems | ~50-150 lines |
+| Reference | API docs, syntax guides, tool documentation | ~30 lines (hub) + references |
 
 | Score | Criteria |
 |-------|----------|

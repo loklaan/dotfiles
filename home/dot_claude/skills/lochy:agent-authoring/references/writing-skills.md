@@ -36,7 +36,7 @@ Most skills are Techniques. Patterns are useful for judgment-heavy tasks (code r
 
 The context window is a shared resource across the system prompt, conversation history, skill metadata, and the user's request. Every paragraph must justify its token cost.
 
-- SKILL.md should be under **5,000 words**. If it exceeds this, move heavy content to `references/`.
+- SKILL.md should be under **500 lines / ~5,000 tokens**. If it exceeds this, move heavy content to `references/`.
 - **One excellent code example beats many mediocre ones.** Choose the most representative scenario and show it well rather than covering every edge case.
 - Use cross-references (`see references/api.md`) instead of repeating content that lives elsewhere.
 - Do not duplicate what Claude already knows. A skill about error handling should not explain what try/catch does.
@@ -48,8 +48,6 @@ Not all instructions need the same level of prescription:
 - **High freedom** (prose instructions)—multiple approaches are valid, decisions depend on context. Example: "Write a clear error message explaining what went wrong."
 - **Medium freedom** (pseudocode, parameterised templates)—a preferred pattern exists but some variation is acceptable. Example: a report template with flexible sections.
 - **Low freedom** (exact scripts, strict templates)—operations are fragile, consistency is critical, or a specific sequence must be followed. Example: a CMS content model migration pipeline with schema validation steps.
-
-A narrow bridge with cliffs needs guardrails; an open field allows many routes.
 
 ## Creating Skills
 
@@ -150,39 +148,25 @@ Guidance for Claude goes here.
 
 #### Frontmatter Fields
 
-**Agent Skills standard fields** (from [agentskills.io](https://agentskills.io/specification)):
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes* | Unique identifier matching directory name (max 64 chars, lowercase + hyphens/colons) |
+| `description` | Yes* | What it does and when to use it (max 1024 chars) |
+| `disable-model-invocation` | No | `true` to prevent Claude from auto-loading. Default: `false` |
+| `user-invocable` | No | `false` to hide from `/` menu. Default: `true` |
+| `allowed-tools` | No | Tools Claude can use without permission when skill is active |
+| `model` | No | Model to use when this skill is active |
+| `context` | No | `fork` to run in a forked subagent context |
+| `agent` | No | Subagent type to use when `context: fork` is set |
+| `hooks` | No | Lifecycle hooks scoped to this skill |
+| `argument-hint` | No | Hint during autocomplete (e.g., `[issue-number]`) |
+| `compatibility` | No | Environment requirements (max 500 chars) |
+| `license` | No | License name or reference to bundled file |
+| `metadata` | No | Arbitrary key-value mapping |
 
-| Field           | Required | Description                                                                    |
-|-----------------|----------|--------------------------------------------------------------------------------|
-| `name`          | Yes      | Unique identifier matching directory name (max 64 chars)                       |
-| `description`   | Yes      | What it does and when to use it (max 1024 chars)                               |
-| `license`       | No       | License name or reference to a bundled license file                            |
-| `compatibility` | No       | Environment requirements—intended product, system packages, etc. (max 500 chars) |
-| `metadata`      | No       | Arbitrary key-value mapping for additional metadata                            |
-| `allowed-tools` | No       | Space-delimited list of pre-approved tools (experimental)                      |
+\* The Agent Skills standard requires both. Claude Code relaxes this—`name` defaults to directory name, `description` falls back to the first paragraph. Always set both explicitly.
 
-**Claude Code extension fields** (from [code.claude.com](https://code.claude.com/docs/en/skills)):
-
-| Field                      | Required    | Description                                                              |
-|----------------------------|-------------|--------------------------------------------------------------------------|
-| `name`                     | No          | Display name. Defaults to directory name. Lowercase + hyphens (max 64 chars) |
-| `description`              | Recommended | What it does and when to use it. Falls back to first paragraph if omitted |
-| `argument-hint`            | No          | Hint shown during autocomplete for expected arguments (e.g., `[issue-number]`) |
-| `disable-model-invocation` | No          | `true` to prevent Claude from auto-loading this skill. Default: `false`  |
-| `user-invocable`           | No          | `false` to hide from the `/` menu. Default: `true`                       |
-| `allowed-tools`            | No          | Comma-separated tools Claude can use without permission when skill is active |
-| `model`                    | No          | Model to use when this skill is active                                   |
-| `context`                  | No          | Set to `fork` to run in a forked subagent context                        |
-| `agent`                    | No          | Which subagent type to use when `context: fork` is set                   |
-| `hooks`                    | No          | Lifecycle hooks scoped to this skill                                     |
-
-**Local conventions** (not part of either spec—used in this repo only):
-
-| Field           | Required | Description                                                        |
-|-----------------|----------|--------------------------------------------------------------------|
-| `attribution`   | No       | URL crediting the source methodology or inspiration                |
-
-Note: The Agent Skills standard makes `name` and `description` required. Claude Code relaxes both—`name` defaults to the directory name and `description` falls back to the first paragraph. For clarity, always set both explicitly.
+Full field specs: [Agent Skills standard](https://agentskills.io/specification) · [Claude Code extensions](https://code.claude.com/docs/en/skills)
 
 #### Writing the Description
 
@@ -194,7 +178,7 @@ The description is the **most critical field** in a skill. It is the ONLY thing 
 2. **WHEN** should it be used? (triggering scenarios)
 3. **KEYWORDS** for discovery (error messages, domain terms, tool names)
 
-**Structure:** Two paragraphs, 200-350 characters total.
+**Structure:** Two paragraphs, 200-350 characters total (hard max 1024 chars per spec—use the extra space when a skill needs more activation keywords).
 
 - **Paragraph 1:** What you can do—capabilities and key features in active voice.
 - **Paragraph 2:** "Use when:" followed by triggering scenarios and discoverable keywords.
@@ -281,7 +265,7 @@ Adding a content block involves these steps:
 
 ```markdown
 Before extracting content into a reference file, ask yourself:
-- Will the SKILL.md body exceed 5k words without it?
+- Will the SKILL.md body exceed 500 lines without it?
 - Is this content needed every invocation, or only for specific sub-tasks?
 - Does the content change at a different cadence than the core instructions?
 
@@ -300,21 +284,28 @@ Is the field optional in the schema?
     └── No → Map directly
 ```
 
-**Anti-patterns / NEVER lists**—document what NOT to do and WHY. Specific prohibitions with reasons are among the highest-value content because they prevent mistakes that take experience to learn:
+**Gotchas**—environment-specific facts that defy reasonable assumptions. These are the highest-value content in many skills because they correct mistakes the agent will make without being told otherwise. Keep gotchas in the SKILL.md body (not references) so the agent reads them before encountering the situation:
 
 ```markdown
-## Anti-Patterns
+## Gotchas
 
+- The `users` table uses soft deletes. Queries must include
+  `WHERE deleted_at IS NULL` or results will include deactivated accounts.
+- The user ID is `user_id` in the database, `uid` in the auth service,
+  and `accountId` in the billing API. All three refer to the same value.
+```
+
+When an agent makes a mistake you have to correct, add the correction as a gotcha. This is one of the most direct ways to improve a skill iteratively.
+
+**Anti-patterns / NEVER lists**—document what NOT to do and WHY. Unlike gotchas (which correct assumptions), anti-patterns prohibit specific actions with concrete consequences:
+
+```markdown
 NEVER mutate the schema object after registration — the validator
 caches compiled schemas, so mutations silently produce stale
 validation results. Clone before modifying.
-
-NEVER use getServerSideProps for static content — it forces
-per-request rendering and increases TTFB by 200-500ms. Use
-getStaticProps with ISR instead.
 ```
 
-Every anti-pattern should follow the pattern: **NEVER** [specific action] **because** [concrete consequence]. Vague warnings ("be careful with edge cases") add no value. The content should be domain-specific knowledge Claude lacks — not textbook best practices it already knows.
+Every anti-pattern follows: **NEVER** [specific action] **because** [concrete consequence]. Vague warnings ("be careful with edge cases") add no value. The content should be domain-specific knowledge Claude lacks—not textbook best practices it already knows.
 
 **Output templates**—provide format examples when consistent output matters. Use strict templates (`ALWAYS use this structure`) for fragile formats, flexible templates (`sensible default, use your judgment`) when adaptation is useful.
 
@@ -328,6 +319,48 @@ Output: feat(auth): implement JWT-based authentication
 
 Examples communicate desired style more effectively than descriptions alone.
 
+**Defaults over menus**—when multiple tools or approaches could work, pick a default and mention alternatives briefly. Presenting equal options causes decision paralysis:
+
+```markdown
+<!-- Wrong: menu of equals -->
+You can use pypdf, pdfplumber, PyMuPDF, or pdf2image...
+
+<!-- Right: clear default with escape hatch -->
+Use pdfplumber for text extraction. For scanned PDFs requiring OCR,
+use pdf2image with pytesseract instead.
+```
+
+**Procedures over declarations**—teach the agent *how to approach* a class of problems, not *what to produce* for a specific instance. A skill that encodes a specific answer only helps for that exact task; a skill that encodes the method generalises:
+
+```markdown
+<!-- Specific answer — only useful for this exact task -->
+Join `orders` to `customers` on `customer_id`, filter `region = 'EMEA'`.
+
+<!-- Reusable method — works for any analytical query -->
+1. Read the schema from `references/schema.yaml` to find relevant tables
+2. Join tables using the `_id` foreign key convention
+3. Apply filters from the user's request as WHERE clauses
+```
+
+**Validation loops**—instruct the agent to validate its own work before moving on. The pattern is: do the work, run a validator, fix issues, repeat until clean. This is distinct from a one-shot quality checklist—the loop is the key:
+
+```markdown
+1. Make your edits
+2. Run validation: `python scripts/validate.py output/`
+3. If validation fails, review the error, fix, and re-validate
+4. Only proceed when validation passes
+```
+
+**Plan-validate-execute**—for batch or destructive operations, have the agent create an intermediate plan in a structured format, validate it against a source of truth, and only then execute. The validation step between plan and execution is what prevents errors from propagating:
+
+```markdown
+1. Extract form fields: `scripts/analyze.py input.pdf` → `fields.json`
+2. Create `values.json` mapping each field to its intended value
+3. Validate: `scripts/validate.py fields.json values.json`
+4. If validation fails, revise `values.json` and re-validate
+5. Fill the form: `scripts/fill.py input.pdf values.json output.pdf`
+```
+
 ### Reference Files
 
 Reference files live in `references/` and follow these conventions:
@@ -337,7 +370,7 @@ Reference files live in `references/` and follow these conventions:
 - **One level deep**—never nest subdirectories inside `references/`
 - **Linked from SKILL.md**—always reference via relative path: `[label](references/file.md)`
 - **Descriptive names**—the filename should describe the content (e.g., `tone-of-voice.md`, `methodology.md`)
-- **Supporting files only for tools or heavy reference**—if the content is short enough to live in SKILL.md without exceeding the 5k word target, keep it inline
+- **Supporting files only for tools or heavy reference**—if the content is short enough to live in SKILL.md without exceeding the 500-line target, keep it inline
 
 ### Restricting Tool Access
 
@@ -404,13 +437,15 @@ Two tests validate that a skill works in practice:
 
 **Functionality test:** Use the skill on a real task—not a toy example. After completion, ask: did you need to provide additional information that the skill should have contained? Did Claude do anything the skill should have prevented? Revise accordingly.
 
+**Trace analysis:** Read execution traces, not just final outputs. If the agent wastes turns on unproductive steps, common causes are: instructions too vague (agent tries several approaches before finding one that works), instructions that don't apply to the current task (agent follows them anyway), or too many options without a clear default.
+
 ## Quality Checklist
 
 Before considering a skill complete, verify every item:
 
 - [ ] Name is lowercase with colons/hyphens, max 64 chars, matches directory name
 - [ ] Description is 250-350 chars with "Use when:" triggers (no workflow summaries)
-- [ ] SKILL.md is under 5,000 words
+- [ ] SKILL.md is under 500 lines / ~5,000 tokens
 - [ ] >70% of content is expert knowledge Claude does not already have
 - [ ] Includes thinking frameworks ("Before X, ask yourself..."), not just procedures (Techniques and Patterns)
 - [ ] Anti-patterns are specific with concrete consequences (NEVER X because Y) (Techniques and Patterns)
@@ -418,7 +453,7 @@ Before considering a skill complete, verify every item:
 - [ ] One strong example per concept (not many weak ones)
 - [ ] No narrative storytelling or filler prose
 - [ ] Supporting files only in `references/` for heavy content or tool documentation
-- [ ] Hub-and-spoke pattern used if SKILL.md would otherwise exceed 5k words
+- [ ] Hub-and-spoke pattern used if SKILL.md would otherwise exceed 500 lines
 - [ ] No extraneous files (README, CHANGELOG, etc.)
 
 ## Namespace Registry
@@ -466,26 +501,13 @@ When a domain grows to contain multiple related skills, use a single skill with 
 
 ## Completion Summary
 
-After creating or updating a skill, ALWAYS print a summary table showing every file in the skill and its line count. Include the rules file if one was created/updated, and a total row.
+After creating or updating a skill, print a summary table: SKILL.md first, then each reference file alphabetically, with a total row.
 
-```
-  +------------------------+-------+---------+
-  |          File          | Lines | ~Tokens |
-  +------------------------+-------+---------+
-  | SKILL.md               | 24    | 250     |
-  +------------------------+-------+---------+
-  | doc-coauthoring.md     | 63    | 660     |
-  +------------------------+-------+---------+
-  | slack-comms.md         | 45    | 470     |
-  +------------------------+-------+---------+
-  | tone-of-voice.md       | 87    | 900     |
-  +------------------------+-------+---------+
-  | Total                  | 219   | 2,280   |
-  +------------------------+-------+---------+
-```
+| File | Lines | ~Tokens |
+|------|-------|---------|
+| SKILL.md | 24 | 250 |
+| tone-of-voice.md | 87 | 900 |
+| Total | 111 | 1,150 |
 
-- List each file on its own row: SKILL.md first, then each reference file alphabetically
-- **Lines**—`wc -l` count for each file
-- **~Tokens**—estimated context window cost, computed as `wc -c / 3.5` (rounded to nearest 10). See `check-refs/references/skill-token-estimates.md` for the empirical basis of this divisor
-- The final row sums all lines and tokens across the skill
+**Lines** = `wc -l`. **~Tokens** = `wc -c / 3.5` (rounded to nearest 10).
 
