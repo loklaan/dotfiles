@@ -13,8 +13,11 @@ Refer to [writing-rules.md](references/writing-rules.md)
 ## Skills
 
 - [writing-skills.md](references/writing-skills.md) — authoring skills
+- [writing-scripts.md](references/writing-scripts.md) — bundling and designing scripts for skills
+- [optimizing-descriptions.md](references/optimizing-descriptions.md) — trigger testing and description iteration
+- [evaluating-output.md](references/evaluating-output.md) — eval-driven output quality measurement
 - [using-skills.md](references/using-skills.md) — discovering, testing, sharing, debugging, and managing skills
-- [judging-skills.md](references/judging-skills.md) — evaluation frameworks, scoring dimensions, and common failure patterns
+- [judging-skills.md](references/judging-skills.md) — design quality scoring and common failure patterns
 
 ## Subagents
 
@@ -25,6 +28,10 @@ Refer to [writing-rules.md](references/writing-rules.md)
 
 These guides are derived from:
 - [Agent Skills Specification](https://agentskills.io/specification) — the open standard for agent skills
+- [Agent Skills: Best Practices](https://agentskills.io/skill-creation/best-practices) — official skill authoring guide
+- [Agent Skills: Optimizing Descriptions](https://agentskills.io/skill-creation/optimizing-descriptions) — trigger testing methodology
+- [Agent Skills: Evaluating Skills](https://agentskills.io/skill-creation/evaluating-skills) — eval-driven quality measurement
+- [Agent Skills: Using Scripts](https://agentskills.io/skill-creation/using-scripts) — script design for agentic use
 - [Claude Code: Skills](https://code.claude.com/docs/en/skills) — Claude Code's skill implementation and extensions
 - [Claude Code: Subagents](https://code.claude.com/docs/en/sub-agents) — subagent configuration
 - [Claude Code: Memory](https://code.claude.com/docs/en/memory) — rules and memory system
