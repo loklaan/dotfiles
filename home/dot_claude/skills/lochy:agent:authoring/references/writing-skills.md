@@ -88,7 +88,7 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 | `lochy:coding:comments`                    | coding             | Comment conventions        |
 | `lochy:coding:effect-ts`                   | coding             | Effect TypeScript patterns |
 | `lochy:coding:shell`                       | coding             | Bash script patterns       |
-| `lochy:agent-authoring`                    | (top-level)        | Authoring agent extensions |
+| `lochy:agent:authoring`                    | agent              | Authoring agent extensions |
 | `lochy:pm`                                 | pm                 | Milestones, tickets, and facilitated scoping |
 | `lochy:writing`                            | (top-level)        | Tone of voice for writing  |
 | `lochy:compress`                           | (top-level)        | Information compression    |
@@ -378,7 +378,7 @@ By default, skills have access to all tools. Only add `allowed-tools` when you n
 
 ```yaml
 ---
-name: lochy:agent-authoring
+name: lochy:agent:authoring
 description: Guidelines for creating custom rules, custom skills, and custom subagents for Claude.
 allowed-tools: Read
 ---
@@ -497,7 +497,7 @@ When a domain grows to contain multiple related skills, use a single skill with 
 
 <!-- lochy:meta namespace
      Reserved for skills about Claude Code extensibility itself.
-     Currently unused—agent-authoring moved to top-level. -->
+     Currently unused—authoring skills live under lochy:agent:. -->
 
 ## Completion Summary
 

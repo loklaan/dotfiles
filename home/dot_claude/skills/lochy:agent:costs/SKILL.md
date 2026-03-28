@@ -1,5 +1,5 @@
 ---
-name: lochy:costs
+name: lochy:agent:costs
 description: >-
   Analyse Claude Code session costs from local JSONL logs in ~/.claude/.
   Reports cost per directory, daily breakdown for the past week, weekly
@@ -24,14 +24,8 @@ Sessions are retained for ~30 days before automatic purge.
 
 ## Report
 
-Run one of the scripts below. Prefer TypeScript; fall back to Python if `tsx` is unavailable.
-
 ```bash
-~/.claude/skills/lochy:costs/references/cost-report.ts
-```
-
-```bash
-python3 ~/.claude/skills/lochy:costs/references/cost-report.py
+python3 ~/.claude/skills/lochy:agent:costs/references/cost-report.py
 ```
 
 Display the full output to the user without summarising.
