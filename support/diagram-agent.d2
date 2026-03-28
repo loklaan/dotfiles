@@ -19,7 +19,7 @@ rules: {
 skills: {
   label: Skills
   style.multiple: true
-  grid-columns: 2
+  grid-columns: 1
 
   env: {
     label: Environment
@@ -44,12 +44,16 @@ skills: {
     handoff
   }
 
+  agent: {
+    label: Agent
+    authoring
+    costs
+    extract
+  }
+
   process: {
     label: Process
     pm
-    agent-authoring
-    costs
-    extract-chat
     tmux-panes
   }
 }

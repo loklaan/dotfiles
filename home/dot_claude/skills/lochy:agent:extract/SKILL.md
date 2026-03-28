@@ -1,5 +1,5 @@
 ---
-name: lochy:extract-chat
+name: lochy:agent:extract
 description: >-
   Extract human-readable conversation history from code agent sessions.
   Produces a markdown transcript with frontmatter metadata, written to a

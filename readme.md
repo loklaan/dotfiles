@@ -23,7 +23,7 @@ Chezmoi manages the file lifecycle: Go templates resolve per-machine configurati
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="support/diagram-dark.svg">
-    <img src="support/diagram-light.svg" alt="dotfiles architecture" width="800">
+    <img src="support/diagram-light.svg" alt="dotfiles architecture" width="1400">
   </picture>
 </p>
 
@@ -113,7 +113,7 @@ Claude Code is the primary code agent, extended with [Agent Skills](https://agen
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="support/diagram-agent-dark.svg">
-    <img src="support/diagram-agent-light.svg" alt="agent rules and skills" width="800">
+    <img src="support/diagram-agent-light.svg" alt="agent rules and skills" width="1400">
   </picture>
 </p>
 
