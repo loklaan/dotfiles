@@ -1,5 +1,5 @@
 ---
-name: lochy:agent-authoring
+name: lochy:agent:authoring
 description: Guidelines for authoring custom rules, skills, and subagents for Claude Code. Use when creating, improving, or reviewing agent extensions.
 allowed-tools: Read
 ---

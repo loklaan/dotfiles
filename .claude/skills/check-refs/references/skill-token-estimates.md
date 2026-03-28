@@ -73,7 +73,7 @@ for the check procedure.
 | writing-skills.md       |   491 | 25064 |  3245 |   5860 | 4.28 |     +22.2% |
 | writing-rules.md        |   122 |  3579 |   456 |    896 | 3.99 |     -14.0% |
 | writing-subagents.md    |   453 | 19203 |  2640 |   4501 | 4.27 |     +21.9% |
-| agent-authoring SKILL.md|    30 |  1318 |   127 |    363 | 3.63 |      +3.9% |
+| agent:authoring SKILL.md|    30 |  1318 |   127 |    363 | 3.63 |      +3.9% |
 | check-refs SKILL.md     |   154 |  5021 |   639 |   1464 | 3.43 |      -2.0% |
 | coding-chezmoi.md       |    72 |  2459 |   307 |    706 | 3.48 |      -0.5% |
 | effect-v4-docs.md       |    86 |  3569 |   425 |   1069 | 3.33 |      -4.4% |
