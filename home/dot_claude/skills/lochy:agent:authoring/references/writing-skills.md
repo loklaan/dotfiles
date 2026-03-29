@@ -20,6 +20,8 @@ A good skill contains only what Claude does not already know. Before writing any
 
 Target composition: >70% Expert, <20% Activation, <10% Redundant. If most of your skill reads like a tutorial, you are paying tokens to tell Claude things it already knows.
 
+**Exception—activation-dominant skills.** When a skill is >80% Activation, that is not a smell to fix—it means the skill belongs in the **MVS (Minimal Viable Skill)** lane: 1-2 sentences where every word pulls weight. Claude already has the competence; the skill's job is to direct it. The craft shifts from structuring knowledge to choosing the right phrasing. See `lochy:env:devil` (4 lines of body, zero structure, pure activation) and `lochy:sweep` (one sentence) for living examples.
+
 ### Skill Types
 
 Choose the right structure based on what the skill delivers:
@@ -32,6 +34,8 @@ Choose the right structure based on what the skill delivers:
 
 Most skills are Techniques. Patterns are useful for judgment-heavy tasks (code review criteria, architectural tradeoffs). References suit tool integrations or specification-heavy domains. Size is a rough guide—if a skill significantly exceeds its type's typical size, consider whether content should move to `references/` or whether the skill is trying to do too much.
 
+MVS is orthogonal to skill type—it is a prose density lane, not a fourth type. You can have an MVS Pattern (a 2-sentence mental model) or an MVS Technique (a single directive activating a known workflow). The Typical Size column above represents structured-lane sizes; MVS skills are typically 1-10 lines of body.
+
 ### Context Window Efficiency
 
 The context window is a shared resource across the system prompt, conversation history, skill metadata, and the user's request. Every paragraph must justify its token cost.
@@ -40,6 +44,7 @@ The context window is a shared resource across the system prompt, conversation h
 - **One excellent code example beats many mediocre ones.** Choose the most representative scenario and show it well rather than covering every edge case.
 - Use cross-references (`see references/api.md`) instead of repeating content that lives elsewhere.
 - Do not duplicate what Claude already knows. A skill about error handling should not explain what try/catch does.
+- **MVS floor:** When Claude already has the competence, the most efficient skill is the shortest one that activates the right mode. Adding structure to an MVS skill wastes tokens on scaffolding with zero knowledge delta.
 
 ### Specificity Matching
 
@@ -446,15 +451,17 @@ Before considering a skill complete, verify every item:
 - [ ] Name is lowercase with colons/hyphens, max 64 chars, matches directory name
 - [ ] Description is 250-350 chars with "Use when:" triggers (no workflow summaries)
 - [ ] SKILL.md is under 500 lines / ~5,000 tokens
-- [ ] >70% of content is expert knowledge Claude does not already have
-- [ ] Includes thinking frameworks ("Before X, ask yourself..."), not just procedures (Techniques and Patterns)
-- [ ] Anti-patterns are specific with concrete consequences (NEVER X because Y) (Techniques and Patterns)
-- [ ] All code examples are tested and working
-- [ ] One strong example per concept (not many weak ones)
+- [ ] >70% of content is expert knowledge Claude does not already have (Structured)
+- [ ] Includes thinking frameworks ("Before X, ask yourself..."), not just procedures (Structured: Techniques and Patterns)
+- [ ] Anti-patterns are specific with concrete consequences (NEVER X because Y) (Structured: Techniques and Patterns)
+- [ ] All code examples are tested and working (Structured)
+- [ ] One strong example per concept (not many weak ones) (Structured)
 - [ ] No narrative storytelling or filler prose
 - [ ] Supporting files only in `references/` for heavy content or tool documentation
 - [ ] Hub-and-spoke pattern used if SKILL.md would otherwise exceed 500 lines
 - [ ] No extraneous files (README, CHANGELOG, etc.)
+- [ ] MVS skills: body is ≤10 lines that activate Claude's existing competence
+- [ ] MVS skills: description + body together produce correct behavior without additional structure
 
 ## Namespace Registry
 
