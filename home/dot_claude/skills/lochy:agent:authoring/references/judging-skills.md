@@ -23,6 +23,8 @@ Every line in a Skill falls into one of three categories:
 The meta-question: "Would an expert in this domain say: 'Yes, this captures knowledge
 that took me years to learn'?"
 
+**MVS lane:** When a skill's profile is >80% Activation, it is an MVS (Minimal Viable Skill). The meta-question shifts: "Does this phrasing activate the right behavior that Claude already knows how to perform?" Score MVS skills using the per-dimension notes below.
+
 
 ## Evaluation Dimensions
 
@@ -53,6 +55,8 @@ Does it transfer thinking patterns AND domain-specific procedures?
 | 4-7 | Generic procedures (open, read, write, save) that any developer knows |
 | 0-3 | No discernible mental model or procedural knowledge |
 
+**MVS:** Score on whether the sentence successfully directs Claude's existing thinking patterns. Absence of explicit frameworks is expected, not a deficiency.
+
 ### 3. Anti-Pattern Quality (15 pts)
 
 Has effective NEVER lists?
@@ -63,6 +67,8 @@ Has effective NEVER lists?
 | 8-11 | Some specific warnings but missing the WHY |
 | 4-7 | Vague warnings: "avoid errors", "be careful with edge cases" |
 | 0-3 | No anti-patterns or entirely generic ones |
+
+**MVS:** Typically unnecessary—MVS activates competence Claude already has, including knowing what NOT to do. Score low only if the skill omits prohibitions Claude would genuinely violate.
 
 ### 4. Description Quality (15 pts)
 
@@ -88,6 +94,8 @@ Proper content layering across the Skill structure?
 | 8-11 | Layers exist but loading triggers are implicit or missing |
 | 4-7 | Everything in SKILL.md; references exist but are orphaned |
 | 0-3 | Single monolithic file or no structure |
+
+**MVS:** A single-file minimal body IS the correct structure. Absence of layering is a feature, not a deficiency.
 
 ### 6. Freedom Calibration (15 pts)
 
@@ -127,6 +135,8 @@ Can an agent actually use this Skill to do work?
 | 8-11 | Actionable but missing some practical elements |
 | 4-7 | Theoretical knowledge without clear application path |
 | 0-3 | Unusable in practice |
+
+**MVS:** Usability means "does it work?", not "does it have decision trees?" Score on whether it reliably produces correct behavior when triggered.
 
 ### Grade Scale
 
@@ -190,6 +200,11 @@ Can an agent actually use this Skill to do work?
 - **Symptom:** Rigid scripts for creative tasks OR vague guidance for fragile operations
 - **Root cause:** Didn't assess the fragility/creativity spectrum of the domain
 - **Fix:** Map each procedure to its risk level; adjust specificity accordingly
+
+### 10. The Over-Structured Activation
+- **Symptom:** 150+ lines of frameworks and anti-patterns for something Claude already knows
+- **Root cause:** Applied structured-lane density to an activation-dominant skill
+- **Fix:** Strip to 1-2 sentences. If Claude executes correctly with just a directive, the structure was scaffolding, not knowledge
 
 
 ## Evaluation Protocol
