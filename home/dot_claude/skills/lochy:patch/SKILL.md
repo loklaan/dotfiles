@@ -7,4 +7,4 @@ description: >-
   fast root-cause analysis with actionable next steps.
 ---
 
-I'm dealing with this situation: [insert problem]. What's actually causing it — and what are a few simple ways I can fix it right now? Keep it realistic, quick to try, and include one idea I probably haven't thought of.
+I'm dealing with this situation: $ARGUMENTS. What's actually causing it — and what are a few simple ways I can fix it right now? Keep it realistic, quick to try, and include one idea I probably haven't thought of.
