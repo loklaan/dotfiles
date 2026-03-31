@@ -414,7 +414,7 @@ trash(){
 do_trash(){
   debug "$LINENO: trash $1"
 
-  if [[ -n $SAFE_RM_USE_APPLESCRIPT ]]; then
+  if [[ -n $SAFE_RM_USE_APPLESCRIPT && ! -L "$1" ]]; then
     applescript_trash "$1"
   elif [[ "$OS_TYPE" == "MacOS" ]]; then
     mac_trash "$1"
