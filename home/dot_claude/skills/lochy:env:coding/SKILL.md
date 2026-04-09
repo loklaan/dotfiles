@@ -45,13 +45,14 @@ Only pause to ask for confirmation when:
 - When it doesn't conflict with YAGNI, architect for extensibility and flexibility.
 
 
-## Test Driven Development  (TDD)
+## Test Driven Development (TDD)
 
-- FOR EVERY NEW FEATURE OR SIGNIFICANT BUGFIX, YOU MUST follow Test Driven Development :
+- FOR EVERY NEW FEATURE OR SIGNIFICANT BUGFIX, YOU MUST follow red/green TDD:
     1. Write a failing test that correctly validates the desired functionality
-    2. Run the test to confirm it fails as expected
+    2. Run the test to confirm it fails (red phase) — skipping this risks
+       building a test that already passes, failing to exercise your new code
     3. Write ONLY enough code to make the failing test pass
-    4. Run the test to confirm success
+    4. Run the test to confirm success (green phase)
     5. Refactor if needed while keeping tests green
 
 ## Writing code
