@@ -90,6 +90,10 @@ set -g @continuum-boot 'off'         # Todo: Re-enable once ghostty is supported
 set -g @continuum-restore 'on'
 set -g @continuum-save-interval '15'
 
+## Claude Code session persistence across resurrect/continuum cycles
+set -g @resurrect-hook-post-save-all 'bash {{ .chezmoi.homeDir }}/.local/lib/tmux-resurrect-claude/save.sh'
+set -g @resurrect-hook-post-restore-all 'bash {{ .chezmoi.homeDir }}/.local/lib/tmux-resurrect-claude/restore.sh'
+
 # Initialisation - managed by .chezmoiexternal.toml
 run-shell "${HOME}/.tmux/_plugins/tmux-yank/yank.tmux"
 run-shell "${HOME}/.tmux/_plugins/tmux-resurrect/resurrect.tmux"
