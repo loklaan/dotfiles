@@ -22,9 +22,10 @@
 #|
 CONFIG_PURE=${CONFIG_PURE:-"og"} # Default to sindressorhus's original prompt
 export ZPLUG_HOME="$ZSH_CONFIG_DIR/zplug" # Added via .chezmoiexternals/zsh.toml
-export ZPLUG_LOG_LOAD_SUCCESS=false
-export ZPLUG_LOG_LOAD_FAILURE=false
 source $ZPLUG_HOME/init.zsh
+# Per-session log files avoid flock contention when multiple shells start at once
+_zplug_load_log[success]="${TMPDIR:-/tmp}/zplug-load-success-$$.log"
+_zplug_load_log[failure]="${TMPDIR:-/tmp}/zplug-load-failure-$$.log"
 zplug "$ZSH_CONFIG_DIR/plugins/ghostty", from:local, use:"*.plugin.zsh"
 # TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
 zplug "$ZSH_CONFIG_DIR/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
