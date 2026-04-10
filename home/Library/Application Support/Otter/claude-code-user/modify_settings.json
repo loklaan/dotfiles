@@ -14,13 +14,30 @@
 {{-     $existing = get $existingHooks $event -}}
 {{-   end -}}
 {{-   $result := list -}}
-{{-   $matchers := list -}}
+{{-   $ourMatchers := list -}}
 {{-   range $ourEntries -}}
-{{-     $matchers = append $matchers .matcher -}}
-{{-     $result = append $result . -}}
+{{-     $m := .matcher -}}
+{{-     $ourMatchers = append $ourMatchers $m -}}
+{{-     $hooks := list -}}
+{{-     $commands := list -}}
+{{-     range .hooks -}}
+{{-       $hooks = append $hooks . -}}
+{{-       $commands = append $commands .command -}}
+{{-     end -}}
+{{-     range $existing -}}
+{{-       if eq .matcher $m -}}
+{{-         range .hooks -}}
+{{-           if not (has .command $commands) -}}
+{{-             $hooks = append $hooks . -}}
+{{-             $commands = append $commands .command -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-     $result = append $result (dict "matcher" $m "hooks" $hooks) -}}
 {{-   end -}}
 {{-   range $existing -}}
-{{-     if not (has .matcher $matchers) -}}
+{{-     if not (has .matcher $ourMatchers) -}}
 {{-       $result = append $result . -}}
 {{-     end -}}
 {{-   end -}}
