@@ -45,6 +45,10 @@
         {
           "type": "command",
           "command": "bash {{ $lib }}/track.sh"
+        },
+        {
+          "type": "command",
+          "command": "bash {{ $lib }}/sync-credentials.sh"
         }
       ]
     }
