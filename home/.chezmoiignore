@@ -1,4 +1,7 @@
 .local/share/fonts/**/.uuid
+{{ if eq "" .emailWork }}
+.local/share/opencode/auth.json
+{{ end }}
 {{ if not (stat (joinPath .chezmoi.homeDir "work/canva/tools/dotslash/bin/gh")) }}
 .local/bin/gh
 {{ end }}

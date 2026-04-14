@@ -2,7 +2,7 @@
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
 {{- /* Load MCP servers from template */ -}}
-{{- $mcpServers := includeTemplate "mcp-servers-opencode-json-tmpl" . | fromJson -}}
+{{- $mcpServers := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
 
 {{- /* Configure instructions to reference shared Claude rules */ -}}
 {{- $instructions := list (printf "%s/.claude/rules/coding-system-prompts.md" .chezmoi.homeDir) -}}
@@ -12,6 +12,13 @@
 {{- $config = $config | setValueAtPath "mcp" $mcpServers -}}
 {{- $config = $config | setValueAtPath "instructions" $instructions -}}
 
+{{- /* Register plugins */ -}}
+{{- $plugins := list "oh-my-openagent@latest" -}}
+{{- if ne "" .openCodeWorkPlugin -}}
+{{-   $plugins = prepend $plugins .openCodeWorkPlugin -}}
+{{- end -}}
+{{- $config = $config | setValueAtPath "plugin" $plugins -}}
+
 {{- /* Set schema for editor validation */ -}}
 {{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
 
@@ -20,7 +27,17 @@
 {{-   $config = $config | setValueAtPath "autoupdate" true -}}
 {{- end -}}
 
-{{- if not (hasKey $base "share") -}}
+{{- if ne "" .emailWork -}}
+{{-   $config = $config | setValueAtPath "share" "disabled" -}}
+{{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
+{{-   $opusLimit := dict "limit" (dict "context" 200000 "output" 128000) -}}
+{{-   $bedrockModels := dict
+        "anthropic.claude-opus-4-6-v1" $opusLimit
+        "us.anthropic.claude-opus-4-6-v1" $opusLimit
+        "global.anthropic.claude-opus-4-6-v1" $opusLimit
+        "eu.anthropic.claude-opus-4-6-v1" $opusLimit -}}
+{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "models" $bedrockModels)) -}}
+{{- else if not (hasKey $base "share") -}}
 {{-   $config = $config | setValueAtPath "share" "manual" -}}
 {{- end -}}
 

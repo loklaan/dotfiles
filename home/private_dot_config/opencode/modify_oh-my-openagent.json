@@ -1,0 +1,38 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $config := $base -}}
+
+{{- /* Schema for editor validation */ -}}
+{{- $config = $config | setValueAtPath "$schema" "https://github.com/code-yeongyu/oh-my-openagent/blob/dev/assets/oh-my-opencode.schema.json" -}}
+
+{{- /* Disable git commit footers — conflicts with commit conventions */ -}}
+{{- $config = $config | setValueAtPath "git_master.commit_footer" false -}}
+{{- $config = $config | setValueAtPath "git_master.include_co_authored_by" false -}}
+
+{{- /* Disable Claude Code interop — hooks misreport as claude-code in telemetry,
+       MCP servers are behind mcpproxy-go instead */ -}}
+{{- $config = $config | setValueAtPath "claude_code.hooks" false -}}
+{{- $config = $config | setValueAtPath "claude_code.mcp" false -}}
+{{- $config = $config | setValueAtPath "claude_code.commands" false -}}
+{{- $config = $config | setValueAtPath "claude_code.skills" false -}}
+{{- $config = $config | setValueAtPath "claude_code.agents" false -}}
+{{- $config = $config | setValueAtPath "claude_code.plugins" false -}}
+
+{{- /* Disable default built-in MCPs — context7 and websearch are behind
+       mcpproxy-go, grep_app is not needed */ -}}
+{{- $config = $config | setValueAtPath "disabled_mcps" (list "context7" "websearch" "grep_app") -}}
+
+{{- /* Model overrides for Bedrock-proxied providers (work machines only) */ -}}
+{{- if ne "" .emailWork -}}
+{{-   $config = $config | setValueAtPath "categories.unspecified-high.model" "amazon-bedrock/anthropic.claude-opus-4-6-v1" -}}
+{{-   $config = $config | setValueAtPath "categories.unspecified-low.model" "amazon-bedrock/anthropic.claude-sonnet-4-6" -}}
+{{-   $config = $config | setValueAtPath "categories.ultrabrain.model" "openai/gpt-5.4" -}}
+{{-   $config = $config | setValueAtPath "categories.deep.model" "openai/gpt-5.4" -}}
+{{-   $config = $config | setValueAtPath "categories.quick.model" "amazon-bedrock/anthropic.claude-haiku-4-5-20251001-v1:0" -}}
+{{-   $config = $config | setValueAtPath "categories.visual-engineering.model" "google/gemini-3.1-pro-preview" -}}
+{{-   $config = $config | setValueAtPath "categories.artistry.model" "google/gemini-3.1-pro-preview" -}}
+{{-   $config = $config | setValueAtPath "categories.writing.model" "google/gemini-2.5-flash" -}}
+{{-   $config = $config | setValueAtPath "agents.sisyphus.model" "amazon-bedrock/anthropic.claude-opus-4-6-v1" -}}
+{{- end -}}
+
+{{ $config | toPrettyJson }}
