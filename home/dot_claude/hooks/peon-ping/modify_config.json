@@ -1,0 +1,17 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $config := $base -}}
+
+{{- /* Reduce sound repetitiveness — especially in subagent-heavy tools
+       like OpenCode. CLI commands (peon volume, peon notifications, etc.)
+       write other keys into this file, so we only overlay our preferences. */ -}}
+{{- $config = $config | setValueAtPath "silent_window_seconds" 30 -}}
+{{- $config = $config | setValueAtPath "suppress_subagent_complete" true -}}
+{{- $config = $config | setValueAtPath "suppress_delegate_sessions" true -}}
+
+{{- /* Raise spam threshold — OpenCode's thin adapter fires UserPromptSubmit
+       on every session.status (busy), which means every tool call. Default
+       threshold of 3 in 10s triggers spam sounds during normal tool chains. */ -}}
+{{- $config = $config | setValueAtPath "annoyed_threshold" 10 -}}
+
+{{ $config | toPrettyJson }}
