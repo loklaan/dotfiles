@@ -10,7 +10,12 @@
   bwsTokenPath = {{ joinPath .chezmoi.homeDir ".config/chezmoi/secrets/bws-access-token.txt" | quote }}
   bwsIdNpmAuthToken = "302ba3e1-8fde-4c5d-8a1c-b37c01600278"
   bwsIdGithubAuthToken = "13a3305b-0c71-411c-89e3-b37c016033b5"
+  bwsIdContext7ApiKey = "607b390d-a45d-40a3-af41-b42b004d6a90"
+  bwsIdExaApiKey = "5db599ed-4498-4f0a-b18d-b42b004cc9ac"
   privateSkillsRepo = {{ get . "privateSkillsRepo" | default "" | quote }}
+  npmWorkRegistry = {{ get . "npmWorkRegistry" | default "" | quote }}
+  openCodeWorkPlugin = {{ get . "openCodeWorkPlugin" | default "" | quote }}
+  jetbrainsLicenseServer = {{ get . "jetbrainsLicenseServer" | default "" | quote }}
 
 # Session logging hooks
 [hooks.apply.pre]
