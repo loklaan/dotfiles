@@ -1,0 +1,7 @@
+{
+  "mcpproxy": {
+    "type": "remote",
+    "enabled": true,
+    "url": "http://127.0.0.1:18321/mcp/"
+  }
+}
