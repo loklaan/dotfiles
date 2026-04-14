@@ -43,23 +43,34 @@ check_bws_token() {
   [ -f "$BWS_TOKEN_PATH" ]
 }
 
-check_signing_key() {
-  local key
-  key=$(chezmoi execute-template '{{ "{{" }} .signingKey {{ "}}" }}' 2>/dev/null || echo "")
-  [ -n "$key" ]
-}
 {{- if ne "" .emailWork }}
 
 check_gh_auth() {
   gh auth status 2>&1 | grep -q "Logged in"
 }
+
+check_work_config() {
+  # Returns the list of missing work config variable names
+  local missing=()
+  local val
+  val=$(chezmoi execute-template '{{ "{{" }} .signingKey {{ "}}" }}' 2>/dev/null || echo "")
+  [ -z "$val" ] && missing+=("signingKey")
+  val=$(chezmoi execute-template '{{ "{{" }} .npmWorkRegistry {{ "}}" }}' 2>/dev/null || echo "")
+  [ -z "$val" ] && missing+=("npmWorkRegistry")
+  val=$(chezmoi execute-template '{{ "{{" }} .openCodeWorkPlugin {{ "}}" }}' 2>/dev/null || echo "")
+  [ -z "$val" ] && missing+=("openCodeWorkPlugin")
+  val=$(chezmoi execute-template '{{ "{{" }} .jetbrainsLicenseServer {{ "}}" }}' 2>/dev/null || echo "")
+  [ -z "$val" ] && missing+=("jetbrainsLicenseServer")
+  [ "${#missing[@]}" -gt 0 ] && printf '%s\n' "${missing[@]}"
+}
 {{- end }}
 
 print_status() {
   local has_bws="$1"
-  local has_signing="$2"
 {{- if ne "" .emailWork }}
-  local has_gh_auth="$3"
+  local has_gh_auth="$2"
+  shift 2
+  local -a work_missing=("$@")
 {{- end }}
 
   echo ""
@@ -73,16 +84,6 @@ print_status() {
     _print yellow "  ✗ BWS token"
     _print white dim "    Secrets not available (npm auth, GitHub tokens)"
   fi
-
-  echo ""
-
-  if [ "$has_signing" = "true" ]; then
-    _print green "  ✓ Signing key"
-    _print white dim "    Git commits will be signed"
-  else
-    _print yellow "  ✗ Signing key"
-    _print white dim "    Git commits will not be signed"
-  fi
 {{- if ne "" .emailWork }}
 
   echo ""
@@ -94,6 +95,19 @@ print_status() {
     _print yellow "  ✗ GitHub CLI auth"
     _print white dim "    Tools needing GitHub access will fail (brew, github-token)"
   fi
+
+  echo ""
+
+  if [ "${#work_missing[@]}" -eq 0 ]; then
+    _print green "  ✓ Work config"
+    _print white dim "    Signing key, npm registry, tooling configured"
+  else
+    _print yellow "  ✗ Work config"
+    local missing_list
+    missing_list=$(printf '%s, ' "${work_missing[@]}")
+    missing_list="${missing_list%, }"
+    _print white dim "    Missing: ${missing_list}"
+  fi
 {{- end }}
 
   echo ""
@@ -101,13 +115,14 @@ print_status() {
 
 print_instructions() {
   local has_bws="$1"
-  local has_signing="$2"
 {{- if ne "" .emailWork }}
-  local has_gh_auth="$3"
+  local has_gh_auth="$2"
+  shift 2
+  local -a work_missing=("$@")
 
-  if [ "$has_bws" = "true" ] && [ "$has_signing" = "true" ] && [ "$has_gh_auth" = "true" ]; then
+  if [ "$has_bws" = "true" ] && [ "$has_gh_auth" = "true" ] && [ "${#work_missing[@]}" -eq 0 ]; then
 {{- else }}
-  if [ "$has_bws" = "true" ] && [ "$has_signing" = "true" ]; then
+  if [ "$has_bws" = "true" ]; then
 {{- end }}
     _print green bold "  All configuration complete!"
     echo ""
@@ -132,15 +147,6 @@ print_instructions() {
     echo ""
     step=$((step + 1))
   fi
-
-  if [ "$has_signing" = "false" ]; then
-    _print white bold "  ${step}. Configure a commit-signing key"
-    echo ""
-    _print white dim "     GPG: Run 'gpg -K --keyid-format SHORT' to list keys"
-    _print white dim "     SSH: Use path like '~/.ssh/id_ed25519.pub'"
-    echo ""
-    step=$((step + 1))
-  fi
 {{- if ne "" .emailWork }}
 
   if [ "$has_gh_auth" = "false" ]; then
@@ -151,41 +157,34 @@ print_instructions() {
     echo ""
     step=$((step + 1))
   fi
+
+  if [ "${#work_missing[@]}" -gt 0 ]; then
+    _print white bold "  ${step}. Configure work-specific values"
+    echo ""
+    _print white dim "     Run:"
+    echo "     chezmoi edit-config"
+    echo ""
+    _print white dim "     Add under [data]:"
+    for var in "${work_missing[@]}"; do
+      echo "       ${var} = \"...\""
+    done
+    echo ""
+    step=$((step + 1))
+  fi
 {{- end }}
 
   _print white bold "  ${step}. Re-apply dotfiles"
   echo ""
-
-  if [ "$has_signing" = "false" ]; then
-    _print white dim "     Re-run install (you'll be prompted for missing values):"
-    echo "     \$HOME/.local/share/chezmoi/install.sh"
-  else
-    _print white dim "     Re-apply to pick up secrets:"
-    echo "     chezmoi apply --force"
-  fi
+  _print white dim "     Re-apply to pick up changes:"
+  echo "     chezmoi apply --force"
 
   echo ""
-
-  if [ "$has_bws" = "false" ] || [ "$has_signing" = "false" ]; then
-    _print white dim "     Or provide everything via environment variables:"
-    local env_cmd="     "
-    if [ "$has_bws" = "false" ]; then
-      env_cmd+="CONFIG_BWS_ACCESS_TOKEN=<token> "
-    fi
-    if [ "$has_signing" = "false" ]; then
-      env_cmd+="CONFIG_SIGNING_KEY=<key> "
-    fi
-    env_cmd+="\$HOME/.local/share/chezmoi/install.sh"
-    _print white dim "$env_cmd"
-    echo ""
-  fi
 }
 
 main() {
   parse_args "$@"
 
   local has_bws="false"
-  local has_signing="false"
 {{- if ne "" .emailWork }}
   local has_gh_auth="false"
 {{- end }}
@@ -193,21 +192,20 @@ main() {
   if check_bws_token; then
     has_bws="true"
   fi
-
-  if check_signing_key; then
-    has_signing="true"
-  fi
 {{- if ne "" .emailWork }}
 
   if check_gh_auth; then
     has_gh_auth="true"
   fi
 
-  print_status "$has_bws" "$has_signing" "$has_gh_auth"
-  print_instructions "$has_bws" "$has_signing" "$has_gh_auth"
+  local -a work_missing
+  mapfile -t work_missing < <(check_work_config)
+
+  print_status "$has_bws" "$has_gh_auth" "${work_missing[@]}"
+  print_instructions "$has_bws" "$has_gh_auth" "${work_missing[@]}"
 {{- else }}
-  print_status "$has_bws" "$has_signing"
-  print_instructions "$has_bws" "$has_signing"
+  print_status "$has_bws"
+  print_instructions "$has_bws"
 {{- end }}
 }
 
