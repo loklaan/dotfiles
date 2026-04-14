@@ -1,0 +1,122 @@
+{{- $extHash := include ".chezmoiexternals/opencode.toml.tmpl" | sha256sum -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+# content-hash: {{ $extHash }}
+
+#/ Usage:
+#/   run_onchange_after_install-065-setup-opencode-plugin.sh
+#/
+#/ Description:
+#/   Installs vendor tokenizer dependencies for the OpenCode context-usage
+#/   plugin, and patches tokenizer-aliases.json with additional provider
+#/   mappings (e.g. amazon-bedrock). Re-runs when the opencode external
+#/   archive definition changes.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+PLUGIN_DIR="${HOME}/.config/opencode/plugin"
+VENDOR_DIR="${PLUGIN_DIR}/vendor"
+ALIASES_FILE="${PLUGIN_DIR}/tokenizer-aliases.json"
+
+# Provider aliases to inject. Each entry is "key=hub" where key is the
+# provider ID and hub is the HuggingFace tokenizer identifier.
+EXTRA_PROVIDERS=(
+  "amazon-bedrock=Xenova/claude-tokenizer"
+)
+
+patch_aliases() {
+  if [ ! -f "$ALIASES_FILE" ]; then
+    warning "╍ tokenizer-aliases.json not found, skipping alias patching"
+    return 0
+  fi
+
+  local changed=false
+  local tmp="${ALIASES_FILE}.tmp"
+  cp "$ALIASES_FILE" "$tmp"
+
+  for entry in "${EXTRA_PROVIDERS[@]}"; do
+    local key="${entry%%=*}"
+    local value="${entry#*=}"
+
+    # Check if the key already exists in .providers
+    if node -e "
+      const fs = require('fs');
+      const data = JSON.parse(fs.readFileSync('${tmp}', 'utf8'));
+      process.exit((data.providers && data.providers['${key}']) ? 0 : 1);
+    " 2>/dev/null; then
+      continue
+    fi
+
+    # Inject the key
+    node -e "
+      const fs = require('fs');
+      const data = JSON.parse(fs.readFileSync('${tmp}', 'utf8'));
+      if (!data.providers) data.providers = {};
+      data.providers['${key}'] = '${value}';
+      fs.writeFileSync('${tmp}', JSON.stringify(data, null, 2) + '\n');
+    "
+    changed=true
+    info "╍ Added provider alias: ${key} -> ${value}"
+  done
+
+  if [ "$changed" = true ]; then
+    mv "$tmp" "$ALIASES_FILE"
+  else
+    rm -f "$tmp"
+  fi
+}
+
+install_vendor_deps() {
+  if [ ! -d "$PLUGIN_DIR" ]; then
+    warning "╍ Plugin directory not found: ${PLUGIN_DIR}"
+    warning "╍ The opencode external archive may not have been applied yet"
+    return 0
+  fi
+
+  mkdir -p "$VENDOR_DIR"
+
+  info "╍ Installing vendor tokenizer packages"
+  npm install --prefix "$VENDOR_DIR" \
+    js-tiktoken@latest \
+    "@huggingface/transformers@^3.3.3" \
+    --silent
+}
+
+main() {
+  # Activate mise so node/npm are on PATH
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v node >/dev/null 2>&1; then
+    warning "▶ OpenCode plugin setup"
+    warning "╍ node not found, skipping (install via: mise install node)"
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    warning "▶ OpenCode plugin setup"
+    warning "╍ npm not found, skipping"
+    return 0
+  fi
+
+  info "▶ OpenCode plugin setup"
+
+  install_vendor_deps
+  patch_aliases
+
+  info "╍ Done"
+}
+
+main "$@"
