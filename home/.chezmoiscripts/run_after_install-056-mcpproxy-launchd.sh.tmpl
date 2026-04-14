@@ -1,0 +1,95 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-056-mcpproxy-launchd.sh
+#/
+#/ Description:
+#/   Manages the mcpproxy-go launchd agent. Creates the log directory,
+#/   (re)loads the plist, and verifies the service is responding.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  # Activate mise so tools installed in earlier scripts (050) are on PATH
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v mcpproxy >/dev/null 2>&1; then
+    info "▶ mcpproxy launchd agent"
+    info "╍ mcpproxy not found, skipping (install via: mise install)"
+    return 0
+  fi
+
+  local log_dir="${HOME}/Library/Logs/mcpproxy"
+  local domain="gui/$(id -u)"
+
+  info "▶ mcpproxy launchd agents"
+
+  # Ensure log directory exists
+  mkdir -p "$log_dir"
+
+  # (Re)load serve agent
+  local serve_label="io.mcpproxy.serve"
+  local serve_plist="${HOME}/Library/LaunchAgents/${serve_label}.plist"
+
+  if launchctl print "${domain}/${serve_label}" >/dev/null 2>&1; then
+    launchctl kickstart -k "${domain}/${serve_label}"
+    info "╍ restarted ${serve_label}"
+  else
+    launchctl bootstrap "$domain" "$serve_plist"
+    info "╍ loaded ${serve_label}"
+  fi
+
+  # (Re)load tray agent
+  local tray_label="io.mcpproxy.tray"
+  local tray_plist="${HOME}/Library/LaunchAgents/${tray_label}.plist"
+
+  if launchctl print "${domain}/${tray_label}" >/dev/null 2>&1; then
+    launchctl kickstart -k "${domain}/${tray_label}"
+    info "╍ restarted ${tray_label}"
+  else
+    launchctl bootstrap "$domain" "$tray_plist"
+    info "╍ loaded ${tray_label}"
+  fi
+
+  # Brief wait for startup then verify
+  sleep 2
+  if curl -sf http://127.0.0.1:18321/ -o /dev/null 2>/dev/null; then
+    info "╍ mcpproxy responding on port 18321"
+  else
+    warning "╍ mcpproxy may not be ready yet (port 18321 not responding)"
+  fi
+}
+
+main "$@"
+{{ end -}}

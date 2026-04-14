@@ -1,0 +1,107 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+
+{{- /* Resolve API keys from Bitwarden Secrets */ -}}
+{{- $bwsToken := "" -}}
+{{- if stat .bwsTokenPath -}}
+{{-   $bwsToken = include .bwsTokenPath | trim -}}
+{{- end -}}
+{{- $context7Key := "" -}}
+{{- $exaKey := "" -}}
+{{- if ne "" $bwsToken -}}
+{{-   $context7Key = (bitwardenSecrets .bwsIdContext7ApiKey $bwsToken).value -}}
+{{-   $exaKey = (bitwardenSecrets .bwsIdExaApiKey $bwsToken).value -}}
+{{- end -}}
+
+{{- /* Build our managed server list */ -}}
+{{- $servers := list -}}
+
+{{- if ne "" .emailWork -}}
+{{-   $servers = append $servers (dict
+        "name" "otter"
+        "command" "otter"
+        "args" (list "mcp" "serve")
+        "protocol" "stdio"
+        "enabled" true
+      ) -}}
+{{- end -}}
+
+{{- $servers = append $servers (dict
+      "name" "effect-docs"
+      "command" "npx"
+      "args" (list "-y" "effect-mcp@latest")
+      "protocol" "stdio"
+      "enabled" true
+    ) -}}
+
+{{- $servers = append $servers (dict
+      "name" "pdf-tools"
+      "command" "uvx"
+      "args" (list "mcp-pdf")
+      "protocol" "stdio"
+      "enabled" true
+    ) -}}
+
+{{- $servers = append $servers (dict
+      "name" "figma-desktop"
+      "url" "http://127.0.0.1:3845/mcp"
+      "protocol" "http"
+      "enabled" true
+    ) -}}
+
+{{- /* Remote MCP servers (moved from oh-my-openagent defaults) */ -}}
+{{- $context7Headers := dict -}}
+{{- if ne "" $context7Key -}}
+{{-   $context7Headers = dict "CONTEXT7_API_KEY" $context7Key -}}
+{{- end -}}
+{{- $servers = append $servers (dict
+      "name" "context7"
+      "url" "https://mcp.context7.com/mcp"
+      "protocol" "http"
+      "headers" $context7Headers
+      "enabled" true
+    ) -}}
+
+{{- $exaHeaders := dict -}}
+{{- if ne "" $exaKey -}}
+{{-   $exaHeaders = dict "x-api-key" $exaKey -}}
+{{- end -}}
+{{- $servers = append $servers (dict
+      "name" "websearch"
+      "url" "https://mcp.exa.ai"
+      "protocol" "http"
+      "headers" $exaHeaders
+      "enabled" true
+    ) -}}
+
+{{- /* Merge existing server entries to preserve runtime state (quarantined,
+       created, updated, oauth) while ensuring our definitions are present.
+       For each managed server, find the existing entry and overlay our fields. */ -}}
+{{- $existingServers := list -}}
+{{- if hasKey $base "mcpServers" -}}
+{{-   $existingServers = get $base "mcpServers" -}}
+{{- end -}}
+
+{{- $mergedServers := list -}}
+{{- range $our := $servers -}}
+{{-   $merged := dict -}}
+{{-   range $existing := $existingServers -}}
+{{-     if eq (get $existing "name") (get $our "name") -}}
+{{-       $merged = $existing -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $merged = merge $our $merged -}}
+{{-   $mergedServers = append $mergedServers $merged -}}
+{{- end -}}
+
+{{- /* Overlay our managed keys, preserve everything else */ -}}
+{{- $config := $base -}}
+{{- $config = $config | setValueAtPath "listen" "127.0.0.1:18321" -}}
+{{- $config = $config | setValueAtPath "data_dir" (printf "%s/.mcpproxy" .chezmoi.homeDir) -}}
+{{- $config = $config | setValueAtPath "top_k" 5 -}}
+{{- $config = $config | setValueAtPath "tools_limit" 15 -}}
+{{- $config = $config | setValueAtPath "tool_response_limit" 20000 -}}
+{{- $config = $config | setValueAtPath "mcpServers" $mergedServers -}}
+{{- $config = $config | setValueAtPath "routing_mode" "retrieve_tools" -}}
+
+{{ $config | toPrettyJson }}
