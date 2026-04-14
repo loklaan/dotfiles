@@ -1,3 +1,6 @@
+{{ if ne "" .npmWorkRegistry -}}
+@canva:registry={{ .npmWorkRegistry }}
+{{ end -}}
 init-author-name=Lochlan Bunn
 init-author-email=bunn@lochlan.io
 init-version=0.1.0
