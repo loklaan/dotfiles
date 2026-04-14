@@ -251,6 +251,25 @@ When chezmoi shares ownership of a JSON object with external tools, `setValueAtP
 
 Use for any `modify_` template where chezmoi shares ownership with external tools. The identity key depends on context (`matcher` for hooks, `name` for plugins, etc.).
 
+### Testing Modify Templates
+
+Verify modify templates before applying:
+
+```bash
+# Preview full rendered output (merges with existing target file)
+chezmoi cat ~/.target/file.json
+
+# Show diff between current target and what chezmoi would write
+chezmoi diff ~/.target/file.json
+
+# Dry-run apply with verbose output
+chezmoi apply --dry-run --verbose ~/.target/file.json
+```
+
+All three commands read the existing target file into `.chezmoi.stdin` automatically. No manual piping needed — chezmoi handles the stdin injection for modify templates.
+
+If `.chezmoi.stdin` errors with `map has no entry for key "stdin"`, the file has the wrong name — modify templates must NOT use the `.tmpl` suffix (use the `chezmoi:modify-template` annotation instead).
+
 ### Section Markers for Plain Text and TOML
 
 When a `modify_` template manages plain text or TOML (not JSON), use markers to cordon off chezmoi's section. This is the recommended pattern for TOML files because chezmoi has no built-in TOML parse/serialize functions (`fromToml`/`toToml` do not exist).
