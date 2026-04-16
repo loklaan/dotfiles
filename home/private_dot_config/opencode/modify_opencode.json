@@ -4,8 +4,14 @@
 {{- /* Load MCP servers from template */ -}}
 {{- $mcpServers := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
 
-{{- /* Configure instructions to reference shared Claude rules */ -}}
-{{- $instructions := list (printf "%s/.claude/rules/coding-system-prompts.md" .chezmoi.homeDir) -}}
+{{- /* Configure instructions to reference shared Claude rules and project rules directories */ -}}
+{{- $instructions := list
+      (printf "%s/.claude/rules/coding-system-prompts.md" .chezmoi.homeDir)
+      "AGENTS.md"
+      "CLAUDE.md"
+      ".claude/rules/*.md"
+      ".agents/rules/*.md"
+-}}
 
 {{- /* Build OpenCode config */ -}}
 {{- $config := $base -}}
