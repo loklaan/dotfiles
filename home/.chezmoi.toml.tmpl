@@ -54,6 +54,10 @@ mv "$MARKER_TEMP" "$MARKER_FILE"
 
 # Print to stderr using ANSI colors (white dim)
 printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
+
+# Pre-flight checks for required tools
+PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
+[ -f "$PREFLIGHT" ] && source "$PREFLIGHT"
 ''']
 [hooks.apply.post]
   command = "bash"
@@ -105,6 +109,10 @@ mv "$MARKER_TEMP" "$MARKER_FILE"
 
 # Print to stderr using ANSI colors (white dim)
 printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
+
+# Pre-flight checks for required tools
+PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
+[ -f "$PREFLIGHT" ] && source "$PREFLIGHT"
 ''']
 
 [hooks.update.post]
