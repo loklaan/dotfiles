@@ -1,4 +1,3 @@
-{{- if eq .chezmoi.os "darwin" -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -16,8 +15,9 @@ setup_session_logging "$(basename "$0")"
 #/   run_after_install-056-mcpproxy-launchd.sh
 #/
 #/ Description:
-#/   Manages the mcpproxy-go launchd agent. Creates the log directory,
-#/   (re)loads the plist, and verifies the service is responding.
+#/   Manages the mcpproxy-go daemon. On macOS, (re)loads LaunchAgents.
+#/   On Linux, enables and (re)starts the systemd user unit. Verifies
+#/   the service is responding on port 18321.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -38,18 +38,7 @@ parse_args() {
   done
 }
 
-main() {
-  parse_args "$@"
-
-  # Activate mise so tools installed in earlier scripts (050) are on PATH
-  eval "$(mise activate bash --quiet)"
-
-  if ! command -v mcpproxy >/dev/null 2>&1; then
-    info "▶ mcpproxy launchd agent"
-    info "╍ mcpproxy not found, skipping (install via: mise install)"
-    return 0
-  fi
-
+start_darwin() {
   local log_dir="${HOME}/Library/Logs/mcpproxy"
   local domain="gui/$(id -u)"
 
@@ -81,6 +70,44 @@ main() {
     launchctl bootstrap "$domain" "$tray_plist"
     info "╍ loaded ${tray_label}"
   fi
+}
+
+start_linux() {
+  info "▶ mcpproxy systemd user service"
+
+  systemctl --user daemon-reload
+  systemctl --user enable mcpproxy.service
+
+  if systemctl --user is-active --quiet mcpproxy.service; then
+    systemctl --user restart mcpproxy.service
+    info "╍ restarted mcpproxy.service"
+  else
+    systemctl --user start mcpproxy.service
+    info "╍ started mcpproxy.service"
+  fi
+}
+
+main() {
+  parse_args "$@"
+
+  # Activate mise so tools installed in earlier scripts (050) are on PATH
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v mcpproxy >/dev/null 2>&1; then
+    info "▶ mcpproxy daemon"
+    info "╍ mcpproxy not found, skipping (install via: mise install)"
+    return 0
+  fi
+
+  case "$(uname -s)" in
+    Darwin) start_darwin ;;
+    Linux)  start_linux ;;
+    *)
+      warning "▶ mcpproxy daemon"
+      warning "╍ unsupported OS: $(uname -s), skipping"
+      return 0
+      ;;
+  esac
 
   # Brief wait for startup then verify
   sleep 2
@@ -92,4 +119,3 @@ main() {
 }
 
 main "$@"
-{{ end -}}

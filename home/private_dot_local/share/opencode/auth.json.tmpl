@@ -1,5 +1,7 @@
 {
+{{- if eq "" (env "CODER") }}
   "amazon-bedrock": { "type": "api", "key": "llmproxy" },
+{{- end }}
   "google": { "type": "api", "key": "llmproxy" },
   "openai": { "type": "api", "key": "llmproxy" }
 }

@@ -1,0 +1,15 @@
+{{- if eq .chezmoi.os "linux" -}}
+[Unit]
+Description=mcpproxy-go MCP proxy server
+After=network.target
+
+[Service]
+ExecStart={{ .chezmoi.homeDir }}/.local/share/mise/shims/mcpproxy serve --log-level info
+Environment=HOME={{ .chezmoi.homeDir }}
+Environment=PATH={{ .chezmoi.homeDir }}/.local/share/mise/shims:{{ .chezmoi.homeDir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+{{- end }}
