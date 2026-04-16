@@ -6,7 +6,7 @@ init-author-email=bunn@lochlan.io
 init-version=0.1.0
 init-license=MIT
 {{- $bwsToken := "" -}}
-{{- if stat .bwsTokenPath -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
 {{-   $bwsToken = include .bwsTokenPath | trim -}}
 {{- end -}}
 {{- if ne "" $bwsToken }}
