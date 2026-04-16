@@ -3,7 +3,7 @@
 
 {{- /* Resolve API keys from Bitwarden Secrets */ -}}
 {{- $bwsToken := "" -}}
-{{- if stat .bwsTokenPath -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
 {{-   $bwsToken = include .bwsTokenPath | trim -}}
 {{- end -}}
 {{- $context7Key := "" -}}
