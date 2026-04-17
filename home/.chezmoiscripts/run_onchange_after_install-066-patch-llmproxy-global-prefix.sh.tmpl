@@ -1,0 +1,203 @@
+{{- $extHash := include ".chezmoiexternals/opencode.toml.tmpl" | sha256sum -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+# content-hash: {{ $extHash }}
+
+#/ Usage:
+#/   run_onchange_after_install-066-patch-llmproxy-global-prefix.sh
+#/
+#/ Description:
+#/   TEMPORARY PATCH — remove once the fix is published upstream.
+#/
+#/   Patches @canva/opencode-plugin-llmproxy in the OpenCode cache to broaden
+#/   the `supportsGlobalPrefix` regex from /claude-[a-z]+-4-5-/ to
+#/   /claude-[a-z]+-4-[5-9]/ so Claude 4.6 and 4.7 models correctly route
+#/   through the `global.` inference profile prefix on AWS Bedrock.
+#/
+#/   Without this, Claude 4.6/4.7 falls through to regional prefix routing
+#/   (e.g. `au.anthropic.claude-opus-4-7` in ap-southeast-2) which Bedrock
+#/   rejects with a 400. `withPrefixRetry` only retries on 429s, so the bare
+#/   model ID fallback is never reached.
+#/
+#/   The upstream fix was merged as PR #12:
+#/     https://github.com/canvanauts/opencode-plugin-llmproxy/pull/12
+#/
+#/   But as of @canva/opencode-plugin-llmproxy@0.20260407.0 the fix has not
+#/   been published to the Canva depot npm registry. This script is the
+#/   bridge until a newer version ships.
+#/
+#/   REMOVE THIS SCRIPT when:
+#/     - A newer @canva/opencode-plugin-llmproxy version is published that
+#/       contains the broadened regex, AND
+#/     - Your opencode external is pinned to (or later than) that version.
+#/
+#/   The script is idempotent and auto-skips if:
+#/     - The plugin cache is missing (warning only)
+#/     - The regex has already been patched (no-op)
+#/     - The regex is not the known-broken form (warning — means upstream
+#/       shipped the fix or changed shape; time to remove this script)
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# Respect XDG_CACHE_HOME, fall back to ~/.cache. On macOS my shell sets
+# XDG_CACHE_HOME=~/Library/Caches, so this works cross-platform without
+# uname branching.
+CACHE_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/opencode"
+PLUGIN_NAME="@canva/opencode-plugin-llmproxy"
+
+# Both locations carry copies of the plugin. OpenCode resolves via
+# node_modules at runtime, but the packages/ tree is the source from which
+# node_modules is populated — patching both keeps them consistent in case
+# anything reads from packages/ directly or node_modules is regenerated.
+PATCH_TARGETS=(
+  "${CACHE_ROOT}/node_modules/${PLUGIN_NAME}"
+  "${CACHE_ROOT}/packages/${PLUGIN_NAME}@latest/node_modules/${PLUGIN_NAME}"
+)
+
+# The two files inside each target that carry the regex. model-routing.js is
+# the source module; index.bundle.js is the bundled entrypoint OpenCode loads.
+PATCH_FILES=(
+  "dist/model-routing.js"
+  "dist/index.bundle.js"
+)
+
+# Literal text of the regex as it appears in the broken source. We search
+# for this as a fixed string (grep -F), not interpret it as a regex itself.
+BROKEN_LITERAL='/claude-[a-z]+-4-5-/'
+# Literal text after the fix.
+FIXED_LITERAL='/claude-[a-z]+-4-[5-9]/'
+# For sed (BRE mode — portable between macOS BSD sed and GNU sed). In BRE:
+# `[` and `]` are character-class metacharacters, so `\[` and `\]` match
+# literal brackets. `+` is a literal by default in BRE so it needs no
+# escaping. Using `|` as the `s` separator avoids escaping the slashes.
+BROKEN_SED='/claude-\[a-z\]+-4-5-/'
+FIXED_SED='/claude-[a-z]+-4-[5-9]/'
+
+patch_file() {
+  local file="$1"
+
+  if [ ! -f "$file" ]; then
+    return 1
+  fi
+
+  if grep -qF "${FIXED_LITERAL}" "$file"; then
+    # Already patched — or upstream fix shipped; either way, no-op.
+    return 2
+  fi
+
+  if ! grep -qF "${BROKEN_LITERAL}" "$file"; then
+    # Neither broken nor fixed form present. Shape has changed; refuse to
+    # patch blindly so we don't corrupt the file.
+    return 3
+  fi
+
+  # Use a temp file and atomic rename; sed -i portability differs between
+  # GNU and BSD so we do it manually. Use BRE (no -E) for portability.
+  local tmp="${file}.patched.tmp"
+  sed "s|${BROKEN_SED}|${FIXED_SED}|g" "$file" > "$tmp"
+
+  if ! grep -qF "${FIXED_LITERAL}" "$tmp"; then
+    rm -f "$tmp"
+    return 4
+  fi
+
+  mv "$tmp" "$file"
+  return 0
+}
+
+patch_target() {
+  local target_dir="$1"
+
+  if [ ! -d "$target_dir" ]; then
+    return 0
+  fi
+
+  local version
+  version="$(node -e "
+    const pkg = require('${target_dir}/package.json');
+    process.stdout.write(pkg.version || 'unknown');
+  " 2>/dev/null || echo "unknown")"
+
+  local any_shape_changed=false
+
+  for rel in "${PATCH_FILES[@]}"; do
+    local abs="${target_dir}/${rel}"
+    set +e
+    patch_file "$abs"
+    local rc=$?
+    set -e
+
+    case "$rc" in
+      0)
+        info "╍ Patched ${rel} (${PLUGIN_NAME}@${version})"
+        ;;
+      1)
+        # file missing — the layout changed, note it
+        warning "╍ Missing ${rel} in ${target_dir}"
+        ;;
+      2)
+        # already patched — silent
+        ;;
+      3)
+        any_shape_changed=true
+        ;;
+      4)
+        warning "╍ Patch produced no change in ${rel}, reverted"
+        ;;
+    esac
+  done
+
+  if [ "$any_shape_changed" = true ]; then
+    warning "╍ ${PLUGIN_NAME}@${version} regex shape has changed"
+    warning "╍ The upstream fix may have shipped — time to delete this script:"
+    warning "╍   $(basename "$0")"
+  fi
+}
+
+main() {
+  # Activate mise so node is on PATH for version parsing
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v node >/dev/null 2>&1; then
+    warning "▶ llmproxy patch"
+    warning "╍ node not found, skipping (install via: mise install node)"
+    return 0
+  fi
+
+  if [ ! -d "$CACHE_ROOT" ]; then
+    info "▶ llmproxy patch"
+    info "╍ OpenCode cache not found at ${CACHE_ROOT}, skipping"
+    return 0
+  fi
+
+  info "▶ llmproxy patch (temporary — see script header)"
+
+  local found=false
+  for target in "${PATCH_TARGETS[@]}"; do
+    if [ -d "$target" ]; then
+      found=true
+      patch_target "$target"
+    fi
+  done
+
+  if [ "$found" = false ]; then
+    info "╍ ${PLUGIN_NAME} not installed in cache, nothing to patch"
+  fi
+
+  info "╍ Done"
+}
+
+main "$@"
