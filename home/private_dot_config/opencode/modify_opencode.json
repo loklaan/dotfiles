@@ -59,6 +59,9 @@
         "meta.llama4-scout-17b-instruct-v1:0"
         "mistral.magistral-small-2509" -}}
 {{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "models" $bedrockModels "whitelist" $bedrockWhitelist)) -}}
+{{-   if not (hasKey $base "model") -}}
+{{-     $config = $config | setValueAtPath "model" "amazon-bedrock/global.anthropic.claude-opus-4-7" -}}
+{{-   end -}}
 {{- else if not (hasKey $base "share") -}}
 {{-   $config = $config | setValueAtPath "share" "manual" -}}
 {{- end -}}
