@@ -2,10 +2,53 @@
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 {{- $statusLineConfig := dict "type" "command" "command" (printf "%s/.claude/statusline.sh" .chezmoi.homeDir) "padding" 0 -}}
 {{- $attributionConfig := dict "commit" "" "pr" "" -}}
+
+{{- /* Paths that were once installed by chezmoi but have since been removed or
+       renamed. Claude Code persists hook entries across sessions and our merge
+       logic (below) additively preserves any existing entry, so dead paths
+       linger in settings.json until explicitly pruned here.
+
+       Add an entry whenever a hook command is removed or moved, and keep it in
+       place for one release cycle after everyone's settings.json has been
+       scrubbed. */ -}}
+{{- $deadPathSubstrings := list
+      "/.local/lib/tmux-resurrect-claude/"
+-}}
+
 {{- $existingHooks := dict -}}
 {{- if hasKey $base "hooks" -}}
 {{-   $existingHooks = get $base "hooks" -}}
 {{- end -}}
+
+{{- /* Drop any hook entry whose command references a dead path. Iteration
+       binds each hook object to a named variable so the inner range over
+       $deadPathSubstrings can still reach it — bare `.` would be the
+       substring and `$` would be the template root. */ -}}
+{{- $cleanedHooks := dict -}}
+{{- range $event, $entries := $existingHooks -}}
+{{-   $cleanedEntries := list -}}
+{{-   range $entry := $entries -}}
+{{-     $keptHooks := list -}}
+{{-     range $hook := $entry.hooks -}}
+{{-       $command := toString (default "" $hook.command) -}}
+{{-       $dead := false -}}
+{{-       range $dead_path := $deadPathSubstrings -}}
+{{-         if contains $dead_path $command -}}
+{{-           $dead = true -}}
+{{-         end -}}
+{{-       end -}}
+{{-       if not $dead -}}
+{{-         $keptHooks = append $keptHooks $hook -}}
+{{-       end -}}
+{{-     end -}}
+{{-     if gt (len $keptHooks) 0 -}}
+{{-       $cleanedEntries = append $cleanedEntries (dict "matcher" $entry.matcher "hooks" $keptHooks) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $cleanedHooks = set $cleanedHooks $event $cleanedEntries -}}
+{{- end -}}
+{{- $existingHooks = $cleanedHooks -}}
+
 {{- $ourHooks := includeTemplate "hooks-json-tmpl" . | fromJson -}}
 {{- $merged := merge (dict) $existingHooks -}}
 {{- range $event, $ourEntries := $ourHooks -}}
