@@ -38,13 +38,12 @@
 {{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
 {{-   $opusLimit := dict "limit" (dict "context" 200000 "output" 128000) -}}
 {{-   $bedrockModels := dict
-        "global.anthropic.claude-opus-4-6-v1" $opusLimit
-        "us.anthropic.claude-opus-4-6-v1" $opusLimit
-        "eu.anthropic.claude-opus-4-6-v1" $opusLimit -}}
+        "global.anthropic.claude-opus-4-7" $opusLimit
+        "au.anthropic.claude-opus-4-7" $opusLimit -}}
 {{-   if eq "" (env "CODER") -}}
-{{-     $bedrockModels = set $bedrockModels "anthropic.claude-opus-4-6-v1" $opusLimit -}}
+{{-     $bedrockModels = set $bedrockModels "anthropic.claude-opus-4-7" $opusLimit -}}
 {{-   end -}}
-{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "region" "ap-southeast-2" "models" $bedrockModels)) -}}
+{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "models" $bedrockModels)) -}}
 {{- else if not (hasKey $base "share") -}}
 {{-   $config = $config | setValueAtPath "share" "manual" -}}
 {{- end -}}

@@ -24,7 +24,7 @@
 
 {{- /* Model overrides for Bedrock-proxied providers (work machines only) */ -}}
 {{- if ne "" .emailWork -}}
-{{-   $config = $config | setValueAtPath "categories.unspecified-high.model" "amazon-bedrock/anthropic.claude-opus-4-6-v1" -}}
+{{-   $config = $config | setValueAtPath "categories.unspecified-high.model" "amazon-bedrock/anthropic.claude-opus-4-7" -}}
 {{-   $config = $config | setValueAtPath "categories.unspecified-low.model" "amazon-bedrock/anthropic.claude-sonnet-4-6" -}}
 {{-   $config = $config | setValueAtPath "categories.ultrabrain.model" "openai/gpt-5.4" -}}
 {{-   $config = $config | setValueAtPath "categories.deep.model" "openai/gpt-5.4" -}}
@@ -32,7 +32,7 @@
 {{-   $config = $config | setValueAtPath "categories.visual-engineering.model" "google/gemini-3.1-pro-preview" -}}
 {{-   $config = $config | setValueAtPath "categories.artistry.model" "google/gemini-3.1-pro-preview" -}}
 {{-   $config = $config | setValueAtPath "categories.writing.model" "google/gemini-2.5-flash" -}}
-{{-   $config = $config | setValueAtPath "agents.sisyphus.model" "amazon-bedrock/anthropic.claude-opus-4-6-v1" -}}
+{{-   $config = $config | setValueAtPath "agents.sisyphus.model" "amazon-bedrock/anthropic.claude-opus-4-7" -}}
 {{- end -}}
 
 {{ $config | toPrettyJson }}
