@@ -1,4 +1,4 @@
-{{- $lib := printf "%s/.local/lib/tmux-resurrect-claude" .chezmoi.homeDir -}}
+{{- $lib := printf "%s/.local/lib/tmux-resurrect-code-agents" .chezmoi.homeDir -}}
 {
   "Notification": [
     {
@@ -44,7 +44,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "bash {{ $lib }}/track.sh"
+          "command": "bash {{ $lib }}/track.sh claude"
         },
         {
           "type": "command",

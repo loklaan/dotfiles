@@ -1,0 +1,16 @@
+{{- $lib := printf "%s/.local/lib/tmux-resurrect-code-agents" .chezmoi.homeDir -}}
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash {{ $lib }}/track.sh codex"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -7,6 +7,7 @@
 {{- $ourSection := "" -}}
 {{- $ourSection = printf "%s\n%s\n%s\n%s" $startMarker "# This section is managed by chezmoi. Do not edit manually." "# Keys set by Codex CLI (model, projects, notice, etc.) are preserved" "# outside this section and will not be overwritten." -}}
 {{- $ourSection = printf "%s\n\n%s" $ourSection (print `model_instructions_file = "` .chezmoi.homeDir `/.codex/instructions.md"`) -}}
+{{- $ourSection = printf "%s\n\n%s\n%s" $ourSection "[features]" "codex_hooks = true" -}}
 {{- $ourSection = printf "%s\n\n%s" $ourSection (includeTemplate "mcp-servers-codex-toml-tmpl" . | trim) -}}
 {{- $ourSection = printf "%s\n%s" $ourSection $endMarker -}}
 
