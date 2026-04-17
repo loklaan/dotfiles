@@ -263,7 +263,7 @@ connect() {
     ccyolo)
       local cmd=""
       [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-6-v1"
+      cmd+="otter claude-code --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-7"
       ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "/usr/bin/zsh -lc '${cmd}'"
       exit $?
       ;;
