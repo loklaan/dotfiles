@@ -227,8 +227,14 @@ EOF
 
   {{ end }}
 
+  info "╍ Running 'mise self-update --yes'"
+  run_quiet mise self-update --yes || true
+
   info "╍ Running 'mise install'"
   run_quiet mise install -y
+
+  info "╍ Running 'mise upgrade'"
+  run_quiet mise upgrade -y
 }
 
 main "$@"

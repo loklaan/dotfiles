@@ -1,5 +1,7 @@
 {{ if ne "" .npmWorkRegistry -}}
 @canva:registry={{ .npmWorkRegistry }}
+{{ else if ne "" .emailWork -}}
+{{   fail "emailWork is set but npmWorkRegistry is empty — @canva scoped packages cannot be resolved. Run: chezmoi edit-config" }}
 {{ end -}}
 init-author-name=Lochlan Bunn
 init-author-email=bunn@lochlan.io
