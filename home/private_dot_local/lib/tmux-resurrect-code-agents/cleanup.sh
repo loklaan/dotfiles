@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
 #|----------------------------------------------------------------------------|
-#| Claude Code SessionEnd Hook                                                |
+#| Code Agent Session Cleanup Hook                                             |
 #|                                                                            |
-#| Removes the session state file when a Claude Code session ends.            |
+#| Removes the session state file when a code agent session ends.             |
 #|----------------------------------------------------------------------------|
 
 [[ -z "${TMUX_PANE:-}" ]] && exit 0
 
-STATE_DIR="${TMPDIR:-/tmp}/tmux-claude-sessions"
+STATE_DIR="${TMPDIR:-/tmp}/tmux-code-agent-sessions"
 rm -f "$STATE_DIR/$TMUX_PANE"
