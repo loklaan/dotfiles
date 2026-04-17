@@ -55,6 +55,14 @@ mv "$MARKER_TEMP" "$MARKER_FILE"
 # Print to stderr using ANSI colors (white dim)
 printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
 
+# macOS: normalize directory permissions that drift from chezmoi's expected
+# modes. launchd resets ~/Library/LaunchAgents to 0744 after plist loading,
+# but chezmoi expects 0755. Normalizing here prevents the apply-time prompt.
+# See: https://github.com/twpayne/chezmoi/issues/769
+if [ "$(uname)" = "Darwin" ]; then
+  chmod 755 "${HOME}/Library/LaunchAgents" 2>/dev/null || true
+fi
+
 # Pre-flight checks for required tools
 PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
 [ -f "$PREFLIGHT" ] && source "$PREFLIGHT"
@@ -109,6 +117,14 @@ mv "$MARKER_TEMP" "$MARKER_FILE"
 
 # Print to stderr using ANSI colors (white dim)
 printf '\033[2;37mLogging session to: %s\033[0m\n' "$SESSION_LOG" >&2
+
+# macOS: normalize directory permissions that drift from chezmoi's expected
+# modes. launchd resets ~/Library/LaunchAgents to 0744 after plist loading,
+# but chezmoi expects 0755. Normalizing here prevents the apply-time prompt.
+# See: https://github.com/twpayne/chezmoi/issues/769
+if [ "$(uname)" = "Darwin" ]; then
+  chmod 755 "${HOME}/Library/LaunchAgents" 2>/dev/null || true
+fi
 
 # Pre-flight checks for required tools
 PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
