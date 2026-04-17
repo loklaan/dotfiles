@@ -83,3 +83,10 @@ For v3 projects, combine this reference with the MCP docs tools above.
 
 Read `references/v4-patterns.md` for the full v4 reference, including
 annotated examples, module deep dives, and v3 migration guides.
+
+## Concurrency bounds
+
+Read `references/concurrency-bounds.md` — version-agnostic heuristic for
+fan-out, retries, periodic loops, and growable state. Apply when writing or
+reviewing any `Effect.all`, `Effect.forEach`, `Effect.retry`, `Effect.repeat`,
+or in-memory state that grows with request rate.
