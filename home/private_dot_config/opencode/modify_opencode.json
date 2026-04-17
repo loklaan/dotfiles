@@ -44,7 +44,7 @@
 {{-   if eq "" (env "CODER") -}}
 {{-     $bedrockModels = set $bedrockModels "anthropic.claude-opus-4-6-v1" $opusLimit -}}
 {{-   end -}}
-{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "models" $bedrockModels)) -}}
+{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "region" "ap-southeast-2" "models" $bedrockModels)) -}}
 {{- else if not (hasKey $base "share") -}}
 {{-   $config = $config | setValueAtPath "share" "manual" -}}
 {{- end -}}
