@@ -1,0 +1,112 @@
+{{- if ne "" .emailWork -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   fix-system-gitconfig-refspec.sh
+#/
+#/ Description:
+#/   Removes a `^refs/heads/*` negative-glob fetch refspec from the system
+#/   gitconfig when an external provisioning tool writes one.
+#/
+#/   Negative globs are valid git syntax but rejected by every Rust-based git
+#/   implementation (gix/gitoxide/jj), which panics tools like mise on every
+#/   invocation. The source writing the refspec re-applies it on each run,
+#/   so a one-shot manual fix doesn't stick. This script runs on every
+#/   chezmoi apply to keep the file clean.
+#/
+#/   Also registers a `managedconfig.optout` entry on the remote.origin.fetch
+#/   key — a convention some enterprise provisioning tools honour to skip
+#/   re-managing specific keys. Belt and suspenders: if the opt-out is
+#/   respected we're done; if not, this script's own cleanup runs next apply.
+#/
+#/   Work-machine only — gated on `.emailWork`. Personal machines don't
+#/   have external tooling writing to the system gitconfig.
+#/
+#/ Options:
+#/   --help:  Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+system_gitconfig() {
+  # Prefer Homebrew-prefixed system gitconfig (arm64 and x86_64 cellars).
+  # Fall back to /etc/gitconfig if neither exists — git's own default.
+  if [ -f /opt/homebrew/etc/gitconfig ]; then
+    echo /opt/homebrew/etc/gitconfig
+  elif [ -f /usr/local/etc/gitconfig ]; then
+    echo /usr/local/etc/gitconfig
+  elif [ -f /etc/gitconfig ]; then
+    echo /etc/gitconfig
+  else
+    echo ""
+  fi
+}
+
+remove_broken_refspec() {
+  local config="$1"
+  local current
+  # `--get-all` returns nonzero when the key is absent — suppress it so the
+  # script doesn't abort under `set -e`.
+  current=$(git config --file "$config" --get-all remote.origin.fetch 2>/dev/null || true)
+  if [ -z "$current" ]; then
+    return 0
+  fi
+
+  # Match any negative-glob refspec on refs/heads/ — the exact prefix varies
+  # between tools but the shape (leading ^ with a trailing glob) is what
+  # trips gix/gitoxide/jj.
+  if echo "$current" | grep -Eq '^\^refs/heads/.*\*'; then
+    git config --file "$config" --unset-all remote.origin.fetch
+    info "removed negative-glob refspec from $config"
+  fi
+}
+
+register_optout() {
+  local config="$1"
+  # `managedconfig.optout` is a multi-valued key convention used by some
+  # enterprise provisioning tools: entries list config paths to leave alone
+  # on subsequent runs. Adding `remote.origin.fetch` signals intent even
+  # when the tool doesn't honour it.
+  if git config --file "$config" --get-all managedconfig.optout 2>/dev/null \
+       | grep -Fxq 'remote.origin.fetch'; then
+    return 0
+  fi
+  git config --file "$config" --add managedconfig.optout remote.origin.fetch
+  info "registered managedconfig.optout for remote.origin.fetch in $config"
+}
+
+main() {
+  parse_args "$@"
+
+  local config
+  config=$(system_gitconfig)
+  if [ -z "$config" ]; then
+    # No system gitconfig at all — nothing to clean. This is expected on
+    # machines without external tooling managing a system-level gitconfig.
+    return 0
+  fi
+
+  if [ ! -w "$config" ]; then
+    warning "$config is not writable; skipping (needs: chmod +w or sudo)"
+    return 0
+  fi
+
+  remove_broken_refspec "$config"
+  register_optout "$config"
+}
+
+main "$@"
+{{ end -}}
