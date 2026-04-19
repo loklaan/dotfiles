@@ -128,20 +128,29 @@ chezmoi apply                      # Apply
 
 ### mise gix Panic
 
-Mise's gitoxide (gix) can panic with certain git configurations:
+Some enterprise provisioning tools write `^refs/heads/*` negative-glob fetch
+refspecs into `/opt/homebrew/etc/gitconfig`. Valid git syntax, but rejected
+by every Rust-based git implementation (gix, gitoxide, jj), which panics
+tools like mise:
 
 ```
 Message: remote was just created and must be visible in config: Find(RefSpec { ... NegativeGlobPattern ... })
 ```
 
-Fix: disable gix in mise config (`~/.config/mise/config.toml`):
+Permanent fix (applied on work machines automatically):
+`home/.chezmoiscripts/run_after_install-058-fix-system-gitconfig-refspec.sh.tmpl`
+strips the refspec and registers a `managedconfig.optout` entry — a
+convention some provisioning tools honour to skip re-managing specific keys.
+
+Fallback workaround for other Rust git consumers: disable gix in mise
+(`~/.config/mise/config.toml`):
 
 ```toml
 [settings]
 gix = false
 ```
 
-Alternative: `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise <command>`
+Last-resort override: `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise <command>`
 
 ## Non-Interactive Execution
 
