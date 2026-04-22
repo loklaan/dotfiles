@@ -108,6 +108,7 @@ main() {
        "jetbrains-toolbox"
        "kap"
        "logitune"
+       "mcpproxy"
        "notion"
        "private-internet-access"
        "qlcolorcode"
@@ -128,8 +129,14 @@ main() {
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
+  {{ $taps := list
+       "smart-mcp-proxy/mcpproxy" -}}
+
   # Brew managed programs/libraries
   run_quiet brew bundle --file=/dev/stdin <<EOF
+{{ range ($taps | sortAlpha | uniq) -}}
+tap {{ . | quote }}
+{{ end -}}
 {{ range ($brews | sortAlpha | uniq) -}}
 brew {{ . | quote }}
 {{ end -}}
