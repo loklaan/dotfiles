@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-056-mcpproxy-launchd.sh
+#/
+#/ Description:
+#/   Manages the mcpproxy-go daemon. On macOS, cleans up legacy launchd
+#/   agents and opens the native MCPProxy.app (Homebrew cask). On Linux,
+#/   enables and (re)starts the systemd user unit. Verifies the service
+#/   is responding on port 18321.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+start_darwin() {
+  local domain="gui/$(id -u)"
+
+  info "▶ mcpproxy (macOS)"
+
+  # Unload legacy launchd agents (replaced by native MCPProxy.app)
+  local label
+  for label in io.mcpproxy.serve io.mcpproxy.tray; do
+    if launchctl print "${domain}/${label}" >/dev/null 2>&1; then
+      launchctl bootout "${domain}/${label}" 2>/dev/null || true
+      info "╍ unloaded legacy ${label}"
+    fi
+    rm -f "${HOME}/Library/LaunchAgents/${label}.plist"
+  done
+
+  # Open MCPProxy.app if installed (idempotent — noop if already running)
+  local app="/Applications/mcpproxy.app"
+  if [ -d "$app" ]; then
+    open -a "$app"
+    info "╍ opened MCPProxy.app"
+  else
+    warning "╍ MCPProxy.app not found (install via: brew install --cask mcpproxy)"
+    return 0
+  fi
+}
+
+start_linux() {
+  info "▶ mcpproxy (Linux)"
+
+  # Activate mise so the mcpproxy shim is on PATH
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v mcpproxy >/dev/null 2>&1; then
+    warning "╍ mcpproxy not found, skipping (install via: mise install)"
+    return 0
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user enable mcpproxy.service
+
+  if systemctl --user is-active --quiet mcpproxy.service; then
+    systemctl --user restart mcpproxy.service
+    info "╍ restarted mcpproxy.service"
+  else
+    systemctl --user start mcpproxy.service
+    info "╍ started mcpproxy.service"
+  fi
+
+  sleep 2
+  if curl -sf http://127.0.0.1:18321/ -o /dev/null 2>/dev/null; then
+    info "╍ mcpproxy responding on port 18321"
+  else
+    warning "╍ mcpproxy may not be ready yet (port 18321 not responding)"
+  fi
+}
+
+main() {
+  parse_args "$@"
+
+  case "$(uname -s)" in
+    Darwin) start_darwin ;;
+    Linux)  start_linux ;;
+    *)
+      warning "▶ mcpproxy daemon"
+      warning "╍ unsupported OS: $(uname -s), skipping"
+      return 0
+      ;;
+  esac
+}
+
+main "$@"
