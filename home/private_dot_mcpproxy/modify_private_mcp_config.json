@@ -103,5 +103,6 @@
 {{- $config = $config | setValueAtPath "tool_response_limit" 20000 -}}
 {{- $config = $config | setValueAtPath "mcpServers" $mergedServers -}}
 {{- $config = $config | setValueAtPath "routing_mode" "retrieve_tools" -}}
+{{- $config = $config | setValueAtPath "telemetry.enabled" false -}}
 
 {{ $config | toPrettyJson }}
