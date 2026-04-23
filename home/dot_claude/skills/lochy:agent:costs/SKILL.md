@@ -37,5 +37,5 @@ The script uses published Anthropic API pricing. When new models ship, update th
 | Model | Input | Output | Cache Write | Cache Read |
 |-------|-------|--------|-------------|------------|
 | Sonnet 4.6 | $3/M | $15/M | $3.75/M | $0.30/M |
-| Opus 4.6 | $15/M | $75/M | $18.75/M | $1.50/M |
+| Opus 4.7 | $15/M | $75/M | $18.75/M | $1.50/M |
 | Haiku 4.5 | $0.80/M | $4/M | $1.00/M | $0.08/M |
