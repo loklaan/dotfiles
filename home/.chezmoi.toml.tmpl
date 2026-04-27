@@ -1,6 +1,10 @@
 {{- $email := promptStringOnce . "email" "Email for you" -}}
 {{- $emailWork := promptStringOnce . "emailWork" "Email for Canva" -}}
 {{- $signingKey := promptStringOnce . "signingKey" "Your commit-signing key (e.g. public ssh/gpg key)" -}}
+{{- $privateSkillsRepo := promptStringOnce . "privateSkillsRepo" "Private skills repo (or empty)" -}}
+{{- $npmWorkRegistry := promptStringOnce . "npmWorkRegistry" "Work npm registry (or empty)" -}}
+{{- $openCodeWorkPlugin := promptStringOnce . "openCodeWorkPlugin" "OpenCode work plugin (or empty)" -}}
+{{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
 
 [data]
   email = {{ $email | quote }}
@@ -12,10 +16,10 @@
   bwsIdGithubAuthToken = "13a3305b-0c71-411c-89e3-b37c016033b5"
   bwsIdContext7ApiKey = "607b390d-a45d-40a3-af41-b42b004d6a90"
   bwsIdExaApiKey = "5db599ed-4498-4f0a-b18d-b42b004cc9ac"
-  privateSkillsRepo = {{ get . "privateSkillsRepo" | default "" | quote }}
-  npmWorkRegistry = {{ get . "npmWorkRegistry" | default "" | quote }}
-  openCodeWorkPlugin = {{ get . "openCodeWorkPlugin" | default "" | quote }}
-  jetbrainsLicenseServer = {{ get . "jetbrainsLicenseServer" | default "" | quote }}
+  privateSkillsRepo = {{ $privateSkillsRepo | quote }}
+  npmWorkRegistry = {{ $npmWorkRegistry | quote }}
+  openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
+  jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
 
 # Session logging hooks
 [hooks.apply.pre]
@@ -65,7 +69,7 @@ fi
 
 # Pre-flight checks for required tools
 PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
-[ -f "$PREFLIGHT" ] && source "$PREFLIGHT"
+[ -f "$PREFLIGHT" ] && source "$PREFLIGHT" || true
 ''']
 [hooks.apply.post]
   command = "bash"
@@ -128,7 +132,7 @@ fi
 
 # Pre-flight checks for required tools
 PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
-[ -f "$PREFLIGHT" ] && source "$PREFLIGHT"
+[ -f "$PREFLIGHT" ] && source "$PREFLIGHT" || true
 ''']
 
 [hooks.update.post]
