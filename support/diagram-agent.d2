@@ -1,11 +1,11 @@
 direction: right
 
-claude-code.shape: rectangle
-claude-code.style.3d: true
-claude-code: |md
-  ## Claude Code
+agents.shape: rectangle
+agents.style.3d: true
+agents: |md
+  ## Code Agents
 
-  Primary code agent for all repos.
+  Shared rules and skills across Claude Code, OpenCode, and Codex.
 |
 
 rules: {
@@ -65,8 +65,8 @@ skills: {
   }
 }
 
-claude-code -> rules
-claude-code -> skills
+agents -> rules
+agents -> skills
 
 rules.coding -> skills.env.coding: {
   style.stroke-dash: 3

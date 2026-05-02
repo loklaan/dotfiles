@@ -108,7 +108,7 @@ home/
 
 ## Code Agent Adoption
 
-Claude Code is the primary code agent, extended with [Agent Skills](https://agentskills.io) managed by chezmoi. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port to OpenCode and Codex.
+Claude Code, OpenCode, and Codex share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`, `~/.codex/`) symlinking into it. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
 
 <p align="center">
   <picture>
