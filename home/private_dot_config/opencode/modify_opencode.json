@@ -4,9 +4,9 @@
 {{- /* Load MCP servers from template */ -}}
 {{- $mcpServers := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
 
-{{- /* Configure instructions to reference shared Claude rules and project rules directories */ -}}
+{{- /* Configure instructions to reference shared agent rules and project rules directories */ -}}
 {{- $instructions := list
-      (printf "%s/.claude/rules/coding-system-prompts.md" .chezmoi.homeDir)
+      (printf "%s/.agents/rules/coding-system-prompts.md" .chezmoi.homeDir)
       "AGENTS.md"
       "CLAUDE.md"
       ".claude/rules/*.md"
