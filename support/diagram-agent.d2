@@ -12,8 +12,8 @@ rules: {
   label: Rules
   style.multiple: true
 
-  coding
   prompt-output
+  coding
 }
 
 skills: {
@@ -41,7 +41,6 @@ skills: {
     writing
     prompts
     compress
-    handoff
   }
 
   agent: {
@@ -56,7 +55,19 @@ skills: {
     pm
     tmux-panes
   }
+
+  checkpoints: {
+    label: Checkpoints
+    challenge
+    sweep
+    patch
+    handoff
+  }
 }
 
 claude-code -> rules
 claude-code -> skills
+
+rules.coding -> skills.env.coding: {
+  style.stroke-dash: 3
+}
