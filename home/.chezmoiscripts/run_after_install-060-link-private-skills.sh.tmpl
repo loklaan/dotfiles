@@ -16,10 +16,10 @@ setup_session_logging "$(basename "$0")"
 #/   run_after_install-060-link-private-skills.sh
 #/
 #/ Description:
-#/   Symlinks private Claude skills from the staging directory into
-#/   ~/.claude/skills/. The staging directory is populated by a chezmoi
-#/   git-repo external. Each subdirectory containing a SKILL.md is
-#/   linked as a sibling of the public skills managed by chezmoi source.
+#/   Symlinks private skills from the staging directory into ~/.agents/skills/.
+#/   The staging directory is populated by a chezmoi git-repo external. Each
+#/   subdirectory containing a SKILL.md is linked as a sibling of the public
+#/   skills managed by chezmoi source.
 #/
 #/   Runs at priority 060, before the skill-packing script at 070.
 #/
@@ -28,7 +28,7 @@ setup_session_logging "$(basename "$0")"
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 STAGING_DIR="${HOME}/.local/share/private-claude-skills"
-SKILLS_DIR="${HOME}/.claude/skills"
+SKILLS_DIR="${HOME}/.agents/skills"
 
 parse_args() {
   while [ "$#" -gt 0 ]; do

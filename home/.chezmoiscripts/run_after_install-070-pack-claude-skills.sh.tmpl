@@ -41,7 +41,7 @@ setup_session_logging "$(basename "$0")"
 #/   replaced with abbreviations (e.g. 'claude' → 'cc').
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-SKILLS_DIR="${HOME}/.claude/skills"
+SKILLS_DIR="${HOME}/.agents/skills"
 OUTPUT_DIR="${HOME}/.cache/claude-skill-packs"
 MANIFEST_FILE="${OUTPUT_DIR}/.skill-hashes"
 
