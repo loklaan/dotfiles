@@ -25,7 +25,7 @@ Sessions are retained for ~30 days before automatic purge.
 ## Report
 
 ```bash
-python3 ~/.claude/skills/lochy:agent:costs/references/cost-report.py
+python3 ~/.agents/skills/lochy:agent:costs/references/cost-report.py
 ```
 
 Display the full output to the user without summarising.
