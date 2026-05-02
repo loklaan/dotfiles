@@ -15,6 +15,10 @@ TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
 readonly LOG_FILE="${TMPDIR}/$(basename "$0").$(date +"%Y%m%d_%H%M%S").log"
 
 #/ Usage: ./install.test.sh
+#/
+#/ STATUS: INACTIVE / DRIFTED — not maintained; likely fails against current state.
+#/         Kept for reference and future revival. Not part of the PR loop.
+#/
 #/ Description: Runs an end-to-end installation test for the dotfiles repository.
 #/              Verification occurs in a Docker container.
 #/
