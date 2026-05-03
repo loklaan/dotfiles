@@ -1,0 +1,177 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "rich",
+#   "transformers",
+#   "torch",
+#   "hf_transfer",
+# ]
+# ///
+"""Transcribe audio/video with any HuggingFace ASR model, grouped into fixed-duration chunks.
+
+Invoked directly as `transcribe ...` — the shebang hands off to `uv run --script`,
+which reads the PEP 723 header above and provisions an isolated, cached venv on
+first run. Subsequent runs are instant (uv cache hit).
+"""
+import argparse
+import os
+import warnings
+
+# Enable faster downloader with byte-level progress. Requires `hf_transfer`,
+# declared in the PEP 723 header above so it's always present.
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+warnings.filterwarnings("ignore")
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from transformers import pipeline
+
+
+console = Console()
+
+
+def group_words(words, target_seconds):
+    """Group word-level chunks into buckets of ~target_seconds."""
+    buckets = []
+    current_words = []
+    start = None
+    last_end = None
+
+    for w in words:
+        ws, we = w["timestamp"]
+        if ws is None or we is None:
+            continue
+        if start is None:
+            start = ws
+        current_words.append(w["text"])
+        last_end = we
+        if we - start >= target_seconds:
+            buckets.append((start, we, "".join(current_words).strip()))
+            current_words = []
+            start = None
+
+    if current_words and start is not None:
+        buckets.append((start, last_end, "".join(current_words).strip()))
+
+    return buckets
+
+
+def step(symbol, color, message):
+    """Print a left-aligned step line in the clack style."""
+    console.print(f"[{color}]{symbol}[/{color}]  {message}")
+
+
+def bar():
+    """Print the connecting vertical bar between steps."""
+    console.print("[dim]│[/dim]")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Transcribe audio/video with a HuggingFace ASR model.",
+        epilog=(
+            "Examples:\n"
+            "  transcribe -m openai/whisper-large-v3 -i video.mp4\n"
+            "  transcribe -m distil-whisper/distil-large-v3 -i video.mp4 -c 5\n"
+            "  transcribe -m openai/whisper-large-v3 -i video.mp4 -d mps -l en"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("-m", "--model", required=True,
+                        help="HF model id, e.g. openai/whisper-large-v3")
+    parser.add_argument("-i", "--input", required=True,
+                        help="Path to audio or video file")
+    parser.add_argument("-c", "--chunk-seconds", type=float, default=3.0,
+                        help="Target duration of each output chunk in seconds (default: 3.0)")
+    parser.add_argument("-d", "--device", default="cpu",
+                        choices=["cpu", "mps", "cuda"],
+                        help="Compute device (default: cpu)")
+    parser.add_argument("-l", "--language", default="en",
+                        help="Source language code (default: en). Use 'auto' to let the model detect.")
+    parser.add_argument("--no-timestamps", action="store_true",
+                        help="Print plain text only, no timestamps")
+    args = parser.parse_args()
+
+    # Intro panel
+    console.print()
+    console.print(Panel.fit(
+        Text("transcribe", style="bold cyan"),
+        border_style="cyan",
+        padding=(0, 2),
+    ))
+    bar()
+
+    # Config summary
+    step("◆", "cyan", f"[bold]model[/bold]    [dim]{args.model}[/dim]")
+    bar()
+    step("◆", "cyan", f"[bold]input[/bold]    [dim]{args.input}[/dim]")
+    bar()
+    step("◆", "cyan",
+         f"[bold]chunks[/bold]   [dim]{args.chunk_seconds}s · "
+         f"device={args.device} · lang={args.language}[/dim]")
+    bar()
+
+    # Load model.
+    # On first run, hf_transfer prints byte-level download progress to stderr —
+    # this sits above our rich output, which is fine.
+    with console.status("[cyan]Loading model...[/cyan]", spinner="dots"):
+        asr = pipeline(
+            "automatic-speech-recognition",
+            model=args.model,
+            chunk_length_s=30,
+            device=args.device,
+        )
+    step("◇", "green", "Model loaded")
+    bar()
+
+    # Transcribe
+    generate_kwargs = {"task": "transcribe"}
+    if args.language != "auto":
+        generate_kwargs["language"] = args.language
+
+    with console.status("[cyan]Transcribing...[/cyan]", spinner="dots"):
+        result = asr(
+            args.input,
+            return_timestamps="word",
+            generate_kwargs=generate_kwargs,
+        )
+    step("◇", "green", "Transcription complete")
+    bar()
+
+    if args.no_timestamps:
+        step("◆", "cyan", "[bold]Transcript[/bold]")
+        bar()
+        step("└", "green", "[bold green]Done[/bold green]")
+        console.print()
+        console.print("[dim]─── transcript ───[/dim]")
+        console.print()
+        print(result["text"].strip())
+        console.print()
+        return
+
+    buckets = group_words(result["chunks"], args.chunk_seconds)
+
+    # Styled, timestamped block
+    step("◆", "cyan", f"[bold]Transcript[/bold]  [dim]({len(buckets)} chunks)[/dim]")
+    bar()
+    for start, end, text in buckets:
+        ts = f"[dim cyan]{start:6.2f} → {end:6.2f}[/dim cyan]"
+        console.print(f"[dim]│[/dim]  {ts}  {text}")
+    bar()
+    step("└", "green", "[bold green]Done[/bold green]")
+
+    # Plain copy-paste block
+    console.print()
+    console.print("[dim]─── transcript ───[/dim]")
+    console.print()
+    for _, _, text in buckets:
+        # Use plain print so no rich markup contaminates the copyable output.
+        print(text)
+    console.print()
+
+
+if __name__ == "__main__":
+    main()
