@@ -89,7 +89,7 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 
 Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates read the token and call `bitwardenSecrets` to resolve secret values during `chezmoi apply`.
 
-See `.claude/rules/secrets-architecture.md` for detailed architecture documentation.
+See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
 
 ## Structure
 

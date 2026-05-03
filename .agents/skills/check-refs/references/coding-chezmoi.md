@@ -5,8 +5,8 @@ references and the actual codebase. This check targets **referential content**
 (file listings, variable names, script examples) — not prose accuracy or
 convention completeness.
 
-The skill lives at `.claude/skills/coding-chezmoi/` with reference files in
-`.claude/skills/coding-chezmoi/references/`.
+The skill lives at `.agents/skills/coding-chezmoi/` with reference files in
+`.agents/skills/coding-chezmoi/references/`.
 
 ## Checks
 

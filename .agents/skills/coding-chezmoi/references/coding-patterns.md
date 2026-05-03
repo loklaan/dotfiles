@@ -132,7 +132,7 @@ All templates that consume secrets use this guard pattern. When the token file i
 {{- end }}
 ```
 
-See `.claude/rules/secrets-architecture.md` for the full secrets model.
+See `.agents/rules/secrets-architecture.md` for the full secrets model.
 
 ## Common Template Patterns
 
