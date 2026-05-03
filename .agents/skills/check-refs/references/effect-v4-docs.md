@@ -4,14 +4,14 @@
 
 | File | Purpose |
 |------|---------|
-| `home/dot_claude/exact_skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl` | Chezmoiexternal config with allowlist |
-| `home/dot_claude/exact_skills/lochy:coding:effect-ts/references/v4-patterns.md` | Reference file pointing to extracted docs |
+| `home/dot_agents/skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl` | Chezmoiexternal config with allowlist |
+| `home/dot_agents/skills/lochy:coding:effect-ts/references/v4-patterns.md` | Reference file pointing to extracted docs |
 
 ## Upstream
 
 - **Repo**: `Effect-TS/effect-smol`
 - **Branch**: `main`
-- **Target path**: `~/.claude/skills/lochy:coding:effect-ts/v4-docs/`
+- **Target path**: `~/.agents/skills/lochy:coding:effect-ts/v4-docs/`
 
 ## Check 1: Allowlist vs upstream
 
@@ -21,7 +21,7 @@ exists in the latest `main` of effect-smol.
 ### Procedure
 
 1. Read the chezmoiexternal TOML at
-   `home/dot_claude/exact_skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl`.
+   `home/dot_agents/skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl`.
    Extract the `include` list.
 
 2. Fetch the full repo tree:
@@ -54,27 +54,27 @@ the on-disk content is fully represented in v4-patterns.md.
 
 ### Procedure
 
-1. Read `home/dot_claude/exact_skills/lochy:coding:effect-ts/references/v4-patterns.md`
+1. Read `home/dot_agents/skills/lochy:coding:effect-ts/references/v4-patterns.md`
    from the chezmoi source directory.
 
 2. Extract all file/directory paths mentioned. They use the prefix
-   `~/.claude/skills/lochy:coding:effect-ts/v4-docs/`.
+   `~/.agents/skills/lochy:coding:effect-ts/v4-docs/`.
 
 3. For each referenced path, check it exists on disk. Report broken references.
 
 4. Scan these directories on disk and compare against what v4-patterns.md lists:
 
-   **Topic directories** (`~/.claude/skills/lochy:coding:effect-ts/v4-docs/ai-docs/src/`):
+   **Topic directories** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/ai-docs/src/`):
    - List all immediate subdirectories
    - Compare against the topic list in v4-patterns.md under "Annotated examples"
    - Report any directories present on disk but not listed
 
-   **Module deep dives** (`~/.claude/skills/lochy:coding:effect-ts/v4-docs/packages/effect/`):
+   **Module deep dives** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/packages/effect/`):
    - List all `.md` files
    - Compare against the files listed under "Module deep dives"
    - Report any files present on disk but not listed
 
-   **Migration guides** (`~/.claude/skills/lochy:coding:effect-ts/v4-docs/migration/`):
+   **Migration guides** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/migration/`):
    - List all `.md` files
    - Compare against the files mentioned under "Migrating from v3"
    - Report any files present on disk but not mentioned
