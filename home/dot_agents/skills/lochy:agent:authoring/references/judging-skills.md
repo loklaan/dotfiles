@@ -2,7 +2,7 @@
 
 ## The Knowledge Delta Formula
 
-**Good Skill = Expert-only Knowledge - What Claude Already Knows**
+**Good Skill = Expert-only Knowledge - What the Agent Already Knows**
 
 A Skill is a knowledge externalization mechanism, not a tutorial. It captures what an
 expert knows that the model does not. The distinction matters:
@@ -16,14 +16,14 @@ Every line in a Skill falls into one of three categories:
 
 | Type | Definition | Target | Action |
 |------|-----------|--------|--------|
-| **Expert** | Knowledge Claude lacks without the Skill | >70% | Keep |
-| **Activation** | Claude knows this but benefits from a brief reminder | <20% | Trim to minimal triggers |
-| **Redundant** | Claude already knows this well | <10% | Delete — wastes tokens |
+| **Expert** | Knowledge the agent lacks without the Skill | >70% | Keep |
+| **Activation** | The agent knows this but benefits from a brief reminder | <20% | Trim to minimal triggers |
+| **Redundant** | The agent already knows this well | <10% | Delete — wastes tokens |
 
 The meta-question: "Would an expert in this domain say: 'Yes, this captures knowledge
 that took me years to learn'?"
 
-**MVS lane:** When a skill's profile is >80% Activation, it is an MVS (Minimal Viable Skill). The meta-question shifts: "Does this phrasing activate the right behavior that Claude already knows how to perform?" Score MVS skills using the per-dimension notes below.
+**MVS lane:** When a skill's profile is >80% Activation, it is an MVS (Minimal Viable Skill). The meta-question shifts: "Does this phrasing activate the right behavior that the agent already knows how to perform?" Score MVS skills using the per-dimension notes below.
 
 
 ## Evaluation Dimensions
@@ -55,7 +55,7 @@ Does it transfer thinking patterns AND domain-specific procedures?
 | 4-7 | Generic procedures (open, read, write, save) that any developer knows |
 | 0-3 | No discernible mental model or procedural knowledge |
 
-**MVS:** Score on whether the sentence successfully directs Claude's existing thinking patterns. Absence of explicit frameworks is expected, not a deficiency.
+**MVS:** Score on whether the sentence successfully directs the agent's existing thinking patterns. Absence of explicit frameworks is expected, not a deficiency.
 
 ### 3. Anti-Pattern Quality (15 pts)
 
@@ -68,7 +68,7 @@ Has effective NEVER lists?
 | 4-7 | Vague warnings: "avoid errors", "be careful with edge cases" |
 | 0-3 | No anti-patterns or entirely generic ones |
 
-**MVS:** Typically unnecessary—MVS activates competence Claude already has, including knowing what NOT to do. Score low only if the skill omits prohibitions Claude would genuinely violate.
+**MVS:** Typically unnecessary—MVS activates competence the agent already has, including knowing what NOT to do. Score low only if the skill omits prohibitions the agent would genuinely violate.
 
 ### 4. Description Quality (15 pts)
 
@@ -81,7 +81,7 @@ THE MOST CRITICAL FIELD. Poor description = Skill never activates.
 | 4-7 | Generic description; could apply to many Skills |
 | 0-3 | Missing, single sentence, or describes implementation not purpose |
 
-Red flags: workflow summaries in the description (Claude may follow the description instead
+Red flags: workflow summaries in the description (the agent may follow the description instead
 of loading the full skill body), passive voice, no "Use when:" triggers.
 
 ### 5. Progressive Disclosure (15 pts)
@@ -152,7 +152,7 @@ Can an agent actually use this Skill to do work?
 ## Common Failure Patterns
 
 ### 1. The Tutorial
-- **Symptom:** Explains basics Claude already knows
+- **Symptom:** Explains basics the agent already knows
 - **Root cause:** Author wrote for humans, not for a model
 - **Fix:** Delete all "What is X" content; keep only expert-level trade-offs and decisions
 
@@ -182,7 +182,7 @@ Can an agent actually use this Skill to do work?
 - **Fix:** Rewrite description with domain vocabulary and trigger scenarios
 
 ### 6b. The Workflow Description
-- **Symptom:** Claude follows a shallow version of the procedure without loading the skill body
+- **Symptom:** The agent follows a shallow version of the procedure without loading the skill body
 - **Root cause:** Description summarizes the step-by-step workflow instead of stating triggers
 - **Fix:** Remove procedure summary from description; keep only WHAT it does and WHEN to use it
 
@@ -202,9 +202,9 @@ Can an agent actually use this Skill to do work?
 - **Fix:** Map each procedure to its risk level; adjust specificity accordingly
 
 ### 10. The Over-Structured Activation
-- **Symptom:** 150+ lines of frameworks and anti-patterns for something Claude already knows
+- **Symptom:** 150+ lines of frameworks and anti-patterns for something the agent already knows
 - **Root cause:** Applied structured-lane density to an activation-dominant skill
-- **Fix:** Strip to 1-2 sentences. If Claude executes correctly with just a directive, the structure was scaffolding, not knowledge
+- **Fix:** Strip to 1-2 sentences. If the agent executes correctly with just a directive, the structure was scaffolding, not knowledge
 
 
 ## Evaluation Protocol
@@ -212,9 +212,9 @@ Can an agent actually use this Skill to do work?
 ### Step 1: Knowledge Delta Scan
 
 Read through the entire Skill. Mark each section:
-- `[E]` Expert — Claude does not know this without the Skill
-- `[A]` Activation — Brief reminder of something Claude mostly knows
-- `[R]` Redundant — Claude knows this well; delete candidate
+- `[E]` Expert — the agent does not know this without the Skill
+- `[A]` Activation — Brief reminder of something the agent mostly knows
+- `[R]` Redundant — the agent knows this well; delete candidate
 
 Calculate the ratio. If Expert < 50%, the Skill needs major revision before detailed
 scoring is worthwhile.

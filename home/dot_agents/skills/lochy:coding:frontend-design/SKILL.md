@@ -75,4 +75,4 @@ Vary between light and dark themes, different fonts, different aesthetics across
 
 ## Isolated Prompting
 
-When building systems that call Claude for frontend generation, you can isolate specific design dimensions or lock in a theme for more targeted control. Read [references/isolated-prompting.md](references/isolated-prompting.md) when composing system prompts that use this skill programmatically.
+When building systems that call an LLM for frontend generation, you can isolate specific design dimensions or lock in a theme for more targeted control. Read [references/isolated-prompting.md](references/isolated-prompting.md) when composing system prompts that use this skill programmatically.

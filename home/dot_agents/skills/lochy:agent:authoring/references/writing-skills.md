@@ -2,25 +2,25 @@
 
 ## What are Agent Skills?
 
-Agent Skills are modular capabilities that extend Claude's functionality in Claude Code. They package expertise into discoverable, reusable components through organized folders containing:
+Agent Skills are modular capabilities that extend a code agent's functionality. They package expertise into discoverable, reusable components through organized folders containing:
 - A `SKILL.md` file with instructions
 - Optional supporting files in a `references/` subdirectory
 
-**Key distinction**: By default, skills are both **model-invoked** (Claude autonomously loads them when relevant) and **user-invoked** (via `/skill-name`). Use `disable-model-invocation: true` or `user-invocable: false` to restrict to one mode.
+**Key distinction**: By default, skills are both **model-invoked** (the agent autonomously loads them when relevant) and **user-invoked** (via `/skill-name`). Use `disable-model-invocation: true` or `user-invocable: false` to restrict to one mode.
 
 ## Design Principles
 
 ### Knowledge Delta
 
-A good skill contains only what Claude does not already know. Before writing any content, classify each piece of information:
+A good skill contains only what the agent does not already know. Before writing any content, classify each piece of information:
 
-- **Expert**—Claude genuinely does not know this (project-specific APIs, internal conventions, proprietary workflows). Must keep.
-- **Activation**—Claude knows this but may not think to apply it unprompted (e.g., "always run linting after generation"). Keep if brief.
-- **Redundant**—Claude definitely knows this (how to write a for-loop, what JSON is). Delete—it wastes tokens.
+- **Expert**—the agent genuinely does not know this (project-specific APIs, internal conventions, proprietary workflows). Must keep.
+- **Activation**—the agent knows this but may not think to apply it unprompted (e.g., "always run linting after generation"). Keep if brief.
+- **Redundant**—the agent definitely knows this (how to write a for-loop, what JSON is). Delete—it wastes tokens.
 
-Target composition: >70% Expert, <20% Activation, <10% Redundant. If most of your skill reads like a tutorial, you are paying tokens to tell Claude things it already knows.
+Target composition: >70% Expert, <20% Activation, <10% Redundant. If most of your skill reads like a tutorial, you are paying tokens to tell the agent things it already knows.
 
-**Exception—activation-dominant skills.** When a skill is >80% Activation, that is not a smell to fix—it means the skill belongs in the **MVS (Minimal Viable Skill)** lane: 1-2 sentences where every word pulls weight. Claude already has the competence; the skill's job is to direct it. The craft shifts from structuring knowledge to choosing the right phrasing. See `lochy:env:devil` (4 lines of body, zero structure, pure activation) and `lochy:sweep` (one sentence) for living examples.
+**Exception—activation-dominant skills.** When a skill is >80% Activation, that is not a smell to fix—it means the skill belongs in the **MVS (Minimal Viable Skill)** lane: 1-2 sentences where every word pulls weight. The agent already has the competence; the skill's job is to direct it. The craft shifts from structuring knowledge to choosing the right phrasing. See `lochy:env:devil` (4 lines of body, zero structure, pure activation) and `lochy:sweep` (one sentence) for living examples.
 
 ### Skill Types
 
@@ -43,8 +43,8 @@ The context window is a shared resource across the system prompt, conversation h
 - SKILL.md should be under **500 lines / ~5,000 tokens**. If it exceeds this, move heavy content to `references/`.
 - **One excellent code example beats many mediocre ones.** Choose the most representative scenario and show it well rather than covering every edge case.
 - Use cross-references (`see references/api.md`) instead of repeating content that lives elsewhere.
-- Do not duplicate what Claude already knows. A skill about error handling should not explain what try/catch does.
-- **MVS floor:** When Claude already has the competence, the most efficient skill is the shortest one that activates the right mode. Adding structure to an MVS skill wastes tokens on scaffolding with zero knowledge delta.
+- Do not duplicate what the agent already knows. A skill about error handling should not explain what try/catch does.
+- **MVS floor:** When the agent already has the competence, the most efficient skill is the shortest one that activates the right mode. Adding structure to an MVS skill wastes tokens on scaffolding with zero knowledge delta.
 
 ### Specificity Matching
 
@@ -104,7 +104,7 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 - Claude Code extends this to also accept colons, which enables the namespace hierarchy shown above
 - The `name` field has a max of 64 characters and must match the directory name
 - Top-level skills (no domain) are fine when the skill doesn't fit a broader category
-- The `meta:` domain is reserved for skills about Claude Code extensibility itself
+- The `meta:` domain is reserved for skills about agent extensibility itself
 
 ### Directory Structure
 
@@ -127,9 +127,9 @@ lochy:writing/
     └── doc-coauthoring.md
 ```
 
-**Convention:** All supporting files go in subdirectories—never loose alongside SKILL.md. The Agent Skills standard defines `references/`, `scripts/`, and `assets/` as optional directories. Claude Code allows any directory structure. This guide uses `references/` for documentation files.
+**Convention:** All supporting files go in subdirectories—never loose alongside SKILL.md. The Agent Skills standard defines `references/`, `scripts/`, and `assets/` as optional directories. Your code agent may allow other directory names. This guide uses `references/` for documentation files.
 
-**Do not include** extraneous files like README.md, CHANGELOG.md, INSTALLATION_GUIDE.md, or QUICK_REFERENCE.md. Skills are for an AI agent to do a job—not for user-facing documentation, setup procedures, or process history. These should exist within the skill's parent project directory!
+**Do not include** extraneous files like README.md, CHANGELOG.md, INSTALLATION_GUIDE.md, or QUICK_REFERENCE.md. Skills are for an agent to do a job—not for user-facing documentation, setup procedures, or process history. These should exist within the skill's parent project directory!
 
 ### SKILL.md Format
 
@@ -148,7 +148,7 @@ description: >-
 # Error Messages
 
 ## Instructions
-Guidance for Claude goes here.
+Guidance for the agent goes here.
 ```
 
 #### Frontmatter Fields
@@ -157,9 +157,9 @@ Guidance for Claude goes here.
 |-------|----------|-------------|
 | `name` | Yes* | Unique identifier matching directory name (max 64 chars, lowercase + hyphens/colons) |
 | `description` | Yes* | What it does and when to use it (max 1024 chars) |
-| `disable-model-invocation` | No | `true` to prevent Claude from auto-loading. Default: `false` |
+| `disable-model-invocation` | No | `true` to prevent the agent from auto-loading. Default: `false` |
 | `user-invocable` | No | `false` to hide from `/` menu. Default: `true` |
-| `allowed-tools` | No | Tools Claude can use without permission when skill is active |
+| `allowed-tools` | No | Tools the agent can use without permission when skill is active |
 | `model` | No | Model to use when this skill is active |
 | `context` | No | `fork` to run in a forked subagent context |
 | `agent` | No | Subagent type to use when `context: fork` is set |
@@ -175,7 +175,7 @@ Full field specs: [Agent Skills standard](https://agentskills.io/specification) 
 
 #### Writing the Description
 
-The description is the **most critical field** in a skill. It is the ONLY thing Claude sees before deciding whether to load the skill body. A weak description means the skill never gets used, no matter how good the content is.
+The description is the **most critical field** in a skill. It is the ONLY thing the agent sees before deciding whether to load the skill body. A weak description means the skill never gets used, no matter how good the content is.
 
 **Three questions every description must answer:**
 
@@ -188,15 +188,15 @@ The description is the **most critical field** in a skill. It is the ONLY thing 
 - **Paragraph 1:** What you can do—capabilities and key features in active voice.
 - **Paragraph 2:** "Use when:" followed by triggering scenarios and discoverable keywords.
 
-**CRITICAL anti-pattern—workflow summaries in descriptions.** When a description summarizes the skill's step-by-step workflow, Claude may follow the description INSTEAD of reading the full skill body. This produces shallow, incomplete results. Descriptions must contain triggering conditions only, never procedure summaries.
+**CRITICAL anti-pattern—workflow summaries in descriptions.** When a description summarizes the skill's step-by-step workflow, the agent may follow the description INSTEAD of reading the full skill body. This produces shallow, incomplete results. Descriptions must contain triggering conditions only, never procedure summaries.
 
 **Bad descriptions and why:**
 
 ```yaml
-# Too vague—Claude cannot match this to any specific request
+# Too vague—the agent cannot match this to any specific request
 description: Helps with documents
 
-# Workflow summary—Claude will follow these steps without loading the skill
+# Workflow summary—the agent will follow these steps without loading the skill
 description: >-
   First reads the schema file, then generates TypeScript types,
   then creates mapper functions, then runs validation tests.
@@ -310,7 +310,7 @@ caches compiled schemas, so mutations silently produce stale
 validation results. Clone before modifying.
 ```
 
-Every anti-pattern follows: **NEVER** [specific action] **because** [concrete consequence]. Vague warnings ("be careful with edge cases") add no value. The content should be domain-specific knowledge Claude lacks—not textbook best practices it already knows.
+Every anti-pattern follows: **NEVER** [specific action] **because** [concrete consequence]. Vague warnings ("be careful with edge cases") add no value. The content should be domain-specific knowledge the agent lacks—not textbook best practices it already knows.
 
 **Output templates**—provide format examples when consistent output matters. Use strict templates (`ALWAYS use this structure`) for fragile formats, flexible templates (`sensible default, use your judgment`) when adaptation is useful.
 
@@ -384,7 +384,7 @@ By default, skills have access to all tools. Only add `allowed-tools` when you n
 ```yaml
 ---
 name: lochy:agent:authoring
-description: Guidelines for creating custom rules, custom skills, and custom subagents for Claude.
+description: Guidelines for creating custom rules, custom skills, and custom subagents for code agents.
 allowed-tools: Read
 ---
 ```
@@ -408,11 +408,11 @@ Use restrictions when:
 
 The vague version matches almost nothing specifically. The improved version matches "shell script", "shellcheck", "bash", "set -e", and several error scenarios.
 
-### 2. Duplicating Claude's knowledge
+### 2. Duplicating the agent's knowledge
 
 **Before:** A 200-line section explaining what TypeScript generics are, how Promise works, and the basics of async/await—followed by 30 lines of project-specific type patterns.
 
-**After:** Just the 30 lines of project-specific type patterns. Claude already knows TypeScript.
+**After:** Just the 30 lines of project-specific type patterns. The agent already knows TypeScript.
 
 ### 3. Missing error keywords in description
 
@@ -422,7 +422,7 @@ If users will encounter specific error messages that this skill addresses, inclu
 
 **Before:** `ALWAYS use exactly this 47-step process for every component`
 
-**After:** Core steps that must be followed, with explicit flexibility where judgment applies. Over-constraining causes Claude to follow steps mechanically when the situation calls for adaptation.
+**After:** Core steps that must be followed, with explicit flexibility where judgment applies. Over-constraining causes the agent to follow steps mechanically when the situation calls for adaptation.
 
 ### 5. No production validation
 
@@ -432,15 +432,15 @@ A skill that was never tested against real tasks will have blind spots. Write th
 
 Two tests validate that a skill works in practice:
 
-**Discovery test:** Ask Claude a question that should trigger the skill, without mentioning the skill by name. Does Claude propose loading it? If not, the description needs better trigger terms.
+**Discovery test:** Ask the agent a question that should trigger the skill, without mentioning the skill by name. Does the agent propose loading it? If not, the description needs better trigger terms.
 
 ```
 # For a shell scripting skill, try:
 "Help me write a bash script that processes CSV files"
-# Claude should discover and propose the skill autonomously
+# The agent should discover and propose the skill autonomously
 ```
 
-**Functionality test:** Use the skill on a real task—not a toy example. After completion, ask: did you need to provide additional information that the skill should have contained? Did Claude do anything the skill should have prevented? Revise accordingly.
+**Functionality test:** Use the skill on a real task—not a toy example. After completion, ask: did you need to provide additional information that the skill should have contained? Did the agent do anything the skill should have prevented? Revise accordingly.
 
 **Trace analysis:** Read execution traces, not just final outputs. If the agent wastes turns on unproductive steps, common causes are: instructions too vague (agent tries several approaches before finding one that works), instructions that don't apply to the current task (agent follows them anyway), or too many options without a clear default.
 
@@ -451,7 +451,7 @@ Before considering a skill complete, verify every item:
 - [ ] Name is lowercase with colons/hyphens, max 64 chars, matches directory name
 - [ ] Description is 250-350 chars with "Use when:" triggers (no workflow summaries)
 - [ ] SKILL.md is under 500 lines / ~5,000 tokens
-- [ ] >70% of content is expert knowledge Claude does not already have (Structured)
+- [ ] >70% of content is expert knowledge the agent does not already have (Structured)
 - [ ] Includes thinking frameworks ("Before X, ask yourself..."), not just procedures (Structured: Techniques and Patterns)
 - [ ] Anti-patterns are specific with concrete consequences (NEVER X because Y) (Structured: Techniques and Patterns)
 - [ ] All code examples are tested and working (Structured)
@@ -460,7 +460,7 @@ Before considering a skill complete, verify every item:
 - [ ] Supporting files only in `references/` for heavy content or tool documentation
 - [ ] Hub-and-spoke pattern used if SKILL.md would otherwise exceed 500 lines
 - [ ] No extraneous files (README, CHANGELOG, etc.)
-- [ ] MVS skills: body is ≤10 lines that activate Claude's existing competence
+- [ ] MVS skills: body is ≤10 lines that activate the agent's existing competence
 - [ ] MVS skills: description + body together produce correct behavior without additional structure
 
 ## Namespace Registry
@@ -482,7 +482,7 @@ When a domain grows to contain multiple related skills, use a single skill with 
        - Documentation & long-form (references/doc-coauthoring.md) -->
 
 <!-- lochy:env namespace
-     Cognitive environment skills that set up *how* Claude should
+     Cognitive environment skills that set up *how* the agent should
      think for a session. Each is a distinct frame: coding
      (conventions and practices), architecture (system design),
      devil (devil's advocate / edge-case surfacing). New env
@@ -503,7 +503,7 @@ When a domain grows to contain multiple related skills, use a single skill with 
      lochy:pm:topic-name skills. -->
 
 <!-- lochy:meta namespace
-     Reserved for skills about Claude Code extensibility itself.
+     Reserved for skills about agent extensibility itself.
      Currently unused—authoring skills live under lochy:agent:. -->
 
 ## Completion Summary
