@@ -1,10 +1,10 @@
 ---
 name: lochy:agent:authoring
-description: Guidelines for authoring custom rules, skills, and subagents for Claude Code. Use when creating, improving, or reviewing agent extensions.
+description: Guidelines for authoring custom rules, skills, and subagents for code agents (Claude Code, OpenCode, Codex). Use when creating, improving, or reviewing agent extensions.
 allowed-tools: Read
 ---
 
-# Authoring Claude Rules, Skills, or Subagents
+# Authoring Agent Rules, Skills, or Subagents
 
 ## Rules
 

@@ -5,7 +5,7 @@ technical specs, decision docs, and similar structured content.
 
 ## Stage 1: Context Gathering
 
-Close the gap between what the user knows and what Claude knows.
+Close the gap between what the user knows and what you know.
 
 1. **Meta-context questions** — ask upfront:
    - What type of document? (spec, decision doc, proposal, RFC, etc.)

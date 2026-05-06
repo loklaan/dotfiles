@@ -1,6 +1,6 @@
 # Isolated Prompting
 
-The full aesthetics guidance works well for general use, but you can isolate specific dimensions (typography, color, motion) or lock in a theme for more targeted control. This gives faster generation and more predictable outputs when composing system prompts that call Claude programmatically.
+The full aesthetics guidance works well for general use, but you can isolate specific dimensions (typography, color, motion) or lock in a theme for more targeted control. This gives faster generation and more predictable outputs when composing system prompts that call an LLM programmatically.
 
 ## Single-Dimension Isolation
 
@@ -33,7 +33,7 @@ State your choice before coding.
 </use_interesting_fonts>
 """
 
-generate_html_with_claude(BASE_SYSTEM_PROMPT + "\n\n" + TYPOGRAPHY_PROMPT, user_prompt)
+generate_html_with_llm(BASE_SYSTEM_PROMPT + "\n\n" + TYPOGRAPHY_PROMPT, user_prompt)
 ```
 
 ## Theme Constraint
@@ -52,7 +52,7 @@ Always design with Solarpunk aesthetic:
 </always_use_solarpunk_theme>
 """
 
-generate_html_with_claude(
+generate_html_with_llm(
     BASE_SYSTEM_PROMPT + "\n\n" + SOLARPUNK_THEME,
     "Create a dashboard for renewable energy monitoring",
 )
@@ -64,4 +64,4 @@ generate_html_with_claude(
 - **Theme lock** — You need visual consistency across a batch of generations. A theme prompt prevents drift between outputs.
 - **Full prompt** — Default for one-off or exploratory work where you want maximum creative range.
 
-Claude defaults to safe, generic choices without explicit direction. Targeting specific dimensions, referencing concrete inspirations, and explicitly naming defaults to avoid reliably produces more distinctive output.
+LLMs default to safe, generic choices without explicit direction. Targeting specific dimensions, referencing concrete inspirations, and explicitly naming defaults to avoid reliably produces more distinctive output.
