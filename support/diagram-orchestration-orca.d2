@@ -1,0 +1,38 @@
+direction: right
+
+macbook: {
+  shape: rectangle
+  style.3d: true
+  label: "MacBook (darwin)"
+
+  orca: {
+    shape: rectangle
+    label: |md
+      **orca** _(brew cask)_
+
+      Desktop SSH client.
+      Discovers Coder hosts via `~/.ssh/config`.
+    |
+  }
+}
+
+coderbox: {
+  shape: rectangle
+  style.3d: true
+  style.multiple: true
+  label: "Coder Box (linux)"
+
+  remote-opencode: {
+    shape: rectangle
+    style.multiple: true
+    label: |md
+      **opencode** _(per project)_
+
+      HTTP+SSE on `:4096`.
+    |
+  }
+}
+
+macbook.orca -> coderbox.remote-opencode: "ssh coder.<ws>\n+ orca relay protocol" {
+  style.stroke-dash: 3
+}

@@ -1,0 +1,50 @@
+direction: right
+
+macbook: {
+  shape: rectangle
+  style.3d: true
+  label: "MacBook (darwin)"
+
+  paseo-client: {
+    shape: rectangle
+    label: |md
+      **paseo** _(brew cask)_
+
+      Desktop / mobile / web client.
+      Adds daemons by URL.
+    |
+  }
+}
+
+coderbox: {
+  shape: rectangle
+  style.3d: true
+  style.multiple: true
+  label: "Coder Box (linux)"
+
+  paseo-daemon: {
+    shape: rectangle
+    label: |md
+      **paseo daemon** _(systemd-user)_
+
+      Opt-in via chezmoi prompt.
+      HTTP+WS on `:6767`.
+    |
+  }
+
+  remote-opencode: {
+    shape: rectangle
+    style.multiple: true
+    label: |md
+      **opencode** _(per project)_
+
+      HTTP+SSE on `:4096`.
+    |
+  }
+
+  paseo-daemon -> remote-opencode: "manages\nlocal sessions"
+}
+
+macbook.paseo-client -> coderbox.paseo-daemon: "coder port-forward\n6767 → :6767" {
+  style.stroke-dash: 3
+}

@@ -117,6 +117,12 @@ Claude Code, OpenCode, and Codex share a vendor-neutral set of rules and [Agent 
   </picture>
 </p>
 
+## Agent Orchestration
+
+Agent sessions running across machines (macbooks + Coder dev boxes) are reached via three complementary tools: **orca** (desktop SSH client, auto-discovers Coder hosts from `~/.ssh/config`), **paseo** (daemon-per-host on Coder boxes via systemd, desktop/mobile clients on macbooks), and **openchamber** (1:1 deep UI for a single local opencode). The paseo daemon is opt-in per machine via a chezmoi prompt — default off, real opt-out by reapplying with the flag flipped.
+
+See `.agents/rules/agent-orchestration.md` for the network model, process model, server model, and operating runbook.
+
 ## Code Projects
 
 The `~/dev/` directory organizes projects by ownership and purpose:
