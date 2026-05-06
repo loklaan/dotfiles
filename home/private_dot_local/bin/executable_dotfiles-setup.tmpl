@@ -43,6 +43,13 @@ check_bws_token() {
   [ -f "$BWS_TOKEN_PATH" ]
 }
 
+{{- if and (eq .chezmoi.os "linux") .paseoDaemon }}
+
+check_paseo_daemon() {
+  systemctl --user is-active --quiet paseo-daemon.service
+}
+{{- end }}
+
 {{- if ne "" .emailWork }}
 
 check_gh_auth() {
@@ -107,6 +114,18 @@ print_status() {
     missing_list=$(printf '%s, ' "${work_missing[@]}")
     missing_list="${missing_list%, }"
     _print white dim "    Missing: ${missing_list}"
+  fi
+{{- end }}
+{{- if and (eq .chezmoi.os "linux") .paseoDaemon }}
+
+  echo ""
+
+  if check_paseo_daemon; then
+    _print green "  ✓ paseo daemon"
+    _print white dim "    Listening on :6767 — port-forward from a macbook to connect"
+  else
+    _print yellow "  ✗ paseo daemon"
+    _print white dim "    Opted in but not running. Try: systemctl --user status paseo-daemon"
   fi
 {{- end }}
 

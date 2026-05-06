@@ -5,6 +5,7 @@
 {{- $npmWorkRegistry := promptStringOnce . "npmWorkRegistry" "Work npm registry (or empty)" -}}
 {{- $openCodeWorkPlugin := promptStringOnce . "openCodeWorkPlugin" "OpenCode work plugin (or empty)" -}}
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
+{{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 
 [data]
   email = {{ $email | quote }}
@@ -20,6 +21,7 @@
   npmWorkRegistry = {{ $npmWorkRegistry | quote }}
   openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
+  paseoDaemon = {{ $paseoDaemon }}
 
 # Session logging hooks
 [hooks.apply.pre]
