@@ -110,6 +110,7 @@ main() {
        "logitune"
        "mcpproxy"
        "notion"
+       "paseo"
        "private-internet-access"
        "qlcolorcode"
        "qlimagesize"
@@ -121,6 +122,7 @@ main() {
        "rocket"
        "slack"
        "spotify"
+       "stablyai/orca/orca"
        "sublime-text"
        "visual-studio-code"
        "vlc" -}}
@@ -130,7 +132,8 @@ main() {
   fi
 
   {{ $taps := list
-       "smart-mcp-proxy/mcpproxy" -}}
+       "smart-mcp-proxy/mcpproxy"
+       "stablyai/orca" -}}
 
   # Brew managed programs/libraries
   run_quiet brew bundle --file=/dev/stdin <<EOF
