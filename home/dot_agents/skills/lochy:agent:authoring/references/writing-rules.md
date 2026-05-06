@@ -20,7 +20,7 @@ All `.md` files in `.claude/rules/` are automatically loaded as project memory, 
 
 ## Path-Specific Rules
 
-Rules can be scoped to specific files using YAML frontmatter with the `paths` field. These conditional rules only apply when Claude is working with files matching the specified patterns:
+Rules can be scoped to specific files using YAML frontmatter with the `paths` field. These conditional rules only apply when the agent is working with files matching the specified patterns:
 
 ```yaml
 ---

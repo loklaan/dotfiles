@@ -164,7 +164,7 @@ tmux list-panes -F "#{pane_index}: #{pane_start_command}"
 
 Match against the commands you spawned. NEVER send `C-c` to a pane whose
 start command is `zsh -l` or similar — those are the user's shells (and
-likely where Claude Code is running).
+likely where the agent itself is running).
 
 ```bash
 # Safe: kill only panes you verified
@@ -180,8 +180,8 @@ cannot see the output, interact with keybindings, or open URLs the
 process prints.
 
 NEVER send `C-c` or `kill-pane` without first listing panes and confirming
-the target is one you created. Killing the user's shell kills their Claude
-Code session.
+the target is one you created. Killing the user's shell kills the agent
+session running inside it.
 
 NEVER assume port numbers are correct after launch. Dev servers auto-increment
 on collision. Always read pane output to get the actual URL.
