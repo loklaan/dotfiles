@@ -1,0 +1,15 @@
+{{- if and (eq .chezmoi.os "linux") .paseoDaemon -}}
+[Unit]
+Description=Paseo daemon (AI coding agent orchestration)
+After=network.target
+
+[Service]
+ExecStart={{ .chezmoi.homeDir }}/.local/share/mise/shims/paseo daemon start --listen 0.0.0.0:6767 --foreground
+Environment=HOME={{ .chezmoi.homeDir }}
+Environment=PATH={{ .chezmoi.homeDir }}/.local/share/mise/shims:{{ .chezmoi.homeDir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+{{- end }}

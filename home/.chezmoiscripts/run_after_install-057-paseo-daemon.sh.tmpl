@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-057-paseo-daemon.sh
+#/
+#/ Description:
+#/   Manages the paseo daemon on Linux machines (typically Coder workspaces).
+#/   When `paseoDaemon` data variable is true, enables and (re)starts the
+#/   systemd user unit. When false, disables and stops the unit so it does
+#/   not auto-start. macOS machines run paseo as a desktop app (Paseo.app)
+#/   and skip this script.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+{{ if eq .chezmoi.os "linux" -}}
+manage_linux() {
+  local enabled={{ .paseoDaemon }}
+
+  if [ "$enabled" != "true" ]; then
+    info "▶ paseo daemon (Linux, opt-out)"
+
+    # Stop and disable if it's running, so an explicit opt-out actually sticks.
+    if systemctl --user list-unit-files paseo-daemon.service >/dev/null 2>&1; then
+      if systemctl --user is-active --quiet paseo-daemon.service; then
+        systemctl --user stop paseo-daemon.service
+        info "╍ stopped paseo-daemon.service"
+      fi
+      if systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
+        systemctl --user disable paseo-daemon.service >/dev/null
+        info "╍ disabled paseo-daemon.service"
+      fi
+    fi
+    return 0
+  fi
+
+  info "▶ paseo daemon (Linux, opt-in)"
+
+  # Activate mise so the paseo shim is on PATH
+  eval "$(mise activate bash --quiet)"
+
+  if ! command -v paseo >/dev/null 2>&1; then
+    warning "╍ paseo not found, skipping (install via: mise install)"
+    return 0
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user enable paseo-daemon.service
+
+  if systemctl --user is-active --quiet paseo-daemon.service; then
+    systemctl --user restart paseo-daemon.service
+    info "╍ restarted paseo-daemon.service"
+  else
+    systemctl --user start paseo-daemon.service
+    info "╍ started paseo-daemon.service"
+  fi
+
+  sleep 2
+  if curl -sf http://127.0.0.1:6767/ -o /dev/null 2>/dev/null; then
+    info "╍ paseo daemon responding on port 6767"
+  else
+    warning "╍ paseo daemon may not be ready yet (port 6767 not responding)"
+  fi
+}
+{{- end }}
+
+main() {
+  parse_args "$@"
+
+  case "$(uname -s)" in
+{{ if eq .chezmoi.os "linux" -}}
+    Linux)  manage_linux ;;
+{{- end }}
+    Darwin)
+      # macOS uses the Paseo.app desktop client; no daemon managed by chezmoi.
+      return 0
+      ;;
+    *)
+      warning "▶ paseo daemon"
+      warning "╍ unsupported OS: $(uname -s), skipping"
+      return 0
+      ;;
+  esac
+}
+
+main "$@"
