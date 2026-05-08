@@ -1,16 +1,19 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* Resolve API keys from Bitwarden Secrets */ -}}
+{{- /* Resolve API keys from Bitwarden Secrets via the soft-fail wrapper so
+       per-secret access gaps (a machine account without Context7 access,
+       for example) produce an empty key rather than aborting apply. */ -}}
 {{- $bwsToken := "" -}}
 {{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
 {{-   $bwsToken = include .bwsTokenPath | trim -}}
 {{- end -}}
+{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
 {{- $context7Key := "" -}}
 {{- $exaKey := "" -}}
-{{- if ne "" $bwsToken -}}
-{{-   $context7Key = (bitwardenSecrets .bwsIdContext7ApiKey $bwsToken).value -}}
-{{-   $exaKey = (bitwardenSecrets .bwsIdExaApiKey $bwsToken).value -}}
+{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey $bwsToken | trim -}}
+{{-   $exaKey = output $bwsGet .bwsIdExaApiKey $bwsToken | trim -}}
 {{- end -}}
 
 {{- /* Build our managed server list */ -}}

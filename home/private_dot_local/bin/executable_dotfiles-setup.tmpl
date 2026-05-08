@@ -20,16 +20,28 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
+#/   --probe-bws: Probe BWS token validity and exit with status:
+#/                  0 = valid, 1 = missing/unconfigured, 2 = invalid
+#/                Used by chezmoi-preflight.sh as a cheap liveness check.
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 readonly BWS_TOKEN_PATH="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
+# Canary secret used to probe BWS token validity. Any live secret ID works;
+# GitHub auth token is present on all machines (personal and work) in this
+# repo's Bitwarden project.
+readonly BWS_PROBE_SECRET_ID="{{ .bwsIdGithubAuthToken }}"
 
 parse_args() {
+  PROBE_ONLY="false"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --help)
         usage
         exit 0
+        ;;
+      --probe-bws)
+        PROBE_ONLY="true"
+        shift
         ;;
       *)
         usage
@@ -39,8 +51,56 @@ parse_args() {
   done
 }
 
+# Probes the BWS token by fetching a canary secret. Returns:
+#   0  — token file present AND server accepts it (ok)
+#   1  — token file missing (missing)
+#   2  — token file present AND server rejects it (invalid)
+# On state 2, echoes a short classification of the cause to stdout:
+#   "auth"      — server returned invalid_client / 401 / 403 (rotate token)
+#   "unknown"   — other failure (network, server 5xx, bws crash)
 check_bws_token() {
-  [ -f "$BWS_TOKEN_PATH" ]
+  if [ ! -f "$BWS_TOKEN_PATH" ]; then
+    return 1
+  fi
+
+  if ! command -v bws >/dev/null 2>&1; then
+    # No bws binary — can't probe, treat as "missing" (templates skip anyway).
+    return 1
+  fi
+
+  local token
+  token=$(tr -d '[:space:]' <"$BWS_TOKEN_PATH")
+  if [ -z "$token" ]; then
+    return 1
+  fi
+
+  local probe_stderr
+  probe_stderr=$(bws secret get "$BWS_PROBE_SECRET_ID" \
+    --access-token "$token" 2>&1 >/dev/null)
+  local rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    return 0
+  fi
+
+  # Classify the failure so we can give actionable guidance rather than
+  # blaming the user for transient BWS/network issues.
+  #
+  # "auth" covers any token-is-the-problem case:
+  #   - invalid_client        (server rejects the token)
+  #   - 401/403               (auth or authorization failure)
+  #   - not in a valid format (malformed token, e.g. truncated/corrupted)
+  #   - decoding base64       (same — the token string itself is broken)
+  # All of these mean "rotate the token" — either the one in Bitwarden is
+  # dead, or the local copy is corrupted. Either way, user action is the
+  # same as a server-side rejection.
+  if printf '%s' "$probe_stderr" \
+    | grep -qE 'invalid_client|401 Unauthorized|403 Forbidden|not in a valid format|Error decoding base64'; then
+    echo "auth"
+  else
+    echo "unknown"
+  fi
+  return 2
 }
 
 {{- if and (eq .chezmoi.os "linux") .paseoDaemon }}
@@ -73,7 +133,7 @@ check_work_config() {
 {{- end }}
 
 print_status() {
-  local has_bws="$1"
+  local bws_state="$1"
 {{- if ne "" .emailWork }}
   local has_gh_auth="$2"
   shift 2
@@ -84,13 +144,24 @@ print_status() {
   _print white bold "  Dotfiles Configuration Status"
   echo ""
 
-  if [ "$has_bws" = "true" ]; then
-    _print green "  ✓ BWS token"
-    _print white dim "    Secrets available (npm auth, GitHub tokens)"
-  else
-    _print yellow "  ✗ BWS token"
-    _print white dim "    Secrets not available (npm auth, GitHub tokens)"
-  fi
+  case "$bws_state" in
+    ok)
+      _print green "  ✓ BWS token"
+      _print white dim "    Secrets available (npm auth, GitHub tokens)"
+      ;;
+    invalid-auth)
+      _print red "  ✗ BWS token (invalid — server rejected)"
+      _print white dim "    Token has expired or been revoked in Bitwarden"
+      ;;
+    invalid-unknown)
+      _print red "  ✗ BWS token (unreachable)"
+      _print white dim "    bws probe failed — network, server, or binary issue"
+      ;;
+    missing)
+      _print yellow "  ✗ BWS token (not configured)"
+      _print white dim "    Secrets not available (npm auth, GitHub tokens)"
+      ;;
+  esac
 {{- if ne "" .emailWork }}
 
   echo ""
@@ -133,15 +204,15 @@ print_status() {
 }
 
 print_instructions() {
-  local has_bws="$1"
+  local bws_state="$1"
 {{- if ne "" .emailWork }}
   local has_gh_auth="$2"
   shift 2
   local -a work_missing=("$@")
 
-  if [ "$has_bws" = "true" ] && [ "$has_gh_auth" = "true" ] && [ "${#work_missing[@]}" -eq 0 ]; then
+  if [ "$bws_state" = "ok" ] && [ "$has_gh_auth" = "true" ] && [ "${#work_missing[@]}" -eq 0 ]; then
 {{- else }}
-  if [ "$has_bws" = "true" ]; then
+  if [ "$bws_state" = "ok" ]; then
 {{- end }}
     _print green bold "  All configuration complete!"
     echo ""
@@ -153,19 +224,54 @@ print_instructions() {
 
   local step=1
 
-  if [ "$has_bws" = "false" ]; then
-    _print white bold "  ${step}. Configure BWS access token"
-    echo ""
-    _print white dim "     Get a token from Bitwarden Secrets Manager:"
-    _print white dim "     https://vault.bitwarden.com → Secrets Manager → Machine accounts"
-    echo ""
-    _print white dim "     Then save it:"
-    echo "     mkdir -p ~/.config/chezmoi/secrets"
-    echo "     echo 'YOUR_TOKEN' > ${BWS_TOKEN_PATH}"
-    echo "     chmod 600 ${BWS_TOKEN_PATH}"
-    echo ""
-    step=$((step + 1))
-  fi
+  case "$bws_state" in
+    invalid-auth)
+      _print white bold "  ${step}. Rotate BWS access token (currently rejected by server)"
+      echo ""
+      _print white dim "     This machine's token has expired or been revoked."
+      _print white dim "     Host: $(hostname)"
+      echo ""
+      _print white dim "     Steps:"
+      _print white dim "       a. Open Bitwarden Secrets Manager:"
+      _print white dim "          https://vault.bitwarden.com → Secrets Manager → Machine accounts"
+      _print white dim "       b. Find the machine account for this host and rotate its access token"
+      _print white dim "       c. Save the new token:"
+      echo "          echo 'YOUR_NEW_TOKEN' > ${BWS_TOKEN_PATH}"
+      echo "          chmod 600 ${BWS_TOKEN_PATH}"
+      echo ""
+      _print white dim "     Or, to proceed without secrets (empty values), remove the token:"
+      echo "          rm ${BWS_TOKEN_PATH}"
+      echo ""
+      step=$((step + 1))
+      ;;
+    invalid-unknown)
+      _print white bold "  ${step}. Investigate BWS probe failure"
+      echo ""
+      _print white dim "     bws could not validate the token. Possible causes:"
+      _print white dim "       • Network connectivity to vault.bitwarden.com"
+      _print white dim "       • BWS service outage"
+      _print white dim "       • bws binary missing / broken install"
+      echo ""
+      _print white dim "     Reproduce manually to see the raw error:"
+      echo "       bws secret get ${BWS_PROBE_SECRET_ID} \\"
+      echo "         --access-token \"\$(cat ${BWS_TOKEN_PATH})\""
+      echo ""
+      step=$((step + 1))
+      ;;
+    missing)
+      _print white bold "  ${step}. Configure BWS access token"
+      echo ""
+      _print white dim "     Get a token from Bitwarden Secrets Manager:"
+      _print white dim "     https://vault.bitwarden.com → Secrets Manager → Machine accounts"
+      echo ""
+      _print white dim "     Then save it:"
+      echo "     mkdir -p ~/.config/chezmoi/secrets"
+      echo "     echo 'YOUR_TOKEN' > ${BWS_TOKEN_PATH}"
+      echo "     chmod 600 ${BWS_TOKEN_PATH}"
+      echo ""
+      step=$((step + 1))
+      ;;
+  esac
 {{- if ne "" .emailWork }}
 
   if [ "$has_gh_auth" = "false" ]; then
@@ -203,14 +309,38 @@ print_instructions() {
 main() {
   parse_args "$@"
 
-  local has_bws="false"
+  # --probe-bws: headless mode for chezmoi-preflight.sh.
+  # Exit code conveys state; no output (BASH_LOGGING_QUIET already
+  # handled by session logging infra). Emits nothing on stdout/stderr
+  # so the preflight hook stays noise-free on the happy path.
+  if [ "$PROBE_ONLY" = "true" ]; then
+    set +e
+    check_bws_token >/dev/null 2>&1
+    exit $?
+  fi
+
+  local bws_state
+  local bws_probe_cause=""
 {{- if ne "" .emailWork }}
   local has_gh_auth="false"
 {{- end }}
 
-  if check_bws_token; then
-    has_bws="true"
-  fi
+  # Capture the classification stdout while still acting on the exit code.
+  set +e
+  bws_probe_cause=$(check_bws_token)
+  local bws_rc=$?
+  set -e
+  case "$bws_rc" in
+    0) bws_state="ok" ;;
+    1) bws_state="missing" ;;
+    2)
+      if [ "$bws_probe_cause" = "auth" ]; then
+        bws_state="invalid-auth"
+      else
+        bws_state="invalid-unknown"
+      fi
+      ;;
+  esac
 {{- if ne "" .emailWork }}
 
   if check_gh_auth; then
@@ -220,11 +350,11 @@ main() {
   local -a work_missing
   mapfile -t work_missing < <(check_work_config)
 
-  print_status "$has_bws" "$has_gh_auth" "${work_missing[@]}"
-  print_instructions "$has_bws" "$has_gh_auth" "${work_missing[@]}"
+  print_status "$bws_state" "$has_gh_auth" "${work_missing[@]}"
+  print_instructions "$bws_state" "$has_gh_auth" "${work_missing[@]}"
 {{- else }}
-  print_status "$has_bws"
-  print_instructions "$has_bws"
+  print_status "$bws_state"
+  print_instructions "$bws_state"
 {{- end }}
 }
 
