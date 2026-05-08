@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# bws-get-or-empty — fetch a Bitwarden Secrets value, or empty on any error.
+#
+# Usage: bws-get-or-empty <secret-id> <access-token>
+#
+# Contract:
+#   - On success: prints the .value field of the secret to stdout, exit 0.
+#   - On ANY failure (missing args, missing bws/jq, revoked token, no project
+#     access to the secret, network error, malformed JSON): prints nothing,
+#     exit 0.
+#
+# The always-exit-0 contract is load-bearing: this is called from chezmoi
+# templates via `output`, which aborts template execution on non-zero exit.
+# Callsites rely on empty output to fall through to their "no secret
+# available" branch, matching the behaviour of a missing token file.
+#
+# This is the per-secret soft-fail companion to chezmoi-preflight.sh, which
+# hard-fails on a token that's fundamentally dead (wrong across all secrets).
+# This wrapper handles the orthogonal case of per-secret access gaps —
+# e.g. a machine account whose project scope doesn't include every secret.
+
+set -uo pipefail
+
+IFS=$'\n\t'
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  exit 0
+fi
+
+SECRET_ID="$1"
+ACCESS_TOKEN="${2:-}"
+
+if [ -z "$SECRET_ID" ] || [ -z "$ACCESS_TOKEN" ]; then
+  exit 0
+fi
+
+if ! command -v bws >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  exit 0
+fi
+
+OUTPUT=$(bws secret get "$SECRET_ID" --access-token "$ACCESS_TOKEN" 2>/dev/null) || exit 0
+
+printf '%s' "$OUTPUT" | jq -r '.value // ""' 2>/dev/null || true
+
+exit 0
