@@ -4,3 +4,6 @@
     exact = false
     stripComponents = 2
     include = ["*/.opencode", "*/.opencode/**"]
+    # Opencode auto-loads every file in plugin/, so .d.ts type declarations
+    # crash plugin loading. Exclude them from the extracted archive.
+    exclude = ["**/*.d.ts"]
