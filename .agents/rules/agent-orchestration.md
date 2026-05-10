@@ -137,15 +137,40 @@ If new patterns ever require a static inventory, prefer:
 2. Bitwarden Secrets storing JSON, parsed via `fromJson` in templates
 3. Keep dynamic discovery wherever possible
 
+## Plugin Versioning
+
+opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux) with its own `package.json` + `bun.lock`. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. So mise upgrading `npm:oh-my-openagent` does not, on its own, update opencode's runtime plugin.
+
+The bridge:
+
+```
+mise (npm:oh-my-openagent = "latest")
+  └─ mise upgrade -y → resolves to current latest, surfaces in `mise outdated`
+                         │
+chezmoi apply          │
+  └─ run_onchange_after_install-067-sync-omo-plugin.sh.tmpl
+       reads `mise current 'npm:oh-my-openagent'` (e.g. "4.0.0")
+       content-hash on that version → reruns when it changes
+       calls `bun add oh-my-openagent@<version> --save` in opencode's cache
+```
+
+`mise upgrade -y && chezmoi apply` is the omo upgrade ritual. Run them paired on every machine.
+
+Verify with `oh-my-openagent doctor` — should report `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`. If `Loaded X · latest Y` mismatch appears, the bridge hasn't run.
+
+The bridge primitives (`tcs_require_bun`, `tcs_get_opencode_cache`, `tcs_bun_sync`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to bridge mise → another tool's private cache can be one-liners.
+
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` prompt and data variable |
-| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; openchamber via npm always |
+| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; openchamber via npm always; pins omo via `npm:oh-my-openagent` |
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |
 | `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
+| `home/.chezmoiscripts/run_onchange_after_install-067-sync-omo-plugin.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache |
+| `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_dotfiles-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
 | `home/private_dot_local/bin/executable_cw` | Coder workspace SSH wrapper (used to port-forward `:6767`) |
 
@@ -171,3 +196,10 @@ If new patterns ever require a static inventory, prefer:
 **Status anywhere:**
 - `dotfiles-setup` shows the daemon line on opt-in Linux machines.
 - On macbooks the line is absent (correct — no daemon there).
+
+**Upgrade omo plugin (every machine):**
+1. `mise upgrade -y` → mise reports if there's a new version, resolves it.
+2. `chezmoi apply` → run_onchange_067 detects the version change and runs `bun add` against opencode's cache.
+3. Verify: `oh-my-openagent doctor` → expect `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`.
+
+If the doctor reports `Loaded X · latest Y` after step 2, the bridge didn't run — check the chezmoi session log for `tool-cache-sync` warnings (most likely `bun not found` or `opencode not found`).
