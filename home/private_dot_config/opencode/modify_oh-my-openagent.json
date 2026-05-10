@@ -22,6 +22,15 @@
        mcpproxy-go, grep_app is not needed */ -}}
 {{- $config = $config | setValueAtPath "disabled_mcps" (list "context7" "websearch" "grep_app") -}}
 
+{{- /* Team Mode (oh-my-openagent v4.0.0+). Lead agent orchestrates a team
+       of category-specialised members in parallel via team_* tools. Off by
+       default upstream; this turns it on for our machines. tmux_visualization
+       stays off here — turn it on per-machine if you live in tmux. */ -}}
+{{- $config = $config | setValueAtPath "team_mode.enabled" true -}}
+{{- $config = $config | setValueAtPath "team_mode.tmux_visualization" false -}}
+{{- $config = $config | setValueAtPath "team_mode.max_parallel_members" 4 -}}
+{{- $config = $config | setValueAtPath "team_mode.max_members" 8 -}}
+
 {{- /* Model overrides for Bedrock-proxied providers (work machines only) */ -}}
 {{- if ne "" .emailWork -}}
 {{-   $config = $config | setValueAtPath "categories.unspecified-high.model" "amazon-bedrock/global.anthropic.claude-opus-4-7" -}}
