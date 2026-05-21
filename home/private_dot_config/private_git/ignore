@@ -15,9 +15,24 @@ done.commit
 # When you want some of your own files in a project
 .me
 
+# Personal scratchpads and notes
+**/.scratch/
+**/.scratchpad/
+**/.scratches/
+**/.notes/
+**/.tmp/
+**/TODO.local.md
+
 # Tool dependency management
 .mise.local.toml
+
+# Editor local state
+**/.history/
+**/.vscode/settings.local.json
 
 # LLM agents
 **/.claude/settings.local.json
 **/.claude/worktrees/
+**/.sisyphus/
+**/AGENTS.local.md
+**/.cursor/rules.local.md
