@@ -37,7 +37,7 @@
 {{-   $config = $config | setValueAtPath "categories.unspecified-low.model" "amazon-bedrock/global.anthropic.claude-sonnet-4-6" -}}
 {{-   $config = $config | setValueAtPath "categories.ultrabrain.model" "openai/gpt-5.5" -}}
 {{-   $config = $config | setValueAtPath "categories.deep.model" "openai/gpt-5.5" -}}
-{{-   $config = $config | setValueAtPath "categories.quick.model" "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0" -}}
+{{-   $config = $config | setValueAtPath "categories.quick.model" "google/gemini-3.5-flash" -}}
 {{-   $config = $config | setValueAtPath "categories.visual-engineering.model" "google/gemini-3.1-pro-preview" -}}
 {{-   $config = $config | setValueAtPath "categories.artistry.model" "google/gemini-3.1-pro-preview" -}}
 {{-   $config = $config | setValueAtPath "categories.writing.model" "google/gemini-3.5-flash" -}}
