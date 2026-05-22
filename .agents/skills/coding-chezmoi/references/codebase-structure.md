@@ -173,6 +173,8 @@ When adding commands, check if they can prompt and add the appropriate flag.
 
 `modify_opencode.json` uses a `whitelist` on the `amazon-bedrock` provider to control which models appear in the model picker. Without it, every model variant from models.dev is shown (bare, `us.`, `eu.`, `global.`, `au.` — often 4+ entries per model).
 
+> For routine model ID bumps (across this file and `modify_oh-my-openagent.json`), see `update-deps` § 7.
+
 ### Principles
 
 - **Anthropic models:** use `global.` prefixed inference profile IDs only. The `global.` prefix routes to all regions. Bare IDs (no prefix) are invalid on Bedrock and will error.

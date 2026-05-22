@@ -127,6 +127,40 @@ This is a `git-repo` external with `refreshPeriod = "168h"`.
    ```
 4. Record: whether a refresh is pending or the clone is up-to-date.
 
+### 7. opencode model pins
+
+**Files:** `home/private_dot_config/opencode/*.json` (chezmoi modify-templates
+that pin model IDs)
+
+Model IDs are provider-prefixed strings (e.g. `{provider}/{model}`) that
+opencode resolves against the [models.dev](https://models.dev) token database.
+Pinned IDs drift as providers ship new versions.
+
+**Procedure:**
+
+1. Grep the opencode config templates for pinned model IDs. Record each
+   pin's location (file + path/key) and the current ID.
+2. Fetch the models.dev catalogue as the source of truth:
+   ```
+   curl -fsSL https://models.dev/api.json
+   ```
+   Fall back to https://github.com/anomalyco/models.dev if the endpoint is down.
+3. For each pin, look up the latest ID in the same provider + family. Match
+   the existing channel (stable vs preview) unless the user wants to switch.
+4. Record: file, key, current ID, latest ID, behind (yes/no).
+
+**Note:** model IDs change format frequently (date suffixes, version numbers,
+preview tags) and provider prefixes or upstream org names occasionally get
+renamed (e.g. the catalogue repo moved from `sst/models.dev` to
+`anomalyco/models.dev`). Always verify against models.dev — never guess from
+memory.
+
+**Cross-file integrity:** when changing a Bedrock model ID, also check
+`home/private_dot_config/opencode/modify_opencode.json` — it whitelists which
+`amazon-bedrock` IDs appear in the model picker. A pin in
+`modify_oh-my-openagent.json` (or any other opencode config) that isn't in
+that whitelist will silently fail to surface. The two files must agree.
+
 ## Output
 
 Present a single markdown table grouped by source:
@@ -138,6 +172,7 @@ Present a single markdown table grouped by source:
 | zsh externals | oh-my-zsh | 7ea8a93 | abc1234 | behind |
 | mise | deno | 2.5.4 | 2.8.0 | behind |
 | brew | git | 2.47.0 | 2.48.1 | behind |
+| opencode model | categories.ultrabrain | {provider}/{old-id} | {provider}/{new-id} | behind |
 ...
 ```
 
@@ -152,5 +187,7 @@ Present a single markdown table grouped by source:
    - **Mise tools:** replace the version string.
    - **Brew/Linux packages:** no file edit needed (not version-pinned), but
      remove deprecated entries if the user agrees.
+   - **opencode model pins:** replace the ID string in place. Preserve
+     the provider prefix exactly as models.dev publishes it.
 3. Run `chezmoi apply --dry-run --verbose` to verify no breakage.
 4. Commit with a message like `update zsh plugins, mise tools, and nerd-fonts`.
