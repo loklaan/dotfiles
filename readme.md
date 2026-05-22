@@ -110,6 +110,8 @@ home/
 
 Claude Code, OpenCode, and Codex share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`, `~/.codex/`) symlinking into it. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
 
+> **Codex pending:** project-level skills in this repo (`.agents/skills/`) are currently surfaced to Claude Code and OpenCode only (via `.claude/skills` symlink). A `.codex/skills` symlink is not yet wired up.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="support/diagram-agent-dark.svg">
