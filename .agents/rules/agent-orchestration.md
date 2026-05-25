@@ -139,26 +139,64 @@ If new patterns ever require a static inventory, prefer:
 
 ## Plugin Versioning
 
-opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux) with its own `package.json` + `bun.lock`. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. So mise upgrading `npm:oh-my-openagent` does not, on its own, update opencode's runtime plugin.
+opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux) with its own `package.json` + `bun.lock`, managed by an embedded bun runtime compiled into the opencode binary. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. So mise upgrading `npm:oh-my-openagent`, or the depot npm registry publishing a newer `@canva/opencode-plugin-llmproxy`, does not on its own update opencode's runtime plugin. Without a bridge, plugins freeze at first-install version indefinitely.
 
-The bridge:
+### Why npm and not bun
+
+opencode's cache uses `bun.lock`, which suggests the bridge should also use bun. It shouldn't. The bun runtime is *embedded* inside the opencode binary (search `strings opencode | grep BunPlugin` to confirm) — it is not exposed as a separate CLI we can shell out to. Pinning a second bun in mise just to populate `node_modules/` would be redundant tooling that doubles up on what opencode already owns.
+
+Instead, the bridge writes to `node_modules/` via `npm install --no-save --no-package-lock`, using the npm that ships with the node already pinned in mise. The flags matter:
+
+- `--no-save` — leaves the cache's `package.json` untouched (opencode owns it)
+- `--no-package-lock` — does not generate `package-lock.json` (would conflict with `bun.lock`)
+
+opencode's embedded bun reconciles its own state from `node_modules/` on next startup. Mixed-tool lockfile concerns don't apply because npm never writes a lockfile in this mode.
+
+`opencode plugin <module>` exists as a first-class CLI command but doesn't fit the bridge use case: it mutates `~/.config/opencode/opencode.json` (which chezmoi owns) and updates `packages/<spec>/` rather than `node_modules/`, so opencode keeps loading the stale `node_modules/` version anyway. Use `npm install` directly.
+
+### The bridges
+
+Two plugins are bridged today:
 
 ```
-mise (npm:oh-my-openagent = "latest")
-  └─ mise upgrade -y → resolves to current latest, surfaces in `mise outdated`
-                         │
-chezmoi apply          │
-  └─ run_onchange_after_install-067-sync-omo-plugin.sh.tmpl
-       reads `mise current 'npm:oh-my-openagent'` (e.g. "4.0.0")
-       content-hash on that version → reruns when it changes
-       calls `bun add oh-my-openagent@<version> --save` in opencode's cache
+mise (npm:oh-my-openagent = "latest")        npm registry (depot, @canva scope)
+  └─ mise upgrade -y                            └─ npm view @canva/opencode-plugin-llmproxy version
+       resolves to current latest                    resolves to current latest
+                         │                                      │
+chezmoi apply            │                                      │
+  ├─ run_onchange_after_install-067-sync-omo-plugin.sh.tmpl     │
+  │    reads `mise current 'npm:oh-my-openagent'`               │
+  │    content-hash on version → reruns when it changes         │
+  │    runs `npm install --no-save --no-package-lock` in cache  │
+  │                                                             │
+  └─ run_onchange_after_install-068-sync-llmproxy-plugin.sh.tmpl
+       reads `npm view @canva/opencode-plugin-llmproxy version`
+       content-hash on version → reruns when it changes
+       runs `npm install --no-save --no-package-lock` in cache
 ```
 
-`mise upgrade -y && chezmoi apply` is the omo upgrade ritual. Run them paired on every machine.
+Different version-resolution sources reflect different ownership:
+
+- **omo** is mise-managed (it's a CLI we install with `mise install`), so the version comes from `mise current`.
+- **llmproxy** is purely an opencode plugin (no CLI), so the version comes from `npm view` against the depot registry where `@canva` is configured in `~/.npmrc`.
+
+Both flow through the same `tcs_npm_sync` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
+
+### Upgrade ritual
+
+`mise upgrade -y && chezmoi apply` upgrades both plugins in lock-step. Run them paired on every machine.
 
 Verify with `oh-my-openagent doctor` — should report `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`. If `Loaded X · latest Y` mismatch appears, the bridge hasn't run.
 
-The bridge primitives (`tcs_require_bun`, `tcs_get_opencode_cache`, `tcs_bun_sync`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to bridge mise → another tool's private cache can be one-liners.
+For llmproxy, verify by checking the version on disk:
+
+```bash
+jq -r .version ~/Library/Caches/opencode/node_modules/@canva/opencode-plugin-llmproxy/package.json
+```
+
+Compare against `npm view @canva/opencode-plugin-llmproxy version`. They should match.
+
+The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm_sync`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to bridge into another tool's private cache can be one-liners.
 
 ## Files
 
