@@ -1,12 +1,18 @@
 # shellcheck shell=bash
 # chezmoi-preflight.sh — pre-apply checks for chezmoi
 #
-# Sourced by chezmoi hooks (apply.pre, update.pre). Runs two checks:
+# Sourced by chezmoi hooks (apply.pre, update.pre). Runs three checks:
 #
-#   1. Missing binaries (non-fatal): warns if tools that templates depend on
-#      aren't installed. Templates are written to degrade gracefully.
+#   1. mise self-heal (non-fatal): re-renders the managed mise config and
+#      reconciles installed tools, so backend/version drift (e.g. legacy
+#      ubi:bitwarden/sdk vs current github:bitwarden/sdk) is corrected
+#      before any template renders. Without this, `chezmoi update` after
+#      a backend migration leaves stale tools on PATH.
 #
-#   2. BWS token health (non-fatal): probes the token via dotfiles-setup
+#   2. Missing binaries (non-fatal): warns if tools that templates depend
+#      on aren't installed. Templates are written to degrade gracefully.
+#
+#   3. BWS token health (non-fatal): probes the token via dotfiles-setup
 #      --probe-bws. Templates fetch secrets through bws-get-or-empty, which
 #      already falls through to empty on any failure, so a bad token won't
 #      crash apply. The preflight still surfaces a warning + a pointer to
@@ -17,8 +23,56 @@
 # that wires it into chezmoi apply.
 
 chezmoi_preflight() {
+  _chezmoi_preflight_sync_mise
   _chezmoi_preflight_tools
   _chezmoi_preflight_bws_token
+}
+
+# Re-render the managed mise config and reconcile installed tools. Runs
+# first so subsequent checks (and templates) see the correct binaries on
+# PATH after a backend migration or version bump.
+_chezmoi_preflight_sync_mise() {
+  # Prevent infinite recursion: the nested `chezmoi apply` below would
+  # re-trigger this hook. Guard with an env var.
+  [ "${CHEZMOI_PREFLIGHT_RUNNING:-}" = "1" ] && return 0
+  export CHEZMOI_PREFLIGHT_RUNNING=1
+
+  command -v chezmoi >/dev/null 2>&1 || return 0
+  command -v mise >/dev/null 2>&1 || return 0
+
+  local mise_config="${HOME}/.config/mise/config.toml"
+
+  # Render the managed mise config to disk first, so `mise install` below
+  # picks up version/backend migrations before any template renders.
+  if ! chezmoi apply --force "$mise_config" >/dev/null 2>&1; then
+    printf '\033[33m⚠ preflight: failed to apply managed mise config\033[0m\n' >&2
+    return 0
+  fi
+
+  # Remove the deprecated ubi:bitwarden/sdk install if a machine was
+  # bootstrapped before the github: migration. The managed config only
+  # references github:bitwarden/sdk, so the ubi: install is always dead
+  # weight once this hook has run.
+  if mise ls 2>/dev/null | grep -q '^ubi:bitwarden/sdk'; then
+    mise uninstall -a 'ubi:bitwarden/sdk' >/dev/null 2>&1 || true
+  fi
+
+  # Prune stale github:bitwarden/sdk versions — keep only the pinned one.
+  # After a `version =` bump, the prior install lingers; nothing
+  # references it. mise current reports the version the config selects.
+  local bws_pin ver
+  bws_pin=$(mise current 'github:bitwarden/sdk' 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$bws_pin" ]; then
+    while read -r ver; do
+      if [ -n "$ver" ] && [ "$ver" != "$bws_pin" ]; then
+        mise uninstall "github:bitwarden/sdk@${ver}" >/dev/null 2>&1 || true
+      fi
+    done < <(mise ls 2>/dev/null | awk '$1 == "github:bitwarden/sdk" {print $2}')
+  fi
+
+  # Reconcile installed tools with the (now-fresh) config.
+  mise install -y >/dev/null 2>&1 || \
+    printf '\033[33m⚠ preflight: mise install reported errors\033[0m\n' >&2
 }
 
 _chezmoi_preflight_tools() {
