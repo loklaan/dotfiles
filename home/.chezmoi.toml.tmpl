@@ -5,6 +5,7 @@
 {{- $npmWorkRegistry := promptStringOnce . "npmWorkRegistry" "Work npm registry (or empty)" -}}
 {{- $openCodeWorkPlugin := promptStringOnce . "openCodeWorkPlugin" "OpenCode work plugin (or empty)" -}}
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
+{{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
 {{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 
 [data]
@@ -21,6 +22,7 @@
   npmWorkRegistry = {{ $npmWorkRegistry | quote }}
   openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
+  workForkRemote = {{ $workForkRemote | quote }}
   paseoDaemon = {{ $paseoDaemon }}
 
 # Session logging hooks
