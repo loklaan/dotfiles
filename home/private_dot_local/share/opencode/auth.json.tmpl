@@ -1,4 +1,22 @@
 {
+{{- /* amazon-bedrock auth gating, per @canva/opencode-plugin-llmproxy README:
+
+       VPN (no CODER env):
+         The plugin fetches a bearer token via `otter` and injects it as the
+         placeholder API key. The "llmproxy" placeholder MUST be present in
+         auth.json — opencode only invokes the plugin's auth.loader for
+         providers that have an entry, so without it the plugin never gets
+         to do its bearer-token swap.
+
+       Coder devbox (CODER=true):
+         The plugin uses AWS IMDS credentials with SigV4 signing instead of
+         a bearer token. Having a placeholder key here breaks that path —
+         opencode picks up the placeholder and bypasses SigV4. So we omit
+         the entry entirely on Coder.
+
+       google + openai are unconditional: they route through the proxy in
+       both modes (mTLS on Coder, VPN endpoint elsewhere), and both modes
+       need the placeholder to wire up auth.loader. */ -}}
 {{- if eq "" (env "CODER") }}
   "amazon-bedrock": { "type": "api", "key": "llmproxy" },
 {{- end }}
