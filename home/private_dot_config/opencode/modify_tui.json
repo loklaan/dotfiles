@@ -1,0 +1,17 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $config := $base -}}
+
+{{- /* Required for the oh-my-openagent TUI sidebar (Roles · Models) and
+       TUI-only commands. The omo installer normally writes this entry, but
+       we manage opencode config via chezmoi rather than running the
+       interactive installer, so we declare it ourselves. Without this entry
+       the server-side plugin still loads via opencode.json, but the TUI
+       half is missing. `oh-my-openagent doctor` flags this if it drifts. */ -}}
+{{- $existingPlugins := default (list) (get $config "plugin") -}}
+{{- $omoTuiPlugin := "oh-my-openagent/tui" -}}
+{{- if not (has $omoTuiPlugin $existingPlugins) -}}
+{{-   $config = $config | setValueAtPath "plugin" (append $existingPlugins $omoTuiPlugin) -}}
+{{- end -}}
+
+{{ $config | toPrettyJson }}
