@@ -6,6 +6,14 @@
 #     stripComponents = 3
 #     include = ["*/skills/doc-coauthoring/**"]
 
+# Matt Pocock's improve-codebase-architecture skill.
+[".agents/skills/improve-codebase-architecture"]
+    type = "archive"
+    url = "https://github.com/mattpocock/skills/archive/refs/heads/main.tar.gz"
+    exact = true
+    stripComponents = 4
+    include = ["*/skills/engineering/improve-codebase-architecture/**"]
+
 {{- if ne "" .privateSkillsRepo }}
 
 # Private skills repo — cloned to a staging location, then symlinked into
