@@ -7,6 +7,7 @@ After=network.target
 ExecStart={{ .chezmoi.homeDir }}/.local/share/mise/shims/paseo daemon start --listen 0.0.0.0:6767 --foreground
 Environment=HOME={{ .chezmoi.homeDir }}
 Environment=PATH={{ .chezmoi.homeDir }}/.local/share/mise/shims:{{ .chezmoi.homeDir }}/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PASEO_HOSTNAMES=localhost,.localhost,.coder
 Restart=on-failure
 RestartSec=5
 
