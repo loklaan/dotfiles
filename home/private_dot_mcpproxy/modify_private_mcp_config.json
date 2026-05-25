@@ -43,6 +43,14 @@
     ) -}}
 
 {{- $servers = append $servers (dict
+      "name" "chrome-devtools"
+      "command" "npx"
+      "args" (list "-y" "chrome-devtools-mcp@latest")
+      "protocol" "stdio"
+      "enabled" true
+    ) -}}
+
+{{- $servers = append $servers (dict
       "name" "figma-desktop"
       "url" "http://127.0.0.1:3845/mcp"
       "protocol" "http"
