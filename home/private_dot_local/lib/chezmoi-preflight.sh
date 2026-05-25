@@ -24,8 +24,35 @@
 
 chezmoi_preflight() {
   _chezmoi_preflight_sync_mise
+  _chezmoi_preflight_prune_unmanaged
   _chezmoi_preflight_tools
   _chezmoi_preflight_bws_token
+}
+
+# Remove files that were once managed but have since been deleted from the
+# repo. Chezmoi's `apply` does not retroactively remove files that were
+# unmanaged after they hit disk; without this, a stale file lingers
+# indefinitely and can poison tools that scan its containing directory.
+#
+# Each entry is a path under $HOME that we know is unsafe to leave behind.
+# Keep the list narrow: deletes are destructive, and a too-broad rule could
+# clobber a user's hand-rolled file. Pair every entry with the commit that
+# removed it from the repo so future-us can prune this list when it grows.
+_chezmoi_preflight_prune_unmanaged() {
+  local stale=(
+    # 77ee265 — drop yolo agent config for opencode. Stale frontmatter
+    # `permission: allow` (string) is rejected by opencode 1.15's agent
+    # schema, which crashes startup with ConfigInvalidError.
+    ".config/opencode/agents/yolo.md"
+  )
+
+  local rel
+  for rel in "${stale[@]}"; do
+    local path="${HOME}/${rel}"
+    [ -e "$path" ] || continue
+    rm -f "$path" 2>/dev/null || \
+      printf '\033[33m⚠ preflight: failed to remove stale file %s\033[0m\n' "$path" >&2
+  done
 }
 
 # Re-render the managed mise config and reconcile installed tools. Runs
