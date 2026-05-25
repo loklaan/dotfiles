@@ -1,23 +1,6 @@
 {
-  {{ if ne "" .emailWork -}}
-  "otter": {
-    "command": "otter",
-    "args": [
-      "mcp",
-      "serve"
-    ]
-  },
-  {{ end -}}
-  "effect-docs": {
-    "command": "npx", "args": ["-y", "effect-mcp@latest" ],
-    "env": {}
-  },
-  "pdf-tools": {
-    "command": "uvx", "args": ["mcp-pdf"],
-    "env": {}
-  },
-  "figma-desktop": {
+  "mcpproxy": {
     "command": "npx",
-    "args": ["-y", "mcp-remote", "http://127.0.0.1:3845/mcp"]
+    "args": ["-y", "mcp-remote", "http://127.0.0.1:18321/mcp/"]
   }
 }
