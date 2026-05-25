@@ -1,0 +1,49 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_before_install-060-reset-external-skills.sh
+#/
+#/ Description:
+#/   Resets patched external skills back to upstream names before chezmoi
+#/   applies externals. Pairs with run_after_install-060-patch-external-skills
+#/   which re-applies the patches. Without this reset, chezmoi sees a diff
+#/   between rendered external and on-disk file and prompts.
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# (skill_dir, patched_name, original_name)
+PATCHES=(
+  "improve-codebase-architecture|lochy:coding:architecture|improve-codebase-architecture"
+)
+
+reset_skill_name() {
+  local skill_dir="$1"
+  local patched_name="$2"
+  local original_name="$3"
+  local skill_md="${HOME}/.agents/skills/${skill_dir}/SKILL.md"
+
+  [ -f "$skill_md" ] || return 0
+
+  if grep -q "^name: ${patched_name}$" "$skill_md" 2>/dev/null; then
+    sed -i '' "s/^name: ${patched_name}$/name: ${original_name}/" "$skill_md"
+    info "╍ Reset: ${patched_name} → ${original_name}"
+  fi
+}
+
+main() {
+  info "▶ Resetting external skill names"
+  for entry in "${PATCHES[@]}"; do
+    IFS='|' read -r dir patched original <<< "$entry"
+    reset_skill_name "$dir" "$patched" "$original"
+  done
+  info "╍ Done"
+}
+
+main "$@"
+{{ end -}}

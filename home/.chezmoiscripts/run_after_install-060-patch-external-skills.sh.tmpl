@@ -1,0 +1,56 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-060-patch-external-skills.sh
+#/
+#/ Description:
+#/   Renames external skills downloaded via chezmoi externals into the
+#/   lochy: namespace. Pairs with run_before_install-060-reset-external-skills.
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# (skill_dir, original_name, patched_name)
+PATCHES=(
+  "improve-codebase-architecture|improve-codebase-architecture|lochy:coding:architecture"
+)
+
+patch_skill_name() {
+  local skill_dir="$1"
+  local original_name="$2"
+  local patched_name="$3"
+  local skill_md="${HOME}/.agents/skills/${skill_dir}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then
+    warning "╍ Skill not found: $skill_md"
+    return 0
+  fi
+
+  if grep -q "^name: ${patched_name}$" "$skill_md" 2>/dev/null; then
+    info "╍ Already patched: ${patched_name}"
+    return 0
+  fi
+
+  if sed -i '' "s/^name: ${original_name}$/name: ${patched_name}/" "$skill_md"; then
+    info "╍ Patched: ${original_name} → ${patched_name}"
+  else
+    warning "╍ Failed to patch: ${skill_md}"
+  fi
+}
+
+main() {
+  info "▶ Patching external skill names to lochy: namespace"
+  for entry in "${PATCHES[@]}"; do
+    IFS='|' read -r dir original patched <<< "$entry"
+    patch_skill_name "$dir" "$original" "$patched"
+  done
+  info "╍ Done"
+}
+
+main "$@"
+{{ end -}}
