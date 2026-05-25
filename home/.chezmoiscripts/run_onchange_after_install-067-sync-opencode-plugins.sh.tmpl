@@ -1,0 +1,40 @@
+{{- $omoVersion := output "mise" "current" "npm:oh-my-openagent" | trim -}}
+{{- $llmproxyVersion := output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/tool-cache-sync.sh"
+setup_session_logging "$(basename "$0")"
+
+# content-hash: {{ printf "%s|%s" $omoVersion $llmproxyVersion | sha256sum }}
+# omo-version-tracked: {{ $omoVersion }}
+# llmproxy-version-tracked: {{ $llmproxyVersion }}
+
+#/ Usage:
+#/   run_onchange_after_install-067-sync-opencode-plugins.sh
+#/
+#/ Description:
+#/   Bridges current plugin versions into OpenCode's sticky private plugin
+#/   cache. See .agents/rules/agent-orchestration.md "Plugin Versioning" for
+#/   the architectural rationale (sticky cache, npm not bun, ETARGET self-heal).
+#/
+#/   Two plugins, two version-resolution sources:
+#/     - oh-my-openagent — version from `mise current` (it's a CLI mise pins)
+#/     - @canva/opencode-plugin-llmproxy — version from `npm view` against
+#/       the depot registry (it's a plugin-only package, not in mise)
+#/
+#/   The combined version string is content-hashed so this script re-runs
+#/   whenever either version advances.
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+eval "$(mise activate bash --quiet)"
+
+tcs_require_command opencode || exit 0
+
+cache_dir=$(tcs_get_opencode_cache) || exit 0
+
+tcs_npm_sync "$cache_dir" "oh-my-openagent@{{ $omoVersion }}"
+tcs_npm_sync "$cache_dir" "@canva/opencode-plugin-llmproxy@{{ $llmproxyVersion }}"
