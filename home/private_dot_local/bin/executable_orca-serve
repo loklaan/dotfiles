@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+#/ Usage: orca-serve [ORCA SERVE OPTIONS...]
+#/
+#/ Transparent wrapper around `orca serve` that handles headless Linux
+#/ execution (no Xvfb needed) and filters noisy Electron stderr.
+#/
+#/ All arguments are forwarded directly to `orca serve`.
+#/ Run `orca-serve --help` to see the upstream options.
+#/
+#/ Environment:
+#/   ORCA_SERVE_EXTRA_ARGS   Additional Chromium flags for the Electron child
+
+# --- Pass --help through to the real CLI ----------------------------------
+for arg in "$@"; do
+  if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+    ELECTRON_RUN_AS_NODE=1 /opt/Orca/orca-ide \
+      /opt/Orca/resources/app.asar.unpacked/out/cli/index.js serve --help
+    exit $?
+  fi
+done
+
+# --- Logging --------------------------------------------------------------
+_log() {
+  local color="$1" label="$2"; shift 2
+  local code
+  case "$color" in
+    green) code="32" ;; cyan) code="36" ;; yellow) code="33" ;; red) code="31" ;;
+    *) code="0" ;;
+  esac
+  printf '\033[%sm[%s]\033[0m %s\n' "$code" "$label" "$*" >&2
+}
+info()  { _log cyan   "orca" "$@"; }
+ok()    { _log green  "orca" "$@"; }
+warn()  { _log yellow "orca" "$@"; }
+error() { _log red    "orca" "$@"; }
+
+# --- Resolve Orca paths ---------------------------------------------------
+APP_DIR="/opt/Orca"
+RESOURCES_DIR="$APP_DIR/resources"
+CLI="$RESOURCES_DIR/app.asar.unpacked/out/cli/index.js"
+
+ELECTRON=""
+for candidate in orca-ide orca Orca; do
+  if [[ -f "$APP_DIR/$candidate" && -x "$APP_DIR/$candidate" ]]; then
+    ELECTRON="$APP_DIR/$candidate"
+    break
+  fi
+done
+[[ -z "$ELECTRON" ]] && { error "cannot find Orca executable in $APP_DIR"; exit 1; }
+[[ -f "$CLI" ]] || { error "CLI entrypoint missing: $CLI"; exit 1; }
+
+# --- Headless Electron wrapper --------------------------------------------
+# serveOrcaApp() uses ORCA_APP_EXECUTABLE to resolve the Electron binary.
+# We point it at a thin wrapper that injects --ozone-platform=headless so
+# Electron starts without a display server and signals propagate cleanly.
+WRAPPER_BIN=$(mktemp /tmp/orca-headless-XXXXXX)
+cat > "$WRAPPER_BIN" <<EOF
+#!/usr/bin/env bash
+exec "$ELECTRON" --ozone-platform=headless --disable-gpu ${ORCA_SERVE_EXTRA_ARGS:-} "\$@"
+EOF
+chmod +x "$WRAPPER_BIN"
+
+cleanup() {
+  rm -f "$WRAPPER_BIN" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# --- Output filter --------------------------------------------------------
+filter_output() {
+  while IFS= read -r line; do
+    case "$line" in
+      *"ERROR:dbus/"*) continue ;;
+      *"ERROR:object_proxy"*) continue ;;
+      *"ERROR:gpu_"*) continue ;;
+      *"ERROR:angle_platform"*) continue ;;
+      *"ERROR:vulkan"*) continue ;;
+      *"Fontconfig"*) continue ;;
+      *"pango"*) continue ;;
+      *"libGL"*) continue ;;
+      *"Mesa"*|*"MESA"*) continue ;;
+      *"DRI"*|*"gbm"*) continue ;;
+      *"InitializeSandbox"*) continue ;;
+      *"sandbox"*) continue ;;
+      *"zygote"*) continue ;;
+      *"crashpad"*) continue ;;
+      *"DevTools listening"*) continue ;;
+      *"extensions"*) continue ;;
+      "") continue ;;
+    esac
+
+    if [[ "$line" == *"server ready"* || "$line" == *"Server ready"* ]]; then
+      ok "$line"
+    elif [[ "$line" == *"FATAL"* || "$line" == *"fatal"* ]]; then
+      error "$line"
+    elif [[ "$line" == *"WARNING"* || "$line" == *"warning"* ]]; then
+      warn "$line"
+    else
+      info "$line"
+    fi
+  done
+}
+
+# --- Launch ---------------------------------------------------------------
+export ELECTRON_RUN_AS_NODE=1
+export ORCA_APP_EXECUTABLE="$WRAPPER_BIN"
+export ORCA_NODE_OPTIONS="${NODE_OPTIONS:-}"
+export ORCA_NODE_REPL_EXTERNAL_MODULE="${NODE_REPL_EXTERNAL_MODULE:-}"
+unset NODE_OPTIONS 2>/dev/null || true
+unset NODE_REPL_EXTERNAL_MODULE 2>/dev/null || true
+
+info "starting orca serve (headless)"
+
+"$ELECTRON" "$CLI" serve "$@" > >(filter_output) 2>&1 &
+ORCA_PID=$!
+
+# --- Signal forwarding ----------------------------------------------------
+shutdown() {
+  info "shutting down..."
+  kill -TERM "$ORCA_PID" 2>/dev/null || true
+  local i=0
+  while kill -0 "$ORCA_PID" 2>/dev/null && (( i < 80 )); do
+    sleep 0.1
+    (( i++ ))
+  done
+  if kill -0 "$ORCA_PID" 2>/dev/null; then
+    warn "force-killing after timeout"
+    kill -KILL "$ORCA_PID" 2>/dev/null || true
+  fi
+  wait "$ORCA_PID" 2>/dev/null || true
+  ok "stopped"
+  exit 0
+}
+trap 'shutdown' SIGTERM SIGINT SIGHUP
+
+while kill -0 "$ORCA_PID" 2>/dev/null; do
+  wait "$ORCA_PID" 2>/dev/null || true
+done
+wait "$ORCA_PID" 2>/dev/null
+exit $?

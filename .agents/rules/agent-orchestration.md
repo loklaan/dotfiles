@@ -10,7 +10,7 @@ How AI coding agent sessions are managed across macbooks and Coder dev boxes.
 
 Two orchestration tools span machines, plus one single-machine deep-UI tool.
 
-### orca: SSH-attached client
+### orca: SSH-attached client (today) + paired-server (beta)
 
 <p align="center">
   <picture>
@@ -19,7 +19,11 @@ Two orchestration tools span machines, plus one single-machine deep-UI tool.
   </picture>
 </p>
 
-orca runs on the macbook only. It SSHes into Coder workspaces using the standard `coder.<ws>` SSH host that Coder writes into `~/.ssh/config`. On first connection orca deploys a small relay binary into `~/.orca-remote/` on the workspace; from then on it streams agent I/O over that relay. There is no orca daemon on the Coder box.
+orca runs on the macbook. The default mode is SSH-attached: it connects to Coder workspaces using the standard `coder.<ws>` SSH host that Coder writes into `~/.ssh/config`. On first connection orca deploys a small relay binary into `~/.orca-remote/` on the workspace; from then on it streams agent I/O over that relay.
+
+The "Remote Orca Servers" beta adds a second mode: a headless `orca serve` process running on the Coder box (systemd-user service, opt-in via chezmoi `orcaServer` flag), paired with the macbook app via an `orca://pair#...` URL printed at startup. Pairing is one-to-many (one server, many paired clients), Curve25519 ECDH for E2EE. Reach the WebSocket endpoint inside the offer URL via `<ws>.coder:<auto-port>` over Coder Connect. The server's `--pairing-address` is set to `$(hostname).coder` so the URL works for any macbook with Coder Connect running.
+
+The two modes coexist: SSH-attached for quick "open this workspace" sessions, paired-server for the new beta features. macbook-only on the client side; the server runs on Coder boxes only.
 
 ### paseo: daemon-per-host
 
@@ -223,13 +227,29 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 1. SSH into the box (`cw <ws>`).
 2. `chezmoi edit-config` → set `paseoDaemon = true` → save.
 3. `chezmoi apply` → daemon starts automatically.
-4. Back on macbook: `coder port-forward <ws> --tcp 6767:6767` (in a long-lived terminal or tmux).
-5. In Paseo.app: Add daemon → `http://localhost:6767`.
+4. On macbook: ensure Coder Desktop / Coder Connect is running.
+5. In Paseo.app: Add daemon → `http://<ws>.coder:6767`.
 
 **Decommission a Coder box's daemon:**
 1. SSH into the box.
 2. `chezmoi edit-config` → set `paseoDaemon = false`.
 3. `chezmoi apply` → daemon stops + disables.
+
+**Add a new Coder box as an orca server host (BETA):**
+1. SSH into the box (`cw <ws>`).
+2. `chezmoi edit-config` → set `orcaServer = true` → save.
+3. `chezmoi apply` → orca is `apt install`ed (passwordless sudo required) and the systemd unit starts.
+4. Capture the pairing URL from the unit's stdout:
+   ```bash
+   journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ "]*' | tail -1
+   ```
+5. On macbook: ensure Coder Desktop / Coder Connect is running.
+6. In Orca.app: Settings → Remote Orca Servers → Add Server → paste the pairing URL.
+
+**Decommission a Coder box's orca server:**
+1. SSH into the box.
+2. `chezmoi edit-config` → set `orcaServer = false`.
+3. `chezmoi apply` → server stops + disables. (orca .deb stays installed; remove manually with `sudo apt remove orca-ide` if reclaiming disk.)
 
 **Status anywhere:**
 - `dotfiles-setup` shows the daemon line on opt-in Linux machines.

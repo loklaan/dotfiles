@@ -110,6 +110,13 @@ check_paseo_daemon() {
 }
 {{- end }}
 
+{{- if and (eq .chezmoi.os "linux") .orcaServer }}
+
+check_orca_server() {
+  systemctl --user is-active --quiet orca-server.service
+}
+{{- end }}
+
 {{- if ne "" .emailWork }}
 
 check_gh_auth() {
@@ -197,6 +204,18 @@ print_status() {
   else
     _print yellow "  ✗ paseo daemon"
     _print white dim "    Opted in but not running. Try: systemctl --user status paseo-daemon"
+  fi
+{{- end }}
+{{- if and (eq .chezmoi.os "linux") .orcaServer }}
+
+  echo ""
+
+  if check_orca_server; then
+    _print green "  ✓ orca server"
+    _print white dim "    Pairing URL via: journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ \"]*' | tail -1"
+  else
+    _print yellow "  ✗ orca server"
+    _print white dim "    Opted in but not running. Try: systemctl --user status orca-server"
   fi
 {{- end }}
 

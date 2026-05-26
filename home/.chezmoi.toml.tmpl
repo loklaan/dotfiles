@@ -7,6 +7,7 @@
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
 {{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
 {{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
+{{- $orcaServer := promptBoolOnce . "orcaServer" "Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 
 [data]
   email = {{ $email | quote }}
@@ -24,6 +25,7 @@
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
   workForkRemote = {{ $workForkRemote | quote }}
   paseoDaemon = {{ $paseoDaemon }}
+  orcaServer = {{ $orcaServer }}
 
 # Session logging hooks
 [hooks.apply.pre]
