@@ -1,0 +1,121 @@
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-059-orca-server.sh
+#/
+#/ Description:
+#/   Manages the orca server on Linux machines (typically Coder workspaces).
+#/   When `orcaServer` data variable is true, ensures orca is installed via
+#/   apt and enables/(re)starts the systemd user unit. When false, disables
+#/   and stops the unit. macOS machines run orca as a desktop app (Orca.app
+#/   from the stablyai/orca cask) and skip this script.
+#/
+#/   The orca .deb package contains the full Electron app; we run it
+#/   headless via `orca serve` from the systemd unit.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+ORCA_DEB_VERSION="1.4.27"
+ORCA_DEB_URL="https://github.com/stablyai/orca/releases/download/v${ORCA_DEB_VERSION}/orca-ide_${ORCA_DEB_VERSION}_amd64.deb"
+ORCA_INSTALL_DIR="/opt/Orca"
+
+ensure_orca_installed() {
+  if [ -d "$ORCA_INSTALL_DIR" ]; then
+    return 0
+  fi
+
+  info "╍ orca not installed, downloading .deb"
+
+  if ! sudo -n true 2>/dev/null; then
+    warning "╍ passwordless sudo not available, skipping install"
+    return 1
+  fi
+
+  local deb_path="${TMPDIR}/orca-ide_${ORCA_DEB_VERSION}_amd64.deb"
+  if ! curl -fsSL "$ORCA_DEB_URL" -o "$deb_path"; then
+    warning "╍ failed to download ${ORCA_DEB_URL}"
+    return 1
+  fi
+
+  if ! sudo apt-get install -y "$deb_path" >/dev/null; then
+    warning "╍ apt install failed for $deb_path"
+    rm -f "$deb_path"
+    return 1
+  fi
+
+  rm -f "$deb_path"
+  info "╍ orca installed (v${ORCA_DEB_VERSION})"
+}
+
+manage_linux() {
+  local enabled={{ .orcaServer }}
+
+  if [ "$enabled" != "true" ]; then
+    info "▶ orca server (Linux, opt-out)"
+
+    if systemctl --user list-unit-files orca-server.service >/dev/null 2>&1; then
+      if systemctl --user is-active --quiet orca-server.service; then
+        systemctl --user stop orca-server.service
+        info "╍ stopped orca-server.service"
+      fi
+      if systemctl --user is-enabled --quiet orca-server.service 2>/dev/null; then
+        systemctl --user disable orca-server.service >/dev/null
+        info "╍ disabled orca-server.service"
+      fi
+    fi
+    return 0
+  fi
+
+  info "▶ orca server (Linux, opt-in)"
+
+  if ! ensure_orca_installed; then
+    return 0
+  fi
+
+  systemctl --user daemon-reload
+  systemctl --user enable orca-server.service
+
+  if systemctl --user is-active --quiet orca-server.service; then
+    systemctl --user restart orca-server.service
+    info "╍ restarted orca-server.service"
+  else
+    systemctl --user start orca-server.service
+    info "╍ started orca-server.service"
+  fi
+
+  sleep 2
+  if systemctl --user is-active --quiet orca-server.service; then
+    info "╍ orca-server.service is active"
+  else
+    warning "╍ orca-server.service did not stay active — check: journalctl --user -u orca-server.service"
+  fi
+}
+
+main() {
+  parse_args "$@"
+  manage_linux
+}
+
+main "$@"
+{{- end }}
