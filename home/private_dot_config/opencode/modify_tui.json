@@ -2,16 +2,45 @@
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 {{- $config := $base -}}
 
-{{- /* Required for the oh-my-openagent TUI sidebar (Roles · Models) and
-       TUI-only commands. The omo installer normally writes this entry, but
-       we manage opencode config via chezmoi rather than running the
-       interactive installer, so we declare it ourselves. Without this entry
-       the server-side plugin still loads via opencode.json, but the TUI
-       half is missing. `oh-my-openagent doctor` flags this if it drifts. */ -}}
-{{- $existingPlugins := default (list) (get $config "plugin") -}}
-{{- $omoTuiPlugin := "oh-my-openagent/tui" -}}
-{{- if not (has $omoTuiPlugin $existingPlugins) -}}
-{{-   $config = $config | setValueAtPath "plugin" (append $existingPlugins $omoTuiPlugin) -}}
+{{- /* DISABLED — opencode 1.15.10's TUI plugin loader treats the
+       "oh-my-openagent/tui" string as a GitHub shorthand and tries to clone
+       https://github.com/oh-my-openagent/tui.git on every startup. That repo
+       does not exist (the TUI plugin source lives inside the oh-my-openagent
+       npm package itself, with no ./tui subpath export yet), so the clone
+       always fails. On Coder devboxes the failure mode is worse: GIT_ASKPASS
+       points at /opt/coder/bin/coder, whose external-auth allowlist regex
+       doesn't match oh-my-openagent, so coder refuses, git falls through to a
+       TTY username prompt, and opencode hangs in "Loading" while the prompt
+       gets dumped on top of the TUI.
+
+       Tracked upstream:
+       - https://github.com/code-yeongyu/oh-my-openagent/issues/4303
+       - https://github.com/code-yeongyu/oh-my-openagent/pull/4305 (adds the
+         missing ./tui subpath export so opencode resolves it via npm)
+
+       Until #4305 lands, we strip the broken entry. `oh-my-openagent doctor`
+       will warn that the TUI plugin entry is missing — accept that warning;
+       it only disables the Roles · Models sidebar section, not the
+       server-side plugin (which loads fine via opencode.json).
+
+       To re-enable after upstream is fixed: replace the strip block below
+       with the original add block, which was:
+
+           $existingPlugins := default (list) (get $config "plugin")
+           $omoTuiPlugin := "oh-my-openagent/tui"
+           if not (has $omoTuiPlugin $existingPlugins)
+             $config = $config | setValueAtPath "plugin" (append $existingPlugins $omoTuiPlugin)
+           end
+       (wrapped in {{- ... -}} delimiters as before). */ -}}
+
+{{- /* Actively strip the broken entry if a previous apply wrote it. */ -}}
+{{- $plugins := default (list) (get $config "plugin") -}}
+{{- $cleaned := list -}}
+{{- range $p := $plugins -}}
+{{-   if and (ne $p "oh-my-openagent/tui") (ne $p "oh-my-opencode/tui") -}}
+{{-     $cleaned = append $cleaned $p -}}
+{{-   end -}}
 {{- end -}}
+{{- $config = $config | setValueAtPath "plugin" $cleaned -}}
 
 {{ $config | toPrettyJson }}
