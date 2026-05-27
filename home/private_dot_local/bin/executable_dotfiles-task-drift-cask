@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   dotfiles-task-drift-cask
+#/
+#/ Description:
+#/   Drift checker for macOS Homebrew casks that have `auto_updates true`
+#/   (which `brew outdated` cannot detect). Specifically: orca and paseo.
+#/
+#/   Compares the version of the installed .app bundle against the cask's
+#/   advertised latest version (via `brew info --cask --json=v2`).
+#/
+#/   Output: JSON array on stdout. One object per drifted cask, in the
+#/   shared schema: name / installed / latest / behind / source.
+#/   Returns [] (and exits 0) when:
+#/     - not on macOS
+#/     - brew not installed
+#/     - no managed casks installed
+#/     - no drift detected
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help) usage; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+CASKS=("stablyai/orca/orca" "paseo")
+
+# Bundle identifiers for the version probe. Maps cask token → app bundle path.
+app_path_for() {
+  case "$1" in
+    stablyai/orca/orca) echo "/Applications/Orca.app" ;;
+    paseo)              echo "/Applications/Paseo.app" ;;
+    *) echo "" ;;
+  esac
+}
+
+bundle_version() {
+  local app="$1"
+  [ -d "$app" ] || { echo ""; return 0; }
+  /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${app}/Contents/Info.plist" 2>/dev/null \
+    || echo ""
+}
+
+main() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "[]"
+    return 0
+  fi
+  if ! command -v brew >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+
+  local out="["
+  local first=1
+
+  for cask in "${CASKS[@]}"; do
+    local app installed latest
+    app=$(app_path_for "$cask")
+    installed=$(bundle_version "$app")
+    [ -z "$installed" ] && continue
+
+    latest=$(brew info --cask --json=v2 "$cask" 2>/dev/null \
+             | jq -r '.casks[0].version // empty' 2>/dev/null) || latest=""
+    [ -z "$latest" ] && continue
+
+    if [ "$installed" != "$latest" ]; then
+      # `installed > latest` means the cask formula is stale (Sparkle/auto-update
+      # ran ahead of brew); `installed < latest` means the app is behind the
+      # cask formula. Both surface as drift; consumers can decide phrasing
+      # by inspecting the values.
+      local entry
+      entry=$(jq -n \
+        --arg name "$cask" \
+        --arg installed "$installed" \
+        --arg latest "$latest" \
+        '{name:$name, installed:$installed, latest:$latest, behind:1, source:("cask:" + $name)}')
+      if [ "$first" -eq 1 ]; then
+        out="${out}${entry}"
+        first=0
+      else
+        out="${out},${entry}"
+      fi
+    fi
+  done
+
+  echo "${out}]"
+}
+
+main

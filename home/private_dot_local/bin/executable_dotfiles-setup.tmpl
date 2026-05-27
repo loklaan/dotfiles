@@ -115,6 +115,26 @@ check_paseo_daemon() {
 check_orca_server() {
   systemctl --user is-active --quiet orca-server.service
 }
+
+# Returns "<installed>|<latest>" — values may be empty on failure.
+# Latest is best-effort (network + GitHub API); failures yield empty string.
+orca_version_state() {
+  local installed="" latest=""
+  # Installed version from mise (http: backend installs orca-linux.AppImage
+  # into ~/.local/share/mise/installs/http-orca/<version>/). Falls back to
+  # dpkg-query for any boxes still on the legacy .deb install.
+  if command -v mise >/dev/null 2>&1; then
+    installed=$(mise current orca 2>/dev/null || echo "")
+  fi
+  if [ -z "$installed" ] && command -v dpkg-query >/dev/null 2>&1; then
+    installed=$(dpkg-query -W -f='${Version}' orca-ide 2>/dev/null || echo "")
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    latest=$(curl -fsSL --max-time 3 "https://api.github.com/repos/stablyai/orca/releases/latest" 2>/dev/null \
+             | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
+  fi
+  printf '%s|%s' "$installed" "$latest"
+}
 {{- end }}
 
 {{- if ne "" .emailWork }}
@@ -210,14 +230,55 @@ print_status() {
 
   echo ""
 
+  local _orca_state _orca_installed _orca_latest
+  _orca_state=$(orca_version_state)
+  _orca_installed="${_orca_state%%|*}"
+  _orca_latest="${_orca_state##*|}"
+
   if check_orca_server; then
-    _print green "  ✓ orca server"
-    _print white dim "    Pairing URL via: journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ \"]*' | tail -1"
+    if [ -n "$_orca_installed" ]; then
+      _print green "  ✓ orca server (v${_orca_installed})"
+    else
+      _print green "  ✓ orca server"
+    fi
+    _print white dim "    Latest upstream: ${_orca_latest:-unknown}"
+    if [ -n "$_orca_installed" ] && [ -n "$_orca_latest" ] && [ "$_orca_installed" != "$_orca_latest" ]; then
+      _print yellow "    ↑ Upstream ahead. Bump http:orca version in home/private_dot_config/mise/config.toml.tmpl, then chezmoi apply."
+    fi
+    _print white dim "    Pairing URL: journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ \"]*' | tail -1"
   else
     _print yellow "  ✗ orca server"
     _print white dim "    Opted in but not running. Try: systemctl --user status orca-server"
   fi
 {{- end }}
+
+  # ── Drift report (read-only view of last drift:check) ─────────
+  echo ""
+  local _drift_cache="${HOME}/.cache/dotfiles/drift.json"
+  if [ -f "$_drift_cache" ] && command -v jq >/dev/null 2>&1; then
+    local _drift_count
+    _drift_count=$(jq '.tools | length' "$_drift_cache" 2>/dev/null || echo 0)
+    if [ "$_drift_count" -eq 0 ]; then
+      _print green "  ✓ Tool drift (no tools behind)"
+      _print white dim "    Last checked: $(jq -r '.checked_at' "$_drift_cache" 2>/dev/null)"
+    else
+      _print yellow "  ⚠ Tool drift (${_drift_count} behind)"
+      jq -r '.tools[] | "    \(.name): \(.installed) → \(.latest) [\(.source)]"' "$_drift_cache" 2>/dev/null \
+        | while IFS= read -r line; do _print white dim "$line"; done
+{{- if eq .chezmoi.os "darwin" }}
+      _print white dim "    Refresh: mise run drift:check  ·  Update everything: mise run update"
+{{- else }}
+      _print white dim "    Refresh: mise run drift:check (manual on Linux; no scheduled notifier)"
+{{- end }}
+    fi
+  else
+    _print white dim "  ⋯ Tool drift (no cache)"
+{{- if eq .chezmoi.os "darwin" }}
+    _print white dim "    Run: mise run drift:check (also runs daily via launchd agent)"
+{{- else }}
+    _print white dim "    Run: mise run drift:check"
+{{- end }}
+  fi
 
   echo ""
 }
