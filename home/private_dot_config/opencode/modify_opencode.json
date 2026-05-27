@@ -20,8 +20,14 @@
 
 {{- /* Register plugins */ -}}
 {{- $plugins := list "oh-my-openagent@latest" -}}
-{{- if ne "" .openCodeWorkPlugin -}}
-{{-   $plugins = prepend $plugins .openCodeWorkPlugin -}}
+{{- /* Local path overrides the npm package name when set — for in-place dev iteration */ -}}
+{{- $workPlugin := .openCodeWorkPlugin -}}
+{{- $localPath := dig "openCodeWorkPluginLocalPath" "" . -}}
+{{- if ne "" $localPath -}}
+{{-   $workPlugin = $localPath -}}
+{{- end -}}
+{{- if ne "" $workPlugin -}}
+{{-   $plugins = prepend $plugins $workPlugin -}}
 {{- end -}}
 {{- $config = $config | setValueAtPath "plugin" $plugins -}}
 

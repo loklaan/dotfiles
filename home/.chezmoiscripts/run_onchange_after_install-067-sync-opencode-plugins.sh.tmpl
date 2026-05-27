@@ -1,5 +1,9 @@
 {{- $omoVersion := output "mise" "current" "npm:oh-my-openagent" | trim -}}
-{{- $llmproxyVersion := output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
+{{- $llmproxyLocal := dig "openCodeWorkPluginLocalPath" "" . -}}
+{{- $llmproxyVersion := "" -}}
+{{- if eq "" $llmproxyLocal -}}
+{{-   $llmproxyVersion = output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
+{{- end -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9,9 +13,9 @@ source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/tool-cache-sync.sh"
 setup_session_logging "$(basename "$0")"
 
-# content-hash: {{ printf "%s|%s" $omoVersion $llmproxyVersion | sha256sum }}
+# content-hash: {{ printf "%s|%s|%s" $omoVersion $llmproxyVersion $llmproxyLocal | sha256sum }}
 # omo-version-tracked: {{ $omoVersion }}
-# llmproxy-version-tracked: {{ $llmproxyVersion }}
+# llmproxy-version-tracked: {{ $llmproxyVersion }}{{ if ne "" $llmproxyLocal }} (overridden by local path: {{ $llmproxyLocal }}){{ end }}
 
 #/ Usage:
 #/   run_onchange_after_install-067-sync-opencode-plugins.sh
@@ -37,4 +41,8 @@ tcs_require_command opencode || exit 0
 cache_dir=$(tcs_get_opencode_cache) || exit 0
 
 tcs_npm_sync "$cache_dir" "oh-my-openagent@{{ $omoVersion }}"
+{{- if eq "" $llmproxyLocal }}
 tcs_npm_sync "$cache_dir" "@canva/opencode-plugin-llmproxy@{{ $llmproxyVersion }}"
+{{- else }}
+# llmproxy plugin is loaded from local dist path, no npm sync needed: {{ $llmproxyLocal }}
+{{- end }}
