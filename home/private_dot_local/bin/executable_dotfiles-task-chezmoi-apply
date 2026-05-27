@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   dotfiles-task-chezmoi-apply
+#/
+#/ Description:
+#/   Wrapper around `chezmoi apply` invoked from mise tasks (notably
+#/   `[tasks."chezmoi:apply"]` and the `[hooks].postinstall` mise hook).
+#/
+#/   Hoisted out of mise.toml so the task body lives next to other
+#/   dotfiles-task-* scripts and so it can be run directly for debugging.
+#/
+#/   On success: silent. On failure: surfaces chezmoi's error output and
+#/   propagates the exit code.
+#/
+#/ Environment:
+#/   CHEZMOI_VERBOSE   When set to "1", invokes `chezmoi apply -v`.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if ! command -v chezmoi >/dev/null 2>&1; then
+    fatal "chezmoi not on PATH"
+  fi
+
+  if [ "${CHEZMOI_VERBOSE:-0}" = "1" ]; then
+    chezmoi apply -v
+  else
+    chezmoi apply
+  fi
+}
+
+main "$@"

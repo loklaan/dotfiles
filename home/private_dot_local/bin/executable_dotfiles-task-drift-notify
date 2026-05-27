@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   dotfiles-task-drift-notify
+#/
+#/ Description:
+#/   Reads ~/.cache/dotfiles/drift.json (produced by dotfiles-task-drift-check)
+#/   and surfaces a single desktop notification when one or more tools have
+#/   drifted. macOS-only by design — Coder boxes don't run a notifier.
+#/
+#/   Marker-file debounce: skips notification if one was sent within the
+#/   last 24h, even if drift count changed. Reset by removing the marker:
+#/     rm ~/.cache/dotfiles/.drift-notified
+#/
+#/   Notification icon: ~/.local/share/dotfiles/icon.png if present.
+#/
+#/ Options:
+#/   --force   Ignore the 24h debounce
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+FORCE=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help) usage; exit 0 ;;
+    --force) FORCE=1; shift ;;
+    *) shift ;;
+  esac
+done
+
+CACHE_DIR="${HOME}/.cache/dotfiles"
+DRIFT_FILE="${CACHE_DIR}/drift.json"
+MARKER_FILE="${CACHE_DIR}/.drift-notified"
+ICON_PATH="${HOME}/.local/share/dotfiles/icon.png"
+
+is_marker_fresh() {
+  [ -f "$MARKER_FILE" ] || return 1
+  local now mtime age
+  now=$(date +%s)
+  if [ "$(uname -s)" = "Darwin" ]; then
+    mtime=$(stat -f %m "$MARKER_FILE" 2>/dev/null || echo 0)
+  else
+    mtime=$(stat -c %Y "$MARKER_FILE" 2>/dev/null || echo 0)
+  fi
+  age=$((now - mtime))
+  [ "$age" -lt 86400 ]
+}
+
+main() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    info "drift:notify is macOS-only; skipping"
+    return 0
+  fi
+
+  if [ ! -f "$DRIFT_FILE" ]; then
+    info "no drift cache at ${DRIFT_FILE}; run dotfiles-task-drift-check first"
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    warning "jq missing; cannot read drift report"
+    return 0
+  fi
+
+  local count
+  count=$(jq '.tools | length' "$DRIFT_FILE" 2>/dev/null || echo 0)
+
+  if [ "$count" -eq 0 ]; then
+    info "no drift; nothing to notify"
+    return 0
+  fi
+
+  if [ "$FORCE" -ne 1 ] && is_marker_fresh; then
+    info "drift notification suppressed (last sent <24h ago)"
+    return 0
+  fi
+
+  if ! command -v notify >/dev/null 2>&1; then
+    warning "notify command not on PATH; skipping"
+    return 0
+  fi
+
+  local names
+  names=$(jq -r '.tools | map(.name) | join(", ")' "$DRIFT_FILE" 2>/dev/null \
+          | head -c 120)
+
+  local plural=""
+  [ "$count" -ne 1 ] && plural="s"
+  local subtitle="${count} tool${plural} behind"
+  local message="${names}"
+
+  local args=(--title "dotfiles" --subtitle "$subtitle")
+  if [ -f "$ICON_PATH" ]; then
+    args+=(--icon "$ICON_PATH")
+  fi
+  args+=("$message")
+
+  notify "${args[@]}"
+  mkdir -p "$CACHE_DIR"
+  touch "$MARKER_FILE"
+}
+
+main

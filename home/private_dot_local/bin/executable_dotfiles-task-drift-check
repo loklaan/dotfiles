@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   dotfiles-task-drift-check
+#/
+#/ Description:
+#/   Aggregates version drift across all managed tools and writes a single
+#/   JSON report to ~/.cache/dotfiles/drift.json.
+#/
+#/   Sources merged into the report:
+#/     1. `mise outdated --json`              everything mise tracks
+#/     2. dotfiles-task-drift-cask            macOS Homebrew casks (orca, paseo)
+#/     3. dotfiles-task-drift-dotfiles        this repo vs origin/main
+#/
+#/   Each checker emits one JSON object on stdout. They're merged into:
+#/
+#/     {
+#/       "checked_at": "<RFC3339>",
+#/       "tools": [
+#/         { "name": "orca", "installed": "1.4.27", "latest": "1.4.30",
+#/           "behind": 3, "source": "cask:stablyai/orca/orca" },
+#/         ...
+#/       ]
+#/     }
+#/
+#/   Soft-fails: any checker error → skip that source, continue. Cache
+#/   may be empty {tools:[]} when nothing drifted or all checks failed.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+CACHE_DIR="${HOME}/.cache/dotfiles"
+CACHE_FILE="${CACHE_DIR}/drift.json"
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || fatal "jq required"
+}
+
+mise_outdated_tools() {
+  if ! command -v mise >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+  # mise outdated --json returns an array of tool objects.
+  # Normalise to our schema: name / installed / latest / behind / source.
+  mise outdated --json 2>/dev/null \
+    | jq '[.[] | {
+        name: .name,
+        installed: (.current // ""),
+        latest: (.latest // ""),
+        behind: 1,
+        source: ("mise:" + (.name // ""))
+      }]' 2>/dev/null \
+    || echo "[]"
+}
+
+cask_drift_tools() {
+  if ! command -v dotfiles-task-drift-cask >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+  dotfiles-task-drift-cask 2>/dev/null || echo "[]"
+}
+
+dotfiles_repo_drift() {
+  if ! command -v dotfiles-task-drift-dotfiles >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+  dotfiles-task-drift-dotfiles 2>/dev/null || echo "[]"
+}
+
+main() {
+  parse_args "$@"
+  require_jq
+
+  mkdir -p "$CACHE_DIR"
+
+  local mise_json cask_json repo_json
+  mise_json=$(mise_outdated_tools)
+  cask_json=$(cask_drift_tools)
+  repo_json=$(dotfiles_repo_drift)
+
+  # Validate each is a JSON array; coerce to [] on parse failure
+  for var in mise_json cask_json repo_json; do
+    if ! printf '%s' "${!var}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      eval "$var='[]'"
+    fi
+  done
+
+  local merged
+  merged=$(jq -n \
+    --argjson mise "$mise_json" \
+    --argjson cask "$cask_json" \
+    --argjson repo "$repo_json" \
+    --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    '{
+      checked_at: $ts,
+      tools: ($mise + $cask + $repo)
+    }')
+
+  printf '%s\n' "$merged" > "$CACHE_FILE"
+  local count
+  count=$(printf '%s' "$merged" | jq '.tools | length')
+  info "drift report written to ${CACHE_FILE} (${count} entries)"
+}
+
+main "$@"

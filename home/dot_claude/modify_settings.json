@@ -42,7 +42,11 @@
 {{-       end -}}
 {{-     end -}}
 {{-     if gt (len $keptHooks) 0 -}}
-{{-       $cleanedEntries = append $cleanedEntries (dict "matcher" $entry.matcher "hooks" $keptHooks) -}}
+{{-       $newEntry := dict "hooks" $keptHooks -}}
+{{-       if hasKey $entry "matcher" -}}
+{{-         $newEntry = set $newEntry "matcher" $entry.matcher -}}
+{{-       end -}}
+{{-       $cleanedEntries = append $cleanedEntries $newEntry -}}
 {{-     end -}}
 {{-   end -}}
 {{-   $cleanedHooks = set $cleanedHooks $event $cleanedEntries -}}

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   dotfiles-task-mise-upgrade
+#/
+#/ Description:
+#/   Runs `mise upgrade` to refresh tools whose pin is `latest`.
+#/   Tools with explicit version pins (e.g. orca via .orcaVersion in
+#/   chezmoi data, paseo via .paseoVersion) are unaffected — bump those
+#/   in home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their
+#/   upgrade lifecycle.
+#/
+#/   Hoisted out of mise.toml so the task body lives next to other
+#/   dotfiles-task-* scripts and is debuggable in isolation.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+
+  if ! command -v mise >/dev/null 2>&1; then
+    fatal "mise not on PATH"
+  fi
+
+  mise upgrade -y
+}
+
+main "$@"

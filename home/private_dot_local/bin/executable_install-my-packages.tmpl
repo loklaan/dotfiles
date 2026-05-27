@@ -86,6 +86,7 @@ main() {
        "safe-rm"
        "poppler"
        "shellcheck"
+       "terminal-notifier"
        "tesseract"
        "tree"
        "wget"
@@ -184,6 +185,20 @@ EOF
   "wget"
   "zsh" -}}
 
+  # Distro-specific package name divergence:
+  # - Ubuntu/Debian provides notify-send via the `libnotify-bin` package
+  # - Alpine + RHEL/Fedora provide it via `libnotify`
+  # FUSE2 (needed for AppImage execution; orca's runtime mode on Linux):
+  # - Ubuntu 22.04 / Debian 12: `libfuse2`
+  # - Ubuntu 24.04+: `libfuse2t64` (t64 is the time_t-64bit transition variant)
+  # - Alpine: `fuse`
+  # - RHEL/Fedora: `fuse-libs`
+  # Apt's name is version-dependent so we pick at runtime; see the apt branch
+  # below. The other distros have stable names.
+  {{ $pkgsAptExtra := list "libnotify-bin" -}}
+  {{ $pkgsApkExtra := list "libnotify" "fuse" -}}
+  {{ $pkgsYumExtra := list "libnotify" "fuse-libs" -}}
+
   packages=$(cat <<EOF
 {{ range ($pkgs | sortAlpha | uniq) -}}
   {{ . | quote }}
@@ -207,18 +222,52 @@ EOF
   )
   case $linux_distro in
     alpine)
-      info "╍ Running 'apk add \$packages'"
-      run_quiet bash -c "$Sudo apk add --update $(echo "$packages" | xargs)"
+      apk_extra=$(cat <<EOF
+{{ range ($pkgsApkExtra | sortAlpha | uniq) -}}
+  {{ . | quote }}
+{{ end -}}
+EOF
+)
+      info "╍ Running 'apk add \$packages \$apk_extra'"
+      run_quiet bash -c "$Sudo apk add --update $(echo "$packages $apk_extra" | xargs)"
     ;;
     amzn|rhel|fedora|rocky)
-      info "╍ Running 'yum install \$packages'"
+      yum_extra=$(cat <<EOF
+{{ range ($pkgsYumExtra | sortAlpha | uniq) -}}
+  {{ . | quote }}
+{{ end -}}
+EOF
+)
+      info "╍ Running 'yum install \$packages \$yum_extra'"
       run_quiet $Sudo yum update -y
-      run_quiet bash -c "$Sudo yum install -y $(echo "$packages" | xargs)"
+      run_quiet bash -c "$Sudo yum install -y $(echo "$packages $yum_extra" | xargs)"
     ;;
     ubuntu|debian)
-      info "╍ Running 'apt-get install \$packages'"
+      apt_extra=$(cat <<EOF
+{{ range ($pkgsAptExtra | sortAlpha | uniq) -}}
+  {{ . | quote }}
+{{ end -}}
+EOF
+)
+      # FUSE2 package name varies by Ubuntu version. Probe apt-cache for both
+      # candidates and pick whichever is available. Skip if neither is found
+      # (rare; we'd want to know).
+      fuse_pkg=""
+      for candidate in libfuse2t64 libfuse2; do
+        if apt-cache show "$candidate" >/dev/null 2>&1; then
+          fuse_pkg="$candidate"
+          break
+        fi
+      done
+      if [ -n "$fuse_pkg" ]; then
+        apt_extra="$apt_extra \"$fuse_pkg\""
+        info "╍ FUSE2 package resolved to: $fuse_pkg"
+      else
+        warning "╍ neither libfuse2 nor libfuse2t64 found in apt cache; AppImage execution may fail"
+      fi
+      info "╍ Running 'apt-get install \$packages \$apt_extra'"
       run_quiet $Sudo apt-get update
-      run_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages" | xargs)"
+      run_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"
     ;;
     *)
       fatal "The \"$linux_distro\" is not supported yet. Full release details from /etc/os-release:\n$(cat /etc/os-release)\n\nAdd '$linux_distro' and it's package manager to this script."

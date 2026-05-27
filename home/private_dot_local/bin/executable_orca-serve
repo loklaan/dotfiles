@@ -9,17 +9,18 @@ set -euo pipefail
 #/ All arguments are forwarded directly to `orca serve`.
 #/ Run `orca-serve --help` to see the upstream options.
 #/
+#/ Discovery strategy:
+#/   1. mise-installed AppImage (preferred). The AppImage is opaque to direct
+#/      headless invocation (its bundled Electron rejects --ozone-platform=
+#/      headless before flag-parsing), so we extract it into a versioned cache
+#/      directory and invoke the same way the .deb path does:
+#/        ELECTRON_RUN_AS_NODE=1 <orca-ide> <cli/index.js> serve ...
+#/      Extraction is one-time per version; cached at:
+#/        ~/.cache/dotfiles/orca-extracted/<version>/squashfs-root/
+#/   2. /opt/Orca (legacy .deb install) — used as-is.
+#/
 #/ Environment:
 #/   ORCA_SERVE_EXTRA_ARGS   Additional Chromium flags for the Electron child
-
-# --- Pass --help through to the real CLI ----------------------------------
-for arg in "$@"; do
-  if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-    ELECTRON_RUN_AS_NODE=1 /opt/Orca/orca-ide \
-      /opt/Orca/resources/app.asar.unpacked/out/cli/index.js serve --help
-    exit $?
-  fi
-done
 
 # --- Logging --------------------------------------------------------------
 _log() {
@@ -36,36 +37,87 @@ ok()    { _log green  "orca" "$@"; }
 warn()  { _log yellow "orca" "$@"; }
 error() { _log red    "orca" "$@"; }
 
-# --- Resolve Orca paths ---------------------------------------------------
-APP_DIR="/opt/Orca"
-RESOURCES_DIR="$APP_DIR/resources"
-CLI="$RESOURCES_DIR/app.asar.unpacked/out/cli/index.js"
+# --- Resolve Orca extraction directory -----------------------------------
+# Both paths converge on a directory layout containing:
+#   <root>/orca-ide                                              (Electron binary)
+#   <root>/resources/app.asar.unpacked/out/cli/index.js          (CLI entry)
+# For the AppImage path, we extract on first use and cache by version. For
+# the .deb path, /opt/Orca already has this layout.
 
-ELECTRON=""
-for candidate in orca-ide orca Orca; do
-  if [[ -f "$APP_DIR/$candidate" && -x "$APP_DIR/$candidate" ]]; then
-    ELECTRON="$APP_DIR/$candidate"
-    break
+ORCA_ROOT=""
+ORCA_INSTALL_MODE=""
+EXTRACT_BASE="${HOME}/.cache/dotfiles/orca-extracted"
+
+resolve_appimage_root() {
+  command -v mise >/dev/null 2>&1 || return 1
+
+  local mise_orca_path
+  mise_orca_path=$(mise which orca 2>/dev/null || true)
+  if [[ -z "$mise_orca_path" || ! -x "$mise_orca_path" ]]; then
+    return 1
+  fi
+
+  # Derive a stable cache key from the install path. mise's install path
+  # contains the version segment (~/.local/share/mise/installs/http-orca/<v>/orca),
+  # so we extract that. Falls back to the AppImage's content checksum if
+  # the path shape changes.
+  local version
+  version=$(printf '%s' "$mise_orca_path" \
+    | grep -oE 'http-orca/[^/]+/' \
+    | head -1 | tr -d '/')
+  version="${version#http-orca}"
+  if [[ -z "$version" ]]; then
+    version="checksum-$(sha256sum "$mise_orca_path" | cut -c1-12)"
+  fi
+
+  local extract_dir="${EXTRACT_BASE}/${version}"
+  local root_dir="${extract_dir}/squashfs-root"
+
+  if [[ ! -x "${root_dir}/orca-ide" ]]; then
+    info "extracting AppImage to ${extract_dir} (one-time per version)"
+    mkdir -p "$extract_dir"
+    if ! ( cd "$extract_dir" && "$mise_orca_path" --appimage-extract >/dev/null 2>&1 ); then
+      error "AppImage extraction failed for ${mise_orca_path}"
+      return 1
+    fi
+  fi
+
+  ORCA_ROOT="$root_dir"
+  ORCA_INSTALL_MODE="mise-appimage"
+}
+
+resolve_deb_root() {
+  if [[ -x /opt/Orca/orca-ide ]]; then
+    ORCA_ROOT="/opt/Orca"
+    ORCA_INSTALL_MODE="deb"
+  fi
+}
+
+resolve_appimage_root || true
+if [[ -z "$ORCA_ROOT" ]]; then
+  resolve_deb_root || true
+fi
+
+if [[ -z "$ORCA_ROOT" ]]; then
+  error "could not locate orca install"
+  error "  expected: mise-installed AppImage (\$(mise which orca)) or /opt/Orca (.deb)"
+  error "  fix: ensure mise has installed http:orca, or fall back to apt-installing orca-ide"
+  exit 1
+fi
+
+ELECTRON="$ORCA_ROOT/orca-ide"
+CLI="$ORCA_ROOT/resources/app.asar.unpacked/out/cli/index.js"
+
+[[ -x "$ELECTRON" ]] || { error "Electron binary missing at $ELECTRON"; exit 1; }
+[[ -f "$CLI" ]]      || { error "CLI entrypoint missing at $CLI"; exit 1; }
+
+# --- Pass --help through to the real CLI ----------------------------------
+for arg in "$@"; do
+  if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+    ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" serve --help
+    exit $?
   fi
 done
-[[ -z "$ELECTRON" ]] && { error "cannot find Orca executable in $APP_DIR"; exit 1; }
-[[ -f "$CLI" ]] || { error "CLI entrypoint missing: $CLI"; exit 1; }
-
-# --- Headless Electron wrapper --------------------------------------------
-# serveOrcaApp() uses ORCA_APP_EXECUTABLE to resolve the Electron binary.
-# We point it at a thin wrapper that injects --ozone-platform=headless so
-# Electron starts without a display server and signals propagate cleanly.
-WRAPPER_BIN=$(mktemp /tmp/orca-headless-XXXXXX)
-cat > "$WRAPPER_BIN" <<EOF
-#!/usr/bin/env bash
-exec "$ELECTRON" --ozone-platform=headless --disable-gpu ${ORCA_SERVE_EXTRA_ARGS:-} "\$@"
-EOF
-chmod +x "$WRAPPER_BIN"
-
-cleanup() {
-  rm -f "$WRAPPER_BIN" "${FIFO:-}" 2>/dev/null || true
-}
-trap cleanup EXIT
 
 # --- Output filter --------------------------------------------------------
 filter_output() {
@@ -102,15 +154,18 @@ filter_output() {
   done
 }
 
-# --- Launch ---------------------------------------------------------------
-export ELECTRON_RUN_AS_NODE=1
-export ORCA_APP_EXECUTABLE="$WRAPPER_BIN"
-export ORCA_NODE_OPTIONS="${NODE_OPTIONS:-}"
-export ORCA_NODE_REPL_EXTERNAL_MODULE="${NODE_REPL_EXTERNAL_MODULE:-}"
-unset NODE_OPTIONS 2>/dev/null || true
-unset NODE_REPL_EXTERNAL_MODULE 2>/dev/null || true
+info "starting orca serve (mode=${ORCA_INSTALL_MODE}, headless)"
 
-info "starting orca serve (headless)"
+# --- Headless Electron wrapper --------------------------------------------
+# serveOrcaApp() uses ORCA_APP_EXECUTABLE to resolve the Electron binary.
+# We point it at a thin wrapper that injects --ozone-platform=headless so
+# Electron starts without a display server.
+WRAPPER_BIN=$(mktemp /tmp/orca-headless-XXXXXX)
+cat > "$WRAPPER_BIN" <<EOF
+#!/usr/bin/env bash
+exec "$ELECTRON" --ozone-platform=headless --disable-gpu ${ORCA_SERVE_EXTRA_ARGS:-} "\$@"
+EOF
+chmod +x "$WRAPPER_BIN"
 
 # --- Signal forwarding ----------------------------------------------------
 # Strategy: run orca in the foreground through a FIFO so we retain direct
@@ -120,9 +175,22 @@ info "starting orca serve (headless)"
 FIFO=$(mktemp -u /tmp/orca-fifo-XXXXXX)
 mkfifo "$FIFO"
 
+cleanup() {
+  rm -f "${WRAPPER_BIN:-}" "${FIFO:-}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 # Background: read from FIFO and filter
 filter_output < "$FIFO" &
 FILTER_PID=$!
+
+# Launch via Electron-as-Node, pointing at the unpacked CLI script.
+export ELECTRON_RUN_AS_NODE=1
+export ORCA_APP_EXECUTABLE="$WRAPPER_BIN"
+export ORCA_NODE_OPTIONS="${NODE_OPTIONS:-}"
+export ORCA_NODE_REPL_EXTERNAL_MODULE="${NODE_REPL_EXTERNAL_MODULE:-}"
+unset NODE_OPTIONS 2>/dev/null || true
+unset NODE_REPL_EXTERNAL_MODULE 2>/dev/null || true
 
 # Foreground: launch orca writing to FIFO. Use setsid so it gets its own
 # process group — this prevents SIGINT from the terminal going directly to
@@ -146,7 +214,7 @@ shutdown() {
   wait "$ORCA_PID" 2>/dev/null || true
   kill "$FILTER_PID" 2>/dev/null || true
   wait "$FILTER_PID" 2>/dev/null || true
-  rm -f "$FIFO" 2>/dev/null || true
+  rm -f "$FIFO" "${WRAPPER_BIN:-}" 2>/dev/null || true
   ok "stopped"
   # exit in trap replaces the default signal disposition
   exit 0
@@ -159,5 +227,5 @@ while kill -0 "$ORCA_PID" 2>/dev/null; do
 done
 wait "$ORCA_PID" 2>/dev/null || true
 kill "$FILTER_PID" 2>/dev/null || true
-rm -f "$FIFO" 2>/dev/null || true
+rm -f "$FIFO" "${WRAPPER_BIN:-}" 2>/dev/null || true
 exit 0
