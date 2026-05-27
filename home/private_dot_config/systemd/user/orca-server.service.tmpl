@@ -19,7 +19,7 @@ After=network.target
 [Service]
 ExecStart={{ .chezmoi.homeDir }}/.local/bin/orca-serve --pairing-address {{ $workspaceName }}.coder --json
 Environment=HOME={{ .chezmoi.homeDir }}
-Environment=PATH={{ .chezmoi.homeDir }}/.local/bin:/usr/bin:/usr/local/bin:/bin
+Environment=PATH={{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin
 SuccessExitStatus=1 143
 Restart=on-failure
 RestartSec=5

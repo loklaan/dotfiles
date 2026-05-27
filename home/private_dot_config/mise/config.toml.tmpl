@@ -6,7 +6,14 @@
 "github:smart-mcp-proxy/mcpproxy-go" = { version = "0.24.2", exe = "mcpproxy" }
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") .paseoDaemon -}}
-"npm:@getpaseo/cli" = "latest"
+"npm:@getpaseo/cli" = "0.1.83"
+{{ end -}}
+{{ if and (eq .chezmoi.os "linux") .orcaServer -}}
+# orca on Linux: AppImage via http: backend. mise downloads, makes executable,
+# and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
+# `orca-serve` wrapper points there. Same shape as paseo above.
+# (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
+"http:orca" = { version = "1.4.30", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
 {{ end -}}
 age = "latest"
 bitwarden = "2025.10.0"
@@ -39,3 +46,51 @@ OMO_SEND_ANONYMOUS_TELEMETRY = "0"
 idiomatic_version_file_enable_tools = ["node"]
 experimental = true
 gix = false
+
+# ── Tasks ────────────────────────────────────────────────────────────────────
+# Task bodies are hoisted into ~/.local/bin/dotfiles-task-* scripts so they
+# follow the repo's standard script header pattern (set -euo pipefail, doc
+# block, bash-logging) and can be debugged in isolation. Task entries here
+# are thin dispatchers + dependency declarations.
+
+[tasks.update]
+description = "Upgrade mise tools, then converge chezmoi state"
+depends = ["mise:upgrade"]
+depends_post = ["chezmoi:apply"]
+run = "true"
+
+[tasks."mise:upgrade"]
+description = "Refresh tools pinned to `latest` (explicit pins untouched)"
+hide = true
+run = "dotfiles-task-mise-upgrade"
+
+[tasks."chezmoi:apply"]
+description = "Apply chezmoi (converges dotfiles + lifecycle scripts)"
+hide = true
+run = "dotfiles-task-chezmoi-apply"
+
+{{ if eq .chezmoi.os "darwin" -}}
+# ── Drift detection (macOS only) ─────────────────────────────────────────────
+# Surfaces version drift across managed tools without firing notifications on
+# Coder boxes (which are non-interactive). Linux drift is visible by SSHing
+# into the box and running dotfiles-setup.
+
+[tasks."drift:check"]
+description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
+run = "dotfiles-task-drift-check"
+
+[tasks."drift:notify"]
+description = "Surface drift via macOS notification (debounced 24h)"
+depends = ["drift:check"]
+run = "dotfiles-task-drift-notify"
+
+{{ end -}}
+
+# ── Hooks ────────────────────────────────────────────────────────────────────
+# After any tool install (`mise install`, `mise upgrade`, `mise use`), run
+# chezmoi apply so lifecycle scripts that depend on tool versions converge.
+# Notable consumer: run_onchange-067 sync-opencode-plugins, which bridges
+# mise's tool pins into opencode's plugin cache.
+
+[hooks]
+postinstall = { task = "chezmoi:apply" }
