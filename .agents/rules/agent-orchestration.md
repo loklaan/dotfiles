@@ -238,7 +238,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 **Add a new Coder box as an orca server host (BETA):**
 1. SSH into the box (`cw <ws>`).
 2. `chezmoi edit-config` → set `orcaServer = true` → save.
-3. `chezmoi apply` → orca is `apt install`ed (passwordless sudo required) and the systemd unit starts.
+3. `chezmoi apply` → mise installs orca (the `orca-linux.AppImage`) into `~/.local/share/mise/installs/http-orca/<version>/orca`. The `run_after_install-059-orca-server` lifecycle script then enables and starts the systemd-user unit.
 4. Capture the pairing URL from the unit's stdout:
    ```bash
    journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ "]*' | tail -1
@@ -249,7 +249,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 **Decommission a Coder box's orca server:**
 1. SSH into the box.
 2. `chezmoi edit-config` → set `orcaServer = false`.
-3. `chezmoi apply` → server stops + disables. (orca .deb stays installed; remove manually with `sudo apt remove orca-ide` if reclaiming disk.)
+3. `chezmoi apply` → server stops + disables. (mise's installed AppImage stays in `~/.local/share/mise/installs/`; remove with `mise uninstall orca` if reclaiming disk.)
 
 **Status anywhere:**
 - `dotfiles-setup` shows the daemon line on opt-in Linux machines.
@@ -261,3 +261,71 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 3. Verify: `oh-my-openagent doctor` → expect `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`.
 
 If the doctor reports `Loaded X · latest Y` after step 2, the bridge didn't run — check the chezmoi session log for `tool-cache-sync` warnings (most likely `bun not found` or `opencode not found`).
+
+## Update Architecture
+
+Three primitives drive every "thing is out of date" workflow in this repo:
+
+```
+mise.toml [tools] pins versions for installable tools (orca, paseo, opencode, etc.)
+  ↓
+mise tasks (update / drift:check / drift:notify) dispatch dotfiles-task-* scripts
+  ↓
+cfleet ssh-fans-out a `mise run <task>` across `coder list -o json` workspaces
+  ↓
+LaunchAgent (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/drift.json
+  ↓
+Surfaces: dotfiles-setup drift block · zsh login one-liner · macOS notification
+```
+
+### Orca / paseo on Linux are installed via mise
+
+Both opt-in tools that run as systemd-user services on Coder boxes are installed by mise as a normal `[tools]` entry:
+
+- **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.83`
+- **orca**: `http:orca` — pinned to `1.4.30`, downloads `orca-linux.AppImage` from GitHub releases
+
+To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cfleet --include-local update` to converge the fleet.
+
+### Daily ergonomics
+
+```bash
+# See what's drifting (cheap; reads cache)
+dotfiles-setup
+
+# Refresh the drift cache (network-bound; minutes)
+mise run drift:check
+
+# Update local box: refresh tools + apply chezmoi
+mise run update
+
+# Update everywhere (local first, then every running Coder workspace)
+cfleet --include-local update
+```
+
+### When to bump what
+
+| Scenario | Action |
+|---|---|
+| `latest`-pinned tool drifted (e.g. opencode, oh-my-openagent) | `mise run update` (local) or `cfleet --include-local update` (fleet) |
+| Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cfleet --include-local update` |
+| Cask drift on macOS (orca/paseo .app vs cask formula) | `brew upgrade --greedy --cask <name>` (Homebrew owns this; mise doesn't see casks) |
+| Repo itself behind origin/main | `git -C ~/.local/share/chezmoi pull && chezmoi apply`, or `cfleet update` |
+
+### Drift detection scope (macOS only)
+
+The launchd agent `io.lochlan.dotfiles.drift` runs `mise run drift:notify` once per 24h. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `dotfiles-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
+
+The drift report aggregates three sources, each emitting JSON to stdout:
+- **`mise outdated --json`** — every tool mise tracks (latest pins + explicit github/npm pins)
+- **`dotfiles-task-drift-cask`** — macOS Homebrew casks with auto_updates=true (orca, paseo apps that mise can't see)
+- **`dotfiles-task-drift-dotfiles`** — this repo vs origin/main (any OS)
+
+### Replacement for the old "ritual"
+
+Where the previous operating model said `mise upgrade -y && chezmoi apply`, the new equivalent is `mise run update` (local) or `cfleet --include-local update` (fleet). The old ritual still works because:
+- `mise:upgrade` task runs `mise upgrade -y` internally
+- `[hooks].postinstall = chezmoi:apply` ensures `mise upgrade` triggers a chezmoi apply automatically
+- `chezmoi:apply` task runs as a `depends_post` on the `update` task
+
+So `mise run update` does both, in the right order, with discoverability via `mise tasks ls`.

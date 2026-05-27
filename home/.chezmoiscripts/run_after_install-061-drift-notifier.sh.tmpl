@@ -1,0 +1,73 @@
+{{- if eq .chezmoi.os "darwin" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-061-drift-notifier.sh
+#/
+#/ Description:
+#/   Loads (or reloads) the drift-notifier launchd agent on macOS so it
+#/   fires `mise run drift:notify` once per day.
+#/
+#/   Idempotent: bootstrap loads, subsequent applies reload-on-change.
+#/   Linux machines render this script empty and skip entirely.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help) usage; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+PLIST="${HOME}/Library/LaunchAgents/io.lochlan.dotfiles.drift.plist"
+LABEL="io.lochlan.dotfiles.drift"
+
+main() {
+  if [ ! -f "$PLIST" ]; then
+    info "▶ drift notifier plist not present at ${PLIST} — nothing to load"
+    return 0
+  fi
+
+  info "▶ drift notifier launchd agent"
+
+  # Bootstrap-or-restart pattern. `bootout` removes any existing service
+  # binding (idempotent — succeeds if not loaded). `bootstrap` registers
+  # the new plist. Done together so on each apply we pick up plist changes.
+  local uid domain
+  uid=$(id -u)
+  domain="gui/${uid}"
+  if launchctl print "${domain}/${LABEL}" >/dev/null 2>&1; then
+    if ! launchctl bootout "${domain}/${LABEL}" 2>/dev/null; then
+      warning "╍ failed to bootout existing agent (continuing)"
+    fi
+  fi
+
+  if launchctl bootstrap "$domain" "$PLIST" 2>/dev/null; then
+    info "╍ loaded ${LABEL}"
+  else
+    warning "╍ launchctl bootstrap failed for ${PLIST}"
+    return 0
+  fi
+
+  # Verify the agent is registered now
+  if launchctl print "${domain}/${LABEL}" >/dev/null 2>&1; then
+    info "╍ ${LABEL} is registered"
+  else
+    warning "╍ ${LABEL} did not register — check: launchctl print ${domain}/${LABEL}"
+  fi
+}
+
+main "$@"
+{{- end }}

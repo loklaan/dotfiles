@@ -78,3 +78,40 @@ if [[ "$_incomplete_setup" == "true" ]]; then
   echo ""
 fi
 unset _incomplete_setup
+
+#|------------------------------------------------------------|#
+#| Tool Drift Reminder (macOS only)
+#|
+#| Surfaces a one-liner once per 24h when managed tools are behind
+#| their pinned versions. Reads the cache populated by the launchd
+#| agent (drift:notify) so the cost here is only a stat + jq.
+#|
+{{- if eq .chezmoi.os "darwin" }}
+if is_interactive_shell && command -v jq &> /dev/null; then
+  _drift_cache="${HOME}/.cache/dotfiles/drift.json"
+  _drift_login_marker="${HOME}/.cache/dotfiles/.drift-login-shown"
+
+  # Only act when cache exists and is parseable
+  if [[ -f "$_drift_cache" ]]; then
+    _drift_show=true
+    if [[ -f "$_drift_login_marker" ]]; then
+      _drift_now=$(date +%s)
+      _drift_age=$(( _drift_now - $(stat -f %m "$_drift_login_marker" 2>/dev/null || echo 0) ))
+      [[ $_drift_age -lt 86400 ]] && _drift_show=false
+    fi
+
+    if [[ "$_drift_show" == "true" ]]; then
+      _drift_count=$(jq '.tools | length' "$_drift_cache" 2>/dev/null || echo 0)
+      if [[ "$_drift_count" -gt 0 ]]; then
+        echo ""
+        print -P "%F{yellow}⚠ ${_drift_count} tool(s) behind.%f Run %F{cyan}dotfiles-setup%f for details, or %F{cyan}mise run update%f to refresh."
+        echo ""
+        mkdir -p "${HOME}/.cache/dotfiles"
+        touch "$_drift_login_marker"
+      fi
+    fi
+    unset _drift_show _drift_now _drift_age _drift_count
+  fi
+  unset _drift_cache _drift_login_marker
+fi
+{{- end }}

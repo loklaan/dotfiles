@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.lochlan.dotfiles.drift</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ .chezmoi.homeDir }}/.local/share/mise/shims/mise</string>
+        <string>run</string>
+        <string>drift:notify</string>
+    </array>
+
+    <!-- Daily at 09:30 local time. launchd queues missed runs when the
+         laptop was asleep at fire time and dispatches on wake — unlike
+         StartInterval, which has no catch-up semantics. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- Don't fire at load time itself (otherwise every chezmoi apply
+         would trigger a notification). The first real fire is at the
+         next 09:30 boundary. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Output goes through bash-logging in the task script. Capture launchd
+         layer separately so we can debug if drift:notify itself fails to
+         start. -->
+    <key>StandardOutPath</key>
+    <string>{{ .chezmoi.homeDir }}/.cache/dotfiles/drift-notify.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ .chezmoi.homeDir }}/.cache/dotfiles/drift-notify.launchd.log</string>
+
+    <!-- Run as the user; mise needs the user's HOME and PATH to find shims. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{ .chezmoi.homeDir }}</string>
+        <key>PATH</key>
+        <string>{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
