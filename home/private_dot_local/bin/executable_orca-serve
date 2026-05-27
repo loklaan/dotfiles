@@ -63,7 +63,7 @@ EOF
 chmod +x "$WRAPPER_BIN"
 
 cleanup() {
-  rm -f "$WRAPPER_BIN" 2>/dev/null || true
+  rm -f "$WRAPPER_BIN" "${FIFO:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -112,10 +112,25 @@ unset NODE_REPL_EXTERNAL_MODULE 2>/dev/null || true
 
 info "starting orca serve (headless)"
 
-"$ELECTRON" "$CLI" serve "$@" > >(filter_output) 2>&1 &
+# --- Signal forwarding ----------------------------------------------------
+# Strategy: run orca in the foreground through a FIFO so we retain direct
+# process parentage. A background reader drains the FIFO through the filter.
+# SIGINT/SIGTERM hit THIS script directly; we forward to the child PID.
+
+FIFO=$(mktemp -u /tmp/orca-fifo-XXXXXX)
+mkfifo "$FIFO"
+
+# Background: read from FIFO and filter
+filter_output < "$FIFO" &
+FILTER_PID=$!
+
+# Foreground: launch orca writing to FIFO. Use setsid so it gets its own
+# process group — this prevents SIGINT from the terminal going directly to
+# Electron (which swallows it). Instead SIGINT hits our script and we
+# forward SIGTERM for a clean shutdown.
+setsid "$ELECTRON" "$CLI" serve "$@" > "$FIFO" 2>&1 &
 ORCA_PID=$!
 
-# --- Signal forwarding ----------------------------------------------------
 shutdown() {
   info "shutting down..."
   kill -TERM "$ORCA_PID" 2>/dev/null || true
@@ -129,13 +144,20 @@ shutdown() {
     kill -KILL "$ORCA_PID" 2>/dev/null || true
   fi
   wait "$ORCA_PID" 2>/dev/null || true
+  kill "$FILTER_PID" 2>/dev/null || true
+  wait "$FILTER_PID" 2>/dev/null || true
+  rm -f "$FIFO" 2>/dev/null || true
   ok "stopped"
+  # exit in trap replaces the default signal disposition
   exit 0
 }
 trap 'shutdown' SIGTERM SIGINT SIGHUP
 
+# Wait for orca to exit (signals interrupt wait → trap fires)
 while kill -0 "$ORCA_PID" 2>/dev/null; do
   wait "$ORCA_PID" 2>/dev/null || true
 done
-wait "$ORCA_PID" 2>/dev/null
-exit $?
+wait "$ORCA_PID" 2>/dev/null || true
+kill "$FILTER_PID" 2>/dev/null || true
+rm -f "$FIFO" 2>/dev/null || true
+exit 0
