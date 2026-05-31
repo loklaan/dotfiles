@@ -40,30 +40,35 @@
 {{- end -}}
 
 {{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
+{{-   $bedrockOpus := "global.anthropic.claude-opus-4-8" -}}
+{{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}
 {{-   $config = $config | setValueAtPath "share" "disabled" -}}
 {{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
-{{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}
-{{-   $bedrockModels := dict
-        "global.anthropic.claude-opus-4-7" $opusLimit -}}
-{{-   $bedrockWhitelist := list
-        "global.anthropic.claude-opus-4-7"
-        "global.anthropic.claude-opus-4-6-v1"
-        "global.anthropic.claude-opus-4-5-20251101-v1:0"
-        "global.anthropic.claude-sonnet-4-6"
-        "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        "global.anthropic.claude-sonnet-4-20250514-v1:0"
-        "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-        "moonshotai.kimi-k2.5"
-        "deepseek.v3.2"
-        "qwen.qwen3-coder-next"
-        "minimax.minimax-m2.5"
-        "mistral.mistral-large-3-675b-instruct"
-        "nvidia.nemotron-super-3-120b"
-        "meta.llama4-scout-17b-instruct-v1:0"
-        "mistral.magistral-small-2509" -}}
-{{-   $config = $config | setValueAtPath "provider" (dict "amazon-bedrock" (dict "models" $bedrockModels "whitelist" $bedrockWhitelist)) -}}
+{{-   $config = mergeOverwrite $config (dict
+        "provider" (dict
+          "amazon-bedrock" (dict
+            "models" (dict
+              $bedrockOpus                                       $opusLimit
+              "global.anthropic.claude-opus-4-7"                 $opusLimit)
+            "whitelist" (list
+              $bedrockOpus
+              "global.anthropic.claude-opus-4-7"
+              "global.anthropic.claude-opus-4-6-v1"
+              "global.anthropic.claude-opus-4-5-20251101-v1:0"
+              "global.anthropic.claude-sonnet-4-6"
+              "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+              "global.anthropic.claude-sonnet-4-20250514-v1:0"
+              "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+              "moonshotai.kimi-k2.5"
+              "deepseek.v3.2"
+              "qwen.qwen3-coder-next"
+              "minimax.minimax-m2.5"
+              "mistral.mistral-large-3-675b-instruct"
+              "nvidia.nemotron-super-3-120b"
+              "meta.llama4-scout-17b-instruct-v1:0"
+              "mistral.magistral-small-2509"))))  -}}
 {{-   if not (hasKey $base "model") -}}
-{{-     $config = $config | setValueAtPath "model" "amazon-bedrock/global.anthropic.claude-opus-4-7" -}}
+{{-     $config = $config | setValueAtPath "model" (printf "amazon-bedrock/%s" $bedrockOpus) -}}
 {{-   end -}}
 {{- else if not (hasKey $base "share") -}}
 {{-   $config = $config | setValueAtPath "share" "manual" -}}

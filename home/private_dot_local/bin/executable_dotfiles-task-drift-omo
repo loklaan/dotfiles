@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   dotfiles-task-drift-omo
+#/
+#/ Description:
+#/   Drift checker for oh-my-openagent (omo) configuration. Surfaces two
+#/   classes of drift, both via the shared {name, installed, latest, behind,
+#/   source} JSON shape on stdout.
+#/
+#/   1. Roster drift — omo recognises an agent/category name that this
+#/      machine's omo config doesn't pin. Source: "omo:roster".
+#/      Suppressed for names listed in the config's `_dotfilesUnmanaged`
+#/      sidecar (= "we know about it, intentionally on omo's chain").
+#/
+#/   2. Bracket drift — a model pinned by this machine's omo config has a
+#/      newer same-family sibling in the models.dev catalogue (Option 2:
+#/      provider/family bracket — flags any newer model sharing the same
+#/      `family` field as the pin). Source: "omo:bracket".
+#/      Bedrock IDs are matched within their region prefix (e.g. drift on a
+#/      `global.anthropic.claude-opus-4-7` pin reports `global.anthropic.
+#/      claude-opus-4-8`, not the `us.` variant).
+#/
+#/   Output: JSON array on stdout. Returns [] (and exits 0) when:
+#/     - omo binary not on PATH
+#/     - omo's rendered config not at ~/.config/opencode/oh-my-openagent.json
+#/     - models.dev fetch fails
+#/     - no drift detected
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help) usage; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+OMO_CONFIG="${HOME}/.config/opencode/oh-my-openagent.json"
+MODELS_DEV_CACHE="${HOME}/.cache/dotfiles/models-dev.json"
+MODELS_DEV_URL="https://models.dev/api.json"
+MODELS_DEV_TTL_SECONDS=86400  # 24h
+
+# ---------------------------------------------------------------------------
+# Source data acquisition
+# ---------------------------------------------------------------------------
+
+# Fetch models.dev catalogue, with on-disk cache. Stale-while-revalidate would
+# be nicer; this just refetches when older than TTL or missing.
+ensure_models_dev() {
+  mkdir -p "$(dirname "$MODELS_DEV_CACHE")"
+  if [ -f "$MODELS_DEV_CACHE" ]; then
+    local age_s
+    if [ "$(uname -s)" = "Darwin" ]; then
+      age_s=$(( $(date +%s) - $(stat -f %m "$MODELS_DEV_CACHE") ))
+    else
+      age_s=$(( $(date +%s) - $(stat -c %Y "$MODELS_DEV_CACHE") ))
+    fi
+    if [ "$age_s" -lt "$MODELS_DEV_TTL_SECONDS" ]; then
+      return 0
+    fi
+  fi
+  curl -fsSL --max-time 30 "$MODELS_DEV_URL" -o "${MODELS_DEV_CACHE}.tmp" 2>/dev/null \
+    && mv "${MODELS_DEV_CACHE}.tmp" "$MODELS_DEV_CACHE" \
+    || return 1
+}
+
+# Pull omo's full roster of agents and categories from `oh-my-openagent doctor
+# --json --verbose`. Returns a JSON object: {agents: {...}, categories: {...}}
+# where each is name → resolved-model-display-string.
+omo_roster() {
+  oh-my-openagent doctor --json --verbose 2>/dev/null \
+  | jq -c '
+      .results[] | select(.name == "Models") | .details as $d
+      | ($d | index("Agents:")) as $a
+      | ($d | index("Categories:")) as $c
+      | {
+          agents: (
+            $d[$a+1:$c-1]
+            | map(select(test("[●○]")))
+            | map(capture("^  [●○] (?<n>[a-z][a-z0-9-]*?): (?<m>[^[]+) \\["))
+            | map({(.n): (.m | rtrimstr(" "))})
+            | add // {}
+          ),
+          categories: (
+            $d[$c+1:]
+            | map(select(test("[●○]")))
+            | map(capture("^  [●○] (?<n>[a-z][a-z0-9-]*?): (?<m>[^[]+) \\["))
+            | map({(.n): (.m | rtrimstr(" "))})
+            | add // {}
+          )
+        }' 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Roster drift (signal A)
+# ---------------------------------------------------------------------------
+
+# omo's names not pinned in our config, AND not on the unmanaged allowlist.
+roster_drift() {
+  local roster
+  roster=$(omo_roster)
+  [ -z "$roster" ] && { echo "[]"; return 0; }
+
+  jq -n \
+    --slurpfile cfg "$OMO_CONFIG" \
+    --argjson roster "$roster" \
+    '
+      ($cfg[0]) as $c
+      | ($c.agents // {} | keys) as $pinned_a
+      | ($c.categories // {} | keys) as $pinned_c
+      | ($c._dotfilesUnmanaged.agents // []) as $unmanaged_a
+      | ($c._dotfilesUnmanaged.categories // []) as $unmanaged_c
+      | (
+          ($roster.agents | keys[] | select(. as $n | ($pinned_a + $unmanaged_a) | index($n) | not)
+            | { kind: "agents", name: ., resolved: $roster.agents[.] }),
+          ($roster.categories | keys[] | select(. as $n | ($pinned_c + $unmanaged_c) | index($n) | not)
+            | { kind: "categories", name: ., resolved: $roster.categories[.] })
+        )
+      | { name: ("omo." + .kind + "." + .name),
+          installed: "not-managed-by-template",
+          latest: .resolved,
+          behind: 1,
+          source: "omo:roster" }
+    ' 2>/dev/null \
+    | jq -s '.' 2>/dev/null \
+    || echo "[]"
+}
+
+# ---------------------------------------------------------------------------
+# Bracket drift (signal B)
+# ---------------------------------------------------------------------------
+
+# For each model pinned in our config, ask models.dev: is there a newer entry
+# in the same provider with the same `family` field?
+#
+# Bedrock IDs include region prefixes (global.anthropic, us.anthropic, etc.).
+# We only flag drift when both old and new IDs share the same region prefix.
+bracket_drift() {
+  ensure_models_dev || { echo "[]"; return 0; }
+  [ -f "$MODELS_DEV_CACHE" ] || { echo "[]"; return 0; }
+
+  jq -n \
+    --slurpfile cfg "$OMO_CONFIG" \
+    --slurpfile mdb "$MODELS_DEV_CACHE" \
+    '
+      ($cfg[0]) as $c
+      | ($mdb[0]) as $m
+      | def parse_pin(s):
+          (s | capture("^(?<provider>[^/]+)/(?<id>.+)$"));
+        def region_prefix(id):
+          # Extract Bedrock-style region prefix like "global.anthropic." or "us.anthropic."
+          # Returns empty string for non-Bedrock IDs.
+          (id | capture("^(?<r>[a-z]{2,6}\\.anthropic\\.)") | .r) // "";
+        def newer_same_family($provider; $id):
+          ($m[$provider].models[$id]) as $me
+          | if $me == null then empty
+            else
+              ($me.family // "") as $fam
+              | if $fam == "" then empty
+                else
+                  ($me.release_date // "1970-01-01") as $my_date
+                  | (region_prefix($id)) as $my_region
+                  | $m[$provider].models | to_entries
+                  | map(select(
+                      .value.family == $fam
+                      and (.value.release_date // "1970-01-01") > $my_date
+                      and region_prefix(.key) == $my_region
+                    ))
+                  | sort_by(.value.release_date)
+                  | reverse
+                  | .[0]
+                  | if . == null then empty else .key end
+                end
+            end;
+
+        # Walk every agent + category pin, check for drift.
+        def pins:
+          (($c.agents // {}) | to_entries | map({kind: "agents", name: .key, model: .value.model})),
+          (($c.categories // {}) | to_entries | map({kind: "categories", name: .key, model: .value.model}));
+        [pins | .[] | select(.model != null)]
+        | flatten
+        | map(
+            . as $entry
+            | parse_pin(.model) as $p
+            | (newer_same_family($p.provider; $p.id)) as $newer
+            | if $newer != null and $newer != $p.id then
+                {
+                  name: ("omo." + .kind + "." + .name + ".model"),
+                  installed: .model,
+                  latest: ($p.provider + "/" + $newer),
+                  behind: 1,
+                  source: "omo:bracket"
+                }
+              else empty end
+          )
+    ' 2>/dev/null \
+    || echo "[]"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+  if ! command -v oh-my-openagent >/dev/null 2>&1 \
+    || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v curl >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+  if [ ! -r "$OMO_CONFIG" ]; then
+    echo "[]"
+    return 0
+  fi
+
+  local roster_json bracket_json
+  roster_json=$(roster_drift)
+  bracket_json=$(bracket_drift)
+
+  # Coerce to [] on parse failure
+  for var in roster_json bracket_json; do
+    if ! printf '%s' "${!var}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      eval "$var='[]'"
+    fi
+  done
+
+  jq -n \
+    --argjson roster "$roster_json" \
+    --argjson bracket "$bracket_json" \
+    '$roster + $bracket'
+}
+
+main
