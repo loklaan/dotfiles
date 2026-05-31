@@ -6,17 +6,21 @@
 {{- $config = $config | setValueAtPath "$schema" "https://github.com/code-yeongyu/oh-my-openagent/blob/dev/assets/oh-my-opencode.schema.json" -}}
 
 {{- /* Disable git commit footers — conflicts with commit conventions */ -}}
-{{- $config = $config | setValueAtPath "git_master.commit_footer" false -}}
-{{- $config = $config | setValueAtPath "git_master.include_co_authored_by" false -}}
+{{- $config = mergeOverwrite $config (dict
+      "git_master" (dict
+        "commit_footer" false
+        "include_co_authored_by" false)) -}}
 
-{{- /* Disable Claude Code interop — hooks misreport as claude-code in telemetry,
-       MCP servers are behind mcpproxy-go instead */ -}}
-{{- $config = $config | setValueAtPath "claude_code.hooks" false -}}
-{{- $config = $config | setValueAtPath "claude_code.mcp" false -}}
-{{- $config = $config | setValueAtPath "claude_code.commands" false -}}
-{{- $config = $config | setValueAtPath "claude_code.skills" false -}}
-{{- $config = $config | setValueAtPath "claude_code.agents" false -}}
-{{- $config = $config | setValueAtPath "claude_code.plugins" false -}}
+{{- /* Disable Claude Code interop — hooks misreport as claude-code in
+       telemetry, MCP servers are behind mcpproxy-go instead */ -}}
+{{- $config = mergeOverwrite $config (dict
+      "claude_code" (dict
+        "hooks" false
+        "mcp" false
+        "commands" false
+        "skills" false
+        "agents" false
+        "plugins" false)) -}}
 
 {{- /* Disable default built-in MCPs — context7 and websearch are behind
        mcpproxy-go, grep_app is not needed */ -}}
@@ -26,22 +30,59 @@
        of category-specialised members in parallel via team_* tools. Off by
        default upstream; this turns it on for our machines. tmux_visualization
        stays off here — turn it on per-machine if you live in tmux. */ -}}
-{{- $config = $config | setValueAtPath "team_mode.enabled" true -}}
-{{- $config = $config | setValueAtPath "team_mode.tmux_visualization" false -}}
-{{- $config = $config | setValueAtPath "team_mode.max_parallel_members" 4 -}}
-{{- $config = $config | setValueAtPath "team_mode.max_members" 8 -}}
+{{- $config = mergeOverwrite $config (dict
+      "team_mode" (dict
+        "enabled" true
+        "tmux_visualization" false
+        "max_parallel_members" 4
+        "max_members" 8)) -}}
 
-{{- /* Model overrides for Bedrock-proxied providers (work machines only) */ -}}
+{{- /* Bedrock-proxied model + variant overrides (work machines only).
+       Bedrock isn't in omo's hardcoded fallback chains, so anthropic-intended
+       agents would silently degrade to OpenAI/Google fallbacks unless pinned
+       here. Variants mirror omo's intended reasoning levels.
+
+       This template is the SOURCE OF TRUTH for agents/categories: we use `set`
+       (not `mergeOverwrite`), so anything not listed here is REMOVED on apply.
+       That kills install-time leftovers (e.g. stale opencode/gpt-5-nano pins
+       written by `oh-my-openagent install`). New omo agents/categories not
+       listed here will fall through to omo's hardcoded chain — the right
+       default until you decide to pin them.
+
+       The `_dotfilesUnmanaged` sidecar is read by `dotfiles-task-drift-omo`:
+       names listed there are agents/categories we know exist but intentionally
+       leave on omo's chain. Drift fires only on names that are neither pinned
+       below nor listed there. The underscore prefix signals "not omo's key";
+       omo ignores unknown top-level keys. */ -}}
 {{- if ne "" .emailWork -}}
-{{-   $config = $config | setValueAtPath "categories.unspecified-high.model" "amazon-bedrock/global.anthropic.claude-opus-4-7" -}}
-{{-   $config = $config | setValueAtPath "categories.unspecified-low.model" "amazon-bedrock/global.anthropic.claude-sonnet-4-6" -}}
-{{-   $config = $config | setValueAtPath "categories.ultrabrain.model" "openai/gpt-5.5" -}}
-{{-   $config = $config | setValueAtPath "categories.deep.model" "openai/gpt-5.5" -}}
-{{-   $config = $config | setValueAtPath "categories.quick.model" "google/gemini-3.5-flash" -}}
-{{-   $config = $config | setValueAtPath "categories.visual-engineering.model" "google/gemini-3.1-pro-preview" -}}
-{{-   $config = $config | setValueAtPath "categories.artistry.model" "google/gemini-3.1-pro-preview" -}}
-{{-   $config = $config | setValueAtPath "categories.writing.model" "google/gemini-3.5-flash" -}}
-{{-   $config = $config | setValueAtPath "agents.sisyphus.model" "amazon-bedrock/global.anthropic.claude-opus-4-7" -}}
+{{-   $bedrockOpus := "amazon-bedrock/global.anthropic.claude-opus-4-8" -}}
+{{-   $bedrockSonnet := "amazon-bedrock/global.anthropic.claude-sonnet-4-6" -}}
+{{-   $bedrockHaiku := "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0" -}}
+{{-   $openaiBig := "openai/gpt-5.5" -}}
+{{-   $googleFlash := "google/gemini-3.5-flash" -}}
+{{-   $googlePro := "google/gemini-3.1-pro-preview" -}}
+{{-   $config = set $config "categories" (dict
+        "unspecified-high"   (dict "model" $bedrockOpus)
+        "unspecified-low"    (dict "model" $bedrockSonnet)
+        "ultrabrain"         (dict "model" $openaiBig    "variant" "xhigh")
+        "deep"               (dict "model" $openaiBig    "variant" "medium")
+        "quick"              (dict "model" $googleFlash)
+        "visual-engineering" (dict "model" $googlePro    "variant" "high")
+        "artistry"           (dict "model" $googlePro    "variant" "high")
+        "writing"            (dict "model" $googleFlash)) -}}
+{{-   $config = set $config "agents" (dict
+        "sisyphus"        (dict "model" $bedrockOpus)
+        "oracle"          (dict "model" $bedrockOpus)
+        "prometheus"      (dict "model" $bedrockOpus)
+        "metis"           (dict "model" $bedrockSonnet)
+        "momus"           (dict "model" $bedrockOpus)
+        "atlas"           (dict "model" $bedrockSonnet)
+        "sisyphus-junior" (dict "model" $bedrockSonnet)
+        "librarian"       (dict "model" $bedrockHaiku)
+        "explore"         (dict "model" $bedrockHaiku)) -}}
+{{-   $config = set $config "_dotfilesUnmanaged" (dict
+        "agents" (list "hephaestus" "multimodal-looker")
+        "categories" (list)) -}}
 {{- end -}}
 
 {{ $config | toPrettyJson }}
