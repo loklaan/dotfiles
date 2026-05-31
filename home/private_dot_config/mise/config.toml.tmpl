@@ -1,43 +1,43 @@
 [tools]
 # Global tools listed here will be automatically installed.
-"github:bitwarden/sdk" = { version = "bws-v2.0.0", exe = "bws", tag_regex = "^bws" }
+"github:bitwarden/sdk" = { version = "bws-v2.1.0", exe = "bws", tag_regex = "^bws" }
 "github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt" }
 {{ if eq .chezmoi.os "linux" -}}
-"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.24.2", exe = "mcpproxy" }
+"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.34.0", exe = "mcpproxy" }
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") .paseoDaemon -}}
-"npm:@getpaseo/cli" = "0.1.83"
+"npm:@getpaseo/cli" = "0.1.87"
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") .orcaServer -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
 # `orca-serve` wrapper points there. Same shape as paseo above.
 # (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
-"http:orca" = { version = "1.4.30", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
+"http:orca" = { version = "1.4.35", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
 {{ end -}}
 age = "latest"
-bitwarden = "2025.10.0"
-chezmoi = "2.67.0"
+bitwarden = "2026.5.0"
+chezmoi = "2.70.4"
 codex = "latest"
 d2 = "0.7.1"
-delta = "0.18.2"
-deno = "2.5.4"
-difftastic = "0.65.0"
-fzf = "0.66.0"
+delta = "0.19.2"
+deno = "2.8.1"
+difftastic = "0.69.0"
+fzf = "0.73.1"
 gemini = "latest"
 go = "1.25.3"
 jq = "latest"
 yq = "latest"
-node = "22.22.0"
+node = "22.22.3"
 "npm:@openchamber/web" = "latest"
 "npm:oh-my-openagent" = "latest"
 opencode = "latest"
 python = "3.12"
-rust = "1.90.0"
+rust = "1.96.0"
 shellcheck = "0.11.0"
-starship = "1.24.2"
-tmux = "3.6a"
-uv = "0.9.26"
+starship = "1.25.1"
+tmux = "3.6b"
+uv = "0.11.17"
 
 [env]
 OMO_SEND_ANONYMOUS_TELEMETRY = "0"
