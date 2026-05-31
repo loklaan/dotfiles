@@ -20,6 +20,7 @@ setup_session_logging "$(basename "$0")"
 #/     1. `mise outdated --json`              everything mise tracks
 #/     2. dotfiles-task-drift-cask            macOS Homebrew casks (orca, paseo)
 #/     3. dotfiles-task-drift-dotfiles        this repo vs origin/main
+#/     4. dotfiles-task-drift-omo             oh-my-openagent roster + model brackets
 #/
 #/   Each checker emits one JSON object on stdout. They're merged into:
 #/
@@ -89,19 +90,28 @@ dotfiles_repo_drift() {
   dotfiles-task-drift-dotfiles 2>/dev/null || echo "[]"
 }
 
+omo_drift_tools() {
+  if ! command -v dotfiles-task-drift-omo >/dev/null 2>&1; then
+    echo "[]"
+    return 0
+  fi
+  dotfiles-task-drift-omo 2>/dev/null || echo "[]"
+}
+
 main() {
   parse_args "$@"
   require_jq
 
   mkdir -p "$CACHE_DIR"
 
-  local mise_json cask_json repo_json
+  local mise_json cask_json repo_json omo_json
   mise_json=$(mise_outdated_tools)
   cask_json=$(cask_drift_tools)
   repo_json=$(dotfiles_repo_drift)
+  omo_json=$(omo_drift_tools)
 
   # Validate each is a JSON array; coerce to [] on parse failure
-  for var in mise_json cask_json repo_json; do
+  for var in mise_json cask_json repo_json omo_json; do
     if ! printf '%s' "${!var}" | jq -e 'type == "array"' >/dev/null 2>&1; then
       eval "$var='[]'"
     fi
@@ -112,10 +122,11 @@ main() {
     --argjson mise "$mise_json" \
     --argjson cask "$cask_json" \
     --argjson repo "$repo_json" \
+    --argjson omo "$omo_json" \
     --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     '{
       checked_at: $ts,
-      tools: ($mise + $cask + $repo)
+      tools: ($mise + $cask + $repo + $omo)
     }')
 
   printf '%s\n' "$merged" > "$CACHE_FILE"
