@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   omo-profile               Show the active profile and its resolved models
+#/   omo-profile list          List available profiles
+#/   omo-profile <name>        Switch to <name> and re-render the omo config
+#/   omo-profile --help        Display this help message
+#/
+#/ Description:
+#/   Switches the oh-my-openagent (omo) cost profile without a full
+#/   `chezmoi apply`. Profiles trade model quality for token cost while
+#/   preserving each agent's personality family (Claude-likes stay
+#/   Claude-likes, GPT stays GPT, Gemini stays Gemini).
+#/
+#/   Mechanism: the active profile name lives in a tiny plaintext state file
+#/   (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This script
+#/   writes that file, then runs a TARGETED `chezmoi apply` on just the omo
+#/   config so the new models land immediately. The profile table itself is
+#/   the source of truth in:
+#/     home/private_dot_config/opencode/modify_oh-my-openagent.json
+#/   so a later full `chezmoi apply` re-derives the same result from the
+#/   persisted state file — the switch survives.
+#/
+#/   omo reads its config once per session, so START A NEW opencode SESSION
+#/   for the switch to take effect.
+#/
+#/ Profiles:
+#/   default   Best-in-class per role (Opus/Sonnet, GPT-5.5, Gemini Pro).
+#/   cheap     Budget set, personality preserved (Bedrock Kimi/Haiku,
+#/             gpt-5.4-mini, Gemini flash).
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# Must mirror the $profiles keys in modify_oh-my-openagent.json. The template
+# is the real enforcer (unknown name → warn + fall back to "default"); this
+# list gives a fast, friendly error before we bother re-rendering.
+KNOWN_PROFILES=("default" "cheap")
+
+OMO_CONFIG="${HOME}/.config/opencode/oh-my-openagent.json"
+PROFILE_FILE="${HOME}/.config/opencode/.omo-profile"
+
+is_known_profile() {
+  local name="$1" p
+  for p in "${KNOWN_PROFILES[@]}"; do
+    [ "$p" = "$name" ] && return 0
+  done
+  return 1
+}
+
+active_profile() {
+  if [ -f "$PROFILE_FILE" ]; then
+    tr -d '[:space:]' <"$PROFILE_FILE"
+  else
+    printf 'default'
+  fi
+}
+
+show_status() {
+  local active
+  active="$(active_profile)"
+  [ -n "$active" ] || active="default"
+
+  info "▶ Active omo profile: ${active}"
+
+  if [ ! -f "$OMO_CONFIG" ]; then
+    warning "omo config not found at ${OMO_CONFIG} — run \`chezmoi apply\` first"
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    warning "jq not on PATH — cannot print resolved models"
+    return 0
+  fi
+
+  local rendered requested
+  rendered="$(jq -r '._dotfilesProfile // "(unset)"' "$OMO_CONFIG" 2>/dev/null || printf '(unparsable)')"
+  requested="$(jq -r '._dotfilesProfileRequested // ""' "$OMO_CONFIG" 2>/dev/null || printf '')"
+  if [ -n "$requested" ]; then
+    warning "state file requests unknown profile '${requested}' — fell back to '${rendered}'"
+    warning "fix the state file or run: omo-profile <known-profile>"
+  elif [ "$rendered" != "$active" ]; then
+    warning "rendered config reports profile '${rendered}', state file says '${active}'"
+    warning "re-render with: omo-profile ${active}"
+  fi
+
+  info "╍ Agents"
+  jq -r '.agents // {} | to_entries[] | "    \(.key): \(.value.model)\(if .value.variant then " (" + .value.variant + ")" else "" end)"' \
+    "$OMO_CONFIG" 2>/dev/null | sort || true
+  info "╍ Categories"
+  jq -r '.categories // {} | to_entries[] | "    \(.key): \(.value.model)\(if .value.variant then " (" + .value.variant + ")" else "" end)"' \
+    "$OMO_CONFIG" 2>/dev/null | sort || true
+}
+
+list_profiles() {
+  local active p marker
+  active="$(active_profile)"
+  [ -n "$active" ] || active="default"
+  info "▶ Available omo profiles"
+  for p in "${KNOWN_PROFILES[@]}"; do
+    marker="  "
+    [ "$p" = "$active" ] && marker="* "
+    _print white "  ${marker}${p}"
+  done
+}
+
+switch_profile() {
+  local name="$1"
+
+  if ! is_known_profile "$name"; then
+    usage
+    echo "" >&2
+    fatal "Unknown profile: ${name} (known: ${KNOWN_PROFILES[*]})"
+  fi
+
+  if ! command -v chezmoi >/dev/null 2>&1; then
+    fatal "chezmoi not on PATH — required to re-render the omo config"
+  fi
+
+  local current
+  current="$(active_profile)"
+  if [ "$current" = "$name" ]; then
+    info "▶ Already on profile '${name}' — re-rendering anyway"
+  else
+    info "▶ Switching omo profile: ${current:-default} → ${name}"
+  fi
+
+  mkdir -p "$(dirname "$PROFILE_FILE")"
+  printf '%s\n' "$name" >"$PROFILE_FILE"
+  info "╍ Wrote ${PROFILE_FILE}"
+
+  info "╍ Re-rendering ${OMO_CONFIG} via targeted chezmoi apply"
+  chezmoi apply --force "$OMO_CONFIG"
+
+  info "▶ Done. Start a NEW opencode session for the switch to take effect."
+}
+
+main() {
+  if [ "$#" -eq 0 ]; then
+    show_status
+    return 0
+  fi
+
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    list) list_profiles; exit 0 ;;
+    *)
+      if [ "$#" -gt 1 ]; then
+        usage
+        echo "" >&2
+        fatal "Too many arguments"
+      fi
+      switch_profile "$1"
+      ;;
+  esac
+}
+
+main "$@"
