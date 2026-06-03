@@ -1,4 +1,3 @@
-{{- if eq .chezmoi.os "darwin" -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -13,6 +12,9 @@ setup_session_logging "$(basename "$0")"
 #/ Description:
 #/   Renames external skills downloaded via chezmoi externals into the
 #/   lochy: namespace. Pairs with run_before_install-060-reset-external-skills.
+#/
+#/   Uses perl for in-place edits so the rename is portable across macOS
+#/   (BSD sed) and Linux (GNU sed) without flag dancing.
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 # (skill_dir, original_name, patched_name)
@@ -36,7 +38,7 @@ patch_skill_name() {
     return 0
   fi
 
-  if sed -i '' "s/^name: ${original_name}$/name: ${patched_name}/" "$skill_md"; then
+  if perl -i -pe "s/^name: \Q${original_name}\E\$/name: ${patched_name}/" "$skill_md"; then
     info "╍ Patched: ${original_name} → ${patched_name}"
   else
     warning "╍ Failed to patch: ${skill_md}"
@@ -53,4 +55,3 @@ main() {
 }
 
 main "$@"
-{{ end -}}
