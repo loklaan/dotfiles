@@ -45,17 +45,11 @@ parse_args() {
 main() {
   parse_args "$@"
 
-  # 1. Update Claude Code
-  info "╍ Updating Claude Code"
-  otter claude-code update >/dev/null 2>&1
-
   if [ "$config_in_canva_devbox" = "true" ]; then
     info "▶ Starting installation of canva dev box quirks!"
 
-    # 2. Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
+    # Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
     cd ~/work/canva && mise trust --quiet .mise.local.toml && ln -s ../../dev/canva/canva/.mise.local.toml .  >/dev/null 2>&1 || true
-
-    # 3. ...
 
     info "▶ Done installing canva dev box quirks. Ensured mise is set up for the pre-cloned canva monorepo."
   else
