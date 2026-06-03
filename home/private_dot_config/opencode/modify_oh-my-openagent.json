@@ -28,11 +28,13 @@
 
 {{- /* Team Mode (oh-my-openagent v4.0.0+). Lead agent orchestrates a team
        of category-specialised members in parallel via team_* tools. Off by
-       default upstream; this turns it on for our machines. tmux_visualization
-       stays off here — turn it on per-machine if you live in tmux. */ -}}
+       default upstream; we keep it off on cost grounds — parallel team members
+       each carry their own context, so they forfeit the heavy token-cache
+       overlap that sequential subagent delegation reuses. Subagents are
+       cheaper for our workloads. tmux_visualization left off too. */ -}}
 {{- $config = mergeOverwrite $config (dict
       "team_mode" (dict
-        "enabled" true
+        "enabled" false
         "tmux_visualization" false
         "max_parallel_members" 4
         "max_members" 8)) -}}
