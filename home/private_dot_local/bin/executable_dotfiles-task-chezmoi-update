@@ -10,24 +10,18 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   dotfiles-task-chezmoi-apply
+#/   dotfiles-task-chezmoi-update
 #/
 #/ Description:
-#/   Wrapper around `chezmoi apply` invoked from mise tasks (notably
-#/   `[tasks."chezmoi:apply"]` and the `[hooks].postinstall` mise hook).
+#/   Wrapper around `chezmoi update` (git pull on the source repo, then
+#/   apply). Sibling to dotfiles-task-chezmoi-apply; same TTY-aware
+#/   semantics so unattended runs (agent shells, CI, piped invocations)
+#/   converge instead of dying on the "X has changed since last write"
+#/   prompt with "could not open a new TTY".
 #/
-#/   Hoisted out of mise.toml so the task body lives next to other
-#/   dotfiles-task-* scripts and so it can be run directly for debugging.
-#/
-#/   When stdin is not a TTY (mise postinstall hooks, CI, agent shells),
-#/   chezmoi's "X has changed since last write — overwrite/skip?" prompt
-#/   would otherwise crash with "could not open a new TTY". This wrapper
-#/   detects non-interactive contexts and adds `--force --no-tty` so the
-#/   apply converges instead of halting. Override by exporting
-#/   CHEZMOI_INTERACTIVE=1 to force the prompt-capable path.
-#/
-#/   On success: silent. On failure: surfaces chezmoi's error output and
-#/   propagates the exit code.
+#/   In interactive shells (stdin attached to a TTY) it runs plain
+#/   `chezmoi update` so prompts still surface for the human at the
+#/   keyboard.
 #/
 #/ Environment:
 #/   CHEZMOI_VERBOSE       When set to "1", invokes chezmoi with -v.
@@ -48,9 +42,6 @@ parse_args() {
   done
 }
 
-# Resolve interactive vs non-interactive mode. Non-interactive adds
-# `--force --no-tty` so unattended runs converge instead of trying to
-# prompt. See header comment for the override knob.
 resolve_mode_flags() {
   local override="${CHEZMOI_INTERACTIVE:-}"
   case "$override" in
@@ -80,7 +71,7 @@ main() {
     verbose_flags+=(-v)
   fi
 
-  chezmoi apply "${mode_flags[@]}" "${verbose_flags[@]}"
+  chezmoi update "${mode_flags[@]}" "${verbose_flags[@]}"
 }
 
 main "$@"
