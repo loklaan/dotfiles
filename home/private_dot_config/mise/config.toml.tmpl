@@ -71,6 +71,11 @@ description = "Apply chezmoi (converges dotfiles + lifecycle scripts)"
 hide = true
 run = "dotfiles-task-chezmoi-apply"
 
+[tasks."chezmoi:update"]
+description = "Pull source repo + apply (TTY-aware non-interactive fallback)"
+hide = true
+run = "dotfiles-task-chezmoi-update"
+
 {{ if eq .chezmoi.os "darwin" -}}
 # ── Drift detection (macOS only) ─────────────────────────────────────────────
 # Surfaces version drift across managed tools without firing notifications on
