@@ -48,7 +48,7 @@ restore_cmd_claude() {
     model=$(jq -r '.meta.model // ""' <<< "$entry")
     flags=$(jq -r '.meta.flags // ""' <<< "$entry")
 
-    local cmd="command otter claude-code"
+    local cmd="command claude"
     [[ -n "$model" ]] && cmd="$cmd --model $(posix_quote "$model")"
     [[ -n "$flags" ]] && cmd="$cmd $flags"
     cmd="$cmd --resume $(posix_quote "$session_id")"
