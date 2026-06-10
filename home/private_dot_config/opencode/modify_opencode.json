@@ -36,7 +36,7 @@
 
 {{- /* Set OpenCode-specific defaults (only if not already set by OpenCode) */ -}}
 {{- if not (hasKey $base "autoupdate") -}}
-{{-   $config = $config | setValueAtPath "autoupdate" true -}}
+{{-   $config = $config | setValueAtPath "autoupdate" false -}}
 {{- end -}}
 
 {{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
