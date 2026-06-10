@@ -11,7 +11,7 @@
 # Work-specific config
 [includeIf "gitdir:~/dev/canva/**"]
     path = ~/.config/git/canva.config
-[includeIf "gitdir:~/work/canva/**"]
+[includeIf "gitdir:~/work/**"]
     path = ~/.config/git/canva.config
 
 # --- END CHEZMOI MANAGED SECTION ---
