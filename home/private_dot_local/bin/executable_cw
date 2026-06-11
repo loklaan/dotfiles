@@ -7,39 +7,43 @@ IFS=$'\n\t'
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
-# Source shared logging library (session logging deferred to connect path)
+# Source shared logging library (session logging deferred to subcommands)
 source "${HOME}/.local/lib/bash-logging.sh"
 
 #/ Usage:
-#/   cw <workspace> [mode] [directory]
-#/   cw completion zsh
+#/   cw <subcommand> [args...]
+#/   cw <workspace> [mode] [directory]    (shorthand for `cw connect ...`)
 #/
 #/ Description:
-#/   Connect to a Coder workspace in various modes. Built-in modes handle
-#/   SSH, VSCode, and Claude Code sessions. Any other mode is passed through to
-#/   the `coder open app` as a workspace app slug (so like: intellij, cursor).
-#/
-#/ Arguments:
-#/   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
-#/   mode         ssh (default), vscode, claude, cursor, intellij, or any app
-#/                slug available on the coder box
-#/   directory    Project path on the remote (~/dev/me/<project>)
+#/   One-stop CLI for Coder dev boxes. Connect to a single workspace, fan a
+#/   mise task across the whole fleet, or migrate working state between boxes.
 #/
 #/ Subcommands:
-#/   completion zsh    Output zsh completion script
+#/   connect <ws> [mode] [dir]   Attach to a workspace (ssh/vscode/claude/app)
+#/   fleet [opts] <mise-task>    Run a mise task across running workspaces
+#/   migrate [opts]              Pull working state from an old devbox to a new one
+#/   completion zsh              Output zsh completion script
+#/
+#/   Bare `cw <workspace> ...` is shorthand for `cw connect <workspace> ...`.
 #/
 #/ Examples:
 #/   cw for-tasks                # SSH into for-tasks
-#/   cw for-tasks-2 vscode       # Open in VS Code
-#/   cw for-tasks-2 cursor       # Open Cursor via coder
-#/   cw for-tasks-2 intellij     # Open IntelliJ via coder
-#/   cw for-tasks code-server    # Open code-server in browser
-#/   cw for-tasks claude         # SSH + Claude Code
-#/   cw for-prs ccyolo           # YOLO mode
+#/   cw connect for-tasks-2 vscode
+#/   cw fleet --include-local update
+#/   cw migrate
 #/
 #/ Options:
-#/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+#/   --help    Display this message (or `cw <subcommand> --help` for a subcommand)
+# Top-level help: untagged `#/` lines, in order (preserving blank `#/` lines).
+# A tagged line like `#/connect:` has a non-space after `#/`, so the
+# `#/[ ]` / `#/$` match excludes subcommand blocks.
+usage_top() { sed -n 's|^#/ ||p; s|^#/$||p' "$0"; }
+
+# Per-subcommand help blocks are tagged `#/<name>:` and rendered in order.
+usage_sub() {
+  local name="$1"
+  sed -n "s|^#/${name}: ||p; s|^#/${name}:\$||p" "$0"
+}
 
 # ── Workspace helpers ────────────────────────────────────────
 
@@ -49,6 +53,33 @@ coder_is_running() {
     | jq -e --arg ws "$name" '.[] | select(.name == $ws and .latest_build.status == "running")' \
     >/dev/null 2>&1
 }
+
+# ═════════════════════════════════════════════════════════════
+# connect — attach to a single workspace
+# ═════════════════════════════════════════════════════════════
+#
+#/connect: Usage:
+#/connect:   cw connect <workspace> [mode] [directory]
+#/connect:
+#/connect: Description:
+#/connect:   Connect to a Coder workspace in various modes. Built-in modes handle
+#/connect:   SSH, VSCode, and Claude Code sessions. Any other mode is passed through
+#/connect:   to `coder open app` as a workspace app slug (so like: intellij, cursor).
+#/connect:
+#/connect: Arguments:
+#/connect:   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
+#/connect:   mode         ssh (default), vscode, claude, ccyolo, or any app slug
+#/connect:                available on the coder box (cursor, intellij, code-server)
+#/connect:   directory    Project path on the remote (~/dev/me/<project>)
+#/connect:
+#/connect: Examples:
+#/connect:   cw connect for-tasks                # SSH into for-tasks
+#/connect:   cw connect for-tasks-2 vscode       # Open in VS Code
+#/connect:   cw connect for-tasks-2 cursor       # Open Cursor via coder
+#/connect:   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
+#/connect:   cw connect for-tasks code-server    # Open code-server in browser
+#/connect:   cw connect for-tasks claude         # SSH + Claude Code
+#/connect:   cw connect for-prs ccyolo           # YOLO mode
 
 # ── Preflight SSH ────────────────────────────────────────────
 #
@@ -161,53 +192,16 @@ fi
   done <<< "$output"
 }
 
-# ── Completion output ────────────────────────────────────────
+cmd_connect() {
+  if [[ "${1:-}" == "--help" ]]; then
+    usage_sub connect
+    exit 0
+  fi
+  if [[ $# -lt 1 ]]; then
+    usage_sub connect >&2
+    fatal "connect requires a workspace name"
+  fi
 
-completion_zsh() {
-  cat <<'ZSH_COMPLETION'
-#compdef cw
-
-_cw() {
-  case $CURRENT in
-    2) # workspace name
-      local -a workspaces
-      if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        workspaces=("${(@f)$(coder list -o json 2>/dev/null | jq -r '.[].name')}")
-      fi
-      _describe 'workspace' workspaces
-      ;;
-    3) # mode or app slug
-      local -a modes=(
-        'ssh:SSH into workspace'
-        'vscode:Open in VS Code'
-        'claude:SSH + Claude Code'
-        'ccyolo:SSH + Claude Code YOLO mode'
-      )
-      if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        local ws="$words[2]"
-        local -a apps
-        apps=("${(@f)$(coder list -o json 2>/dev/null | jq -r --arg ws "$ws" '
-          .[] | select(.name == $ws)
-          | .latest_build.resources[].agents[]?.apps[]?
-          | .slug + ":" + .display_name
-        ' 2>/dev/null)}")
-        [[ ${#apps} -gt 0 && -n "${apps[1]}" ]] && modes+=("${apps[@]}")
-      fi
-      _describe 'mode' modes
-      ;;
-    4) # directory - no completion (remote path)
-      _message 'remote directory path (optional)'
-      ;;
-  esac
-}
-
-_cw "$@"
-ZSH_COMPLETION
-}
-
-# ── Connect to workspace ─────────────────────────────────────
-
-connect() {
   setup_session_logging "cw"
 
   local ws="$1"
@@ -275,29 +269,784 @@ connect() {
   esac
 }
 
+# ═════════════════════════════════════════════════════════════
+# fleet — run a mise task across running workspaces
+# ═════════════════════════════════════════════════════════════
+#
+#/fleet: Usage:
+#/fleet:   cw fleet [OPTIONS] -- <mise-task> [args...]
+#/fleet:   cw fleet [OPTIONS] <mise-task> [args...]
+#/fleet:
+#/fleet: Description:
+#/fleet:   Run a mise task on every running Coder workspace, in parallel.
+#/fleet:   A small composable primitive, not a workflow-aware orchestrator.
+#/fleet:   Whatever task you can `mise run` locally, you can run on the fleet.
+#/fleet:
+#/fleet:   Discovery is dynamic via `coder list -o json` (filtered to running
+#/fleet:   workspaces by default). No static inventory.
+#/fleet:
+#/fleet: Options:
+#/fleet:   --include-local       Also run the task on this machine (before the fleet)
+#/fleet:   --local-only          Run only on this machine (skip the fleet)
+#/fleet:   --filter <expr>       jq filter against `coder list -o json`
+#/fleet:                         (default: '.[] | select(.latest_build.status == "running") | .name')
+#/fleet:   --parallel <N>        Max concurrent SSH targets (default: 4)
+#/fleet:   --dry-run             Print the matrix; don't execute
+#/fleet:
+#/fleet: Examples:
+#/fleet:   cw fleet update                          # `mise run update` on every running box
+#/fleet:   cw fleet --include-local update          # me first, then every box
+#/fleet:   cw fleet --local-only drift:check        # local convergence only
+#/fleet:   cw fleet --dry-run update                # preview the fan-out
+#/fleet:
+#/fleet: Output:
+#/fleet:   Per-host structured: [<ws>] ok | [<ws>] FAIL: <reason>
+#/fleet:   Per-host stdout/stderr captured to $TMPDIR/cw-fleet-<ts>/<ws>.log
+#/fleet:   Aggregate exit code = max of per-host codes (0 only if all succeeded)
+
+FLEET_INCLUDE_LOCAL=0
+FLEET_LOCAL_ONLY=0
+FLEET_FILTER='.[] | select(.latest_build.status == "running") | .name'
+FLEET_PARALLEL=4
+FLEET_DRY_RUN=0
+FLEET_TASK_AND_ARGS=()
+
+fleet_parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage_sub fleet; exit 0 ;;
+      --include-local) FLEET_INCLUDE_LOCAL=1; shift ;;
+      --local-only) FLEET_LOCAL_ONLY=1; shift ;;
+      --filter) FLEET_FILTER="$2"; shift 2 ;;
+      --parallel) FLEET_PARALLEL="$2"; shift 2 ;;
+      --dry-run) FLEET_DRY_RUN=1; shift ;;
+      --) shift; FLEET_TASK_AND_ARGS=("$@"); return ;;
+      -*) usage_sub fleet >&2; fatal "Unknown option: $1" ;;
+      *) FLEET_TASK_AND_ARGS=("$@"); return ;;
+    esac
+  done
+}
+
+fleet_require_tools() {
+  command -v mise >/dev/null 2>&1 || fatal "mise not on PATH"
+  if [ "$FLEET_LOCAL_ONLY" -ne 1 ]; then
+    command -v coder >/dev/null 2>&1 || fatal "coder CLI not found (needed for fleet dispatch)"
+    command -v jq    >/dev/null 2>&1 || fatal "jq not found"
+  fi
+}
+
+fleet_list_workspaces() {
+  coder list -o json 2>/dev/null | jq -r "$FLEET_FILTER"
+}
+
+fleet_run_local() {
+  local task="$1"; shift
+  info "[local] mise run $task $*"
+  if [ "$FLEET_DRY_RUN" -eq 1 ]; then return 0; fi
+  if mise run "$task" "$@"; then
+    _print green "[local] ok" >&2
+    return 0
+  else
+    local rc=$?
+    _print red "[local] FAIL ($rc)" >&2
+    return "$rc"
+  fi
+}
+
+fleet_run_remote() {
+  local ws="$1" log_dir="$2"; shift 2
+  local task="$1"; shift
+  local log_file="${log_dir}/${ws}.log"
+  local cmd="mise run $task"
+  for a in "$@"; do
+    cmd="$cmd $(printf '%q' "$a")"
+  done
+  info "[$ws] $cmd"
+  if [ "$FLEET_DRY_RUN" -eq 1 ]; then return 0; fi
+  if ssh -o ConnectTimeout=15 "coder.${ws}" "$cmd" >"$log_file" 2>&1; then
+    _print green "[$ws] ok" >&2
+    return 0
+  else
+    local rc=$?
+    _print red "[$ws] FAIL ($rc) — see $log_file" >&2
+    return "$rc"
+  fi
+}
+
+cmd_fleet() {
+  fleet_parse_args "$@"
+
+  if [ "${#FLEET_TASK_AND_ARGS[@]}" -eq 0 ]; then
+    usage_sub fleet >&2
+    fatal "no mise task specified"
+  fi
+
+  fleet_require_tools
+
+  local task="${FLEET_TASK_AND_ARGS[0]}"
+  local task_args=("${FLEET_TASK_AND_ARGS[@]:1}")
+  local ts log_dir
+  ts=$(date +"%Y%m%d_%H%M%S")
+  log_dir="${TMPDIR}/cw-fleet-${ts}"
+  mkdir -p "$log_dir"
+
+  local max_rc=0
+
+  # 1. Optional local-first run
+  if [ "$FLEET_INCLUDE_LOCAL" -eq 1 ] || [ "$FLEET_LOCAL_ONLY" -eq 1 ]; then
+    if ! fleet_run_local "$task" "${task_args[@]}"; then
+      max_rc=$?
+    fi
+  fi
+
+  if [ "$FLEET_LOCAL_ONLY" -eq 1 ]; then
+    [ "$max_rc" -ne 0 ] && return "$max_rc"
+    return 0
+  fi
+
+  # 2. Fleet dispatch
+  local workspaces
+  workspaces=$(fleet_list_workspaces)
+  if [ -z "$workspaces" ]; then
+    warning "no running workspaces matched filter"
+    return "$max_rc"
+  fi
+
+  info "fan-out: $(echo "$workspaces" | wc -l | tr -d ' ') workspace(s) · parallelism=$FLEET_PARALLEL · log_dir=$log_dir"
+
+  local pids=() ws
+  local running=0
+  while IFS= read -r ws; do
+    [ -z "$ws" ] && continue
+    while [ "$running" -ge "$FLEET_PARALLEL" ]; do
+      wait -n 2>/dev/null || true
+      running=$((running - 1))
+    done
+    fleet_run_remote "$ws" "$log_dir" "$task" "${task_args[@]}" &
+    pids+=("$!")
+    running=$((running + 1))
+  done <<< "$workspaces"
+
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      local rc=$?
+      [ "$rc" -gt "$max_rc" ] && max_rc=$rc
+    fi
+  done
+
+  if [ "$max_rc" -eq 0 ]; then
+    _print green "cw fleet: all targets ok"
+  else
+    _print yellow "cw fleet: completed with $max_rc max-rc — inspect $log_dir"
+  fi
+  return "$max_rc"
+}
+
+# ═════════════════════════════════════════════════════════════
+# migrate — pull working state from an old devbox to a new one
+# ═════════════════════════════════════════════════════════════
+#
+#/migrate: Usage:
+#/migrate:   cw migrate [OPTIONS]
+#/migrate:
+#/migrate: Description:
+#/migrate:   Migrates working state from an old devbox to a new one.
+#/migrate:   Run on the DESTINATION (new) devbox — it pulls from the source via SSH.
+#/migrate:
+#/migrate:   Transfers small repos, shell history, tool configs, and editor state.
+#/migrate:   Large repos should be re-cloned on the new devbox.
+#/migrate:
+#/migrate:   Before transferring, audits source repos for unpushed branches to
+#/migrate:   prevent data loss.
+#/migrate:
+#/migrate: Default Migration Paths:
+#/migrate:   dev/                          Small git repos
+#/migrate:   .claude/                      Claude Code state
+#/migrate:   .claude.json                  Claude Code config
+#/migrate:   .zsh_history                  Shell history
+#/migrate:   .z                            Directory jump history
+#/migrate:   .local/share/tmux/resurrect   Tmux resurrect session snapshots
+#/migrate:
+#/migrate: Default Audit Paths:
+#/migrate:   dev/             Scanned recursively for git repos
+#/migrate:
+#/migrate: Options:
+#/migrate:   --manifest PATH:  Custom manifest file (default: ~/.config/cw-migrate/manifest)
+#/migrate:
+#/migrate: Manifest Format (~/.config/cw-migrate/manifest):
+#/migrate:   # Paths relative to $HOME
+#/migrate:   [migrate]
+#/migrate:   dev
+#/migrate:   .claude
+#/migrate:   .claude.json
+#/migrate:
+#/migrate:   [audit]
+#/migrate:   dev
+
+readonly MIGRATE_DEFAULT_MANIFEST="${HOME}/.config/cw-migrate/manifest"
+
+MIGRATE_MANIFEST_PATH=""
+MIGRATE_SOURCE_HOST=""
+MIGRATE_PATHS=()
+MIGRATE_AUDIT_PATHS=()
+MIGRATE_EXISTING_PATHS=()
+
+MIGRATE_DEFAULT_PATHS=(
+  "dev"
+  ".claude"
+  ".claude.json"
+  ".zsh_history"
+  ".z"
+  ".local/share/tmux/resurrect"
+)
+
+MIGRATE_DEFAULT_AUDIT_PATHS=(
+  "dev"
+)
+
+migrate_parse_args() {
+  MIGRATE_MANIFEST_PATH="${MIGRATE_DEFAULT_MANIFEST}"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --manifest)
+        if [ -z "${2:-}" ]; then
+          fatal "--manifest requires a path argument"
+        fi
+        MIGRATE_MANIFEST_PATH="$2"
+        shift 2
+        ;;
+      --help)
+        usage_sub migrate
+        exit 0
+        ;;
+      *)
+        usage_sub migrate >&2
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
+}
+
+migrate_load_manifest() {
+  if [ ! -f "${MIGRATE_MANIFEST_PATH}" ]; then
+    if [ "${MIGRATE_MANIFEST_PATH}" = "${MIGRATE_DEFAULT_MANIFEST}" ]; then
+      info "╍ No manifest found, using defaults"
+      MIGRATE_PATHS=("${MIGRATE_DEFAULT_PATHS[@]}")
+      MIGRATE_AUDIT_PATHS=("${MIGRATE_DEFAULT_AUDIT_PATHS[@]}")
+      return
+    else
+      fatal "Manifest not found: ${MIGRATE_MANIFEST_PATH}"
+    fi
+  fi
+
+  info "╍ Loading manifest from ${MIGRATE_MANIFEST_PATH}"
+
+  local section=""
+  MIGRATE_PATHS=()
+  MIGRATE_AUDIT_PATHS=()
+
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" ]] && continue
+
+    if [[ "${line}" =~ ^\[(.+)\]$ ]]; then
+      section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    case "${section}" in
+      migrate) MIGRATE_PATHS+=("${line}") ;;
+      audit) MIGRATE_AUDIT_PATHS+=("${line}") ;;
+      *) warning "Unknown manifest section: [${section}]" ;;
+    esac
+  done < "${MIGRATE_MANIFEST_PATH}"
+
+  if [ ${#MIGRATE_PATHS[@]} -eq 0 ]; then
+    fatal "Manifest has no [migrate] entries"
+  fi
+}
+
+migrate_connect_source() {
+  echo ""
+  _print cyan bold "Source devbox"
+  echo ""
+  _print white dim "Enter the SSH host of the OLD devbox to pull from."
+  _print white dim "  - Coder devbox:  coder.<workspace-name>"
+  _print white dim "  - Any SSH host:  user@hostname"
+  echo ""
+  read -rp "Source host: " MIGRATE_SOURCE_HOST
+
+  if [[ -z "${MIGRATE_SOURCE_HOST}" ]]; then
+    fatal "No source host specified"
+  fi
+
+  info "▶ Testing SSH connection to ${MIGRATE_SOURCE_HOST}"
+  if ! ssh -o ConnectTimeout=10 "${MIGRATE_SOURCE_HOST}" "echo ok" &>/dev/null; then
+    error "Cannot connect to ${MIGRATE_SOURCE_HOST}"
+    _print white dim "Try: coder config-ssh"
+    exit 1
+  fi
+  info "╍ Connection OK"
+}
+
+migrate_audit_repos() {
+  if [ ${#MIGRATE_AUDIT_PATHS[@]} -eq 0 ]; then
+    info "╍ No audit paths configured, skipping repo check"
+    return
+  fi
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${MIGRATE_AUDIT_PATHS[@]}")
+
+  echo ""
+  _print cyan bold "Checking source repos for unpushed branches..."
+  echo ""
+
+  local audit_output
+  audit_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+
+    audit_paths=()
+    while IFS= read -r p; do
+      [[ -z "\${p}" ]] && continue
+      audit_paths+=("\${p}")
+    done <<< '${paths_str}'
+
+    for audit_path in "\${audit_paths[@]}"; do
+      full_path="\${HOME}/\${audit_path}"
+      if [[ ! -d "\${full_path}" ]]; then
+        continue
+      fi
+
+      while IFS= read -r git_dir; do
+        [[ -z "\${git_dir}" ]] && continue
+        repo_dir=\$(dirname "\${git_dir}")
+        repo_rel="\${repo_dir#\${HOME}/}"
+
+        has_issues=false
+        while IFS= read -r branch; do
+          [[ -z "\${branch}" ]] && continue
+
+          upstream_ref=\$(git -C "\${repo_dir}" rev-parse --abbrev-ref "\${branch}@{upstream}" 2>/dev/null || true)
+
+          if [[ -z "\${upstream_ref}" ]]; then
+            echo "ISSUE|\${repo_rel}|\${branch} (no remote tracking branch)"
+            has_issues=true
+          else
+            ahead_count=\$(git -C "\${repo_dir}" rev-list --count "\${upstream_ref}..\${branch}" 2>/dev/null || echo "0")
+            if [[ "\${ahead_count}" -gt 0 ]]; then
+              echo "ISSUE|\${repo_rel}|\${branch} (\${ahead_count} unpushed commit(s))"
+              has_issues=true
+            fi
+          fi
+        done < <(git -C "\${repo_dir}" for-each-ref --format='%(refname:short)' refs/heads/)
+
+        if [[ "\${has_issues}" == "false" ]]; then
+          echo "OK|\${repo_rel}"
+        fi
+      done < <(find "\${full_path}" -name .git -type d 2>/dev/null)
+    done
+REMOTE_SCRIPT
+  )
+
+  if [[ -z "${audit_output}" ]]; then
+    info "╍ No git repos found in audit paths"
+    return
+  fi
+
+  local has_unpushed=false
+  local current_repo=""
+
+  while IFS='|' read -r status repo_path detail; do
+    [[ -z "${status}" ]] && continue
+    case "${status}" in
+      OK)
+        _print green "  ~/${repo_path} — all branches pushed"
+        ;;
+      ISSUE)
+        if [[ "${repo_path}" != "${current_repo}" ]]; then
+          _print red "  ~/${repo_path}"
+          current_repo="${repo_path}"
+        fi
+        _print yellow "    [ ] ${detail}"
+        has_unpushed=true
+        ;;
+    esac
+  done <<< "${audit_output}"
+
+  echo ""
+  if ${has_unpushed}; then
+    warning "Unpushed branches found! Push them first or they will be lost."
+    echo ""
+    read -rp "Continue anyway? [y/N]: " confirm
+    if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+      info "Aborted. Push branches on the source and re-run."
+      exit 0
+    fi
+  else
+    info "╍ All repo branches are pushed"
+  fi
+}
+
+migrate_validate_paths() {
+  local paths_str
+  paths_str=$(printf '%s\n' "${MIGRATE_PATHS[@]}")
+
+  local check_output
+  check_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      if [[ -e "\${HOME}/\${path}" ]]; then
+        echo "EXISTS|\${path}"
+      else
+        echo "MISSING|\${path}"
+      fi
+    done <<< '${paths_str}'
+REMOTE_SCRIPT
+  )
+
+  MIGRATE_EXISTING_PATHS=()
+
+  while IFS='|' read -r status path; do
+    case "${status}" in
+      EXISTS) MIGRATE_EXISTING_PATHS+=("${path}") ;;
+      MISSING) warning "Not found on source: ~/${path}" ;;
+    esac
+  done <<< "${check_output}"
+
+  local found=${#MIGRATE_EXISTING_PATHS[@]}
+  info "╍ Found ${found}/${#MIGRATE_PATHS[@]} items to migrate"
+
+  if [[ ${found} -eq 0 ]]; then
+    fatal "Nothing to migrate!"
+  fi
+}
+
+migrate_show_summary() {
+  echo ""
+  _print cyan bold "Items to migrate:"
+  echo ""
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${MIGRATE_EXISTING_PATHS[@]}")
+
+  local size_output
+  size_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    size_args=()
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      size=\$(du -sh "\${HOME}/\${path}" 2>/dev/null | cut -f1)
+      echo "\${path}|\${size}"
+      size_args+=("\${HOME}/\${path}")
+    done <<< '${paths_str}'
+    total=\$(du -shc "\${size_args[@]}" 2>/dev/null | tail -1 | cut -f1)
+    echo "TOTAL|\${total}"
+REMOTE_SCRIPT
+  )
+
+  while IFS='|' read -r path size; do
+    if [[ "${path}" == "TOTAL" ]]; then
+      echo ""
+      _print white bold "  Total: ${size}"
+    else
+      printf "  %-45s %s\n" "~/${path}" "${size}"
+    fi
+  done <<< "${size_output}"
+
+  echo ""
+}
+
+migrate_do_rsync() {
+  echo ""
+  warning "This will overwrite matching paths locally. Continue? [y/N]"
+  read -rn 1 confirm
+  echo ""
+  if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
+    info "Aborted"
+    exit 0
+  fi
+
+  info "▶ Creating local directory structure"
+  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
+    local parent
+    parent=$(dirname "${path}")
+    if [[ "${parent}" != "." ]]; then
+      mkdir -p "${HOME}/${parent}"
+    fi
+  done
+
+  local failed=0
+  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
+    local parent
+    parent=$(dirname "${path}")
+    local local_dir="${HOME}/"
+    if [[ "${parent}" != "." ]]; then
+      local_dir="${HOME}/${parent}/"
+    fi
+
+    info "╍ Pulling ~/${path}"
+    if rsync -az "${MIGRATE_SOURCE_HOST}:~/${path}" "${local_dir}"; then
+      _print white dim "    done"
+    else
+      error "Failed to pull ~/${path}"
+      ((failed++)) || true
+    fi
+  done
+
+  echo ""
+  if [[ ${failed} -eq 0 ]]; then
+    info "▶ Migration complete! All ${#MIGRATE_EXISTING_PATHS[@]} items pulled."
+  else
+    warning "Migration finished with ${failed} failure(s)"
+  fi
+}
+
+migrate_do_tar() {
+  local archive_name="devbox-migration-$(date +%Y%m%d_%H%M%S).tar.gz"
+  local remote_archive="/tmp/${archive_name}"
+
+  echo ""
+  _print cyan bold "Creating tar archive on source"
+  echo ""
+
+  local paths_str
+  paths_str=$(printf '%s\n' "${MIGRATE_EXISTING_PATHS[@]}")
+
+  info "▶ Creating archive on ${MIGRATE_SOURCE_HOST}"
+  ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
+    set -euo pipefail
+    paths=()
+    while IFS= read -r path; do
+      [[ -z "\${path}" ]] && continue
+      paths+=("\${path}")
+    done <<< '${paths_str}'
+    tar -czf "${remote_archive}" -C "\${HOME}" "\${paths[@]}"
+REMOTE_SCRIPT
+
+  info "╍ Pulling archive"
+  scp "${MIGRATE_SOURCE_HOST}:${remote_archive}" "/tmp/${archive_name}"
+
+  local archive_size
+  archive_size=$(du -sh "/tmp/${archive_name}" | cut -f1)
+
+  info "╍ Archive saved: /tmp/${archive_name} (${archive_size})"
+  echo ""
+  _print white dim "To extract:"
+  _print white dim "  cd ~ && tar -xzf /tmp/${archive_name}"
+  echo ""
+
+  info "╍ Cleaning up remote archive"
+  ssh "${MIGRATE_SOURCE_HOST}" "rm -f ${remote_archive}"
+}
+
+migrate_do_checklist() {
+  echo ""
+  _print cyan bold "Migration Checklist"
+  echo ""
+  _print white dim "Pull these paths from ${MIGRATE_SOURCE_HOST}:~ to local ~:"
+  echo ""
+
+  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
+    printf "  [ ] ~/%s\n" "${path}"
+  done
+
+  echo ""
+  _print white dim "Example for each:"
+  _print white dim "  rsync -az ${MIGRATE_SOURCE_HOST}:~/PATH ~/PATH"
+  echo ""
+  _print white dim "After copying:"
+  echo ""
+  printf "  [ ] Run chezmoi apply to restore dotfiles\n"
+  printf "  [ ] Verify git repos have correct remotes\n"
+  echo ""
+}
+
+cmd_migrate() {
+  migrate_parse_args "$@"
+
+  setup_session_logging "cw-migrate"
+
+  echo ""
+  _print cyan bold "Devbox Migration"
+  echo ""
+
+  migrate_load_manifest
+  migrate_connect_source
+  migrate_audit_repos
+  migrate_validate_paths
+  migrate_show_summary
+
+  _print cyan bold "Transfer method"
+  echo ""
+  echo "  1) rsync  — pull directly over SSH"
+  echo "  2) tar    — archive on source, pull here, extract manually"
+  echo "  3) list   — just show what to copy"
+  echo ""
+  read -rp "Choose [1/2/3]: " choice
+
+  case "${choice}" in
+    1) migrate_do_rsync ;;
+    2) migrate_do_tar ;;
+    3) migrate_do_checklist ;;
+    *)
+      fatal "Invalid choice: ${choice}"
+      ;;
+  esac
+
+  echo ""
+  warning "Credentials are NOT included — migrate these yourself:"
+  _print white dim "  ~/.ssh/  ~/.aws/  ~/.gnupg/  ~/.npmrc"
+  echo ""
+  warning "Run chezmoi apply on this devbox to restore dotfiles."
+  echo ""
+}
+
+# ── Completion output ────────────────────────────────────────
+
+completion_zsh() {
+  cat <<'ZSH_COMPLETION'
+#compdef cw
+
+_cw() {
+  local -a subcommands
+  subcommands=(
+    'connect:Attach to a workspace (ssh/vscode/claude/app)'
+    'fleet:Run a mise task across running workspaces'
+    'migrate:Pull working state from an old devbox to a new one'
+    'completion:Output shell completion script'
+  )
+
+  _cw_workspaces() {
+    local -a workspaces
+    if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+      workspaces=("${(@f)$(coder list -o json 2>/dev/null | jq -r '.[].name')}")
+    fi
+    _describe 'workspace' workspaces
+  }
+
+  _cw_modes() {
+    local ws="$1"
+    local -a modes=(
+      'ssh:SSH into workspace'
+      'vscode:Open in VS Code'
+      'claude:SSH + Claude Code'
+      'ccyolo:SSH + Claude Code YOLO mode'
+    )
+    if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+      local -a apps
+      apps=("${(@f)$(coder list -o json 2>/dev/null | jq -r --arg ws "$ws" '
+        .[] | select(.name == $ws)
+        | .latest_build.resources[].agents[]?.apps[]?
+        | .slug + ":" + .display_name
+      ' 2>/dev/null)}")
+      [[ ${#apps} -gt 0 && -n "${apps[1]}" ]] && modes+=("${apps[@]}")
+    fi
+    _describe 'mode' modes
+  }
+
+  _cw_mise_tasks() {
+    local -a tasks
+    if command -v mise >/dev/null 2>&1; then
+      tasks=("${(@f)$(mise tasks ls --no-header 2>/dev/null | awk '{print $1}')}")
+    fi
+    _describe 'mise task' tasks
+  }
+
+  # Determine the subcommand (word 2), if any.
+  local sub="${words[2]}"
+
+  case "$sub" in
+    connect)
+      # cw connect <ws> <mode> <dir>
+      case $CURRENT in
+        3) _cw_workspaces ;;
+        4) _cw_modes "$words[3]" ;;
+        5) _message 'remote directory path (optional)' ;;
+      esac
+      ;;
+    fleet)
+      local -a fleet_opts=(
+        '--include-local:Also run on this machine'
+        '--local-only:Run only on this machine'
+        '--filter:jq filter against coder list'
+        '--parallel:Max concurrent SSH targets'
+        '--dry-run:Print the matrix; do not execute'
+      )
+      if [[ "$words[CURRENT]" == -* ]]; then
+        _describe 'option' fleet_opts
+      else
+        _cw_mise_tasks
+      fi
+      ;;
+    migrate)
+      _describe 'option' '(--manifest:Custom manifest file)'
+      ;;
+    completion)
+      _describe 'shell' '(zsh:zsh completion)'
+      ;;
+    *)
+      # Word 2: offer subcommands AND workspace names (bare `cw <ws>`).
+      if [[ $CURRENT -eq 2 ]]; then
+        _describe 'subcommand' subcommands
+        _cw_workspaces
+      elif [[ $CURRENT -eq 3 ]]; then
+        # Bare `cw <ws> <mode>` shorthand.
+        _cw_modes "$words[2]"
+      elif [[ $CURRENT -eq 4 ]]; then
+        _message 'remote directory path (optional)'
+      fi
+      ;;
+  esac
+}
+
+_cw "$@"
+ZSH_COMPLETION
+}
+
 # ── Main ─────────────────────────────────────────────────────
 
 main() {
   if [[ $# -lt 1 ]]; then
-    usage
+    usage_top
     exit 1
   fi
 
   case "$1" in
-    --help)
-      usage
+    --help|help)
+      usage_top
       exit 0
       ;;
     completion)
       if [[ "${2:-}" == "zsh" ]]; then
         completion_zsh
       else
-        usage >&2
+        usage_top >&2
         fatal "Unknown completion shell: ${2:-}. Supported: zsh"
       fi
       ;;
+    connect)
+      shift
+      cmd_connect "$@"
+      ;;
+    fleet)
+      shift
+      cmd_fleet "$@"
+      ;;
+    migrate)
+      shift
+      cmd_migrate "$@"
+      ;;
+    -*)
+      usage_top >&2
+      fatal "Unknown option: $1"
+      ;;
     *)
-      connect "$@"
+      # Bare `cw <workspace> [mode] [dir]` — shorthand for `cw connect`.
+      cmd_connect "$@"
       ;;
   esac
 }
