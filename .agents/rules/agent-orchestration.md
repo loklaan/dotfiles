@@ -271,7 +271,7 @@ mise.toml [tools] pins versions for installable tools (orca, paseo, opencode, et
   ↓
 mise tasks (update / drift:check / drift:notify) dispatch dotfiles-task-* scripts
   ↓
-cfleet ssh-fans-out a `mise run <task>` across `coder list -o json` workspaces
+cw fleet ssh-fans-out a `mise run <task>` across `coder list -o json` workspaces
   ↓
 LaunchAgent (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/drift.json
   ↓
@@ -285,7 +285,7 @@ Both opt-in tools that run as systemd-user services on Coder boxes are installed
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.83`
 - **orca**: `http:orca` — pinned to `1.4.30`, downloads `orca-linux.AppImage` from GitHub releases
 
-To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cfleet --include-local update` to converge the fleet.
+To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cw fleet --include-local update` to converge the fleet.
 
 ### Daily ergonomics
 
@@ -300,17 +300,17 @@ mise run drift:check
 mise run update
 
 # Update everywhere (local first, then every running Coder workspace)
-cfleet --include-local update
+cw fleet --include-local update
 ```
 
 ### When to bump what
 
 | Scenario | Action |
 |---|---|
-| `latest`-pinned tool drifted (e.g. opencode, oh-my-openagent) | `mise run update` (local) or `cfleet --include-local update` (fleet) |
-| Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cfleet --include-local update` |
+| `latest`-pinned tool drifted (e.g. opencode, oh-my-openagent) | `mise run update` (local) or `cw fleet --include-local update` (fleet) |
+| Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cw fleet --include-local update` |
 | Cask drift on macOS (orca/paseo .app vs cask formula) | `brew upgrade --greedy --cask <name>` (Homebrew owns this; mise doesn't see casks) |
-| Repo itself behind origin/main | `git -C ~/.local/share/chezmoi pull && chezmoi apply`, or `cfleet update` |
+| Repo itself behind origin/main | `git -C ~/.local/share/chezmoi pull && chezmoi apply`, or `cw fleet update` |
 
 ### Drift detection scope (macOS only)
 
@@ -323,7 +323,7 @@ The drift report aggregates three sources, each emitting JSON to stdout:
 
 ### Replacement for the old "ritual"
 
-Where the previous operating model said `mise upgrade -y && chezmoi apply`, the new equivalent is `mise run update` (local) or `cfleet --include-local update` (fleet). The old ritual still works because:
+Where the previous operating model said `mise upgrade -y && chezmoi apply`, the new equivalent is `mise run update` (local) or `cw fleet --include-local update` (fleet). The old ritual still works because:
 - `mise:upgrade` task runs `mise upgrade -y` internally
 - `[hooks].postinstall = chezmoi:apply` ensures `mise upgrade` triggers a chezmoi apply automatically
 - `chezmoi:apply` task runs as a `depends_post` on the `update` task
