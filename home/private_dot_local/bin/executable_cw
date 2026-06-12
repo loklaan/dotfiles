@@ -363,7 +363,10 @@ fleet_run_remote() {
   done
   info "[$ws] $cmd"
   if [ "$FLEET_DRY_RUN" -eq 1 ]; then return 0; fi
-  if ssh -o ConnectTimeout=15 "coder.${ws}" "$cmd" >"$log_file" 2>&1; then
+  # Run through a login shell so mise (and ~/.local/bin) are on PATH. A bare
+  # `ssh host "mise run ..."` uses a non-login, non-interactive shell that never
+  # sources the rc files that add mise to PATH, so mise resolves to 127.
+  if ssh -o ConnectTimeout=15 "coder.${ws}" "/usr/bin/zsh -lc $(printf '%q' "$cmd")" >"$log_file" 2>&1; then
     _print green "[$ws] ok" >&2
     return 0
   else
@@ -427,11 +430,11 @@ cmd_fleet() {
     running=$((running + 1))
   done <<< "$workspaces"
 
+  local pid rc
   for pid in "${pids[@]}"; do
-    if ! wait "$pid"; then
-      local rc=$?
-      [ "$rc" -gt "$max_rc" ] && max_rc=$rc
-    fi
+    rc=0
+    wait "$pid" || rc=$?
+    [ "$rc" -gt "$max_rc" ] && max_rc=$rc
   done
 
   if [ "$max_rc" -eq 0 ]; then
