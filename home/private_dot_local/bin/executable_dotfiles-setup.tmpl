@@ -103,14 +103,14 @@ check_bws_token() {
   return 2
 }
 
-{{- if and (eq .chezmoi.os "linux") .paseoDaemon }}
+{{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
 
 check_paseo_daemon() {
   systemctl --user is-active --quiet paseo-daemon.service
 }
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") .orcaServer }}
+{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
 
 check_orca_server() {
   systemctl --user is-active --quiet orca-server.service
@@ -214,7 +214,7 @@ print_status() {
     _print white dim "    Missing: ${missing_list}"
   fi
 {{- end }}
-{{- if and (eq .chezmoi.os "linux") .paseoDaemon }}
+{{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
 
   echo ""
 
@@ -226,7 +226,7 @@ print_status() {
     _print white dim "    Opted in but not running. Try: systemctl --user status paseo-daemon"
   fi
 {{- end }}
-{{- if and (eq .chezmoi.os "linux") .orcaServer }}
+{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
 
   echo ""
 

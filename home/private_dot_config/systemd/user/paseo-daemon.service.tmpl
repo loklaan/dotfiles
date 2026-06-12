@@ -1,4 +1,4 @@
-{{- if and (eq .chezmoi.os "linux") .paseoDaemon -}}
+{{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) -}}
 [Unit]
 Description=Paseo daemon (AI coding agent orchestration)
 After=network.target
