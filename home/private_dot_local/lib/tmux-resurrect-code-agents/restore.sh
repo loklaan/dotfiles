@@ -95,5 +95,25 @@ for ((i = 0; i < count; i++)); do
     } > "$tmp"
     chmod 600 "$tmp"
     mv -f "$tmp" "$drop_file"
+
+    # The resurrect plugin respawns pane shells (restore_all_panes) *before*
+    # firing this post-restore-all hook. A fast-booting pane therefore runs
+    # init/tmux-resume.zsh — claiming a not-yet-written drop file — and would
+    # never resume. Poke it to re-attempt the claim now the file exists.
+    #
+    # Send only the literal function name, never the agent command: if zsh is
+    # still mid-init the terminal buffers these keys until its first prompt
+    # (function defined by then); if boot already claimed, the function's
+    # atomic `mv` no-ops. Resume runs exactly once, at an idle prompt — this is
+    # the ZLE-safety the original send-keys-free design depended on.
+    #
+    # Only poke panes still showing a shell, so we never clobber a pane the
+    # user or a prior poke already launched into.
+    poke_cmd=$(tmux display-message -p -t "$pane_id" '#{pane_current_command}' 2>/dev/null || true)
+    case "$poke_cmd" in
+        bash|zsh|fish|sh|dash|ksh)
+            tmux send-keys -t "$pane_id" ' _tmux_resume_claim' Enter 2>/dev/null || true
+            ;;
+    esac
 done
 
