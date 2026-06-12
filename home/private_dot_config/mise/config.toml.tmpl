@@ -56,9 +56,9 @@ gix = false
 # are thin dispatchers + dependency declarations.
 
 [tasks.update]
-description = "Upgrade mise tools, then converge chezmoi state"
+description = "Upgrade mise tools, pull dotfiles source, then converge chezmoi state"
 depends = ["mise:upgrade"]
-depends_post = ["chezmoi:apply"]
+depends_post = ["chezmoi:update"]
 run = "true"
 
 [tasks."mise:upgrade"]
