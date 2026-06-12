@@ -129,15 +129,16 @@ class Pushbullet extends Context.Service<Pushbullet, {
   ).pipe(Layer.provide(FetchHttpClient.layer))
 }
 
-const SendNote = Tool.make("send_note", {
+const SendNotification = Tool.make("send_notification", {
   description:
-    "Send a text notification (a Pushbullet \"note\") to the user's phones, " +
-    "tablets, and computers. Use this when the user wants to be notified, " +
-    "pinged, alerted, or reminded about something that is plain text with no " +
-    "associated link \u2014 for example a task finishing, a status update, or a " +
-    "message to themselves. For a notification whose primary payload is a URL, " +
-    "use send_link instead. This delivers a real notification to physical " +
-    "devices, so only call it when notification is clearly intended.",
+    "Notify the user by pushing a notification to their phones, tablets, and " +
+    "computers (via Pushbullet). Use this whenever the user wants to be " +
+    "notified, pinged, alerted, reminded, or messaged \u2014 for example a task " +
+    "finishing, a status update, a heads-up, or a link to read later. Provide " +
+    "`url` to make the notification a tappable link; omit it for a plain text " +
+    "note. Omit `device_iden` to reach every device, or target one via " +
+    "list_notification_devices. This delivers a real notification to physical " +
+    "devices, so only call it when the user actually wants to be notified.",
   parameters: Schema.Struct({
     title: Schema.String.annotate({
       description: "Short headline shown as the notification title.",
@@ -145,11 +146,18 @@ const SendNote = Tool.make("send_note", {
     body: Schema.String.annotate({
       description: "Main notification text shown beneath the title.",
     }),
+    url: Schema.optional(
+      Schema.String.annotate({
+        description:
+          "Optional URL. When set, the notification becomes a tappable link " +
+          "that opens this URL; when omitted, it is a plain text note.",
+      }),
+    ),
     device_iden: Schema.optional(
       Schema.String.annotate({
         description:
           "Deliver only to one device, identified by its iden from " +
-          "list_devices. Omit to broadcast to all of the user's devices.",
+          "list_notification_devices. Omit to broadcast to all devices.",
       }),
     ),
   }),
@@ -159,57 +167,19 @@ const SendNote = Tool.make("send_note", {
   }),
   failure: Schema.String,
 })
-  .annotate(Tool.Title, "Send Pushbullet Note")
+  .annotate(Tool.Title, "Send Notification")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true)
 
-const SendLink = Tool.make("send_link", {
+const ListNotificationDevices = Tool.make("list_notification_devices", {
   description:
-    "Send a clickable link notification (a Pushbullet \"link\" push) to the " +
-    "user's phones, tablets, and computers. Use this when the user wants to be " +
-    "notified with a URL they can open \u2014 for example sharing a page to their " +
-    "phone, or sending themselves a link to read later. When the notification " +
-    "has no URL, use send_note instead. This delivers a real notification to " +
-    "physical devices, so only call it when notification is clearly intended.",
-  parameters: Schema.Struct({
-    title: Schema.String.annotate({
-      description: "Short headline shown as the notification title.",
-    }),
-    body: Schema.String.annotate({
-      description: "Descriptive text shown beneath the title.",
-    }),
-    url: Schema.String.annotate({
-      description: "The URL to deliver; tapping the notification opens it.",
-    }),
-    device_iden: Schema.optional(
-      Schema.String.annotate({
-        description:
-          "Deliver only to one device, identified by its iden from " +
-          "list_devices. Omit to broadcast to all of the user's devices.",
-      }),
-    ),
-  }),
-  success: Schema.Struct({
-    iden: Schema.String,
-    delivered: Schema.Boolean,
-  }),
-  failure: Schema.String,
-})
-  .annotate(Tool.Title, "Send Pushbullet Link")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true)
-
-const ListDevices = Tool.make("list_devices", {
-  description:
-    "List the user's active Pushbullet devices and their idens. Use this to " +
-    "discover which devices exist before targeting one, or when the user asks " +
-    "where a notification can be sent. Returns each device's iden, which can " +
-    "then be passed as device_iden to send_note or send_link to reach a single " +
-    "device. Read-only: it does not send any notification.",
+    "List the user's active notification devices and their idens. Use this to " +
+    "discover where a notification can be sent, or when the user asks which " +
+    "devices are available. Returns each device's iden, which can be passed as " +
+    "device_iden to send_notification to reach a single device. Read-only: it " +
+    "does not send any notification.",
   parameters: Schema.Struct({}),
   success: Schema.Array(
     Schema.Struct({
@@ -220,13 +190,13 @@ const ListDevices = Tool.make("list_devices", {
   ),
   failure: Schema.String,
 })
-  .annotate(Tool.Title, "List Pushbullet Devices")
+  .annotate(Tool.Title, "List Notification Devices")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true)
 
-const PushbulletToolkit = Toolkit.make(SendNote, SendLink, ListDevices)
+const PushbulletToolkit = Toolkit.make(SendNotification, ListNotificationDevices)
 
 const ToolkitLayer = McpServer.toolkit(PushbulletToolkit).pipe(
   Layer.provideMerge(
@@ -234,17 +204,14 @@ const ToolkitLayer = McpServer.toolkit(PushbulletToolkit).pipe(
       Effect.gen(function* () {
         const pb = yield* Pushbullet
         return {
-          send_note: ({ title, body, device_iden }) =>
-            pb.sendNote({ title, body, device_iden }).pipe(
-              Effect.map((r) => ({ iden: r.iden, delivered: r.active })),
-              Effect.catchTag("PushbulletError", (e) => Effect.fail(e.message)),
-            ),
-          send_link: ({ title, body, url, device_iden }) =>
-            pb.sendLink({ title, body, url, device_iden }).pipe(
-              Effect.map((r) => ({ iden: r.iden, delivered: r.active })),
-              Effect.catchTag("PushbulletError", (e) => Effect.fail(e.message)),
-            ),
-          list_devices: () =>
+          send_notification: ({ title, body, url, device_iden }) =>
+            (url === undefined
+              ? pb.sendNote({ title, body, device_iden })
+              : pb.sendLink({ title, body, url, device_iden })).pipe(
+                Effect.map((r) => ({ iden: r.iden, delivered: r.active })),
+                Effect.catchTag("PushbulletError", (e) => Effect.fail(e.message)),
+              ),
+          list_notification_devices: () =>
             pb.listDevices().pipe(
               Effect.map((devices) =>
                 devices.map((d) => ({
@@ -395,11 +362,10 @@ Deno.test("PushResult decodes a real /v2/pushes response", () => {
 
 Deno.test("tool annotations encode the intended MCP permission hints", () => {
   const expected = {
-    send_note: { readOnly: false, destructive: false, idempotent: false },
-    send_link: { readOnly: false, destructive: false, idempotent: false },
-    list_devices: { readOnly: true, destructive: false, idempotent: true },
+    send_notification: { readOnly: false, destructive: false, idempotent: false },
+    list_notification_devices: { readOnly: true, destructive: false, idempotent: true },
   }
-  for (const tool of [SendNote, SendLink, ListDevices]) {
+  for (const tool of [SendNotification, ListNotificationDevices]) {
     const e = expected[tool.name as keyof typeof expected]
     const a = tool.annotations
     if (
