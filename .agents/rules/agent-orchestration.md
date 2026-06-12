@@ -214,7 +214,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 | `home/.chezmoiscripts/run_onchange_after_install-067-sync-omo-plugin.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_dotfiles-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
-| `home/private_dot_local/bin/executable_cw` | Coder workspace SSH wrapper (used to port-forward `:6767`) |
+| `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
 
 ## Operating Runbook
 
@@ -296,7 +296,7 @@ dotfiles-setup
 # Refresh the drift cache (network-bound; minutes)
 mise run drift:check
 
-# Update local box: refresh tools + apply chezmoi
+# Update local box: refresh tools + pull dotfiles source + apply chezmoi
 mise run update
 
 # Update everywhere (local first, then every running Coder workspace)
@@ -310,7 +310,7 @@ cw fleet --include-local update
 | `latest`-pinned tool drifted (e.g. opencode, oh-my-openagent) | `mise run update` (local) or `cw fleet --include-local update` (fleet) |
 | Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cw fleet --include-local update` |
 | Cask drift on macOS (orca/paseo .app vs cask formula) | `brew upgrade --greedy --cask <name>` (Homebrew owns this; mise doesn't see casks) |
-| Repo itself behind origin/main | `git -C ~/.local/share/chezmoi pull && chezmoi apply`, or `cw fleet update` |
+| Repo itself behind origin/main | `mise run update` (local) or `cw fleet --include-local update` (fleet) — `update` now pulls the source before applying |
 
 ### Drift detection scope (macOS only)
 
@@ -326,6 +326,6 @@ The drift report aggregates three sources, each emitting JSON to stdout:
 Where the previous operating model said `mise upgrade -y && chezmoi apply`, the new equivalent is `mise run update` (local) or `cw fleet --include-local update` (fleet). The old ritual still works because:
 - `mise:upgrade` task runs `mise upgrade -y` internally
 - `[hooks].postinstall = chezmoi:apply` ensures `mise upgrade` triggers a chezmoi apply automatically
-- `chezmoi:apply` task runs as a `depends_post` on the `update` task
+- `chezmoi:update` task runs as a `depends_post` on the `update` task — it pulls the source repo, then applies, so `update` converges pushed commits as well as tool versions
 
 So `mise run update` does both, in the right order, with discoverability via `mise tasks ls`.
