@@ -75,7 +75,7 @@ verify_fuse() {
 }
 
 manage_linux() {
-  local enabled={{ .orcaServer }}
+  local enabled={{ dig "orcaServer" false . }}
 
   if [ "$enabled" != "true" ]; then
     info "▶ orca server (Linux, opt-out)"

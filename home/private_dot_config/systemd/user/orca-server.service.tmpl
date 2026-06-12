@@ -1,4 +1,4 @@
-{{- if and (eq .chezmoi.os "linux") .orcaServer -}}
+{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 {{- /* CODER_WORKSPACE_NAME is the canonical workspace identifier on Coder
        boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
        at chezmoi-render time so the systemd unit gets a baked-in pairing
