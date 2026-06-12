@@ -11,9 +11,11 @@
 {{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
 {{- $context7Key := "" -}}
 {{- $exaKey := "" -}}
+{{- $pushbulletToken := "" -}}
 {{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
 {{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey $bwsToken | trim -}}
 {{-   $exaKey = output $bwsGet .bwsIdExaApiKey $bwsToken | trim -}}
+{{-   $pushbulletToken = output $bwsGet .bwsIdPushbulletAccessToken $bwsToken | trim -}}
 {{- end -}}
 
 {{- /* Build our managed server list */ -}}
@@ -26,6 +28,22 @@
         "args" (list "mcp" "serve")
         "protocol" "stdio"
         "enabled" true
+      ) -}}
+{{- end -}}
+
+{{- /* Pushbullet MCP: local single-file Deno server. Only registered when the
+       access token resolves from Bitwarden, since the server is useless without
+       it; a missing token therefore omits the server rather than registering a
+       broken one. The token is passed via env (read by Config.redacted). The
+       deno invocation lives in the script's shebang, so we exec it directly. */ -}}
+{{- if ne "" $pushbulletToken -}}
+{{-   $servers = append $servers (dict
+        "name" "pushbullet"
+        "command" (joinPath .chezmoi.homeDir ".local/bin/pushbullet-mcp")
+        "args" (list)
+        "protocol" "stdio"
+        "enabled" true
+        "env" (dict "PUSHBULLET_ACCESS_TOKEN" $pushbulletToken)
       ) -}}
 {{- end -}}
 
