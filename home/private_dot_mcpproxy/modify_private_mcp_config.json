@@ -12,10 +12,15 @@
 {{- $context7Key := "" -}}
 {{- $exaKey := "" -}}
 {{- $pushbulletToken := "" -}}
+{{- /* dig the data var so machines whose active config predates it (not yet
+       re-inited) degrade gracefully instead of aborting apply on a missing key. */ -}}
+{{- $pushbulletSecretId := dig "bwsIdPushbulletAccessToken" "" . -}}
 {{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
 {{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey $bwsToken | trim -}}
 {{-   $exaKey = output $bwsGet .bwsIdExaApiKey $bwsToken | trim -}}
-{{-   $pushbulletToken = output $bwsGet .bwsIdPushbulletAccessToken $bwsToken | trim -}}
+{{-   if ne "" $pushbulletSecretId -}}
+{{-     $pushbulletToken = output $bwsGet $pushbulletSecretId $bwsToken | trim -}}
+{{-   end -}}
 {{- end -}}
 
 {{- /* Build our managed server list */ -}}
