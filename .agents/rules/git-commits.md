@@ -48,3 +48,11 @@ Summary line only. Add a body when >~7 files touched.
 - Capitalised first word, trailing punctuation, emoji
 - Past tense, ticket refs, footers, file lists
 - Vague subjects ("update configs", "various fixes")
+
+## After Pushing
+
+To roll pushed commits onto dev boxes (local + running Coder boxes):
+
+    cw fleet --include-local update
+
+Pulls source, upgrades tools, applies. Only hits *running* boxes. See `agent-orchestration.md`.
