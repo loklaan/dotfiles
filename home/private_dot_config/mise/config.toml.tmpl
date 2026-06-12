@@ -5,10 +5,10 @@
 {{ if eq .chezmoi.os "linux" -}}
 "github:smart-mcp-proxy/mcpproxy-go" = { version = "0.34.0", exe = "mcpproxy" }
 {{ end -}}
-{{ if and (eq .chezmoi.os "linux") .paseoDaemon -}}
+{{ if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) -}}
 "npm:@getpaseo/cli" = "0.1.87"
 {{ end -}}
-{{ if and (eq .chezmoi.os "linux") .orcaServer -}}
+{{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
 # `orca-serve` wrapper points there. Same shape as paseo above.
