@@ -60,6 +60,19 @@
       "enabled" true
     ) -}}
 
+{{- /* Smithers: durable, code-defined workflow orchestrator. Exposed as an MCP
+       server so the lead agent can OPERATE it — run deterministic workflow
+       graphs (Sequence/Branch/Ralph-with-predicate, schema-validated handoffs)
+       for by-step mid-horizon work, with opencode as the worker. Runs on bun
+       (its CLI shebang is bun); bunx resolves via the mise shim like npx/uvx. */ -}}
+{{- $servers = append $servers (dict
+      "name" "smithers"
+      "command" "bunx"
+      "args" (list "smithers-orchestrator" "--mcp")
+      "protocol" "stdio"
+      "enabled" true
+    ) -}}
+
 {{- $servers = append $servers (dict
       "name" "pdf-tools"
       "command" "uvx"
