@@ -1,6 +1,6 @@
 # Git Commit Messages
 
-Summary line only. Add a body when >~7 files touched.
+Summary line only. NEVER add a body — it just makes the log noisy.
 
 ## Linear History
 
@@ -37,13 +37,9 @@ Summary line only. Add a body when >~7 files touched.
 - `+` bundles unrelated changes
 - Commas for 3+ items
 
-## Body (rare)
-
-- Blank line after subject, lowercase prose, ~72 char width, `- ` bullets
-- 1-3 sentences summarising scope
-
 ## Never
 
+- Bodies — summary line only, always
 - Conventional prefixes (`feat:`, `fix:`, `chore:`)
 - Capitalised first word, trailing punctuation, emoji
 - Past tense, ticket refs, footers, file lists
