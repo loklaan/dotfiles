@@ -11,9 +11,10 @@
 {{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
-# `orca-serve` wrapper points there. Same shape as paseo above.
+# `orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
 # (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
 "http:orca" = { version = "1.4.35", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
+"github:jdx/pitchfork" = { version = "2.13.1", exe = "pitchfork" }
 {{ end -}}
 age = "latest"
 bitwarden = "2026.5.0"
@@ -85,12 +86,12 @@ run = "dotfiles-task-chezmoi-update"
 
 [tasks."drift:check"]
 description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
-run = "dotfiles-task-drift-check"
+run = "drift check"
 
 [tasks."drift:notify"]
 description = "Surface drift via macOS notification (debounced 24h)"
 depends = ["drift:check"]
-run = "dotfiles-task-drift-notify"
+run = "drift notify"
 
 {{ end -}}
 

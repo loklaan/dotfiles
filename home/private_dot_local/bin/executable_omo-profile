@@ -1,168 +1,614 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S deno run --allow-run=chezmoi --allow-read --allow-write --allow-env
 
-IFS=$'\n\t'
+// omo-profile (Deno + Effect v4 beta). Switches the oh-my-openagent (omo) cost
+// profile without a full `chezmoi apply`. Profiles trade model quality for token
+// cost while preserving each agent's personality family (Claude-likes stay
+// Claude-likes, GPT stays GPT, Gemini stays Gemini).
+//
+// Mechanism: the active profile name lives in a tiny plaintext state file
+// (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This tool writes that
+// file, then runs a TARGETED `chezmoi apply` on just the omo config so the new
+// models land immediately. The profile table itself is the source of truth in
+// home/private_dot_config/opencode/modify_oh-my-openagent.json, so a later full
+// `chezmoi apply` re-derives the same result from the persisted state file — the
+// switch survives. omo reads its config once per session, so START A NEW
+// opencode SESSION for the switch to take effect.
+//
+// CLI surface (preserved from the original bash):
+//   omo-profile               Show the active profile and its resolved models
+//   omo-profile list          List available profiles
+//   omo-profile <name>        Switch to <name> and re-render the omo config
+//   omo-profile --help        Display this help message
+//
+// Exit codes: 0 success; 1 unknown profile / chezmoi missing / too many args.
+//
+// All concerns (FS, subprocess, errors, flow) run through Effect. NodeServices /
+// NodeRuntime from @effect/platform-node run under Deno via its node:
+// compatibility layer; NodeServices provides FileSystem, Path, and the
+// ChildProcessSpawner used for the targeted apply. Effect v4 beta import paths
+// verified against effect@4.0.0-beta.80.
+//
+// IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
+// `import.meta.main` block, never at module top level. Its static import graph
+// pulls in ioredis -> msgpackr, which reads `process.env` at module-load time
+// and so demands `--allow-env`. Deferring the import keeps `deno test` runnable
+// with ZERO permission flags: the tests only touch the pure surfaces below and
+// never construct the Node layer. The runtime entrypoint loads it on demand.
+//
+// FILESYSTEM: file reads/writes go through Deno's native APIs (Deno.readTextFile
+// / Deno.mkdir / Deno.writeTextFile) wrapped in Effect, NOT through the platform
+// FileSystem service. Under Deno, the platform FileSystem's `exists`/stat path
+// resolves file ownership via `uid`, which demands `--allow-sys` — a permission
+// the mandated shebang deliberately omits. Native FS honours exactly
+// `--allow-read` / `--allow-write`. The ChildProcessSpawner (for the chezmoi
+// probe + targeted apply) still comes from the Node platform layer.
 
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import {
+  Console,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from "npm:effect@4.0.0-beta.80";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.80/unstable/process";
 
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+// --------------------------------------------------------------------------
+// Constants & contracts
+// --------------------------------------------------------------------------
 
-#/ Usage:
-#/   omo-profile               Show the active profile and its resolved models
-#/   omo-profile list          List available profiles
-#/   omo-profile <name>        Switch to <name> and re-render the omo config
-#/   omo-profile --help        Display this help message
-#/
-#/ Description:
-#/   Switches the oh-my-openagent (omo) cost profile without a full
-#/   `chezmoi apply`. Profiles trade model quality for token cost while
-#/   preserving each agent's personality family (Claude-likes stay
-#/   Claude-likes, GPT stays GPT, Gemini stays Gemini).
-#/
-#/   Mechanism: the active profile name lives in a tiny plaintext state file
-#/   (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This script
-#/   writes that file, then runs a TARGETED `chezmoi apply` on just the omo
-#/   config so the new models land immediately. The profile table itself is
-#/   the source of truth in:
-#/     home/private_dot_config/opencode/modify_oh-my-openagent.json
-#/   so a later full `chezmoi apply` re-derives the same result from the
-#/   persisted state file — the switch survives.
-#/
-#/   omo reads its config once per session, so START A NEW opencode SESSION
-#/   for the switch to take effect.
-#/
-#/ Profiles:
-#/   default   Best-in-class per role (Opus/Sonnet, GPT-5.5, Gemini Pro).
-#/   cheap     Budget set, personality preserved (Bedrock Kimi/Haiku,
-#/             gpt-5.4-mini, Gemini flash).
-#/
-#/ Options:
-#/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+// Must mirror the $profiles keys in modify_oh-my-openagent.json. The template is
+// the real enforcer (unknown name → fall back to "default"); this list gives a
+// fast, friendly error before we bother re-rendering.
+const KNOWN_PROFILES = ["default", "cheap"] as const;
+type ProfileName = (typeof KNOWN_PROFILES)[number];
 
-# Must mirror the $profiles keys in modify_oh-my-openagent.json. The template
-# is the real enforcer (unknown name → warn + fall back to "default"); this
-# list gives a fast, friendly error before we bother re-rendering.
-KNOWN_PROFILES=("default" "cheap")
+const DEFAULT_PROFILE: ProfileName = "default";
 
-OMO_CONFIG="${HOME}/.config/opencode/oh-my-openagent.json"
-PROFILE_FILE="${HOME}/.config/opencode/.omo-profile"
+const isKnownProfile = (name: string): name is ProfileName =>
+  (KNOWN_PROFILES as readonly string[]).includes(name);
 
-is_known_profile() {
-  local name="$1" p
-  for p in "${KNOWN_PROFILES[@]}"; do
-    [ "$p" = "$name" ] && return 0
-  done
-  return 1
+// Relative-to-HOME locations of the omo config and the state file. Resolved
+// against HOME at runtime so tests can reason about the join without env access.
+const OMO_CONFIG_REL = ".config/opencode/oh-my-openagent.json";
+const PROFILE_FILE_REL = ".config/opencode/.omo-profile";
+
+const USAGE = `Usage:
+  omo-profile               Show the active profile and its resolved models
+  omo-profile list          List available profiles
+  omo-profile <name>        Switch to <name> and re-render the omo config
+  omo-profile --help        Display this help message
+
+Description:
+  Switches the oh-my-openagent (omo) cost profile without a full
+  \`chezmoi apply\`. Profiles trade model quality for token cost while
+  preserving each agent's personality family (Claude-likes stay
+  Claude-likes, GPT stays GPT, Gemini stays Gemini).
+
+  Mechanism: the active profile name lives in a tiny plaintext state file
+  (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This script
+  writes that file, then runs a TARGETED \`chezmoi apply\` on just the omo
+  config so the new models land immediately. The profile table itself is
+  the source of truth in:
+    home/private_dot_config/opencode/modify_oh-my-openagent.json
+  so a later full \`chezmoi apply\` re-derives the same result from the
+  persisted state file — the switch survives.
+
+  omo reads its config once per session, so START A NEW opencode SESSION
+  for the switch to take effect.
+
+Profiles:
+  default   Best-in-class per role (Opus/Sonnet, GPT-5.5, Gemini Pro).
+  cheap     Budget set, personality preserved (Bedrock Kimi/Haiku,
+            gpt-5.4-mini, Gemini flash).
+
+Options:
+  --help    Display this help message`;
+
+// --------------------------------------------------------------------------
+// Errors — one cause per error, structured, never information-hiding.
+// --------------------------------------------------------------------------
+
+class UnknownProfileError
+  extends Schema.TaggedErrorClass<UnknownProfileError>()(
+    "UnknownProfileError",
+    {
+      name: Schema.String,
+    },
+  ) {
+  get displayMessage(): string {
+    return `Unknown profile: ${this.name} (known: ${KNOWN_PROFILES.join(" ")})`;
+  }
 }
 
-active_profile() {
-  if [ -f "$PROFILE_FILE" ]; then
-    tr -d '[:space:]' <"$PROFILE_FILE"
-  else
-    printf 'default'
-  fi
+class TooManyArgumentsError
+  extends Schema.TaggedErrorClass<TooManyArgumentsError>()(
+    "TooManyArgumentsError",
+    { args: Schema.Array(Schema.String) },
+  ) {
+  get displayMessage(): string {
+    return "Too many arguments";
+  }
 }
 
-show_status() {
-  local active
-  active="$(active_profile)"
-  [ -n "$active" ] || active="default"
-
-  info "▶ Active omo profile: ${active}"
-
-  if [ ! -f "$OMO_CONFIG" ]; then
-    warning "omo config not found at ${OMO_CONFIG} — run \`chezmoi apply\` first"
-    return 0
-  fi
-
-  if ! command -v jq >/dev/null 2>&1; then
-    warning "jq not on PATH — cannot print resolved models"
-    return 0
-  fi
-
-  local rendered requested
-  rendered="$(jq -r '._dotfilesProfile // "(unset)"' "$OMO_CONFIG" 2>/dev/null || printf '(unparsable)')"
-  requested="$(jq -r '._dotfilesProfileRequested // ""' "$OMO_CONFIG" 2>/dev/null || printf '')"
-  if [ -n "$requested" ]; then
-    warning "state file requests unknown profile '${requested}' — fell back to '${rendered}'"
-    warning "fix the state file or run: omo-profile <known-profile>"
-  elif [ "$rendered" != "$active" ]; then
-    warning "rendered config reports profile '${rendered}', state file says '${active}'"
-    warning "re-render with: omo-profile ${active}"
-  fi
-
-  info "╍ Agents"
-  jq -r '.agents // {} | to_entries[] | "    \(.key): \(.value.model)\(if .value.variant then " (" + .value.variant + ")" else "" end)"' \
-    "$OMO_CONFIG" 2>/dev/null | sort || true
-  info "╍ Categories"
-  jq -r '.categories // {} | to_entries[] | "    \(.key): \(.value.model)\(if .value.variant then " (" + .value.variant + ")" else "" end)"' \
-    "$OMO_CONFIG" 2>/dev/null | sort || true
+class ChezmoiMissingError
+  extends Schema.TaggedErrorClass<ChezmoiMissingError>()(
+    "ChezmoiMissingError",
+    {},
+  ) {
+  get displayMessage(): string {
+    return "chezmoi not on PATH — required to re-render the omo config";
+  }
 }
 
-list_profiles() {
-  local active p marker
-  active="$(active_profile)"
-  [ -n "$active" ] || active="default"
-  info "▶ Available omo profiles"
-  for p in "${KNOWN_PROFILES[@]}"; do
-    marker="  "
-    [ "$p" = "$active" ] && marker="* "
-    _print white "  ${marker}${p}"
-  done
+class ChezmoiApplyError
+  extends Schema.TaggedErrorClass<ChezmoiApplyError>()("ChezmoiApplyError", {
+    exitCode: Schema.Number,
+    target: Schema.String,
+  }) {
+  get displayMessage(): string {
+    return `chezmoi apply --force ${this.target} failed (exit ${this.exitCode})`;
+  }
 }
 
-switch_profile() {
-  local name="$1"
+// Fatal CLI errors carry a `displayMessage` (mirrors the bash `fatal` wording)
+// so the runner can map any tagged failure to a process exit without inspecting
+// each tag. Exit code is always 1 for these, matching the original bash.
+type FatalCliError =
+  | UnknownProfileError
+  | TooManyArgumentsError
+  | ChezmoiMissingError
+  | ChezmoiApplyError;
 
-  if ! is_known_profile "$name"; then
-    usage
-    echo "" >&2
-    fatal "Unknown profile: ${name} (known: ${KNOWN_PROFILES[*]})"
-  fi
+// --------------------------------------------------------------------------
+// Rendered omo config schema (only the fields this tool reads).
+// --------------------------------------------------------------------------
 
-  if ! command -v chezmoi >/dev/null 2>&1; then
-    fatal "chezmoi not on PATH — required to re-render the omo config"
-  fi
+const ModelEntry = Schema.Struct({
+  model: Schema.optional(Schema.String),
+  variant: Schema.optional(Schema.String),
+});
+type ModelEntry = typeof ModelEntry.Type;
 
-  local current
-  current="$(active_profile)"
-  if [ "$current" = "$name" ]; then
-    info "▶ Already on profile '${name}' — re-rendering anyway"
-  else
-    info "▶ Switching omo profile: ${current:-default} → ${name}"
-  fi
+const OmoConfig = Schema.Struct({
+  _dotfilesProfile: Schema.optional(Schema.String),
+  _dotfilesProfileRequested: Schema.optional(Schema.String),
+  agents: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+  categories: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+});
+type OmoConfig = typeof OmoConfig.Type;
 
-  mkdir -p "$(dirname "$PROFILE_FILE")"
-  printf '%s\n' "$name" >"$PROFILE_FILE"
-  info "╍ Wrote ${PROFILE_FILE}"
+const decodeOmoConfigSync = Schema.decodeUnknownSync(OmoConfig);
 
-  info "╍ Re-rendering ${OMO_CONFIG} via targeted chezmoi apply"
-  chezmoi apply --force "$OMO_CONFIG"
+// Decode-or-none: the status command tolerates a malformed/foreign config by
+// degrading to a warning, so a decode failure becomes Option.none rather than a
+// thrown error. Unknown keys (omo's own config) are tolerated by Schema.Struct.
+const decodeOmoConfig = (input: unknown): Option.Option<OmoConfig> => {
+  try {
+    return Option.some(decodeOmoConfigSync(input));
+  } catch {
+    return Option.none();
+  }
+};
 
-  info "▶ Done. Start a NEW opencode session for the switch to take effect."
+// Pure: format a {model, variant?} record as the sorted "    key: model (variant)"
+// lines the original jq pipeline produced. Kept pure so it is unit-testable
+// without FS or env.
+const formatModelLines = (
+  record: Record<string, ModelEntry> | undefined,
+): ReadonlyArray<string> =>
+  Object.entries(record ?? {})
+    .map(([key, value]) => {
+      const model = value.model ?? "";
+      const variant = value.variant ? ` (${value.variant})` : "";
+      return `    ${key}: ${model}${variant}`;
+    })
+    .sort();
+
+// --------------------------------------------------------------------------
+// Native filesystem helpers (Deno APIs wrapped in Effect).
+//
+// These deliberately bypass the platform FileSystem service: under Deno its
+// stat path resolves `uid`, which would force `--allow-sys` onto the shebang.
+// Native Deno.* honours exactly `--allow-read` / `--allow-write`.
+// --------------------------------------------------------------------------
+
+// Read a UTF-8 file, mapping any failure (missing, unreadable) to Option.none.
+// Mirrors the bash tolerance of an absent state file / config.
+const readTextOption = (path: string): Effect.Effect<Option.Option<string>> =>
+  Effect.tryPromise(() => Deno.readTextFile(path)).pipe(
+    Effect.map(Option.some),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+// Recursively create a directory, swallowing "already exists". Mirrors the bash
+// `mkdir -p`.
+const makeDirRecursive = (path: string): Effect.Effect<void> =>
+  Effect.tryPromise(() => Deno.mkdir(path, { recursive: true })).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+
+// Write a UTF-8 file, dying on failure (an unwritable state file is fatal — the
+// switch cannot be persisted, matching the bash `set -e` behaviour).
+const writeText = (path: string, content: string): Effect.Effect<void> =>
+  Effect.tryPromise(() => Deno.writeTextFile(path, content)).pipe(Effect.orDie);
+
+// Join HOME with a relative path using a single forward slash. The targets are
+// always under ~/.config, so POSIX joining is sufficient and keeps this free of
+// the Path service (and its transitive permission surface).
+const joinHome = (home: string, rel: string): string =>
+  home.endsWith("/") ? `${home}${rel}` : `${home}/${rel}`;
+
+// Directory portion of a POSIX path (everything before the last slash).
+const posixDirname = (path: string): string => {
+  const idx = path.lastIndexOf("/");
+  return idx <= 0 ? "/" : path.slice(0, idx);
+};
+
+// --------------------------------------------------------------------------
+// Profiles service: all state-file + chezmoi interaction behind one interface.
+// --------------------------------------------------------------------------
+
+class Profiles extends Context.Service<Profiles, {
+  readonly activeProfile: Effect.Effect<string>;
+  readonly showStatus: Effect.Effect<void>;
+  readonly listProfiles: Effect.Effect<void>;
+  readonly switchProfile: (name: string) => Effect.Effect<void, FatalCliError>;
+}>()("omo-profile/Profiles") {
+  static readonly layer = Layer.effect(
+    Profiles,
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+      const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
+      const omoConfigPath = joinHome(home, OMO_CONFIG_REL);
+      const profileFilePath = joinHome(home, PROFILE_FILE_REL);
+
+      // Active profile: trimmed contents of the state file, or "default" when the
+      // file is absent or empty (mirrors the bash `tr -d '[:space:]'` + fallback).
+      const activeProfile: Effect.Effect<string> = readTextOption(
+        profileFilePath,
+      ).pipe(
+        Effect.map((maybe) =>
+          Option.match(maybe, {
+            onNone: () => DEFAULT_PROFILE as string,
+            onSome: (raw) => {
+              const trimmed = raw.trim();
+              return trimmed.length > 0 ? trimmed : (DEFAULT_PROFILE as string);
+            },
+          })
+        ),
+      );
+
+      // Does a binary exist on PATH? Probe via the platform spawner so the
+      // permission surface stays exactly `--allow-run=chezmoi,...`. Any failure
+      // to even start the probe is treated as "absent".
+      const onPath = (bin: string): Effect.Effect<boolean> =>
+        spawner.exitCode(
+          ChildProcess.make(bin, ["--version"], {
+            stdout: "ignore",
+            stderr: "ignore",
+          }),
+        ).pipe(
+          Effect.map((code) => code === 0),
+          Effect.orElseSucceed(() => false),
+        );
+
+      const info = (msg: string) => Console.error(`info ${msg}`);
+      const warning = (msg: string) => Console.error(`warning ${msg}`);
+
+      const showStatus: Effect.Effect<void> = Effect.gen(function* () {
+        const active = yield* activeProfile;
+
+        yield* info(`\u25B6 Active omo profile: ${active}`);
+
+        const rawConfig = yield* readTextOption(omoConfigPath);
+        if (Option.isNone(rawConfig)) {
+          yield* warning(
+            `omo config not found at ${omoConfigPath} — run \`chezmoi apply\` first`,
+          );
+          return;
+        }
+
+        const decoded = Option.flatMap(
+          (() => {
+            try {
+              return Option.some(JSON.parse(rawConfig.value) as unknown);
+            } catch {
+              return Option.none<unknown>();
+            }
+          })(),
+          (value) => decodeOmoConfig(value),
+        );
+
+        if (Option.isNone(decoded)) {
+          yield* warning(
+            `cannot parse ${omoConfigPath} — run \`chezmoi apply\` to re-render`,
+          );
+          return;
+        }
+
+        const config: OmoConfig = decoded.value;
+        const rendered = config._dotfilesProfile ?? "(unset)";
+        const requested = config._dotfilesProfileRequested ?? "";
+
+        if (requested.length > 0) {
+          yield* warning(
+            `state file requests unknown profile '${requested}' — fell back to '${rendered}'`,
+          );
+          yield* warning(
+            "fix the state file or run: omo-profile <known-profile>",
+          );
+        } else if (rendered !== active) {
+          yield* warning(
+            `rendered config reports profile '${rendered}', state file says '${active}'`,
+          );
+          yield* warning(`re-render with: omo-profile ${active}`);
+        }
+
+        yield* info("\u254D Agents");
+        for (const line of formatModelLines(config.agents)) {
+          yield* Console.error(line);
+        }
+        yield* info("\u254D Categories");
+        for (const line of formatModelLines(config.categories)) {
+          yield* Console.error(line);
+        }
+      });
+
+      const listProfiles: Effect.Effect<void> = Effect.gen(function* () {
+        const active = yield* activeProfile;
+        yield* info("\u25B6 Available omo profiles");
+        for (const p of KNOWN_PROFILES) {
+          const marker = p === active ? "* " : "  ";
+          yield* Console.error(`  ${marker}${p}`);
+        }
+      });
+
+      const switchProfile = (
+        name: string,
+      ): Effect.Effect<void, FatalCliError> =>
+        Effect.gen(function* () {
+          if (!isKnownProfile(name)) {
+            yield* Console.error(USAGE);
+            yield* Console.error("");
+            return yield* Effect.fail(new UnknownProfileError({ name }));
+          }
+
+          const hasChezmoi = yield* onPath("chezmoi");
+          if (!hasChezmoi) {
+            return yield* Effect.fail(new ChezmoiMissingError());
+          }
+
+          const current = yield* activeProfile;
+          if (current === name) {
+            yield* info(
+              `\u25B6 Already on profile '${name}' — re-rendering anyway`,
+            );
+          } else {
+            yield* info(
+              `\u25B6 Switching omo profile: ${current} \u2192 ${name}`,
+            );
+          }
+
+          // Persist the state file (newline-terminated, like the bash `printf`),
+          // creating the parent directory first.
+          yield* makeDirRecursive(posixDirname(profileFilePath));
+          yield* writeText(profileFilePath, `${name}\n`);
+          yield* info(`\u254D Wrote ${profileFilePath}`);
+
+          yield* info(
+            `\u254D Re-rendering ${omoConfigPath} via targeted chezmoi apply`,
+          );
+
+          // Targeted apply on just the omo config. Inherit stdio so chezmoi's
+          // own output reaches the terminal, matching the bash behaviour.
+          const exitCode = yield* spawner.exitCode(
+            ChildProcess.make("chezmoi", ["apply", "--force", omoConfigPath], {
+              stdout: "inherit",
+              stderr: "inherit",
+            }),
+          ).pipe(Effect.orElseSucceed(() => 1));
+          if (exitCode !== 0) {
+            return yield* Effect.fail(
+              new ChezmoiApplyError({ exitCode, target: omoConfigPath }),
+            );
+          }
+
+          yield* info(
+            "\u25B6 Done. Start a NEW opencode session for the switch to take effect.",
+          );
+        });
+
+      return Profiles.of({
+        activeProfile,
+        showStatus,
+        listProfiles,
+        switchProfile,
+      });
+    }),
+  );
 }
 
-main() {
-  if [ "$#" -eq 0 ]; then
-    show_status
-    return 0
-  fi
+// The only platform service this layer depends on is the ChildProcessSpawner
+// (for the chezmoi probe + targeted apply). It is supplied at the runtime
+// entrypoint via NodeServices.layer, which is imported dynamically to keep tests
+// permission-free. All filesystem work uses native Deno APIs, not the platform
+// FileSystem service (see the FILESYSTEM note in the header).
+type ProfilesRequirements = ChildProcessSpawner.ChildProcessSpawner;
 
-  case "$1" in
-    --help|-h) usage; exit 0 ;;
-    list) list_profiles; exit 0 ;;
-    *)
-      if [ "$#" -gt 1 ]; then
-        usage
-        echo "" >&2
-        fatal "Too many arguments"
-      fi
-      switch_profile "$1"
-      ;;
-  esac
+// --------------------------------------------------------------------------
+// CLI dispatch
+// --------------------------------------------------------------------------
+
+const program = (
+  args: ReadonlyArray<string>,
+): Effect.Effect<void, FatalCliError, Profiles> =>
+  Effect.gen(function* () {
+    const profiles = yield* Profiles;
+
+    if (args.length === 0) {
+      yield* profiles.showStatus;
+      return;
+    }
+
+    const first = args[0];
+    if (first === "--help" || first === "-h") {
+      yield* Console.log(USAGE);
+      return;
+    }
+    if (first === "list") {
+      yield* profiles.listProfiles;
+      return;
+    }
+    if (args.length > 1) {
+      yield* Console.error(USAGE);
+      yield* Console.error("");
+      return yield* Effect.fail(new TooManyArgumentsError({ args }));
+    }
+    yield* profiles.switchProfile(first);
+  });
+
+const runnable = (
+  args: ReadonlyArray<string>,
+  platform: Layer.Layer<ProfilesRequirements>,
+) =>
+  program(args).pipe(
+    // Surface the fatal message exactly like bash `fatal`, then re-fail so the
+    // runtime maps it to a non-zero exit.
+    Effect.tapError((error) => Console.error(`fatal ${error.displayMessage}`)),
+    Effect.provide(Profiles.layer),
+    Effect.provide(platform),
+  );
+
+if (import.meta.main) {
+  // Dynamic import: @effect/platform-node's static graph reads process.env at
+  // load time (via ioredis -> msgpackr), which would force --allow-env onto
+  // `deno test`. Loading it only here keeps the test surface permission-free.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.80"
+  );
+  runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }
 
-main "$@"
+// ===========================================================================
+// Tests. Run offline with ZERO permission flags:
+//
+//   deno test home/private_dot_local/bin/executable_omo-profile
+//
+// The `import.meta.main` guard above keeps the CLI from firing under test. These
+// tests cover the pure surfaces that carry the contract: profile-name
+// validation, the omo-config schema decode (the shape the status command relies
+// on), and the model-line formatting that reproduces the old jq pipeline. No FS,
+// env, or subprocess access is touched, so no permissions are required.
+// ===========================================================================
+
+const assert = (cond: boolean, msg: string) => {
+  if (!cond) throw new Error(msg);
+};
+
+Deno.test("KNOWN_PROFILES matches the template roster", () => {
+  assert(
+    KNOWN_PROFILES.length === 2 &&
+      KNOWN_PROFILES[0] === "default" &&
+      KNOWN_PROFILES[1] === "cheap",
+    `unexpected KNOWN_PROFILES: ${KNOWN_PROFILES.join(",")}`,
+  );
+});
+
+Deno.test("isKnownProfile accepts known names and rejects others", () => {
+  assert(isKnownProfile("default"), "default should be known");
+  assert(isKnownProfile("cheap"), "cheap should be known");
+  assert(!isKnownProfile("expensive"), "expensive should be unknown");
+  assert(!isKnownProfile(""), "empty should be unknown");
+  assert(!isKnownProfile("Default"), "case-sensitive: Default is unknown");
+});
+
+Deno.test("OmoConfig decodes a rendered config with agents + categories", () => {
+  const decoded = decodeOmoConfig({
+    _dotfilesProfile: "cheap",
+    agents: {
+      oracle: { model: "openai/gpt-5.4-mini" },
+      explore: { model: "amazon-bedrock/...haiku" },
+    },
+    categories: {
+      ultrabrain: { model: "openai/gpt-5.4-mini" },
+      "visual-engineering": { model: "google/flash" },
+    },
+    // Unknown keys (omo's own config) must be tolerated, not rejected.
+    permission: { bash: "allow" },
+  });
+  assert(Option.isSome(decoded), "expected a successful decode");
+  if (Option.isSome(decoded)) {
+    assert(
+      decoded.value._dotfilesProfile === "cheap",
+      "profile field did not decode",
+    );
+    assert(
+      decoded.value.agents?.oracle.model === "openai/gpt-5.4-mini",
+      "agent model did not decode",
+    );
+  }
+});
+
+Deno.test("OmoConfig decodes a config missing optional fields", () => {
+  const decoded = decodeOmoConfig({});
+  assert(Option.isSome(decoded), "empty object should decode");
+  if (Option.isSome(decoded)) {
+    assert(
+      decoded.value._dotfilesProfile === undefined,
+      "_dotfilesProfile should be undefined",
+    );
+    assert(decoded.value.agents === undefined, "agents should be undefined");
+  }
+});
+
+Deno.test("OmoConfig decode fails on the wrong shape", () => {
+  // agents must be a record of {model,variant}; a string is invalid.
+  const decoded = decodeOmoConfig({ agents: "nope" });
+  assert(Option.isNone(decoded), "string agents should fail to decode");
+});
+
+Deno.test("formatModelLines sorts and renders model + variant", () => {
+  const lines = formatModelLines({
+    zeta: { model: "m-z" },
+    alpha: { model: "m-a", variant: "high" },
+    beta: { model: "m-b" },
+  });
+  assert(lines.length === 3, `expected 3 lines, got ${lines.length}`);
+  assert(lines[0] === "    alpha: m-a (high)", `bad line 0: ${lines[0]}`);
+  assert(lines[1] === "    beta: m-b", `bad line 1: ${lines[1]}`);
+  assert(lines[2] === "    zeta: m-z", `bad line 2: ${lines[2]}`);
+});
+
+Deno.test("formatModelLines handles undefined and empty input", () => {
+  assert(formatModelLines(undefined).length === 0, "undefined → []");
+  assert(formatModelLines({}).length === 0, "empty record → []");
+});
+
+Deno.test("error messages preserve the bash CLI wording", () => {
+  assert(
+    new UnknownProfileError({ name: "x" }).displayMessage ===
+      "Unknown profile: x (known: default cheap)",
+    "UnknownProfileError wording drifted",
+  );
+  assert(
+    new TooManyArgumentsError({ args: ["a", "b"] }).displayMessage ===
+      "Too many arguments",
+    "TooManyArgumentsError wording drifted",
+  );
+  assert(
+    new ChezmoiMissingError().displayMessage ===
+      "chezmoi not on PATH — required to re-render the omo config",
+    "ChezmoiMissingError wording drifted",
+  );
+  assert(
+    new ChezmoiApplyError({ exitCode: 2, target: "/tmp/x.json" })
+      .displayMessage ===
+      "chezmoi apply --force /tmp/x.json failed (exit 2)",
+    "ChezmoiApplyError wording drifted",
+  );
+});

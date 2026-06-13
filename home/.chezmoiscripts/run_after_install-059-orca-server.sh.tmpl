@@ -1,6 +1,6 @@
 {{- if eq .chezmoi.os "linux" -}}
 #!/usr/bin/env bash
-# Runs every chezmoi apply on Linux. Manages the orca-server systemd unit
+# Runs every chezmoi apply on Linux. Manages the orca-server Pitchfork daemon
 # lifecycle. Install is handled by mise (http: backend → AppImage); this
 # script no longer touches apt or downloads anything.
 set -euo pipefail
@@ -13,27 +13,29 @@ TMPDIR="${TMPDIR%/}"
 source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
+PITCHFORK_BIN=""
+
 #/ Usage:
 #/   run_after_install-059-orca-server.sh
 #/
 #/ Description:
-#/   Manages the orca-server systemd-user unit lifecycle on Linux Coder
+#/   Manages the orca-server Pitchfork daemon lifecycle on Linux Coder
 #/   workspaces. Opt-in via the `orcaServer` chezmoi flag.
 #/
 #/   When `orcaServer` is true:
 #/     - Verifies orca is installed via mise (the AppImage resolved by
 #/       `mise which orca`)
 #/     - Verifies FUSE is available (AppImage requires it)
-#/     - Enables and starts the systemd unit
+#/     - Starts the Pitchfork daemon
 #/   When `orcaServer` is false:
-#/     - Stops and disables the unit (real opt-out, not just unit-file removal)
+#/     - Stops the Pitchfork daemon (real opt-out, not just config removal)
 #/
 #/   Install of orca itself is handled by mise's http: backend (see
 #/   home/private_dot_config/mise/config.toml.tmpl). This script does NOT
 #/   download or apt-install anything.
 #/
 #/   macOS: orca runs as Orca.app from the Homebrew cask, not via this script
-#/   or systemd. The script renders empty on macOS.
+#/   or Pitchfork. The script renders empty on macOS.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -62,6 +64,20 @@ verify_orca_installed() {
   info "╍ orca AppImage available at ${orca_path}"
 }
 
+verify_pitchfork_installed() {
+  if command -v pitchfork >/dev/null 2>&1; then
+    PITCHFORK_BIN=$(command -v pitchfork)
+  elif command -v mise >/dev/null 2>&1; then
+    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
+  fi
+
+  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
+    warning "╍ pitchfork not yet installed by mise. Try: mise install"
+    return 1
+  fi
+  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
+}
+
 verify_fuse() {
   # AppImages require FUSE2 to mount themselves at runtime.
   # On modern Ubuntu/Debian, libfuse2t64 (or libfuse2 on older releases)
@@ -80,52 +96,42 @@ manage_linux() {
   if [ "$enabled" != "true" ]; then
     info "▶ orca server (Linux, opt-out)"
 
-    # Stop the running unit even if the unit file is gone — chezmoi removes
-    # the unit file before this script runs (template renders empty), but
-    # the in-memory service can still be active.
-    if systemctl --user is-active --quiet orca-server.service 2>/dev/null; then
-      systemctl --user stop orca-server.service 2>/dev/null || true
-      info "╍ stopped orca-server.service"
+    if verify_pitchfork_installed; then
+      "$PITCHFORK_BIN" stop orca-server 2>/dev/null || true
+      info "╍ stopped orca-server daemon"
+    else
+      info "╍ Pitchfork not installed; no daemon to stop"
     fi
-    if systemctl --user is-enabled --quiet orca-server.service 2>/dev/null; then
-      systemctl --user disable orca-server.service 2>/dev/null || true
-      info "╍ disabled orca-server.service"
-    fi
-    # Clear any 'failed' state — the unit file is gone, so SuccessExitStatus
-    # no longer covers exit-code 1 from orca-serve's normal SIGTERM exit.
-    systemctl --user reset-failed orca-server.service 2>/dev/null || true
-    systemctl --user daemon-reload 2>/dev/null || true
     return 0
   fi
 
   info "▶ orca server (Linux, opt-in)"
 
   if ! verify_orca_installed; then
-    warning "╍ skipping unit lifecycle — orca not installed"
+    warning "╍ skipping daemon lifecycle — orca not installed"
+    return 0
+  fi
+
+  if ! verify_pitchfork_installed; then
+    warning "╍ skipping daemon lifecycle — Pitchfork not installed"
     return 0
   fi
 
   verify_fuse || true   # warn but don't block; some boxes have FUSE preconfigured
 
-  systemctl --user daemon-reload
-  systemctl --user enable orca-server.service
-
-  if systemctl --user is-active --quiet orca-server.service; then
-    # Restart on every apply — picks up potential AppImage version bumps
-    # (mise re-installs in place, but the running process holds the old
-    # extracted squashfs view until restart).
-    systemctl --user restart orca-server.service
-    info "╍ restarted orca-server.service (picks up any AppImage version change)"
-  else
-    systemctl --user start orca-server.service
-    info "╍ started orca-server.service"
-  fi
+  # Restart on every apply — picks up potential AppImage version bumps
+  # (mise re-installs in place, but the running process holds the old
+  # extracted squashfs view until restart). Pitchfork's start command is
+  # idempotent; stop first so a running daemon is replaced cleanly.
+  "$PITCHFORK_BIN" stop orca-server 2>/dev/null || true
+  "$PITCHFORK_BIN" start orca-server
+  info "╍ started orca-server daemon (picks up any AppImage version change)"
 
   sleep 2
-  if systemctl --user is-active --quiet orca-server.service; then
-    info "╍ orca-server.service is active"
+  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'orca-server'; then
+    info "╍ orca-server daemon is registered with Pitchfork"
   else
-    warning "╍ orca-server.service did not stay active — check: journalctl --user -u orca-server.service"
+    warning "╍ orca-server daemon was not reported by Pitchfork — check: pitchfork logs orca-server"
   fi
 }
 

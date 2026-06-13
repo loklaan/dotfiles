@@ -1,100 +1,954 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S deno run --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com
 
-#/ Usage:
-#/   notify [OPTIONS] <message>
-#/
-#/ Description:
-#/   Cross-platform desktop notification.
-#/
-#/   On macOS: prefers `terminal-notifier` when present (custom icons +
-#/   brand identity); falls back to `osascript display notification`.
-#/
-#/   On Linux: uses `notify-send` from libnotify-bin / libnotify.
-#/
-#/ Options:
-#/   --title <str>      Notification title (default: "Notification")
-#/   --subtitle <str>   Notification subtitle (macOS / terminal-notifier only;
-#/                      ignored on Linux + osascript fallback)
-#/   --icon <path>      Absolute path to icon image (.png / .icns).
-#/                      macOS terminal-notifier passes via -contentImage
-#/                      (right-side thumbnail). The left-side app icon is
-#/                      always terminal-notifier's default — macOS 14+ blocks
-#/                      CLI customisation of the app-identity icon by design.
-#/                      Linux notify-send passes via --icon.
-#/                      osascript fallback ignores it (no AppleScript icon API).
-#/   --sender <bundle>  macOS terminal-notifier only: borrow another app's
-#/                      identity (e.g. com.apple.Terminal) so the notification
-#/                      shows that app's icon. Useful when no --icon is set.
-#/   --help             Display this help message
-#/
-#/ Examples:
-#/   notify "Build complete"
-#/   notify --title "dotfiles" --subtitle "drift" --icon ~/.local/share/dotfiles/icon.png "3 tools behind"
-#/
-#/ Exit codes:
-#/   0   Notification dispatched
-#/   1   Underlying notifier missing or failed
-usage() { grep '^#/' "$0" | cut -c4- ; exit 0 ; }
+// notify (Deno + Effect v4 beta). Two faces of one tool:
+//
+//   notify [OPTIONS] <message>   Cross-platform desktop notification (default).
+//                                Preserves the original bash CLI surface:
+//                                --title, --subtitle, --icon, --sender.
+//                                Fallback chain: terminal-notifier -> osascript
+//                                on macOS; notify-send on Linux.
+//
+//   notify mcp                   Pushbullet MCP server over stdio (the former
+//                                pushbullet-mcp). Pushes notifications to the
+//                                user's phones/tablets/computers via the
+//                                Pushbullet REST API v2.
+//
+// CRITICAL: in `mcp` mode stdout is the NDJSON-RPC channel — all logging must go
+// to stderr, or the protocol breaks. The desktop path writes diagnostics to
+// stderr and exits 0 (dispatched) / 1 (notifier missing or failed), matching the
+// bash original. The PUSHBULLET_ACCESS_TOKEN has full account access, so it is
+// held as Redacted and never logged.
+//
+// @effect/platform-node (NodeRuntime/NodeStdio) is imported lazily inside the
+// `mcp` branch: it transitively loads msgpackr, which reads process.env at module
+// load and throws NotCapable without --allow-env, breaking flag-free `deno test`.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
 
-TITLE="Notification"
-SUBTITLE=""
-ICON=""
-SENDER=""
+import {
+  Config,
+  Context,
+  Effect,
+  Layer,
+  Logger,
+  Redacted,
+  Runtime,
+  Schema,
+} from "npm:effect@4.0.0-beta.80";
+// NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
+// `mcp` branch and the env-gated annotation test — it transitively loads
+// msgpackr, which reads process.env at module load and throws NotCapable
+// without --allow-env, breaking flag-free `deno test`.
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "npm:effect@4.0.0-beta.80/unstable/http";
 
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --help) usage ;;
-    --title) TITLE="$2"; shift 2 ;;
-    --subtitle) SUBTITLE="$2"; shift 2 ;;
-    --icon) ICON="$2"; shift 2 ;;
-    --sender) SENDER="$2"; shift 2 ;;
-    --) shift; break ;;
-    -*) echo "notify: unknown option: $1" >&2; usage ;;
-    *) break ;;
-  esac
-done
+// ===========================================================================
+// Desktop notification (default CLI surface — the bash `notify` front)
+// ===========================================================================
 
-MESSAGE="${1:-}"
+const HELP = `Usage:
+  notify [OPTIONS] <message>
+  notify mcp
 
-if [ -z "$MESSAGE" ]; then
-  usage
-fi
+Description:
+  Cross-platform desktop notification.
 
-main() {
-  case "$OSTYPE" in
-    darwin*)
-      if command -v terminal-notifier >/dev/null 2>&1; then
-        local args=(-message "$MESSAGE" -title "$TITLE")
-        [ -n "$SUBTITLE" ] && args+=(-subtitle "$SUBTITLE")
-        [ -n "$ICON" ]     && args+=(-contentImage "$ICON")
-        [ -n "$SENDER" ]   && args+=(-sender "$SENDER")
-        terminal-notifier "${args[@]}"
-        return $?
-      fi
+  On macOS: prefers \`terminal-notifier\` when present (custom icons +
+  brand identity); falls back to \`osascript display notification\`.
 
-      # Fallback: osascript. No icon support, no subtitle support beyond AppleScript.
-      local script="display notification \"$MESSAGE\" with title \"$TITLE\""
-      [ -n "$SUBTITLE" ] && script="$script subtitle \"$SUBTITLE\""
-      osascript -e "$script"
-      ;;
-    linux*)
-      if ! command -v notify-send >/dev/null 2>&1; then
-        echo "notify-send not found. Install libnotify-bin (apt) or libnotify (apk/yum)." >&2
-        return 1
-      fi
-      local args=("$TITLE" "$MESSAGE")
-      [ -n "$ICON" ] && args=(--icon "$ICON" "${args[@]}")
-      notify-send "${args[@]}"
-      ;;
-    cygwin*|msys*)
-      echo "Notifications not supported on $OSTYPE" >&2
-      return 1
-      ;;
-    *)
-      echo "Platform $OSTYPE not supported" >&2
-      return 1
-      ;;
-  esac
+  On Linux: uses \`notify-send\` from libnotify-bin / libnotify.
+
+  The \`mcp\` subcommand runs the Pushbullet MCP server over stdio instead,
+  pushing notifications to the user's phones, tablets, and computers.
+
+Options:
+  --title <str>      Notification title (default: "Notification")
+  --subtitle <str>   Notification subtitle (macOS / terminal-notifier only;
+                     ignored on Linux + osascript fallback)
+  --icon <path>      Absolute path to icon image (.png / .icns).
+                     macOS terminal-notifier passes via -contentImage
+                     (right-side thumbnail). The left-side app icon is
+                     always terminal-notifier's default — macOS 14+ blocks
+                     CLI customisation of the app-identity icon by design.
+                     Linux notify-send passes via --icon.
+                     osascript fallback ignores it (no AppleScript icon API).
+  --sender <bundle>  macOS terminal-notifier only: borrow another app's
+                     identity (e.g. com.apple.Terminal) so the notification
+                     shows that app's icon. Useful when no --icon is set.
+  --help             Display this help message
+
+Examples:
+  notify "Build complete"
+  notify --title "dotfiles" --subtitle "drift" --icon ~/icon.png "3 tools behind"
+  notify mcp
+
+Exit codes:
+  0   Notification dispatched
+  1   Underlying notifier missing or failed`;
+
+class NotifyError
+  extends Schema.TaggedErrorClass<NotifyError>()("NotifyError", {
+    message: Schema.String,
+  }) {}
+
+interface NotifyOptions {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly icon: string;
+  readonly sender: string;
+  readonly message: string;
 }
 
-main
+// Mirror the bash arg parser: option/value pairs, `--` terminator, first
+// positional is the message. Unknown `-*` flags are an error (bash printed
+// usage to stderr and exited). Returns either parsed options, or a directive
+// to print help (and the exit code to use).
+type ParseResult =
+  | { readonly kind: "help"; readonly code: number }
+  | { readonly kind: "options"; readonly options: NotifyOptions };
+
+const parseArgs = (argv: readonly string[]): ParseResult => {
+  let title = "Notification";
+  let subtitle = "";
+  let icon = "";
+  let sender = "";
+  let i = 0;
+  let message: string | undefined;
+
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--help") return { kind: "help", code: 0 };
+    if (arg === "--title") {
+      title = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--subtitle") {
+      subtitle = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--icon") {
+      icon = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--sender") {
+      sender = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--") {
+      message = argv[i + 1];
+      break;
+    }
+    if (arg.startsWith("-")) {
+      // unknown option — bash printed an error then usage and exited 0
+      return { kind: "help", code: 0 };
+    }
+    message = arg;
+    break;
+  }
+
+  if (message === undefined || message === "") {
+    // bash: empty message => usage (exit 0)
+    return { kind: "help", code: 0 };
+  }
+
+  return {
+    kind: "options",
+    options: { title, subtitle, icon, sender, message },
+  };
+};
+
+// Run an external notifier. Resolves to the child's exit code; 127 when the
+// binary cannot be spawned (missing / not on PATH), matching shell semantics.
+const runNotifier = (
+  cmd: string,
+  args: readonly string[],
+): Effect.Effect<number> =>
+  Effect.tryPromise({
+    try: async () => {
+      const command = new Deno.Command(cmd, {
+        args: [...args],
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const { code } = await command.output();
+      return code;
+    },
+    catch: () => 127,
+  }).pipe(Effect.orElseSucceed(() => 127));
+
+const hasCommand = (cmd: string): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (cmd.includes("/")) return yield* fileExists(cmd);
+    const pathEnv = Deno.env.get("PATH") ?? "";
+    for (const dir of pathEnv.split(":")) {
+      if (dir === "") continue;
+      if (yield* fileExists(`${dir}/${cmd}`)) return true;
+    }
+    return false;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const fileExists = (path: string): Effect.Effect<boolean> =>
+  Effect.tryPromise({
+    try: async () => {
+      await Deno.stat(path);
+      return true;
+    },
+    catch: () => false,
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const osType = (): "darwin" | "linux" | "other" => {
+  const os = Deno.build.os;
+  if (os === "darwin") return "darwin";
+  if (os === "linux") return "linux";
+  return "other";
+};
+
+// Build the terminal-notifier argv (exported shape used in tests).
+const terminalNotifierArgs = (o: NotifyOptions): string[] => {
+  const args = ["-message", o.message, "-title", o.title];
+  if (o.subtitle) args.push("-subtitle", o.subtitle);
+  if (o.icon) args.push("-contentImage", o.icon);
+  if (o.sender) args.push("-sender", o.sender);
+  return args;
+};
+
+// Build the AppleScript string for the osascript fallback (no icon support).
+const osascriptScript = (o: NotifyOptions): string => {
+  let script = `display notification "${o.message}" with title "${o.title}"`;
+  if (o.subtitle) script += ` subtitle "${o.subtitle}"`;
+  return script;
+};
+
+// Build the notify-send argv: --icon (when set) precedes the title/message,
+// matching the bash positional ordering.
+const notifySendArgs = (o: NotifyOptions): string[] => {
+  const positional = [o.title, o.message];
+  return o.icon ? ["--icon", o.icon, ...positional] : positional;
+};
+
+const dispatchNotification = (
+  o: NotifyOptions,
+): Effect.Effect<void, NotifyError> =>
+  Effect.gen(function* () {
+    switch (osType()) {
+      case "darwin": {
+        if (yield* hasCommand("terminal-notifier")) {
+          const code = yield* runNotifier(
+            "terminal-notifier",
+            terminalNotifierArgs(o),
+          );
+          if (code !== 0) {
+            return yield* Effect.fail(
+              new NotifyError({ message: "terminal-notifier failed" }),
+            );
+          }
+          return;
+        }
+        // Fallback: osascript. No icon, no subtitle beyond AppleScript.
+        const code = yield* runNotifier("osascript", [
+          "-e",
+          osascriptScript(o),
+        ]);
+        if (code !== 0) {
+          return yield* Effect.fail(
+            new NotifyError({ message: "osascript failed" }),
+          );
+        }
+        return;
+      }
+      case "linux": {
+        if (!(yield* hasCommand("notify-send"))) {
+          return yield* Effect.fail(
+            new NotifyError({
+              message:
+                "notify-send not found. Install libnotify-bin (apt) or libnotify (apk/yum).",
+            }),
+          );
+        }
+        const code = yield* runNotifier("notify-send", notifySendArgs(o));
+        if (code !== 0) {
+          return yield* Effect.fail(
+            new NotifyError({ message: "notify-send failed" }),
+          );
+        }
+        return;
+      }
+      default:
+        return yield* Effect.fail(
+          new NotifyError({
+            message: `Platform ${Deno.build.os} not supported`,
+          }),
+        );
+    }
+  });
+
+// ===========================================================================
+// Pushbullet MCP server (the `mcp` subcommand — unchanged logic)
+// ===========================================================================
+
+class PushbulletError
+  extends Schema.TaggedErrorClass<PushbulletError>()("PushbulletError", {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  }) {}
+
+const PushResult = Schema.Struct({
+  iden: Schema.String,
+  type: Schema.String,
+  active: Schema.Boolean,
+});
+
+const Device = Schema.Struct({
+  iden: Schema.String,
+  nickname: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  active: Schema.Boolean,
+  created: Schema.optional(Schema.Number),
+});
+const DevicesResponse = Schema.Struct({
+  devices: Schema.Array(Device),
+});
+
+class Pushbullet extends Context.Service<Pushbullet, {
+  sendNote(params: {
+    readonly title: string;
+    readonly body: string;
+    readonly device_iden?: string | undefined;
+  }): Effect.Effect<typeof PushResult.Type, PushbulletError>;
+  sendLink(params: {
+    readonly title: string;
+    readonly body: string;
+    readonly url: string;
+    readonly device_iden?: string | undefined;
+  }): Effect.Effect<typeof PushResult.Type, PushbulletError>;
+  listDevices(): Effect.Effect<
+    ReadonlyArray<typeof Device.Type>,
+    PushbulletError
+  >;
+}>()("notify/Pushbullet") {
+  static readonly layer = Layer.effect(
+    Pushbullet,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+
+      // Resolve the access token lazily, per call, rather than at layer-build
+      // time. This lets the MCP server boot and answer `initialize` /
+      // `tools/list` with no credentials present; the token is only required
+      // once a tool that actually talks to Pushbullet is invoked. A missing
+      // token then surfaces as a PushbulletError (a proper MCP tool error)
+      // instead of aborting the server launch.
+      const authedClient = Config.redacted("PUSHBULLET_ACCESS_TOKEN").pipe(
+        Effect.map((token) =>
+          httpClient.pipe(
+            HttpClient.mapRequest((request) =>
+              request.pipe(
+                HttpClientRequest.prependUrl("https://api.pushbullet.com/v2"),
+                HttpClientRequest.setHeader(
+                  "Access-Token",
+                  Redacted.value(token),
+                ),
+                HttpClientRequest.acceptJson,
+              )
+            ),
+            HttpClient.filterStatusOk,
+          )
+        ),
+        Effect.mapError((cause) =>
+          new PushbulletError({
+            message:
+              "PUSHBULLET_ACCESS_TOKEN is not set; export it to send Pushbullet notifications",
+            cause,
+          })
+        ),
+      );
+
+      const postPush = Effect.fn("Pushbullet.postPush")(function* (
+        body: Record<string, string>,
+      ) {
+        const client = yield* authedClient;
+        return yield* HttpClientRequest.post("/pushes").pipe(
+          HttpClientRequest.bodyJsonUnsafe(body),
+          client.execute,
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(PushResult)),
+          Effect.mapError((cause) =>
+            new PushbulletError({ message: "Failed to send push", cause })
+          ),
+        );
+      });
+
+      const sendNote = Effect.fn("Pushbullet.sendNote")(function* (params: {
+        readonly title: string;
+        readonly body: string;
+        readonly device_iden?: string | undefined;
+      }) {
+        return yield* postPush({
+          type: "note",
+          title: params.title,
+          body: params.body,
+          ...(params.device_iden ? { device_iden: params.device_iden } : {}),
+        });
+      });
+
+      const sendLink = Effect.fn("Pushbullet.sendLink")(function* (params: {
+        readonly title: string;
+        readonly body: string;
+        readonly url: string;
+        readonly device_iden?: string | undefined;
+      }) {
+        return yield* postPush({
+          type: "link",
+          title: params.title,
+          body: params.body,
+          url: params.url,
+          ...(params.device_iden ? { device_iden: params.device_iden } : {}),
+        });
+      });
+
+      const listDevices = Effect.fn("Pushbullet.listDevices")(function* () {
+        const client = yield* authedClient;
+        const response = yield* client.get("/devices", {
+          urlParams: { active: "true" },
+        }).pipe(
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(DevicesResponse)),
+          Effect.mapError((cause) =>
+            new PushbulletError({ message: "Failed to list devices", cause })
+          ),
+        );
+        return response.devices;
+      });
+
+      return Pushbullet.of({ sendNote, sendLink, listDevices });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+}
+
+// MCP tools/toolkit/server layer are built lazily — they pull `unstable/ai`
+// (and thus msgpackr) which reads process.env at module load. Constructing them
+// inside this async builder keeps flag-free `deno test` clean; the builder is
+// only called from the `mcp` branch (and the env-gated annotation test).
+const buildMcp = async () => {
+  const { McpServer, Tool, Toolkit } = await import(
+    "npm:effect@4.0.0-beta.80/unstable/ai"
+  );
+
+  const SendNotification = Tool.make("send_notification", {
+    description:
+      "Notify the user by pushing a notification to their phones, tablets, and " +
+      "computers (via Pushbullet). Use this whenever the user wants to be " +
+      "notified, pinged, alerted, reminded, or messaged \u2014 for example a " +
+      "task finishing, a status update, a heads-up, or a link to read later. " +
+      "Provide `url` to make the notification a tappable link; omit it for a " +
+      "plain text note. Omit `device_iden` to reach every device, or target " +
+      "one via list_notification_devices. This delivers a real notification to " +
+      "physical devices, so only call it when the user actually wants to be " +
+      "notified.",
+    parameters: Schema.Struct({
+      title: Schema.String.annotate({
+        description: "Short headline shown as the notification title.",
+      }),
+      body: Schema.String.annotate({
+        description: "Main notification text shown beneath the title.",
+      }),
+      url: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Optional URL. When set, the notification becomes a tappable link " +
+            "that opens this URL; when omitted, it is a plain text note.",
+        }),
+      ),
+      device_iden: Schema.optional(
+        Schema.String.annotate({
+          description:
+            "Deliver only to one device, identified by its iden from " +
+            "list_notification_devices. Omit to broadcast to all devices.",
+        }),
+      ),
+    }),
+    success: Schema.Struct({
+      iden: Schema.String,
+      delivered: Schema.Boolean,
+    }),
+    failure: Schema.String,
+  })
+    .annotate(Tool.Title, "Send Notification")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, false)
+    .annotate(Tool.OpenWorld, true);
+
+  const ListNotificationDevices = Tool.make("list_notification_devices", {
+    description:
+      "List the user's active notification devices and their idens. Use this " +
+      "to discover where a notification can be sent, or when the user asks " +
+      "which devices are available. Returns each device's iden, which can be " +
+      "passed as device_iden to send_notification to reach a single device. " +
+      "Read-only: it does not send any notification.",
+    parameters: Schema.Struct({}),
+    success: Schema.Array(
+      Schema.Struct({
+        iden: Schema.String,
+        nickname: Schema.optional(Schema.String),
+        model: Schema.optional(Schema.String),
+      }),
+    ),
+    failure: Schema.String,
+  })
+    .annotate(Tool.Title, "List Notification Devices")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, true);
+
+  const PushbulletToolkit = Toolkit.make(
+    SendNotification,
+    ListNotificationDevices,
+  );
+
+  const ToolkitLayer = McpServer.toolkit(PushbulletToolkit).pipe(
+    Layer.provideMerge(
+      PushbulletToolkit.toLayer(
+        Effect.gen(function* () {
+          const pb = yield* Pushbullet;
+          return {
+            send_notification: ({ title, body, url, device_iden }) =>
+              (url === undefined
+                ? pb.sendNote({ title, body, device_iden })
+                : pb.sendLink({ title, body, url, device_iden })).pipe(
+                  Effect.map((r) => ({ iden: r.iden, delivered: r.active })),
+                  Effect.catchTag(
+                    "PushbulletError",
+                    (e) => Effect.fail(e.message),
+                  ),
+                ),
+            list_notification_devices: () =>
+              pb.listDevices().pipe(
+                Effect.map((devices) =>
+                  devices.map((d) => ({
+                    iden: d.iden,
+                    nickname: d.nickname,
+                    model: d.model,
+                  }))
+                ),
+                Effect.catchTag(
+                  "PushbulletError",
+                  (e) => Effect.fail(e.message),
+                ),
+              ),
+          };
+        }),
+      ),
+    ),
+    Layer.provide(Pushbullet.layer),
+  );
+
+  const ServerLayer = ToolkitLayer.pipe(
+    Layer.provide(
+      McpServer.layerStdio({
+        name: "Pushbullet MCP",
+        version: "1.0.0",
+      }),
+    ),
+  );
+
+  return {
+    McpServer,
+    Tool,
+    ServerLayer,
+    SendNotification,
+    ListNotificationDevices,
+  };
+};
+
+// ===========================================================================
+// Entry point
+// ===========================================================================
+
+if (import.meta.main) {
+  const command = Deno.args[0];
+
+  if (command === "mcp") {
+    // Lazy import: @effect/platform-node loads msgpackr, which reads process.env
+    // at module load and throws NotCapable without --allow-env. Keeping it here
+    // means flag-free `deno test` never triggers it. buildMcp() lazily imports
+    // `unstable/ai` (also msgpackr-tainted) for the same reason.
+    const { NodeRuntime, NodeStdio } = await import(
+      "npm:@effect/platform-node@4.0.0-beta.80"
+    );
+    const { ServerLayer } = await buildMcp();
+
+    const ServerLayerWithStdio = ServerLayer.pipe(
+      Layer.provide(NodeStdio.layer),
+      // stdout is the JSON-RPC channel, so logs must go to stderr.
+      Layer.provide(Logger.layer([Logger.consolePretty({ stderr: true })])),
+    );
+
+    // The stdio RPC protocol interrupts the main fiber when the client closes
+    // stdin (see RpcServer.makeProtocolStdio). That clean shutdown surfaces as
+    // an interrupts-only Cause, which the default teardown maps to exit 130.
+    // For an MCP stdio server, stdin EOF (and SIGINT) are graceful shutdowns,
+    // so remap that 130 to 0; genuine failures keep their non-zero codes.
+    const teardown: Runtime.Teardown = (exit, onExit) =>
+      Runtime.defaultTeardown(exit, (code) => onExit(code === 130 ? 0 : code));
+
+    Layer.launch(ServerLayerWithStdio).pipe(
+      NodeRuntime.runMain({ teardown }),
+    );
+  } else {
+    const parsed = parseArgs(Deno.args);
+    if (parsed.kind === "help") {
+      console.log(HELP);
+      Deno.exit(parsed.code);
+    } else {
+      Effect.runPromiseExit(dispatchNotification(parsed.options)).then(
+        (exit) => {
+          if (exit._tag === "Failure") {
+            // Surface the message on stderr like the bash original, exit 1.
+            const err = exit.cause;
+            console.error(
+              `notify: ${JSON.stringify(err)}`,
+            );
+            Deno.exit(1);
+          }
+          Deno.exit(0);
+        },
+      );
+    }
+  }
+}
+
+// ===========================================================================
+// Tests. Offline tests run unconditionally with zero permission flags:
+//
+//   deno test home/private_dot_local/bin/executable_notify
+//
+// They cover the bash-derived arg parser and the per-notifier argv builders
+// (the chief regression risk when porting the shell logic). The integration
+// tests exercise the Pushbullet HTTP client and are gated on a token, so the
+// default run needs no secret and no network:
+//
+//   PUSHBULLET_ACCESS_TOKEN="$(bws-get-or-empty <uuid> "$(cat ~/.config/chezmoi/secrets/bws-access-token.txt)")" \
+//     deno test --allow-net=api.pushbullet.com --allow-env home/private_dot_local/bin/executable_notify
+//
+// Two paths can only be checked manually:
+//   - desktop dispatch: `./notify "hi"` fires a real OS notification.
+//   - mcp stdio contract: pipe a JSON-RPC `initialize` to `./notify mcp` and
+//     confirm STDOUT carries ONLY JSON-RPC (logs must be on STDERR).
+// ===========================================================================
+
+// Permission-safe env gate (raw Deno.env.get throws without --allow-env).
+const hasEnv = (key: string): boolean =>
+  Deno.permissions.querySync({ name: "env", variable: key }).state ===
+    "granted" && Boolean(Deno.env.get(key));
+
+const itEffect = <E>(
+  name: string,
+  effect: Effect.Effect<unknown, E>,
+  options?: { readonly ignore?: boolean },
+) =>
+  Deno.test({
+    name,
+    ignore: options?.ignore ?? false,
+    fn: async () => {
+      const exit = await Effect.runPromiseExit(effect);
+      if (exit._tag === "Failure") {
+        throw new Error(`Effect failed: ${JSON.stringify(exit.cause)}`);
+      }
+    },
+  });
+
+const assert = (cond: boolean, msg: string) =>
+  cond ? Effect.void : Effect.fail(new Error(msg));
+
+const eq = (a: unknown, b: unknown, msg: string) => {
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(`${msg}: got ${JSON.stringify(a)}`);
+  }
+};
+
+Deno.test("parseArgs: bare message keeps defaults", () => {
+  const r = parseArgs(["Build complete"]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.title, "Notification", "default title");
+  eq(r.options.message, "Build complete", "message");
+});
+
+Deno.test("parseArgs: drift callsite shape", () => {
+  const r = parseArgs([
+    "--title",
+    "dotfiles",
+    "--subtitle",
+    "3 tools behind",
+    "--icon",
+    "/x/icon.png",
+    "mise, deno",
+  ]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.title, "dotfiles", "title");
+  eq(r.options.subtitle, "3 tools behind", "subtitle");
+  eq(r.options.icon, "/x/icon.png", "icon");
+  eq(r.options.message, "mise, deno", "message");
+});
+
+Deno.test("parseArgs: --sender is captured", () => {
+  const r = parseArgs(["--sender", "com.apple.Terminal", "hi"]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.sender, "com.apple.Terminal", "sender");
+});
+
+Deno.test("parseArgs: -- terminator passes the message through", () => {
+  const r = parseArgs(["--title", "t", "--", "--looks-like-a-flag"]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.message, "--looks-like-a-flag", "message after --");
+});
+
+Deno.test("parseArgs: empty / missing message asks for help", () => {
+  eq(parseArgs([]).kind, "help", "no args");
+  eq(parseArgs([""]).kind, "help", "empty message");
+});
+
+Deno.test("parseArgs: --help requests help", () => {
+  eq(parseArgs(["--help"]).kind, "help", "--help");
+});
+
+Deno.test("terminalNotifierArgs: includes only set options", () => {
+  eq(
+    terminalNotifierArgs({
+      title: "T",
+      subtitle: "",
+      icon: "",
+      sender: "",
+      message: "M",
+    }),
+    ["-message", "M", "-title", "T"],
+    "minimal",
+  );
+  eq(
+    terminalNotifierArgs({
+      title: "T",
+      subtitle: "S",
+      icon: "/i.png",
+      sender: "com.x",
+      message: "M",
+    }),
+    [
+      "-message",
+      "M",
+      "-title",
+      "T",
+      "-subtitle",
+      "S",
+      "-contentImage",
+      "/i.png",
+      "-sender",
+      "com.x",
+    ],
+    "full",
+  );
+});
+
+Deno.test("osascriptScript: appends subtitle only when set", () => {
+  eq(
+    osascriptScript({
+      title: "T",
+      subtitle: "",
+      icon: "",
+      sender: "",
+      message: "M",
+    }),
+    `display notification "M" with title "T"`,
+    "no subtitle",
+  );
+  eq(
+    osascriptScript({
+      title: "T",
+      subtitle: "S",
+      icon: "",
+      sender: "",
+      message: "M",
+    }),
+    `display notification "M" with title "T" subtitle "S"`,
+    "with subtitle",
+  );
+});
+
+Deno.test("notifySendArgs: icon precedes title/message when set", () => {
+  eq(
+    notifySendArgs({
+      title: "T",
+      subtitle: "",
+      icon: "",
+      sender: "",
+      message: "M",
+    }),
+    ["T", "M"],
+    "no icon",
+  );
+  eq(
+    notifySendArgs({
+      title: "T",
+      subtitle: "",
+      icon: "/i.png",
+      sender: "",
+      message: "M",
+    }),
+    ["--icon", "/i.png", "T", "M"],
+    "with icon",
+  );
+});
+
+const decodeNote = Schema.decodeUnknownSync(PushResult);
+const decodeDevice = Schema.decodeUnknownSync(Device);
+const decodeDevices = Schema.decodeUnknownSync(DevicesResponse);
+
+Deno.test("Device schema decodes a real /v2/devices entry", () => {
+  const device = decodeDevice({
+    iden: "ujpah72o0",
+    nickname: "Galaxy S8",
+    model: "SM-G950F",
+    active: true,
+    created: 1.49,
+    pushable: true,
+  });
+  if (device.iden !== "ujpah72o0" || device.nickname !== "Galaxy S8") {
+    throw new Error(`unexpected decode: ${JSON.stringify(device)}`);
+  }
+});
+
+Deno.test("Device schema tolerates a missing nickname/model", () => {
+  const device = decodeDevice({ iden: "x1", active: true });
+  if (device.nickname !== undefined || device.model !== undefined) {
+    throw new Error("optional fields should decode to undefined");
+  }
+});
+
+Deno.test("DevicesResponse decodes the list envelope", () => {
+  const res = decodeDevices({
+    devices: [{ iden: "a", active: true }, { iden: "b", active: false }],
+  });
+  if (res.devices.length !== 2) throw new Error("expected 2 devices");
+});
+
+Deno.test("PushResult decodes a real /v2/pushes response", () => {
+  const push = decodeNote({
+    iden: "ujpah72o0sjAoRtnM0jc",
+    type: "note",
+    active: true,
+    dismissed: false,
+    title: "t",
+    body: "b",
+  });
+  if (push.iden !== "ujpah72o0sjAoRtnM0jc" || push.active !== true) {
+    throw new Error(`unexpected decode: ${JSON.stringify(push)}`);
+  }
+});
+
+// Gated on --allow-env: buildMcp() lazily imports `unstable/ai`, which loads
+// msgpackr (reads process.env at module load). Skipped on flag-free runs.
+Deno.test({
+  name:
+    "tool annotations encode the intended MCP permission hints [needs --allow-env]",
+  ignore: Deno.permissions.querySync({ name: "env" }).state !== "granted",
+  fn: async () => {
+    const { Tool, SendNotification, ListNotificationDevices } =
+      await buildMcp();
+    const expected = {
+      send_notification: {
+        readOnly: false,
+        destructive: false,
+        idempotent: false,
+      },
+      list_notification_devices: {
+        readOnly: true,
+        destructive: false,
+        idempotent: true,
+      },
+    };
+    for (const tool of [SendNotification, ListNotificationDevices]) {
+      const e = expected[tool.name as keyof typeof expected];
+      const a = tool.annotations;
+      if (
+        Context.get(a, Tool.Readonly) !== e.readOnly ||
+        Context.get(a, Tool.Destructive) !== e.destructive ||
+        Context.get(a, Tool.Idempotent) !== e.idempotent ||
+        Context.get(a, Tool.OpenWorld) !== true
+      ) {
+        throw new Error(`annotation mismatch for ${tool.name}`);
+      }
+    }
+  },
+});
+
+itEffect(
+  "Config injection reads PUSHBULLET_ACCESS_TOKEN as a Redacted value [needs token]",
+  Effect.gen(function* () {
+    const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN");
+    yield* assert(
+      Redacted.isRedacted(token),
+      "token did not resolve to a Redacted value",
+    );
+    yield* assert(
+      Redacted.value(token).length > 0,
+      "token resolved but is empty",
+    );
+    yield* assert(
+      `${token}` === "<redacted>",
+      "Redacted value leaked via string coercion",
+    );
+  }),
+  { ignore: !hasEnv("PUSHBULLET_ACCESS_TOKEN") },
+);
+
+itEffect(
+  "HTTP client round-trips against the real Pushbullet API [needs token]",
+  Effect.gen(function* () {
+    const pb = yield* Pushbullet;
+    const devices = yield* pb.listDevices();
+    yield* assert(
+      Array.isArray(devices),
+      "listDevices did not return an array",
+    );
+  }).pipe(Effect.provide(Pushbullet.layer)),
+  { ignore: !hasEnv("PUSHBULLET_ACCESS_TOKEN") },
+);
+
+// DESTRUCTIVE smoke: actually sends a note to the newest device. Double-gated —
+// needs both a token AND PUSHBULLET_SMOKE_SEND=1 — so it never fires on a plain
+// `deno test`, only when explicitly opted in:
+//   PUSHBULLET_ACCESS_TOKEN=… PUSHBULLET_SMOKE_SEND=1 deno test --allow-net=api.pushbullet.com --allow-env home/private_dot_local/bin/executable_notify
+itEffect(
+  "sends a real note to the newest device [needs token + PUSHBULLET_SMOKE_SEND=1]",
+  Effect.gen(function* () {
+    const pb = yield* Pushbullet;
+    const devices = yield* pb.listDevices();
+    yield* assert(devices.length > 0, "no devices to send to");
+
+    const newest = devices.reduce((a, b) =>
+      (b.created ?? 0) >= (a.created ?? 0) ? b : a
+    );
+    yield* Effect.logInfo(
+      `Sending to newest device: ${newest.nickname ?? newest.iden}`,
+    );
+
+    const result = yield* pb.sendNote({
+      title: "a message left on the rooftops",
+      body:
+        "Heya you — slugcat says hi. Another cycle, another rain rolling in, and " +
+        "here we still are, scurrying between the pipes. Eat your batflies, mind " +
+        "your karma, and look to the moon when it all gets heavy. We'll make it " +
+        "to the void sea eventually — no rush. Pebbles believes in you. (I do too.)",
+      device_iden: newest.iden,
+    });
+    yield* assert(result.active, "push was created but not active");
+  }).pipe(Effect.provide(Pushbullet.layer)),
+  {
+    ignore: !hasEnv("PUSHBULLET_ACCESS_TOKEN") ||
+      !hasEnv("PUSHBULLET_SMOKE_SEND"),
+  },
+);

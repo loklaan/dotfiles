@@ -16,4 +16,7 @@ Working in this repo requires understanding three layers:
 3. **Coding patterns** — bash/zsh conventions, template patterns, modify patterns
    [coding-patterns.md](references/coding-patterns.md)
 
+4. **Deno + Effect tools** — single-file tools, shebang permissions, Effect v4 patterns, CLI structure, MCP, in-file tests
+   [deno-effect-tools.md](references/deno-effect-tools.md)
+
 Load the reference relevant to your task. For new files, check all three.

@@ -1,0 +1,24 @@
+{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
+{{- /* CODER_WORKSPACE_NAME is the canonical workspace identifier on Coder
+       boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
+       at chezmoi-render time so Pitchfork gets a baked-in pairing address — no
+       runtime shell parsing, no risk of leaking sibling secrets from agent.conf
+       (e.g. CODER_AGENT_TOKEN) into the orca process. */ -}}
+{{- $agentConf := "" -}}
+{{- if stat "/run/coder/agent.conf" -}}
+{{-   $agentConf = include "/run/coder/agent.conf" -}}
+{{- end -}}
+{{- $workspaceName := $agentConf | regexFind `CODER_WORKSPACE_NAME="[^"]+"` | regexFind `[^"]+"$` | trimSuffix `"` -}}
+{{- if eq "" $workspaceName -}}
+{{-   fail "orcaServer = true but CODER_WORKSPACE_NAME could not be resolved from /run/coder/agent.conf" -}}
+{{- end -}}
+#:schema https://pitchfork.jdx.dev/schema.json
+
+[daemons.orca-server]
+run = "orca-serve --pairing-address {{ $workspaceName }}.coder --json"
+dir = "{{ .chezmoi.homeDir }}"
+env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
+retry = true
+boot_start = true
+ready_delay = 2
+{{- end }}

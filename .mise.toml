@@ -1,8 +1,8 @@
 [tools]
 
 [tasks.lint]
-description = "Format-check and lint the pushbullet-mcp Deno executable"
+description = "Format-check and lint all Deno+Effect tools"
 run = [
-  "deno fmt --ext=ts --check home/private_dot_local/bin/executable_pushbullet-mcp",
-  "deno lint --ext=ts home/private_dot_local/bin/executable_pushbullet-mcp",
+  "deno fmt --ext=ts --check home/private_dot_local/bin/executable_json-escape home/private_dot_local/bin/executable_drift home/private_dot_local/bin/executable_omo-profile home/private_dot_local/bin/executable_notify home/private_dot_local/bin/executable_transcribe",
+  "deno lint --ext=ts home/private_dot_local/bin/executable_json-escape home/private_dot_local/bin/executable_drift home/private_dot_local/bin/executable_omo-profile home/private_dot_local/bin/executable_notify home/private_dot_local/bin/executable_transcribe",
 ]
