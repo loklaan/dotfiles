@@ -20,7 +20,7 @@ empty on any failure. This gives chezmoi apply a three-layer safety net:
    empty for just those secrets. Apply succeeds, other secrets fill.
 
 The preflight hook surfaces cases 2 + 3 as warnings (not errors) so silent
-degradation is still visible to the user, who can then run `dotfiles-setup`
+degradation is still visible to the user, who can then run `df-setup`
 for actionable guidance.
 
 ## Data Variables
@@ -82,14 +82,14 @@ no project access, network failure, server 5xx), malformed JSON response.
 
 1. **Missing tool warning** (non-fatal) — warns if `bws`, `jq`, or `node`
    aren't on PATH. Templates still render; they just skip secrets.
-2. **BWS token probe** (non-fatal) — calls `dotfiles-setup --probe-bws`
+2. **BWS token probe** (non-fatal) — calls `df-setup --probe-bws`
    which fetches a canary secret (`bwsIdGithubAuthToken`) to determine
    token liveness. On rejection, prints a one-line warning pointing at
-   `dotfiles-setup` for guidance. Never aborts apply.
+   `df-setup` for guidance. Never aborts apply.
 
-## `dotfiles-setup` (the doctor)
+## `df-setup` (the doctor)
 
-`~/.local/bin/dotfiles-setup` is the single source of truth for
+`~/.local/bin/df-setup` is the single source of truth for
 "what state is this machine in, and what should the user do next."
 
 It reports a 3-state BWS status:
@@ -101,7 +101,7 @@ It reports a 3-state BWS status:
 - **invalid-unknown** — `bws` failed for another reason (network,
   service outage). Prints a reproducer command.
 
-`dotfiles-setup --probe-bws` is the headless mode used by the preflight:
+`df-setup --probe-bws` is the headless mode used by the preflight:
 exits 0/1/2 for ok/missing/invalid, silent on stdout/stderr.
 
 ## Bootstrap
@@ -133,6 +133,6 @@ time.
 | `~/.config/chezmoi/secrets/bws-access-token.txt` | BWS token (per-machine, not in repo, mode 0600) |
 | `~/.local/lib/bws-get-or-empty` | Soft-fail wrapper used by templates |
 | `~/.local/lib/chezmoi-preflight.sh` | apply.pre / update.pre hook |
-| `~/.local/bin/dotfiles-setup` | Doctor + `--probe-bws` probe |
+| `~/.local/bin/df-setup` | Doctor + `--probe-bws` probe |
 | `home/.chezmoi.toml.tmpl` | Defines `bwsTokenPath` and `bwsId*` data variables |
 | `install.sh` | Bootstrap flow: writes token file with correct permissions |

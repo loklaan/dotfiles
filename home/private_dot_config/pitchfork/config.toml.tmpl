@@ -14,8 +14,8 @@
 {{- end -}}
 #:schema https://pitchfork.jdx.dev/schema.json
 
-[daemons.orca-server]
-run = "orca-serve --pairing-address {{ $workspaceName }}.coder --json"
+[daemons.df-orca-server]
+run = "df-orca-serve --pairing-address {{ $workspaceName }}.coder --json"
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
 retry = true

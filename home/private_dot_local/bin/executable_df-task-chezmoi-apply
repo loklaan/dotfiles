@@ -10,7 +10,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   dotfiles-task-chezmoi-apply
+#/   df-task-chezmoi-apply
 #/
 #/ Description:
 #/   Wrapper around `chezmoi apply` invoked from mise tasks (notably

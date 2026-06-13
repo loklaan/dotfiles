@@ -10,7 +10,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   dotfiles-task-mise-upgrade
+#/   df-task-mise-upgrade
 #/
 #/ Description:
 #/   Runs `mise upgrade` to refresh tools whose pin is `latest`.

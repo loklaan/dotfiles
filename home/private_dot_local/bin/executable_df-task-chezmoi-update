@@ -10,7 +10,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   dotfiles-task-chezmoi-update
+#/   df-task-chezmoi-update
 #/
 #/ Description:
 #/   Wrapper around `chezmoi update` (git pull on the source repo, then

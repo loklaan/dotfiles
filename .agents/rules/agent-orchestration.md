@@ -104,7 +104,7 @@ chezmoi apply
   ├─ renders mise config (Linux + opt-in: includes paseo CLI)
   ├─ renders systemd unit (Linux + opt-in: real unit; otherwise empty)
   ├─ run_after_install-057 enables + starts unit (Linux + opt-in)
-  └─ dotfiles-setup health check shows daemon status (Linux + opt-in only)
+  └─ df-setup health check shows daemon status (Linux + opt-in only)
 
 install-my-packages --gui
   ├─ installs Paseo.app cask (macOS)
@@ -213,7 +213,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 | `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
 | `home/.chezmoiscripts/run_onchange_after_install-067-sync-omo-plugin.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
-| `home/private_dot_local/bin/executable_dotfiles-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
+| `home/private_dot_local/bin/executable_df-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
 
 ## Operating Runbook
@@ -252,7 +252,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 3. `chezmoi apply` → server stops + disables. (mise's installed AppImage stays in `~/.local/share/mise/installs/`; remove with `mise uninstall orca` if reclaiming disk.)
 
 **Status anywhere:**
-- `dotfiles-setup` shows the daemon line on opt-in Linux machines.
+- `df-setup` shows the daemon line on opt-in Linux machines.
 - On macbooks the line is absent (correct — no daemon there).
 
 **Upgrade omo plugin (every machine):**
@@ -275,7 +275,7 @@ cw fleet ssh-fans-out a `mise run <task>` across `coder list -o json` workspaces
   ↓
 LaunchAgent (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/drift.json
   ↓
-Surfaces: dotfiles-setup drift block · zsh login one-liner · macOS notification
+Surfaces: df-setup drift block · zsh login one-liner · macOS notification
 ```
 
 ### Orca / paseo on Linux are installed via mise
@@ -291,7 +291,7 @@ To bump either: edit the version literal in `home/private_dot_config/mise/config
 
 ```bash
 # See what's drifting (cheap; reads cache)
-dotfiles-setup
+df-setup
 
 # Refresh the drift cache (network-bound; minutes)
 mise run drift:check
@@ -314,7 +314,7 @@ cw fleet --include-local update
 
 ### Drift detection scope (macOS only)
 
-The launchd agent `io.lochlan.dotfiles.drift` runs `mise run drift:notify` once per 24h. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `dotfiles-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
+The launchd agent `io.lochlan.dotfiles.drift` runs `mise run drift:notify` once per 24h. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `df-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
 
 The drift report aggregates three sources, each emitting JSON to stdout:
 - **`mise outdated --json`** — every tool mise tracks (latest pins + explicit github/npm pins)

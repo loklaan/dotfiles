@@ -74,7 +74,7 @@ fi
 if [[ "$_incomplete_setup" == "true" ]]; then
   echo ""
   print -P "%F{yellow}Dotfiles applied with incomplete configuration.%f"
-  print -P "Run %F{cyan}dotfiles-setup%f for instructions."
+  print -P "Run %F{cyan}df-setup%f for instructions."
   echo ""
 fi
 unset _incomplete_setup
@@ -104,7 +104,7 @@ if is_interactive_shell && command -v jq &> /dev/null; then
       _drift_count=$(jq '.tools | length' "$_drift_cache" 2>/dev/null || echo 0)
       if [[ "$_drift_count" -gt 0 ]]; then
         echo ""
-        print -P "%F{yellow}⚠ ${_drift_count} tool(s) behind.%f Run %F{cyan}dotfiles-setup%f for details, or %F{cyan}mise run update%f to refresh."
+        print -P "%F{yellow}⚠ ${_drift_count} tool(s) behind.%f Run %F{cyan}df-setup%f for details, or %F{cyan}mise run update%f to refresh."
         echo ""
         mkdir -p "${HOME}/.cache/dotfiles"
         touch "$_drift_login_marker"

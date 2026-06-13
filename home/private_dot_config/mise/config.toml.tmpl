@@ -11,7 +11,7 @@
 {{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
-# `orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
+# `df-orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
 # (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
 "http:orca" = { version = "1.4.35", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
 "github:jdx/pitchfork" = { version = "2.13.1", exe = "pitchfork" }
@@ -66,32 +66,32 @@ run = "true"
 [tasks."mise:upgrade"]
 description = "Refresh tools pinned to `latest` (explicit pins untouched)"
 hide = true
-run = "dotfiles-task-mise-upgrade"
+run = "df-task-mise-upgrade"
 
 [tasks."chezmoi:apply"]
 description = "Apply chezmoi (converges dotfiles + lifecycle scripts)"
 hide = true
-run = "dotfiles-task-chezmoi-apply"
+run = "df-task-chezmoi-apply"
 
 [tasks."chezmoi:update"]
 description = "Pull source repo + apply (TTY-aware non-interactive fallback)"
 hide = true
-run = "dotfiles-task-chezmoi-update"
+run = "df-task-chezmoi-update"
 
 {{ if eq .chezmoi.os "darwin" -}}
 # ── Drift detection (macOS only) ─────────────────────────────────────────────
 # Surfaces version drift across managed tools without firing notifications on
 # Coder boxes (which are non-interactive). Linux drift is visible by SSHing
-# into the box and running dotfiles-setup.
+# into the box and running df-setup.
 
 [tasks."drift:check"]
 description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
-run = "drift check"
+run = "df-drift check"
 
 [tasks."drift:notify"]
 description = "Surface drift via macOS notification (debounced 24h)"
 depends = ["drift:check"]
-run = "drift notify"
+run = "df-drift notify"
 
 {{ end -}}
 

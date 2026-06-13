@@ -3,7 +3,7 @@ name: setup-clone
 description: >-
   Configure this dotfiles clone to mirror Lochy's setup on other machines —
   git remotes (with parametised work fork URL from chezmoi data), per-clone
-  git identity, and a sanity-check pass over chezmoi apply + dotfiles-setup
+  git identity, and a sanity-check pass over chezmoi apply + df-setup
   health. Use when bootstrapping the dotfiles repo on a new machine, or when
   verifying that an existing clone hasn't drifted from the expected remote
   and identity setup.
@@ -74,7 +74,7 @@ After remotes and identity are in place:
 
 - `chezmoi apply --dry-run` runs cleanly (no template errors, no auth
   failures from BWS, etc.)
-- `dotfiles-setup` reports OK across all subsystems
+- `df-setup` reports OK across all subsystems
 
 ## Procedure
 
@@ -163,7 +163,7 @@ git config user.name "$(git config --global user.name)"
 
 ```bash
 chezmoi apply --dry-run 2>&1 | tail -20
-dotfiles-setup 2>&1 | tail -20
+df-setup 2>&1 | tail -20
 git remote -v
 git config user.email
 ```
@@ -174,9 +174,9 @@ Report any non-zero exits or mismatches against the expected topology.
 
 A short summary of what was changed (or "already configured, no changes")
 and a final block showing the live state of `git remote -v` and
-`git config user.email`. If `dotfiles-setup` reported any non-OK status,
+`git config user.email`. If `df-setup` reported any non-OK status,
 include those lines verbatim with a pointer to the relevant remediation
-doc (`dotfiles-setup --probe-bws` for BWS issues,
+doc (`df-setup --probe-bws` for BWS issues,
 `.agents/rules/agent-orchestration.md` for paseo/orca/openchamber, etc.).
 
 ## Out of scope
@@ -184,7 +184,7 @@ doc (`dotfiles-setup --probe-bws` for BWS issues,
 - SSH key setup for GitHub access (do this out-of-band before running the
   skill — `ssh -T git@github.com` should succeed for both `loklaan/dotfiles`
   and the work fork)
-- BWS token rotation (use `dotfiles-setup --probe-bws` then follow its
+- BWS token rotation (use `df-setup --probe-bws` then follow its
   guidance)
 - `mise` tool installation (handled by `install.sh` and `mise install`)
 - First-time `chezmoi init` (handled by `install.sh`)
