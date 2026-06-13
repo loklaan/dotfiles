@@ -10,7 +10,53 @@ description: Drive Smithers, a durable control plane for long-running coding age
   server ("smithers" server, launched `bunx smithers-orchestrator --mcp`), so
   the CLI verbs below are also reachable as MCP tools. opencode is a first-class
   worker agent; prefer it as the agent inside <Task> nodes on these machines.
+  See ## OpenCode Agent Configuration (this machine) below for the omo agent
+  roster and semantic pool wiring.
 -->
+
+## OpenCode Agent Configuration (this machine)
+
+`OpenCodeAgent` in Smithers spawns `opencode run --agent <name>` as a local
+subprocess. The `agentName` resolves model + system prompt from
+`oh-my-openagent.json` — no separate API keys beyond what opencode already has.
+
+### Factory pattern (`.smithers/agents/opencode.ts`)
+
+```typescript
+const agent = (agentName: string) =>
+  new SmithersOpenCodeAgent({ agentName, cwd: process.cwd() });
+```
+
+### omo agent roster
+
+| Export | agentName | Model | Role |
+|--------|-----------|-------|------|
+| `sisyphusJunior` | `sisyphus-junior` | claude-sonnet-4-6 (Bedrock) | Focused executor — default for most tasks |
+| `sisyphus` | `sisyphus` | claude-opus-4-8 (Bedrock) | Heavy implementation — complex multi-file work |
+| `oracle` | `oracle` | claude-opus-4-8 (Bedrock) | Read-only reasoning — verification, audits |
+| `momus` | `momus` | claude-opus-4-8 (Bedrock) | Plan critic — review gates |
+| `prometheus` | `prometheus` | claude-opus-4-8 (Bedrock) | Planner |
+| `atlas` | `atlas` | claude-sonnet-4-6 (Bedrock) | Orchestrator |
+| `metis` | `metis` | claude-sonnet-4-6 (Bedrock) | Pre-planning consultant |
+| `explore` | `explore` | claude-haiku-4-5 (Bedrock) | Codebase search |
+| `librarian` | `librarian` | claude-haiku-4-5 (Bedrock) | Docs / remote repos |
+
+### Semantic pools (`.smithers/agents.ts`)
+
+```typescript
+agents.implement       // [sisyphusJunior] — focused execution (most tasks)
+agents.implement_heavy // [sisyphus]       — complex multi-file work
+agents.verify          // [oracle]         — read-only checks, deno fmt/lint/test
+agents.review          // [momus]          — critique and approval gates
+```
+
+**Routing rule:** convert/implement -> `agents.implement`; heavy rewrites -> `agents.implement_heavy`; deno fmt/lint/test verify -> `agents.verify`; review gates -> `agents.review`; default when unsure -> `agents.implement`.
+
+### Note on `.smithers/`
+
+`.smithers/` is **not in version control** (gitignored globally). Re-scaffold
+with `bunx smithers-orchestrator init` after a fresh clone, then restore
+`agents/opencode.ts` and `agents.ts` from this skill.
 
 # Smithers
 
