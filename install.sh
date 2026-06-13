@@ -121,9 +121,9 @@ main() {
   #  - Prompts should be kept in-sync with .chezmoi.toml.tmpl config
   info "▶ Installing templated dotfiles with 'chezmoi init'"
   config_github_user="${CONFIG_GH_USER:-"loklaan"}"
-  config_email="${CONFIG_EMAIL:-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
-  config_email_work="${CONFIG_EMAIL_WORK:-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
-  config_signing_key="${CONFIG_SIGNING_KEY:-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
+  config_email="${CONFIG_EMAIL-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
+  config_email_work="${CONFIG_EMAIL_WORK-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
+  config_signing_key="${CONFIG_SIGNING_KEY-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
   config_private_skills_repo="$(chezmoi execute-template "{{ .privateSkillsRepo }}" 2>/dev/null || echo "")"
   config_npm_work_registry="$(chezmoi execute-template "{{ .npmWorkRegistry }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin="$(chezmoi execute-template "{{ .openCodeWorkPlugin }}" 2>/dev/null || echo "")"
