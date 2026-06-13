@@ -9,26 +9,38 @@
 // full account access, so it is held as Redacted and never logged.
 // Effect v4 beta import paths verified against effect@4.0.0-beta.80.
 
-import { Config, Context, Effect, Layer, Logger, Redacted, Schema } from "npm:effect@4.0.0-beta.80"
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.80/unstable/ai"
+import {
+  Config,
+  Context,
+  Effect,
+  Layer,
+  Logger,
+  Redacted,
+  Schema,
+} from "npm:effect@4.0.0-beta.80";
+import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.80/unstable/ai";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.80/unstable/http"
-import { NodeRuntime, NodeStdio } from "npm:@effect/platform-node@4.0.0-beta.80"
+} from "npm:effect@4.0.0-beta.80/unstable/http";
+import {
+  NodeRuntime,
+  NodeStdio,
+} from "npm:@effect/platform-node@4.0.0-beta.80";
 
-class PushbulletError extends Schema.TaggedErrorClass<PushbulletError>()("PushbulletError", {
-  message: Schema.String,
-  cause: Schema.Unknown,
-}) {}
+class PushbulletError
+  extends Schema.TaggedErrorClass<PushbulletError>()("PushbulletError", {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  }) {}
 
 const PushResult = Schema.Struct({
   iden: Schema.String,
   type: Schema.String,
   active: Schema.Boolean,
-})
+});
 
 const Device = Schema.Struct({
   iden: Schema.String,
@@ -36,29 +48,32 @@ const Device = Schema.Struct({
   model: Schema.optional(Schema.String),
   active: Schema.Boolean,
   created: Schema.optional(Schema.Number),
-})
+});
 const DevicesResponse = Schema.Struct({
   devices: Schema.Array(Device),
-})
+});
 
 class Pushbullet extends Context.Service<Pushbullet, {
   sendNote(params: {
-    readonly title: string
-    readonly body: string
-    readonly device_iden?: string | undefined
-  }): Effect.Effect<typeof PushResult.Type, PushbulletError>
+    readonly title: string;
+    readonly body: string;
+    readonly device_iden?: string | undefined;
+  }): Effect.Effect<typeof PushResult.Type, PushbulletError>;
   sendLink(params: {
-    readonly title: string
-    readonly body: string
-    readonly url: string
-    readonly device_iden?: string | undefined
-  }): Effect.Effect<typeof PushResult.Type, PushbulletError>
-  listDevices(): Effect.Effect<ReadonlyArray<typeof Device.Type>, PushbulletError>
+    readonly title: string;
+    readonly body: string;
+    readonly url: string;
+    readonly device_iden?: string | undefined;
+  }): Effect.Effect<typeof PushResult.Type, PushbulletError>;
+  listDevices(): Effect.Effect<
+    ReadonlyArray<typeof Device.Type>,
+    PushbulletError
+  >;
 }>()("pushbullet-mcp/Pushbullet") {
   static readonly layer = Layer.effect(
     Pushbullet,
     Effect.gen(function* () {
-      const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN")
+      const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN");
 
       const client = (yield* HttpClient.HttpClient).pipe(
         HttpClient.mapRequest((request) =>
@@ -69,7 +84,7 @@ class Pushbullet extends Context.Service<Pushbullet, {
           )
         ),
         HttpClient.filterStatusOk,
-      )
+      );
 
       const postPush = Effect.fn("Pushbullet.postPush")(function* (
         body: Record<string, string>,
@@ -81,27 +96,27 @@ class Pushbullet extends Context.Service<Pushbullet, {
           Effect.mapError((cause) =>
             new PushbulletError({ message: "Failed to send push", cause })
           ),
-        )
-      })
+        );
+      });
 
       const sendNote = Effect.fn("Pushbullet.sendNote")(function* (params: {
-        readonly title: string
-        readonly body: string
-        readonly device_iden?: string | undefined
+        readonly title: string;
+        readonly body: string;
+        readonly device_iden?: string | undefined;
       }) {
         return yield* postPush({
           type: "note",
           title: params.title,
           body: params.body,
           ...(params.device_iden ? { device_iden: params.device_iden } : {}),
-        })
-      })
+        });
+      });
 
       const sendLink = Effect.fn("Pushbullet.sendLink")(function* (params: {
-        readonly title: string
-        readonly body: string
-        readonly url: string
-        readonly device_iden?: string | undefined
+        readonly title: string;
+        readonly body: string;
+        readonly url: string;
+        readonly device_iden?: string | undefined;
       }) {
         return yield* postPush({
           type: "link",
@@ -109,8 +124,8 @@ class Pushbullet extends Context.Service<Pushbullet, {
           body: params.body,
           url: params.url,
           ...(params.device_iden ? { device_iden: params.device_iden } : {}),
-        })
-      })
+        });
+      });
 
       const listDevices = Effect.fn("Pushbullet.listDevices")(function* () {
         const response = yield* client.get("/devices", {
@@ -120,13 +135,13 @@ class Pushbullet extends Context.Service<Pushbullet, {
           Effect.mapError((cause) =>
             new PushbulletError({ message: "Failed to list devices", cause })
           ),
-        )
-        return response.devices
-      })
+        );
+        return response.devices;
+      });
 
-      return Pushbullet.of({ sendNote, sendLink, listDevices })
+      return Pushbullet.of({ sendNote, sendLink, listDevices });
     }),
-  ).pipe(Layer.provide(FetchHttpClient.layer))
+  ).pipe(Layer.provide(FetchHttpClient.layer));
 }
 
 const SendNotification = Tool.make("send_notification", {
@@ -171,7 +186,7 @@ const SendNotification = Tool.make("send_notification", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.OpenWorld, true);
 
 const ListNotificationDevices = Tool.make("list_notification_devices", {
   description:
@@ -194,22 +209,28 @@ const ListNotificationDevices = Tool.make("list_notification_devices", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.OpenWorld, true);
 
-const PushbulletToolkit = Toolkit.make(SendNotification, ListNotificationDevices)
+const PushbulletToolkit = Toolkit.make(
+  SendNotification,
+  ListNotificationDevices,
+);
 
 const ToolkitLayer = McpServer.toolkit(PushbulletToolkit).pipe(
   Layer.provideMerge(
     PushbulletToolkit.toLayer(
       Effect.gen(function* () {
-        const pb = yield* Pushbullet
+        const pb = yield* Pushbullet;
         return {
           send_notification: ({ title, body, url, device_iden }) =>
             (url === undefined
               ? pb.sendNote({ title, body, device_iden })
               : pb.sendLink({ title, body, url, device_iden })).pipe(
                 Effect.map((r) => ({ iden: r.iden, delivered: r.active })),
-                Effect.catchTag("PushbulletError", (e) => Effect.fail(e.message)),
+                Effect.catchTag(
+                  "PushbulletError",
+                  (e) => Effect.fail(e.message),
+                ),
               ),
           list_notification_devices: () =>
             pb.listDevices().pipe(
@@ -222,12 +243,12 @@ const ToolkitLayer = McpServer.toolkit(PushbulletToolkit).pipe(
               ),
               Effect.catchTag("PushbulletError", (e) => Effect.fail(e.message)),
             ),
-        }
+        };
       }),
     ),
   ),
   Layer.provide(Pushbullet.layer),
-)
+);
 
 const ServerLayer = ToolkitLayer.pipe(
   Layer.provide(
@@ -239,31 +260,33 @@ const ServerLayer = ToolkitLayer.pipe(
   Layer.provide(NodeStdio.layer),
   // stdout is the JSON-RPC channel, so logs must go to stderr.
   Layer.provide(Logger.layer([Logger.consolePretty({ stderr: true })])),
-)
+);
 
 // `selftest`/`list-devices` exercise just the HTTP client (no stdio/RPC), so the
 // client can be verified in isolation from the MCP protocol. Writes only to
 // stderr and never starts the server, keeping stdout clean for the default path.
 const runSelfTest = Effect.gen(function* () {
-  const pb = yield* Pushbullet
-  const devices = yield* pb.listDevices()
-  yield* Effect.logInfo(`Pushbullet OK: ${devices.length} active device(s)`)
+  const pb = yield* Pushbullet;
+  const devices = yield* pb.listDevices();
+  yield* Effect.logInfo(`Pushbullet OK: ${devices.length} active device(s)`);
   for (const d of devices) {
-    yield* Effect.logInfo(`  ${d.iden} ${d.nickname ?? "(no nickname)"} ${d.model ?? ""}`)
+    yield* Effect.logInfo(
+      `  ${d.iden} ${d.nickname ?? "(no nickname)"} ${d.model ?? ""}`,
+    );
   }
 }).pipe(
   Effect.provide(Pushbullet.layer),
   Effect.provide(Logger.layer([Logger.consolePretty({ stderr: true })])),
-)
+);
 
 if (import.meta.main) {
-  const command = Deno.args[0]
+  const command = Deno.args[0];
   if (command === "selftest" || command === "list-devices") {
     Effect.runPromiseExit(runSelfTest).then((exit) => {
-      Deno.exit(exit._tag === "Success" ? 0 : 1)
-    })
+      Deno.exit(exit._tag === "Success" ? 0 : 1);
+    });
   } else {
-    Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)
+    Layer.launch(ServerLayer).pipe(NodeRuntime.runMain);
   }
 }
 
@@ -291,9 +314,9 @@ if (import.meta.main) {
 //     not resolve — see .agents/rules/secrets-architecture.md / `dotfiles-setup`.
 // ===========================================================================
 
-const decodeNote = Schema.decodeUnknownSync(PushResult)
-const decodeDevice = Schema.decodeUnknownSync(Device)
-const decodeDevices = Schema.decodeUnknownSync(DevicesResponse)
+const decodeNote = Schema.decodeUnknownSync(PushResult);
+const decodeDevice = Schema.decodeUnknownSync(Device);
+const decodeDevices = Schema.decodeUnknownSync(DevicesResponse);
 
 // Minimal `@effect/vitest`-style adapter: run an Effect as a Deno test, failing
 // the test if the Effect fails. `ignore` is evaluated before the body, so a
@@ -308,15 +331,15 @@ const itEffect = <E>(
     name,
     ignore: options?.ignore ?? false,
     fn: async () => {
-      const exit = await Effect.runPromiseExit(effect)
+      const exit = await Effect.runPromiseExit(effect);
       if (exit._tag === "Failure") {
-        throw new Error(`Effect failed: ${JSON.stringify(exit.cause)}`)
+        throw new Error(`Effect failed: ${JSON.stringify(exit.cause)}`);
       }
     },
-  })
+  });
 
 const assert = (cond: boolean, msg: string) =>
-  cond ? Effect.void : Effect.fail(new Error(msg))
+  cond ? Effect.void : Effect.fail(new Error(msg));
 
 Deno.test("Device schema decodes a real /v2/devices entry", () => {
   const device = decodeDevice({
@@ -326,25 +349,25 @@ Deno.test("Device schema decodes a real /v2/devices entry", () => {
     active: true,
     created: 1.49,
     pushable: true,
-  })
+  });
   if (device.iden !== "ujpah72o0" || device.nickname !== "Galaxy S8") {
-    throw new Error(`unexpected decode: ${JSON.stringify(device)}`)
+    throw new Error(`unexpected decode: ${JSON.stringify(device)}`);
   }
-})
+});
 
 Deno.test("Device schema tolerates a missing nickname/model", () => {
-  const device = decodeDevice({ iden: "x1", active: true })
+  const device = decodeDevice({ iden: "x1", active: true });
   if (device.nickname !== undefined || device.model !== undefined) {
-    throw new Error("optional fields should decode to undefined")
+    throw new Error("optional fields should decode to undefined");
   }
-})
+});
 
 Deno.test("DevicesResponse decodes the list envelope", () => {
   const res = decodeDevices({
     devices: [{ iden: "a", active: true }, { iden: "b", active: false }],
-  })
-  if (res.devices.length !== 2) throw new Error("expected 2 devices")
-})
+  });
+  if (res.devices.length !== 2) throw new Error("expected 2 devices");
+});
 
 Deno.test("PushResult decodes a real /v2/pushes response", () => {
   const push = decodeNote({
@@ -354,51 +377,71 @@ Deno.test("PushResult decodes a real /v2/pushes response", () => {
     dismissed: false,
     title: "t",
     body: "b",
-  })
+  });
   if (push.iden !== "ujpah72o0sjAoRtnM0jc" || push.active !== true) {
-    throw new Error(`unexpected decode: ${JSON.stringify(push)}`)
+    throw new Error(`unexpected decode: ${JSON.stringify(push)}`);
   }
-})
+});
 
 Deno.test("tool annotations encode the intended MCP permission hints", () => {
   const expected = {
-    send_notification: { readOnly: false, destructive: false, idempotent: false },
-    list_notification_devices: { readOnly: true, destructive: false, idempotent: true },
-  }
+    send_notification: {
+      readOnly: false,
+      destructive: false,
+      idempotent: false,
+    },
+    list_notification_devices: {
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+    },
+  };
   for (const tool of [SendNotification, ListNotificationDevices]) {
-    const e = expected[tool.name as keyof typeof expected]
-    const a = tool.annotations
+    const e = expected[tool.name as keyof typeof expected];
+    const a = tool.annotations;
     if (
       Context.get(a, Tool.Readonly) !== e.readOnly ||
       Context.get(a, Tool.Destructive) !== e.destructive ||
       Context.get(a, Tool.Idempotent) !== e.idempotent ||
       Context.get(a, Tool.OpenWorld) !== true
     ) {
-      throw new Error(`annotation mismatch for ${tool.name}`)
+      throw new Error(`annotation mismatch for ${tool.name}`);
     }
   }
-})
+});
 
 itEffect(
   "Config injection reads PUSHBULLET_ACCESS_TOKEN as a Redacted value [needs token]",
   Effect.gen(function* () {
-    const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN")
-    yield* assert(Redacted.isRedacted(token), "token did not resolve to a Redacted value")
-    yield* assert(Redacted.value(token).length > 0, "token resolved but is empty")
-    yield* assert(`${token}` === "<redacted>", "Redacted value leaked via string coercion")
+    const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN");
+    yield* assert(
+      Redacted.isRedacted(token),
+      "token did not resolve to a Redacted value",
+    );
+    yield* assert(
+      Redacted.value(token).length > 0,
+      "token resolved but is empty",
+    );
+    yield* assert(
+      `${token}` === "<redacted>",
+      "Redacted value leaked via string coercion",
+    );
   }),
   { ignore: !Deno.env.get("PUSHBULLET_ACCESS_TOKEN") },
-)
+);
 
 itEffect(
   "HTTP client round-trips against the real Pushbullet API [needs token]",
   Effect.gen(function* () {
-    const pb = yield* Pushbullet
-    const devices = yield* pb.listDevices()
-    yield* assert(Array.isArray(devices), "listDevices did not return an array")
+    const pb = yield* Pushbullet;
+    const devices = yield* pb.listDevices();
+    yield* assert(
+      Array.isArray(devices),
+      "listDevices did not return an array",
+    );
   }).pipe(Effect.provide(Pushbullet.layer)),
   { ignore: !Deno.env.get("PUSHBULLET_ACCESS_TOKEN") },
-)
+);
 
 // DESTRUCTIVE smoke: actually sends a note to the newest device. Double-gated —
 // needs both a token AND PUSHBULLET_SMOKE_SEND=1 — so it never fires on a plain
@@ -407,14 +450,18 @@ itEffect(
 itEffect(
   "sends a real note to the newest device [needs token + PUSHBULLET_SMOKE_SEND=1]",
   Effect.gen(function* () {
-    const pb = yield* Pushbullet
-    const devices = yield* pb.listDevices()
-    yield* assert(devices.length > 0, "no devices to send to")
+    const pb = yield* Pushbullet;
+    const devices = yield* pb.listDevices();
+    yield* assert(devices.length > 0, "no devices to send to");
 
     // "Newest" = most recently created; fall back to list order when the API
     // omits `created` for a device.
-    const newest = devices.reduce((a, b) => (b.created ?? 0) >= (a.created ?? 0) ? b : a)
-    yield* Effect.logInfo(`Sending to newest device: ${newest.nickname ?? newest.iden}`)
+    const newest = devices.reduce((a, b) =>
+      (b.created ?? 0) >= (a.created ?? 0) ? b : a
+    );
+    yield* Effect.logInfo(
+      `Sending to newest device: ${newest.nickname ?? newest.iden}`,
+    );
 
     const result = yield* pb.sendNote({
       title: "a message left on the rooftops",
@@ -424,11 +471,11 @@ itEffect(
         "your karma, and look to the moon when it all gets heavy. We'll make it " +
         "to the void sea eventually — no rush. Pebbles believes in you. (I do too.)",
       device_iden: newest.iden,
-    })
-    yield* assert(result.active, "push was created but not active")
+    });
+    yield* assert(result.active, "push was created but not active");
   }).pipe(Effect.provide(Pushbullet.layer)),
   {
     ignore: !Deno.env.get("PUSHBULLET_ACCESS_TOKEN") ||
       Deno.env.get("PUSHBULLET_SMOKE_SEND") !== "1",
   },
-)
+);
