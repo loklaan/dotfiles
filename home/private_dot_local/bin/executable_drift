@@ -1,0 +1,964 @@
+#!/usr/bin/env -S deno run --allow-run=mise,git,brew,chezmoi,oh-my-openagent,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env
+
+// drift — version-drift detection for the dotfiles fleet (Deno + Effect v4 beta).
+//
+// Folds five bash scripts (dotfiles-task-drift-{check,notify,cask,dotfiles,omo})
+// into one CLI with two subcommands:
+//
+//   drift check    Aggregate drift across all managed tools, write
+//                  ~/.cache/dotfiles/drift.json
+//   drift notify   Read drift.json, fire a macOS desktop notification when
+//                  something is behind. Debounced 24h via a marker file;
+//                  --force ignores the debounce.
+//
+// CALLSITE CONTRACTS (do not break):
+//   - mise tasks `drift:check` / `drift:notify` run `drift check` / `drift notify`
+//     (config.toml.tmpl). drift:notify depends on drift:check.
+//   - LaunchAgent io.lochlan.dotfiles.drift runs `mise run drift:notify` daily.
+//   - dotfiles-setup reads drift.json: {checked_at, tools:[{name,installed,
+//     latest,behind,source}]}.
+//
+// Each sub-checker SOFT-FAILS to [] — a broken checker drops its source and the
+// others still report. The cache is always written by `check`, possibly empty.
+//
+// The four checkers are Effect services so they compose and are individually
+// testable; each yields ReadonlyArray<DriftTool> and never fails the pipeline.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
+
+import {
+  Context,
+  Effect,
+  Layer,
+  Logger,
+  Schema,
+} from "npm:effect@4.0.0-beta.80";
+import {
+  FetchHttpClient,
+  HttpClient,
+} from "npm:effect@4.0.0-beta.80/unstable/http";
+import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.80";
+
+// ===========================================================================
+// Schema — the on-disk contract consumed by dotfiles-setup.
+// ===========================================================================
+
+const DriftTool = Schema.Struct({
+  name: Schema.String,
+  installed: Schema.String,
+  latest: Schema.String,
+  behind: Schema.Number,
+  source: Schema.String,
+});
+type DriftTool = typeof DriftTool.Type;
+
+const DriftReport = Schema.Struct({
+  checked_at: Schema.String,
+  tools: Schema.Array(DriftTool),
+});
+type DriftReport = typeof DriftReport.Type;
+
+const encodeReport = Schema.encodeSync(DriftReport);
+const decodeReport = Schema.decodeUnknownSync(DriftReport);
+
+// ===========================================================================
+// Paths. Resolved from $HOME so the tool works under any user.
+//
+// These are LAZY (computed on first use) so importing the module — as the
+// offline test suite does — never touches Deno.env. That keeps `deno test`
+// runnable with zero permission flags; only the CLI paths read the environment.
+// ===========================================================================
+
+const home = () => Deno.env.get("HOME") ?? "";
+const cacheDir = () => `${home()}/.cache/dotfiles`;
+const cacheFile = () => `${cacheDir()}/drift.json`;
+const markerFile = () => `${cacheDir()}/.drift-notified`;
+const iconPath = () => `${home()}/.local/share/dotfiles/icon.png`;
+const omoConfig = () => `${home()}/.config/opencode/oh-my-openagent.json`;
+const modelsDevCache = () => `${cacheDir()}/models-dev.json`;
+const MODELS_DEV_URL = "https://models.dev/api.json";
+const MODELS_DEV_TTL_SECONDS = 86400; // 24h
+const DEBOUNCE_SECONDS = 86400; // 24h
+
+const isMacOS = () => Deno.build.os === "darwin";
+
+// ===========================================================================
+// Small process/fs helpers. All soft — they swallow their own failures so the
+// callers can stay total (every checker returns [] rather than throwing).
+// ===========================================================================
+
+interface RunResult {
+  readonly ok: boolean;
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+// Run a command, capturing stdout/stderr. Never rejects: a spawn failure
+// (binary missing, permission denied) is reported as ok:false, code:127.
+const run = (
+  cmd: string,
+  args: readonly string[],
+): Effect.Effect<RunResult> =>
+  Effect.tryPromise({
+    try: async () => {
+      const command = new Deno.Command(cmd, {
+        args: [...args],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { code, stdout, stderr } = await command.output();
+      const dec = new TextDecoder();
+      return {
+        ok: code === 0,
+        code,
+        stdout: dec.decode(stdout),
+        stderr: dec.decode(stderr),
+      };
+    },
+    catch: () => undefined,
+  }).pipe(
+    Effect.orElseSucceed((): RunResult => ({
+      ok: false,
+      code: 127,
+      stdout: "",
+      stderr: "",
+    })),
+  );
+
+// Resolve a command on $PATH by stat-ing candidate paths. This needs only
+// --allow-read/--allow-env (no --allow-run on the probed binary) and never
+// executes anything, so it works for tools that lack a `--version` flag
+// (notify, oh-my-openagent) and for binaries outside the --allow-run allowlist.
+// Absolute/relative paths are stat-ed directly.
+const hasCommand = (cmd: string): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (cmd.includes("/")) return yield* fileExists(cmd);
+    const pathEnv = Deno.env.get("PATH") ?? "";
+    for (const dir of pathEnv.split(":")) {
+      if (dir === "") continue;
+      if (yield* fileExists(`${dir}/${cmd}`)) return true;
+    }
+    return false;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const fileExists = (path: string): Effect.Effect<boolean> =>
+  Effect.tryPromise({
+    try: async () => {
+      await Deno.stat(path);
+      return true;
+    },
+    catch: () => false,
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const readTextFile = (path: string): Effect.Effect<string | null> =>
+  Effect.tryPromise({
+    try: () => Deno.readTextFile(path),
+    catch: () => null,
+  }).pipe(Effect.orElseSucceed(() => null));
+
+// Age in seconds of a file, via mtime. null when the file is missing/unstattable.
+const fileAgeSeconds = (path: string): Effect.Effect<number | null> =>
+  Effect.tryPromise({
+    try: async () => {
+      const info = await Deno.stat(path);
+      if (info.mtime === null) return null;
+      return Math.floor((Date.now() - info.mtime.getTime()) / 1000);
+    },
+    catch: () => null,
+  }).pipe(Effect.orElseSucceed(() => null));
+
+const ensureDir = (path: string): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () => Deno.mkdir(path, { recursive: true }),
+    catch: () => undefined,
+  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
+
+const writeTextFile = (path: string, content: string): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () => Deno.writeTextFile(path, content),
+    catch: () => undefined,
+  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
+
+const touchFile = (path: string): Effect.Effect<void> =>
+  writeTextFile(path, "");
+
+const parseJson = (text: string | null): unknown => {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const rfc3339Now = (): string =>
+  new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+
+// ===========================================================================
+// Checker: mise outdated
+// ===========================================================================
+// Mirrors `mise outdated --json | jq` from drift-check: normalise mise's array
+// of {name,current,latest} to our schema. behind is always 1 (mise doesn't
+// expose a numeric distance). source = "mise:<name>".
+
+class MiseChecker extends Context.Service<MiseChecker, {
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+}>()("drift/MiseChecker") {
+  static readonly layer = Layer.succeed(MiseChecker)(MiseChecker.of({
+    tools: () =>
+      Effect.gen(function* () {
+        if (!(yield* hasCommand("mise"))) return [];
+        const res = yield* run("mise", ["outdated", "--json"]);
+        if (!res.ok) return [];
+        const parsed = parseJson(res.stdout);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.flatMap((entry): DriftTool[] => {
+          if (typeof entry !== "object" || entry === null) return [];
+          const e = entry as Record<string, unknown>;
+          const name = typeof e.name === "string" ? e.name : "";
+          return [{
+            name,
+            installed: typeof e.current === "string" ? e.current : "",
+            latest: typeof e.latest === "string" ? e.latest : "",
+            behind: 1,
+            source: `mise:${name}`,
+          }];
+        });
+      }).pipe(Effect.orElseSucceed(() => [])),
+  }));
+}
+
+// ===========================================================================
+// Checker: dotfiles repo (git HEAD vs origin/main)
+// ===========================================================================
+// Counts commits behind origin/main. Single-element array when behind, else [].
+
+class DotfilesChecker extends Context.Service<DotfilesChecker, {
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+}>()("drift/DotfilesChecker") {
+  static readonly layer = Layer.succeed(DotfilesChecker)(
+    DotfilesChecker.of({
+      tools: () =>
+        Effect.gen(function* () {
+          if (!(yield* hasCommand("chezmoi"))) return [];
+          if (!(yield* hasCommand("git"))) return [];
+
+          const sourcePathRes = yield* run("chezmoi", ["source-path"]);
+          if (!sourcePathRes.ok) return [];
+          const sourceDir = sourcePathRes.stdout.trim();
+          if (sourceDir === "") return [];
+          // repo_root = parent of source dir (source dir is <repo>/home).
+          const repoRoot = sourceDir.replace(/\/[^/]*\/?$/, "");
+          if (repoRoot === "" || repoRoot === sourceDir) return [];
+
+          if (!(yield* fileExists(`${repoRoot}/.git`))) return [];
+
+          // Best-effort fetch; ignore network errors.
+          yield* run("git", ["-C", repoRoot, "fetch", "-q", "origin", "main"]);
+
+          const behindRes = yield* run("git", [
+            "-C",
+            repoRoot,
+            "rev-list",
+            "--count",
+            "HEAD..origin/main",
+          ]);
+          const behind = behindRes.ok
+            ? parseInt(behindRes.stdout.trim(), 10)
+            : 0;
+          if (!Number.isFinite(behind) || behind <= 0) return [];
+
+          const headRes = yield* run("git", [
+            "-C",
+            repoRoot,
+            "rev-parse",
+            "--short",
+            "HEAD",
+          ]);
+          const originRes = yield* run("git", [
+            "-C",
+            repoRoot,
+            "rev-parse",
+            "--short",
+            "origin/main",
+          ]);
+
+          return [{
+            name: "dotfiles",
+            installed: headRes.ok ? headRes.stdout.trim() : "",
+            latest: originRes.ok ? originRes.stdout.trim() : "",
+            behind,
+            source: "git:dotfiles",
+          }];
+        }).pipe(Effect.orElseSucceed(() => [])),
+    }),
+  );
+}
+
+// ===========================================================================
+// Checker: Homebrew casks (macOS only)
+// ===========================================================================
+// orca + paseo have `auto_updates true`, so `brew outdated` can't see them.
+// Compare installed .app bundle version against the cask's advertised version.
+// Non-macOS → [].
+
+const CASKS: ReadonlyArray<readonly [token: string, appPath: string]> = [
+  ["stablyai/orca/orca", "/Applications/Orca.app"],
+  ["paseo", "/Applications/Paseo.app"],
+];
+
+const bundleVersion = (app: string): Effect.Effect<string> =>
+  Effect.gen(function* () {
+    if (!(yield* fileExists(app))) return "";
+    const res = yield* run("/usr/libexec/PlistBuddy", [
+      "-c",
+      "Print :CFBundleShortVersionString",
+      `${app}/Contents/Info.plist`,
+    ]);
+    return res.ok ? res.stdout.trim() : "";
+  }).pipe(Effect.orElseSucceed(() => ""));
+
+class CaskChecker extends Context.Service<CaskChecker, {
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+}>()("drift/CaskChecker") {
+  static readonly layer = Layer.succeed(CaskChecker)(CaskChecker.of({
+    tools: () =>
+      Effect.gen(function* () {
+        if (!isMacOS()) return [];
+        if (!(yield* hasCommand("brew"))) return [];
+
+        const out: DriftTool[] = [];
+        for (const [token, appPath] of CASKS) {
+          const installed = yield* bundleVersion(appPath);
+          if (installed === "") continue;
+
+          const infoRes = yield* run("brew", [
+            "info",
+            "--cask",
+            "--json=v2",
+            token,
+          ]);
+          if (!infoRes.ok) continue;
+          const parsed = parseJson(infoRes.stdout);
+          const latest = extractCaskVersion(parsed);
+          if (latest === "") continue;
+
+          // installed != latest in either direction surfaces as drift; the
+          // consumer decides phrasing from the values.
+          if (installed !== latest) {
+            out.push({
+              name: token,
+              installed,
+              latest,
+              behind: 1,
+              source: `cask:${token}`,
+            });
+          }
+        }
+        return out;
+      }).pipe(Effect.orElseSucceed(() => [])),
+  }));
+}
+
+// `.casks[0].version` from `brew info --cask --json=v2`.
+const extractCaskVersion = (parsed: unknown): string => {
+  if (typeof parsed !== "object" || parsed === null) return "";
+  const casks = (parsed as Record<string, unknown>).casks;
+  if (!Array.isArray(casks) || casks.length === 0) return "";
+  const first = casks[0];
+  if (typeof first !== "object" || first === null) return "";
+  const version = (first as Record<string, unknown>).version;
+  return typeof version === "string" ? version : "";
+};
+
+// ===========================================================================
+// Checker: oh-my-openagent (roster + model bracket drift)
+// ===========================================================================
+// Two signals, both in the shared schema:
+//   omo:roster  — an agent/category omo knows that our config doesn't pin
+//                 (suppressed via _dotfilesUnmanaged allowlist).
+//   omo:bracket — a pinned model has a newer same-family sibling in
+//                 models.dev. Bedrock IDs are matched WITHIN their region
+//                 prefix (global.anthropic. / us.anthropic. / …), so drift on
+//                 a global.* pin reports a global.* successor, never us.*.
+
+// Bedrock region prefix like "global.anthropic." — "" for non-Bedrock IDs.
+const regionPrefix = (id: string): string => {
+  const m = id.match(/^([a-z]{2,6}\.anthropic\.)/);
+  return m ? m[1] : "";
+};
+
+// Parse "provider/rest-of-id" into its two parts.
+const parsePin = (s: string): { provider: string; id: string } | null => {
+  const m = s.match(/^([^/]+)\/(.+)$/);
+  if (!m) return null;
+  return { provider: m[1], id: m[2] };
+};
+
+interface ModelEntry {
+  readonly family?: string;
+  readonly release_date?: string;
+}
+
+// Find the newest model in the same provider sharing `family` AND region
+// prefix, released strictly after the pinned model. Returns its id or null.
+const newerSameFamily = (
+  modelsDb: unknown,
+  provider: string,
+  id: string,
+): string | null => {
+  if (typeof modelsDb !== "object" || modelsDb === null) return null;
+  const prov = (modelsDb as Record<string, unknown>)[provider];
+  if (typeof prov !== "object" || prov === null) return null;
+  const models = (prov as Record<string, unknown>).models;
+  if (typeof models !== "object" || models === null) return null;
+  const modelMap = models as Record<string, ModelEntry>;
+
+  const me = modelMap[id];
+  if (me === undefined) return null;
+  const fam = me.family ?? "";
+  if (fam === "") return null;
+
+  const myDate = me.release_date ?? "1970-01-01";
+  const myRegion = regionPrefix(id);
+
+  const candidates = Object.entries(modelMap)
+    .filter(([key, value]) =>
+      value.family === fam &&
+      (value.release_date ?? "1970-01-01") > myDate &&
+      regionPrefix(key) === myRegion
+    )
+    .sort((a, b) =>
+      (a[1].release_date ?? "1970-01-01").localeCompare(
+        b[1].release_date ?? "1970-01-01",
+      )
+    );
+
+  if (candidates.length === 0) return null;
+  return candidates[candidates.length - 1][0];
+};
+
+// omo doctor emits a "Models" result whose `details` lines look like:
+//   "  ● build: anthropic/claude-... [ ... ]"
+// split into an Agents: block and a Categories: block. Parse name→model.
+const parseRoster = (
+  doctorJson: unknown,
+): { agents: Record<string, string>; categories: Record<string, string> } => {
+  const empty = { agents: {}, categories: {} };
+  if (typeof doctorJson !== "object" || doctorJson === null) return empty;
+  const results = (doctorJson as Record<string, unknown>).results;
+  if (!Array.isArray(results)) return empty;
+  const models = results.find((r) =>
+    typeof r === "object" && r !== null &&
+    (r as Record<string, unknown>).name === "Models"
+  );
+  if (models === undefined) return empty;
+  const details = (models as Record<string, unknown>).details;
+  if (!Array.isArray(details)) return empty;
+  const lines = details.filter((d): d is string => typeof d === "string");
+
+  const aIdx = lines.indexOf("Agents:");
+  const cIdx = lines.indexOf("Categories:");
+  if (aIdx === -1 || cIdx === -1) return empty;
+
+  const parseBlock = (block: string[]): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const line of block) {
+      if (!/[●○]/.test(line)) continue;
+      const m = line.match(/^ {2}[●○] ([a-z][a-z0-9-]*?): ([^[]+) \[/);
+      if (m) out[m[1]] = m[2].replace(/ $/, "");
+    }
+    return out;
+  };
+
+  return {
+    agents: parseBlock(lines.slice(aIdx + 1, cIdx - 1)),
+    categories: parseBlock(lines.slice(cIdx + 1)),
+  };
+};
+
+class OmoChecker extends Context.Service<OmoChecker, {
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+}>()("drift/OmoChecker") {
+  static readonly layer = Layer.effect(
+    OmoChecker,
+    Effect.gen(function* () {
+      const http = yield* HttpClient.HttpClient;
+
+      // models.dev catalogue with on-disk cache; refetch when stale/missing.
+      const ensureModelsDev = Effect.fn("OmoChecker.ensureModelsDev")(
+        function* () {
+          const age = yield* fileAgeSeconds(modelsDevCache());
+          if (age !== null && age < MODELS_DEV_TTL_SECONDS) {
+            return parseJson(yield* readTextFile(modelsDevCache()));
+          }
+          const fetched = yield* http.get(MODELS_DEV_URL).pipe(
+            Effect.flatMap((response) => response.text),
+            Effect.timeout("30 seconds"),
+            Effect.option,
+          );
+          if (fetched._tag === "Some") {
+            const body: string = fetched.value;
+            yield* ensureDir(cacheDir());
+            yield* writeTextFile(modelsDevCache(), body);
+            return parseJson(body);
+          }
+          // Fetch failed — fall back to any stale cache on disk.
+          const stale = yield* readTextFile(modelsDevCache());
+          return parseJson(stale);
+        },
+      );
+
+      const tools = () =>
+        Effect.gen(function* () {
+          if (!(yield* hasCommand("oh-my-openagent"))) return [];
+          const cfgRaw = parseJson(yield* readTextFile(omoConfig()));
+          if (cfgRaw === null || typeof cfgRaw !== "object") return [];
+          const cfg = cfgRaw as Record<string, unknown>;
+
+          const out: DriftTool[] = [];
+
+          // --- roster drift ---
+          const doctorRes = yield* run("oh-my-openagent", [
+            "doctor",
+            "--json",
+            "--verbose",
+          ]);
+          if (doctorRes.ok) {
+            const roster = parseRoster(parseJson(doctorRes.stdout));
+            const cfgAgents = asRecord(cfg.agents);
+            const cfgCategories = asRecord(cfg.categories);
+            const unmanaged = asRecord(cfg._dotfilesUnmanaged);
+            const unmanagedAgents = asStringArray(unmanaged.agents);
+            const unmanagedCategories = asStringArray(unmanaged.categories);
+
+            const pinnedAgents = new Set([
+              ...Object.keys(cfgAgents),
+              ...unmanagedAgents,
+            ]);
+            const pinnedCategories = new Set([
+              ...Object.keys(cfgCategories),
+              ...unmanagedCategories,
+            ]);
+
+            for (const [name, resolved] of Object.entries(roster.agents)) {
+              if (!pinnedAgents.has(name)) {
+                out.push({
+                  name: `omo.agents.${name}`,
+                  installed: "not-managed-by-template",
+                  latest: resolved,
+                  behind: 1,
+                  source: "omo:roster",
+                });
+              }
+            }
+            for (
+              const [name, resolved] of Object.entries(roster.categories)
+            ) {
+              if (!pinnedCategories.has(name)) {
+                out.push({
+                  name: `omo.categories.${name}`,
+                  installed: "not-managed-by-template",
+                  latest: resolved,
+                  behind: 1,
+                  source: "omo:roster",
+                });
+              }
+            }
+          }
+
+          // --- bracket drift ---
+          const modelsDb = yield* ensureModelsDev();
+          if (modelsDb !== null) {
+            const pins: { kind: string; name: string; model: string }[] = [];
+            for (const [name, v] of Object.entries(asRecord(cfg.agents))) {
+              const model = asRecord(v).model;
+              if (typeof model === "string") {
+                pins.push({ kind: "agents", name, model });
+              }
+            }
+            for (
+              const [name, v] of Object.entries(asRecord(cfg.categories))
+            ) {
+              const model = asRecord(v).model;
+              if (typeof model === "string") {
+                pins.push({ kind: "categories", name, model });
+              }
+            }
+
+            for (const pin of pins) {
+              const p = parsePin(pin.model);
+              if (p === null) continue;
+              const newer = newerSameFamily(modelsDb, p.provider, p.id);
+              if (newer !== null && newer !== p.id) {
+                out.push({
+                  name: `omo.${pin.kind}.${pin.name}.model`,
+                  installed: pin.model,
+                  latest: `${p.provider}/${newer}`,
+                  behind: 1,
+                  source: "omo:bracket",
+                });
+              }
+            }
+          }
+
+          return out;
+        }).pipe(Effect.orElseSucceed(() => []));
+
+      return OmoChecker.of({ tools });
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
+}
+
+const asRecord = (v: unknown): Record<string, unknown> =>
+  typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
+
+const asStringArray = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+// ===========================================================================
+// `drift check`
+// ===========================================================================
+
+const runCheck = Effect.gen(function* () {
+  const mise = yield* MiseChecker;
+  const cask = yield* CaskChecker;
+  const dotfiles = yield* DotfilesChecker;
+  const omo = yield* OmoChecker;
+
+  // Independent checkers run concurrently; each already soft-fails to [].
+  const [miseTools, caskTools, repoTools, omoTools] = yield* Effect.all([
+    mise.tools(),
+    cask.tools(),
+    dotfiles.tools(),
+    omo.tools(),
+  ], { concurrency: "unbounded" });
+
+  const report: DriftReport = {
+    checked_at: rfc3339Now(),
+    tools: [...miseTools, ...caskTools, ...repoTools, ...omoTools],
+  };
+
+  yield* ensureDir(cacheDir());
+  yield* writeTextFile(
+    cacheFile(),
+    JSON.stringify(encodeReport(report), null, 2) + "\n",
+  );
+  yield* Effect.logInfo(
+    `drift report written to ${cacheFile()} (${report.tools.length} entries)`,
+  );
+}).pipe(
+  Effect.provide(MiseChecker.layer),
+  Effect.provide(CaskChecker.layer),
+  Effect.provide(DotfilesChecker.layer),
+  Effect.provide(OmoChecker.layer),
+);
+
+// ===========================================================================
+// `drift notify`
+// ===========================================================================
+
+const runNotify = (force: boolean) =>
+  Effect.gen(function* () {
+    if (!isMacOS()) {
+      yield* Effect.logInfo("drift:notify is macOS-only; skipping");
+      return;
+    }
+    if (!(yield* fileExists(cacheFile()))) {
+      yield* Effect.logInfo(
+        `no drift cache at ${cacheFile()}; run drift check first`,
+      );
+      return;
+    }
+
+    const report = parseJson(yield* readTextFile(cacheFile()));
+    const tools = extractTools(report);
+    const count = tools.length;
+
+    if (count === 0) {
+      yield* Effect.logInfo("no drift; nothing to notify");
+      return;
+    }
+
+    if (!force) {
+      const age = yield* fileAgeSeconds(markerFile());
+      if (age !== null && age < DEBOUNCE_SECONDS) {
+        yield* Effect.logInfo(
+          "drift notification suppressed (last sent <24h ago)",
+        );
+        return;
+      }
+    }
+
+    if (!(yield* hasCommand("notify"))) {
+      yield* Effect.logWarning("notify command not on PATH; skipping");
+      return;
+    }
+
+    const names = tools.map((t) => t.name).join(", ").slice(0, 120);
+    const plural = count !== 1 ? "s" : "";
+    const subtitle = `${count} tool${plural} behind`;
+
+    const args = ["--title", "dotfiles", "--subtitle", subtitle];
+    if (yield* fileExists(iconPath())) {
+      args.push("--icon", iconPath());
+    }
+    args.push(names);
+
+    yield* run("notify", args);
+    yield* ensureDir(cacheDir());
+    yield* touchFile(markerFile());
+  });
+
+const extractTools = (report: unknown): ReadonlyArray<{ name: string }> => {
+  if (typeof report !== "object" || report === null) return [];
+  const tools = (report as Record<string, unknown>).tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.flatMap((t) => {
+    if (typeof t !== "object" || t === null) return [];
+    const name = (t as Record<string, unknown>).name;
+    return typeof name === "string" ? [{ name }] : [];
+  });
+};
+
+// ===========================================================================
+// CLI dispatch
+// ===========================================================================
+
+const USAGE = `Usage:
+  drift check            Aggregate version drift into ~/.cache/dotfiles/drift.json
+  drift notify [--force] Surface drift via macOS notification (debounced 24h)
+  drift --help           Display this help message`;
+
+const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
+
+const main = (argv: readonly string[]): Effect.Effect<number> => {
+  const [command, ...rest] = argv;
+  if (command === "--help" || command === "-h" || command === undefined) {
+    console.error(USAGE);
+    return Effect.succeed(command === undefined ? 1 : 0);
+  }
+  if (command === "check") {
+    return runCheck.pipe(
+      Effect.provide(loggerLayer),
+      Effect.as(0),
+      Effect.orElseSucceed(() => 1),
+    );
+  }
+  if (command === "notify") {
+    const force = rest.includes("--force");
+    return runNotify(force).pipe(
+      Effect.provide(loggerLayer),
+      Effect.as(0),
+      Effect.orElseSucceed(() => 1),
+    );
+  }
+  console.error(`drift: unknown command: ${command}\n\n${USAGE}`);
+  return Effect.succeed(1);
+};
+
+if (import.meta.main) {
+  Effect.runPromiseExit(main(Deno.args)).then((exit) => {
+    if (exit._tag === "Success") {
+      Deno.exit(exit.value);
+    } else {
+      console.error(exit.cause);
+      Deno.exit(1);
+    }
+  }).catch((err) => {
+    console.error(err);
+    Deno.exit(1);
+  });
+}
+
+// ===========================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_drift
+// import.meta.main is false under `deno test`, so the CLI never fires.
+//
+// The risky surfaces are the parsers that replace jq: region-prefix matching,
+// the bracket family/region successor pick, roster line parsing, the cask
+// version extractor, and schema round-tripping. Process/FS/HTTP paths are
+// integration concerns excluded from the offline suite by design.
+// ===========================================================================
+
+if (!import.meta.main) {
+  Deno.test("regionPrefix extracts Bedrock region, empty for plain ids", () => {
+    assertEq(
+      regionPrefix("global.anthropic.claude-opus-4-7"),
+      "global.anthropic.",
+    );
+    assertEq(regionPrefix("us.anthropic.claude-opus-4-7"), "us.anthropic.");
+    assertEq(regionPrefix("claude-3-5-sonnet"), "");
+    assertEq(regionPrefix("openai/gpt-4o"), "");
+  });
+
+  Deno.test("parsePin splits provider/id, null on malformed", () => {
+    const p = parsePin("amazon-bedrock/global.anthropic.claude-opus-4-7");
+    if (p === null) throw new Error("expected a parse");
+    assertEq(p.provider, "amazon-bedrock");
+    assertEq(p.id, "global.anthropic.claude-opus-4-7");
+    if (parsePin("no-slash-here") !== null) {
+      throw new Error("expected null for slashless input");
+    }
+  });
+
+  Deno.test("newerSameFamily honours region prefix EXACTLY", () => {
+    const db = {
+      "amazon-bedrock": {
+        models: {
+          "global.anthropic.claude-opus-4-7": {
+            family: "opus",
+            release_date: "2025-01-01",
+          },
+          "global.anthropic.claude-opus-4-8": {
+            family: "opus",
+            release_date: "2025-06-01",
+          },
+          // us.* successor must NOT be returned for a global.* pin.
+          "us.anthropic.claude-opus-4-9": {
+            family: "opus",
+            release_date: "2025-09-01",
+          },
+        },
+      },
+    };
+    const newer = newerSameFamily(
+      db,
+      "amazon-bedrock",
+      "global.anthropic.claude-opus-4-7",
+    );
+    assertEq(newer, "global.anthropic.claude-opus-4-8");
+  });
+
+  Deno.test("newerSameFamily picks the latest within region", () => {
+    const db = {
+      p: {
+        models: {
+          "global.anthropic.a": { family: "f", release_date: "2025-01-01" },
+          "global.anthropic.b": { family: "f", release_date: "2025-03-01" },
+          "global.anthropic.c": { family: "f", release_date: "2025-02-01" },
+        },
+      },
+    };
+    assertEq(
+      newerSameFamily(db, "p", "global.anthropic.a"),
+      "global.anthropic.b",
+    );
+  });
+
+  Deno.test("newerSameFamily null when no newer / no family / unknown", () => {
+    const db = {
+      p: {
+        models: {
+          "x": { family: "f", release_date: "2025-05-01" },
+          "y": { family: "f", release_date: "2025-01-01" },
+          "z": { release_date: "2025-09-01" }, // no family
+        },
+      },
+    };
+    if (newerSameFamily(db, "p", "x") !== null) {
+      throw new Error("nothing newer in family — expected null");
+    }
+    if (newerSameFamily(db, "p", "z") !== null) {
+      throw new Error("pin has no family — expected null");
+    }
+    if (newerSameFamily(db, "p", "missing") !== null) {
+      throw new Error("unknown pin — expected null");
+    }
+    if (newerSameFamily(db, "absent", "x") !== null) {
+      throw new Error("unknown provider — expected null");
+    }
+  });
+
+  Deno.test("parseRoster splits Agents/Categories blocks", () => {
+    const doctor = {
+      results: [
+        { name: "Other", details: ["irrelevant"] },
+        {
+          name: "Models",
+          details: [
+            "Agents:",
+            "  ● build: anthropic/claude-sonnet [resolved]",
+            "  ○ plan: anthropic/claude-haiku [resolved]",
+            "",
+            "Categories:",
+            "  ● ultrabrain: anthropic/claude-opus [resolved]",
+          ],
+        },
+      ],
+    };
+    const roster = parseRoster(doctor);
+    assertEq(roster.agents.build, "anthropic/claude-sonnet");
+    assertEq(roster.agents.plan, "anthropic/claude-haiku");
+    assertEq(roster.categories.ultrabrain, "anthropic/claude-opus");
+  });
+
+  Deno.test("parseRoster empty on missing Models result", () => {
+    const roster = parseRoster({ results: [{ name: "Nope", details: [] }] });
+    assertEq(Object.keys(roster.agents).length, 0);
+    assertEq(Object.keys(roster.categories).length, 0);
+  });
+
+  Deno.test("extractCaskVersion reads casks[0].version", () => {
+    assertEq(
+      extractCaskVersion({ casks: [{ version: "1.4.30" }] }),
+      "1.4.30",
+    );
+    assertEq(extractCaskVersion({ casks: [] }), "");
+    assertEq(extractCaskVersion({}), "");
+    assertEq(extractCaskVersion(null), "");
+  });
+
+  Deno.test("extractTools reads names, tolerant of junk", () => {
+    const tools = extractTools({
+      tools: [{ name: "orca" }, { nope: 1 }, "bad", { name: "paseo" }],
+    });
+    assertEq(tools.length, 2);
+    assertEq(tools[0].name, "orca");
+    assertEq(tools[1].name, "paseo");
+    assertEq(extractTools(null).length, 0);
+    assertEq(extractTools({ tools: "x" }).length, 0);
+  });
+
+  Deno.test("DriftReport schema round-trips the on-disk contract", () => {
+    const report = decodeReport({
+      checked_at: "2026-06-13T09:30:00Z",
+      tools: [{
+        name: "orca",
+        installed: "1.4.27",
+        latest: "1.4.30",
+        behind: 3,
+        source: "cask:stablyai/orca/orca",
+      }],
+    });
+    assertEq(report.tools[0].name, "orca");
+    assertEq(report.tools[0].behind, 3);
+    const encoded = encodeReport(report);
+    assertEq(encoded.checked_at, "2026-06-13T09:30:00Z");
+  });
+
+  Deno.test("empty report is valid (nothing drifted)", () => {
+    const report = decodeReport({
+      checked_at: "2026-06-13T09:30:00Z",
+      tools: [],
+    });
+    assertEq(report.tools.length, 0);
+  });
+
+  Deno.test("rfc3339Now has no millis and a Z suffix", () => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(rfc3339Now())) {
+      throw new Error(`unexpected timestamp: ${rfc3339Now()}`);
+    }
+  });
+}
+
+function assertEq<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+}

@@ -1,177 +1,540 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "rich",
-#   "transformers",
-#   "torch",
-#   "hf_transfer",
-# ]
-# ///
-"""Transcribe audio/video with any HuggingFace ASR model, grouped into fixed-duration chunks.
+#!/usr/bin/env -S deno run --allow-net --allow-read --allow-write --allow-env --allow-run=ffmpeg --unstable-webgpu
 
-Invoked directly as `transcribe ...` — the shebang hands off to `uv run --script`,
-which reads the PEP 723 header above and provisions an isolated, cached venv on
-first run. Subsequent runs are instant (uv cache hit).
-"""
-import argparse
-import os
-import warnings
+// Transcribe audio/video with any HuggingFace ASR model, grouped into
+// fixed-duration chunks. Deno + Effect v4 beta rewrite of the original
+// `uv run --script` Python tool.
+//
+// Pipeline: ffmpeg shells out to decode any audio/video container into mono
+// 16 kHz f32 PCM, which is fed as a Float32Array into a Transformers.js v4 ASR
+// pipeline (WebGPU by default, runtime falls back to wasm/CPU). Word-level
+// timestamps come back from the model and are grouped into ~chunk-seconds
+// buckets for human-readable, timestamped output on stdout.
+//
+// CLI surface is preserved from the Python version:
+//   -m/--model         HF model id (required)
+//   -i/--input         path to audio or video file (required)
+//   -c/--chunk-seconds target bucket duration in seconds (default 3.0)
+//   -d/--device        webgpu | wasm | cpu (default webgpu; was cpu/mps/cuda)
+//   -l/--language      source language code, or "auto" (default en)
+//   --no-timestamps    print plain text only
+//
+// Effect v4 beta import paths verified against effect@4.0.0-beta.80. The CLI,
+// process, and platform-node submodules live under the `unstable/` path prefix
+// (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
+// transcript on stdout stays clean and copy-pasteable.
 
-# Enable faster downloader with byte-level progress. Requires `hf_transfer`,
-# declared in the PEP 723 header above so it's always present.
-os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+import {
+  Console,
+  Context,
+  Data,
+  Effect,
+  Layer,
+  Stream,
+} from "npm:effect@4.0.0-beta.80";
+import { Command, Flag } from "npm:effect@4.0.0-beta.80/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.80/unstable/process";
 
-warnings.filterwarnings("ignore")
+// `@effect/platform-node` is imported LAZILY (runtime dynamic import in the
+// CLI entrypoint) rather than at the top level. Its dependency chain pulls in
+// `msgpackr`, which reads environment variables at module-load time and would
+// crash a zero-permission `deno test` run the instant the module graph loads.
+// The specifier is assembled at runtime so Deno's test runner cannot eagerly
+// preload it, keeping the in-file tests hermetic. The real CLI loads it on the
+// `import.meta.main` path only.
+type NodePlatform = {
+  readonly NodeRuntime:
+    typeof import("npm:@effect/platform-node@4.0.0-beta.80").NodeRuntime;
+  readonly NodeServices:
+    typeof import("npm:@effect/platform-node@4.0.0-beta.80").NodeServices;
+};
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from transformers import pipeline
+const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.80"]
+  .join("/");
 
+const loadNodePlatform = (): Promise<NodePlatform> =>
+  import(PLATFORM_NODE_SPECIFIER) as Promise<NodePlatform>;
 
-console = Console()
+// `@huggingface/transformers` is imported LAZILY (dynamic import inside the
+// Transcriber) rather than at the top level. Its dependency chain
+// (onnxruntime -> msgpackr) reads environment variables at module-load time,
+// which would crash a zero-permission `deno test` run the instant the module
+// graph is loaded. Deno eagerly preloads dynamic imports with a static string
+// specifier, so the specifier is assembled at runtime to stay opaque to the
+// graph analyzer — keeping the in-file tests hermetic while the real CLI still
+// loads transformers on first use.
+type Pipeline = (
+  audio: Float32Array,
+  options: {
+    readonly chunk_length_s: number;
+    readonly return_timestamps: "word" | false;
+    readonly generate_kwargs: Record<string, string>;
+  },
+) => Promise<AsrResult>;
 
+type PipelineFactory = (
+  task: "automatic-speech-recognition",
+  model: string,
+  options: { readonly device: DeviceChoice },
+) => Promise<Pipeline>;
 
-def group_words(words, target_seconds):
-    """Group word-level chunks into buckets of ~target_seconds."""
-    buckets = []
-    current_words = []
-    start = None
-    last_end = None
+const TRANSFORMERS_SPECIFIER = ["npm:@huggingface", "transformers@^4"].join(
+  "/",
+);
 
-    for w in words:
-        ws, we = w["timestamp"]
-        if ws is None or we is None:
-            continue
-        if start is None:
-            start = ws
-        current_words.append(w["text"])
-        last_end = we
-        if we - start >= target_seconds:
-            buckets.append((start, we, "".join(current_words).strip()))
-            current_words = []
-            start = None
+const loadPipelineFactory = (): Promise<PipelineFactory> =>
+  import(TRANSFORMERS_SPECIFIER).then(
+    (m) => m.pipeline as unknown as PipelineFactory,
+  );
 
-    if current_words and start is not None:
-        buckets.append((start, last_end, "".join(current_words).strip()))
+// ===========================================================================
+// Errors. One cause per error; each carries the context needed to act on it.
+// ===========================================================================
 
-    return buckets
+class AudioDecodeError extends Data.TaggedError("AudioDecodeError")<{
+  readonly input: string;
+  readonly cause: unknown;
+}> {}
 
+class ModelLoadError extends Data.TaggedError("ModelLoadError")<{
+  readonly model: string;
+  readonly device: string;
+  readonly cause: unknown;
+}> {}
 
-def step(symbol, color, message):
-    """Print a left-aligned step line in the clack style."""
-    console.print(f"[{color}]{symbol}[/{color}]  {message}")
+class TranscribeError extends Data.TaggedError("TranscribeError")<{
+  readonly input: string;
+  readonly cause: unknown;
+}> {}
 
+// ===========================================================================
+// Domain types. The ASR result shape matches Transformers.js v4: a flat `text`
+// plus `chunks`, each a `{ text, timestamp: [start, end] }`. For word-level
+// timestamps a chunk is a single word; nulls appear when the model cannot place
+// a token, so the start/end are nullable and skipped during grouping.
+// ===========================================================================
 
-def bar():
-    """Print the connecting vertical bar between steps."""
-    console.print("[dim]│[/dim]")
+interface WordChunk {
+  readonly text: string;
+  readonly timestamp: readonly [number | null, number | null];
+}
 
+interface AsrResult {
+  readonly text: string;
+  readonly chunks?: ReadonlyArray<WordChunk>;
+}
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Transcribe audio/video with a HuggingFace ASR model.",
-        epilog=(
-            "Examples:\n"
-            "  transcribe -m openai/whisper-large-v3 -i video.mp4\n"
-            "  transcribe -m distil-whisper/distil-large-v3 -i video.mp4 -c 5\n"
-            "  transcribe -m openai/whisper-large-v3 -i video.mp4 -d mps -l en"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("-m", "--model", required=True,
-                        help="HF model id, e.g. openai/whisper-large-v3")
-    parser.add_argument("-i", "--input", required=True,
-                        help="Path to audio or video file")
-    parser.add_argument("-c", "--chunk-seconds", type=float, default=3.0,
-                        help="Target duration of each output chunk in seconds (default: 3.0)")
-    parser.add_argument("-d", "--device", default="cpu",
-                        choices=["cpu", "mps", "cuda"],
-                        help="Compute device (default: cpu)")
-    parser.add_argument("-l", "--language", default="en",
-                        help="Source language code (default: en). Use 'auto' to let the model detect.")
-    parser.add_argument("--no-timestamps", action="store_true",
-                        help="Print plain text only, no timestamps")
-    args = parser.parse_args()
+interface Bucket {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
 
-    # Intro panel
-    console.print()
-    console.print(Panel.fit(
-        Text("transcribe", style="bold cyan"),
-        border_style="cyan",
-        padding=(0, 2),
-    ))
-    bar()
+// Device selection maps the user-facing choice onto the Transformers.js device
+// id. "cpu" and "wasm" both run on CPU; "wasm" is the explicit WASM backend,
+// "cpu" lets the runtime pick a native CPU EP. WebGPU auto-falls back to
+// wasm/cpu inside ONNX Runtime when unavailable, so no manual chain is needed.
+type DeviceChoice = "webgpu" | "wasm" | "cpu";
 
-    # Config summary
-    step("◆", "cyan", f"[bold]model[/bold]    [dim]{args.model}[/dim]")
-    bar()
-    step("◆", "cyan", f"[bold]input[/bold]    [dim]{args.input}[/dim]")
-    bar()
-    step("◆", "cyan",
-         f"[bold]chunks[/bold]   [dim]{args.chunk_seconds}s · "
-         f"device={args.device} · lang={args.language}[/dim]")
-    bar()
+// ===========================================================================
+// Audio decoding. Transformers.js consumes raw f32 mono samples, not file
+// paths, so ffmpeg is the decode front-end: it reads any container/codec and
+// emits headerless 32-bit little-endian float PCM at 16 kHz mono on stdout,
+// which becomes a Float32Array. 16 kHz mono is what Whisper-family models
+// expect; the model's processor would otherwise resample internally.
+// ===========================================================================
 
-    # Load model.
-    # On first run, hf_transfer prints byte-level download progress to stderr —
-    # this sits above our rich output, which is fine.
-    with console.status("[cyan]Loading model...[/cyan]", spinner="dots"):
-        asr = pipeline(
-            "automatic-speech-recognition",
-            model=args.model,
-            chunk_length_s=30,
-            device=args.device,
-        )
-    step("◇", "green", "Model loaded")
-    bar()
+const SAMPLE_RATE = 16000;
 
-    # Transcribe
-    generate_kwargs = {"task": "transcribe"}
-    if args.language != "auto":
-        generate_kwargs["language"] = args.language
+const decodeAudio = (input: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-    with console.status("[cyan]Transcribing...[/cyan]", spinner="dots"):
-        result = asr(
-            args.input,
-            return_timestamps="word",
-            generate_kwargs=generate_kwargs,
-        )
-    step("◇", "green", "Transcription complete")
-    bar()
+    // ffmpeg emits headerless f32le on stdout. The spawner exposes only text
+    // collectors (`string`/`lines`), which would mangle binary PCM, so spawn
+    // the process and collect its raw `stdout` byte stream into chunks. The
+    // process handle needs a Scope; `Effect.scoped` closes it once collected.
+    const chunks = yield* Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make("ffmpeg", [
+          "-nostdin",
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-i",
+          input,
+          "-f",
+          "f32le",
+          "-ac",
+          "1",
+          "-ar",
+          String(SAMPLE_RATE),
+          "-",
+        ]),
+      );
+      const collected = yield* Stream.runCollect(handle.stdout);
+      const exit = yield* handle.exitCode;
+      if (exit !== ChildProcessSpawner.ExitCode(0)) {
+        return yield* Effect.fail(
+          new Error(`ffmpeg exited with code ${exit}`),
+        );
+      }
+      return collected;
+    }).pipe(
+      Effect.scoped,
+      Effect.mapError((cause) => new AudioDecodeError({ input, cause })),
+    );
 
-    if args.no_timestamps:
-        step("◆", "cyan", "[bold]Transcript[/bold]")
-        bar()
-        step("└", "green", "[bold green]Done[/bold green]")
-        console.print()
-        console.print("[dim]─── transcript ───[/dim]")
-        console.print()
-        print(result["text"].strip())
-        console.print()
-        return
+    return chunksToFloat32(chunks);
+  });
 
-    buckets = group_words(result["chunks"], args.chunk_seconds)
+// Concatenate ffmpeg's stdout byte chunks and reinterpret them as little-endian
+// f32 mono samples. Split out from spawning so it can be unit-tested offline
+// without ffmpeg. Chunk boundaries may fall mid-sample, so the bytes are joined
+// before reinterpretation and any trailing partial sample is discarded.
+const chunksToFloat32 = (chunks: ReadonlyArray<Uint8Array>): Float32Array => {
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    joined.set(c, offset);
+    offset += c.byteLength;
+  }
+  return bytesToFloat32(joined);
+};
 
-    # Styled, timestamped block
-    step("◆", "cyan", f"[bold]Transcript[/bold]  [dim]({len(buckets)} chunks)[/dim]")
-    bar()
-    for start, end, text in buckets:
-        ts = f"[dim cyan]{start:6.2f} → {end:6.2f}[/dim cyan]"
-        console.print(f"[dim]│[/dim]  {ts}  {text}")
-    bar()
-    step("└", "green", "[bold green]Done[/bold green]")
+// Reinterpret a little-endian f32 byte buffer as Float32Array. Copies via a
+// DataView so it is correct regardless of the source buffer's byte alignment.
+const bytesToFloat32 = (bytes: Uint8Array): Float32Array => {
+  const usable = bytes.byteLength - (bytes.byteLength % 4);
+  const out = new Float32Array(usable / 4);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, usable);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = view.getFloat32(i * 4, true);
+  }
+  return out;
+};
 
-    # Plain copy-paste block
-    console.print()
-    console.print("[dim]─── transcript ───[/dim]")
-    console.print()
-    for _, _, text in buckets:
-        # Use plain print so no rich markup contaminates the copyable output.
-        print(text)
-    console.print()
+// ===========================================================================
+// Word grouping. Collapse word-level chunks into buckets of ~targetSeconds,
+// dropping words the model could not place (null timestamps). A direct port of
+// the Python `group_words`, kept pure so it is trivially testable offline.
+// ===========================================================================
 
+const groupWords = (
+  words: ReadonlyArray<WordChunk>,
+  targetSeconds: number,
+): ReadonlyArray<Bucket> => {
+  const buckets: Bucket[] = [];
+  let currentWords: string[] = [];
+  let start: number | null = null;
+  let lastEnd: number | null = null;
 
-if __name__ == "__main__":
-    main()
+  for (const w of words) {
+    const [ws, we] = w.timestamp;
+    if (ws === null || we === null) continue;
+    if (start === null) start = ws;
+    currentWords.push(w.text);
+    lastEnd = we;
+    if (we - start >= targetSeconds) {
+      buckets.push({ start, end: we, text: currentWords.join("").trim() });
+      currentWords = [];
+      start = null;
+    }
+  }
+
+  if (currentWords.length > 0 && start !== null && lastEnd !== null) {
+    buckets.push({ start, end: lastEnd, text: currentWords.join("").trim() });
+  }
+
+  return buckets;
+};
+
+// ===========================================================================
+// Transcriber service. Wraps Transformers.js pipeline init plus chunked
+// inference behind an Effect service so device selection, model loading, and
+// the async inference call are all expressed as typed, traced Effects.
+// ===========================================================================
+
+interface TranscribeParams {
+  readonly model: string;
+  readonly device: DeviceChoice;
+  readonly audio: Float32Array;
+  readonly language: string;
+  readonly wordTimestamps: boolean;
+}
+
+class Transcriber extends Context.Service<Transcriber, {
+  run(
+    params: TranscribeParams,
+  ): Effect.Effect<AsrResult, ModelLoadError | TranscribeError>;
+}>()("transcribe/Transcriber") {
+  static readonly layer = Layer.effect(
+    Transcriber,
+    Effect.sync(() => {
+      const run = Effect.fn("Transcriber.run")(function* (
+        params: TranscribeParams,
+      ) {
+        // Model load is its own failure surface (network, bad model id,
+        // unsupported device) distinct from inference. The transformers module
+        // is imported here, lazily, so importing this file (e.g. under the test
+        // runner) never pulls in its env-touching dependency chain.
+        const asr = yield* Effect.tryPromise({
+          try: async () => {
+            const pipeline = await loadPipelineFactory();
+            return await pipeline(
+              "automatic-speech-recognition",
+              params.model,
+              { device: params.device },
+            );
+          },
+          catch: (cause) =>
+            new ModelLoadError({
+              model: params.model,
+              device: params.device,
+              cause,
+            }),
+        });
+
+        // chunk_length_s=30 matches the Python default and lets the pipeline
+        // window long audio. Language is omitted on "auto" so the model
+        // detects it; task is always transcribe (never translate).
+        const generateKwargs: Record<string, string> = {
+          task: "transcribe",
+        };
+        if (params.language !== "auto") {
+          generateKwargs.language = params.language;
+        }
+
+        const result = yield* Effect.tryPromise({
+          try: () =>
+            asr(params.audio, {
+              chunk_length_s: 30,
+              return_timestamps: params.wordTimestamps ? "word" : false,
+              generate_kwargs: generateKwargs,
+            }),
+          catch: (cause) =>
+            new TranscribeError({ input: "<decoded audio>", cause }),
+        });
+
+        return result;
+      });
+
+      return Transcriber.of({ run });
+    }),
+  );
+}
+
+// ===========================================================================
+// Rendering. The Python tool drew a "clack"-style stepped UI on stderr and
+// emitted a plain transcript on stdout. We keep stdout pure transcript and push
+// the human progress/structure to stderr via the logger, so piping `transcribe
+// ... > out.txt` yields only transcript text.
+// ===========================================================================
+
+const renderTimestamped = (buckets: ReadonlyArray<Bucket>) =>
+  Effect.gen(function* () {
+    yield* Effect.logInfo(`Transcript (${buckets.length} chunks)`);
+    for (const b of buckets) {
+      yield* Effect.logInfo(
+        `${b.start.toFixed(2).padStart(6)} \u2192 ${
+          b.end.toFixed(2).padStart(6)
+        }  ${b.text}`,
+      );
+    }
+    // Plain, copy-pasteable transcript on stdout — one bucket per line.
+    for (const b of buckets) {
+      yield* Console.log(b.text);
+    }
+  });
+
+const renderPlain = (text: string) => Console.log(text.trim());
+
+// ===========================================================================
+// CLI. Mirrors the Python argparse surface exactly, including short aliases,
+// defaults, and the --no-timestamps switch. The handler decodes, loads, infers,
+// groups, and renders.
+// ===========================================================================
+
+const modelFlag = Flag.string("model").pipe(
+  Flag.withAlias("m"),
+  Flag.withDescription("HF model id, e.g. openai/whisper-large-v3"),
+);
+
+const inputFlag = Flag.string("input").pipe(
+  Flag.withAlias("i"),
+  Flag.withDescription("Path to audio or video file"),
+);
+
+const chunkSecondsFlag = Flag.float("chunk-seconds").pipe(
+  Flag.withAlias("c"),
+  Flag.withDescription(
+    "Target duration of each output chunk in seconds (default: 3.0)",
+  ),
+  Flag.withDefault(3.0),
+);
+
+const deviceFlag = Flag.choice("device", ["webgpu", "wasm", "cpu"]).pipe(
+  Flag.withAlias("d"),
+  Flag.withDescription("Compute device (default: webgpu)"),
+  Flag.withDefault("webgpu" as DeviceChoice),
+);
+
+const languageFlag = Flag.string("language").pipe(
+  Flag.withAlias("l"),
+  Flag.withDescription(
+    "Source language code (default: en). Use 'auto' to let the model detect.",
+  ),
+  Flag.withDefault("en"),
+);
+
+const noTimestampsFlag = Flag.boolean("no-timestamps").pipe(
+  Flag.withDescription("Print plain text only, no timestamps"),
+  Flag.withDefault(false),
+);
+
+const transcribeCommand = Command.make(
+  "transcribe",
+  {
+    model: modelFlag,
+    input: inputFlag,
+    chunkSeconds: chunkSecondsFlag,
+    device: deviceFlag,
+    language: languageFlag,
+    noTimestamps: noTimestampsFlag,
+  },
+  Effect.fn(function* (
+    { model, input, chunkSeconds, device, language, noTimestamps },
+  ) {
+    yield* Effect.logInfo(
+      `model=${model} input=${input} chunk=${chunkSeconds}s ` +
+        `device=${device} lang=${language}`,
+    );
+
+    yield* Effect.logInfo("Decoding audio with ffmpeg\u2026");
+    const audio = yield* decodeAudio(input);
+
+    yield* Effect.logInfo("Loading model and transcribing\u2026");
+    const transcriber = yield* Transcriber;
+    const result = yield* transcriber.run({
+      model,
+      device: device as DeviceChoice,
+      audio,
+      language,
+      wordTimestamps: !noTimestamps,
+    });
+
+    if (noTimestamps) {
+      yield* renderPlain(result.text);
+      return;
+    }
+
+    const buckets = groupWords(result.chunks ?? [], chunkSeconds);
+    yield* renderTimestamped(buckets);
+  }),
+).pipe(
+  Command.withDescription(
+    "Transcribe audio/video with a HuggingFace ASR model.",
+  ),
+);
+
+const cli = transcribeCommand.pipe(
+  Command.run({ version: "2.0.0" }),
+);
+
+if (import.meta.main) {
+  // Load the Node platform lazily so importing this file (under the test
+  // runner) never pulls in msgpackr's env-touching load-time code.
+  loadNodePlatform().then(({ NodeRuntime, NodeServices }) => {
+    // All concerns (CLI, child process, Transcriber) provided as one runtime.
+    const MainLayer = Layer.mergeAll(
+      Transcriber.layer,
+      NodeServices.layer,
+    );
+    cli.pipe(
+      Effect.provide(MainLayer),
+      NodeRuntime.runMain,
+    );
+  });
+}
+
+// ===========================================================================
+// Testing. The pure transforms — byte reinterpretation and word grouping — are
+// the chief logic risk and are fully covered offline. Model load and inference
+// require network + WebGPU/wasm and are out of scope for a hermetic test run.
+//
+//   deno test home/private_dot_local/bin/executable_transcribe
+//
+// All tests below run with ZERO permission flags and never touch the network,
+// filesystem, or ffmpeg. The import.meta.main guard above ensures the CLI does
+// not fire when this file is imported by the test runner.
+// ===========================================================================
+
+const assert = (cond: boolean, msg: string) => {
+  if (!cond) throw new Error(msg);
+};
+
+Deno.test("bytesToFloat32 reinterprets little-endian f32 samples", () => {
+  const src = new Float32Array([0, 0.5, -0.5, 1]);
+  const bytes = new Uint8Array(src.buffer.slice(0));
+  const out = bytesToFloat32(bytes);
+  assert(out.length === 4, `expected 4 samples, got ${out.length}`);
+  assert(out[0] === 0 && out[3] === 1, "endpoint samples mismatch");
+  assert(Math.abs(out[1] - 0.5) < 1e-6, "sample 1 mismatch");
+  assert(Math.abs(out[2] + 0.5) < 1e-6, "sample 2 mismatch");
+});
+
+Deno.test("bytesToFloat32 drops a trailing partial sample", () => {
+  // 9 bytes = 2 whole f32 samples + 1 dangling byte; the partial is discarded.
+  const bytes = new Uint8Array(9);
+  const out = bytesToFloat32(bytes);
+  assert(out.length === 2, `expected 2 samples, got ${out.length}`);
+});
+
+Deno.test("groupWords buckets words by target duration", () => {
+  const words: WordChunk[] = [
+    { text: " a", timestamp: [0, 1] },
+    { text: " b", timestamp: [1, 2] },
+    { text: " c", timestamp: [2, 3.5] },
+    { text: " d", timestamp: [3.5, 4] },
+  ];
+  // target 3s: first bucket closes when end-start >= 3 (at word "c", end 3.5).
+  const buckets = groupWords(words, 3);
+  assert(buckets.length === 2, `expected 2 buckets, got ${buckets.length}`);
+  assert(buckets[0].text === "a b c", `bucket 0 text: ${buckets[0].text}`);
+  assert(buckets[0].start === 0 && buckets[0].end === 3.5, "bucket 0 span");
+  assert(buckets[1].text === "d", `bucket 1 text: ${buckets[1].text}`);
+});
+
+Deno.test("groupWords skips words with null timestamps", () => {
+  const words: WordChunk[] = [
+    { text: " a", timestamp: [0, 1] },
+    { text: " skip", timestamp: [null, null] },
+    { text: " b", timestamp: [1, 2] },
+  ];
+  const buckets = groupWords(words, 10);
+  assert(buckets.length === 1, `expected 1 bucket, got ${buckets.length}`);
+  assert(buckets[0].text === "a b", `text was: ${buckets[0].text}`);
+});
+
+Deno.test("groupWords flushes a trailing under-target bucket", () => {
+  const words: WordChunk[] = [
+    { text: " only", timestamp: [0, 0.5] },
+  ];
+  const buckets = groupWords(words, 100);
+  assert(buckets.length === 1, "trailing bucket should flush");
+  assert(buckets[0].start === 0 && buckets[0].end === 0.5, "trailing span");
+});
+
+Deno.test("groupWords returns nothing for empty input", () => {
+  assert(groupWords([], 3).length === 0, "empty input yields no buckets");
+});
+
+Deno.test("AsrResult chunks are optional (no-timestamps path)", () => {
+  const r: AsrResult = { text: "hello world" };
+  const buckets = groupWords(r.chunks ?? [], 3);
+  assert(buckets.length === 0, "missing chunks must not throw");
+});

@@ -1,75 +1,382 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S deno run --allow-read
 
-IFS=$'\n\t'
+// json-escape (Deno + Effect v4 beta). Escapes a JSON value for embedding in a
+// quoted key=value field string: validates the input parses as JSON, then emits
+// the original text with every internal double quote backslash-escaped, wrapped
+// in a single pair of outer quotes. Reads from a FILE argument or stdin.
+//
+// Designed for tools that parse flat key=value field formats (e.g. Jira API
+// tools) where nested JSON in the value position would otherwise break the
+// field parser's comma-splitting. See:
+//   home/dot_agents/skills/lochy:pm/references/using-jira.md
+//
+// CLI surface (preserved from the previous bash implementation):
+//   json-escape [OPTIONS] [FILE]
+//   --help          print usage and exit 0
+//   FILE            read JSON from this path; otherwise read stdin
+// Exit codes: 0 on success, 1 on any error (unknown option, missing/unreadable
+// file, empty input, invalid JSON, no stdin on a TTY).
+//
+// Output: the escaped JSON string to stdout, with NO trailing newline, matching
+// the bash `process.stdout.write('"' + escaped + '"')` behaviour exactly.
+//
+// IMPORTANT — why this tool does NOT use @effect/platform-node:
+// The shebang grants only `--allow-read`. Importing anything from
+// @effect/platform-node@4.0.0-beta.80 transitively loads `msgpackr`, which reads
+// the env var MSGPACKR_NATIVE_ACCELERATION_DISABLED at module-evaluation time.
+// Under Deno that throws `NotCapable: Requires env access ...` unless --allow-env
+// is granted — which would both break this tool's shebang AND force the in-file
+// tests to run with extra permission flags. So this tool keeps the `effect` core
+// (Effect.gen, tagged errors, Effect.try, catchTags) for all control flow and
+// error modelling, but performs FS/stdin/stdout through Deno's own primitives
+// wrapped in Effect, and runs via Effect.runPromiseExit + Deno.exit instead of
+// NodeRuntime.runMain. Do NOT "helpfully" re-add @effect/platform-node: it is
+// empirically incompatible with the --allow-read-only shebang.
+//
+// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
 
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import { Cause, Console, Effect, Option } from "npm:effect@4.0.0-beta.80";
 
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+const USAGE = `Usage:
+  json-escape [OPTIONS] [FILE]
 
-#/ Usage:
-#/   json-escape [OPTIONS] [FILE]
-#/
-#/ Description:
-#/   Escapes a JSON value for embedding in a quoted key=value field string.
-#/   Reads JSON from a file argument or stdin. Outputs the escaped string
-#/   with internal double quotes backslash-escaped, wrapped in outer quotes.
-#/
-#/   Designed for use with tools that parse flat key=value field formats
-#/   (e.g., Jira API tools) where nested JSON in the value position would
-#/   otherwise break the field parser's comma-splitting.
-#/
-#/ Examples:
-#/   echo '{"type":"doc","version":1}' | json-escape
-#/   json-escape adf.json
-#/   json-escape <<< '{"id":"10201"}'
-#/
-#/ Options:
-#/   --help:    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+Description:
+  Escapes a JSON value for embedding in a quoted key=value field string.
+  Reads JSON from a file argument or stdin. Outputs the escaped string
+  with internal double quotes backslash-escaped, wrapped in outer quotes.
 
-parse_args() {
-  INPUT_FILE=""
+  Designed for use with tools that parse flat key=value field formats
+  (e.g., Jira API tools) where nested JSON in the value position would
+  otherwise break the field parser's comma-splitting.
 
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      -*)
-        usage
-        echo "" >&2
-        fatal "Unknown option: $1"
-        ;;
-      *)
-        INPUT_FILE="$1"
-        shift
-        ;;
-    esac
-  done
+Examples:
+  echo '{"type":"doc","version":1}' | json-escape
+  json-escape adf.json
+  json-escape <<< '{"id":"10201"}'
+
+Options:
+  --help:    Display this help message
+`;
+
+// One cause per error. Each tag names exactly what went wrong so the top-level
+// handler can map it to a precise stderr message and exit 1.
+class HelpRequested {
+  readonly _tag = "HelpRequested";
+}
+class UnknownOption {
+  readonly _tag = "UnknownOption";
+  constructor(readonly option: string) {}
+}
+class NoStdin {
+  readonly _tag = "NoStdin";
+}
+class EmptyInput {
+  readonly _tag = "EmptyInput";
+}
+class FileReadError {
+  readonly _tag = "FileReadError";
+  constructor(readonly path: string, readonly cause: unknown) {}
+}
+class StdinReadError {
+  readonly _tag = "StdinReadError";
+  constructor(readonly cause: unknown) {}
+}
+class InvalidJson {
+  readonly _tag = "InvalidJson";
+  constructor(readonly cause: unknown) {}
 }
 
-main() {
-  parse_args "$@"
-
-  local json
-  if [ -n "${INPUT_FILE:-}" ]; then
-    json=$(cat "$INPUT_FILE")
-  else
-    json=$(cat)
-  fi
-
-  node -e "
-    const json = process.argv[1];
-    JSON.parse(json);
-    const escaped = json.replace(/\"/g, '\\\\\"');
-    process.stdout.write('\"' + escaped + '\"');
-  " "$json"
+interface Args {
+  readonly inputFile: string | undefined;
 }
 
-main "$@"
+// Mirror the bash arg loop: --help wins, any other -* is rejected, the last
+// bare argument is treated as the input file.
+const parseArgs = (
+  argv: ReadonlyArray<string>,
+): Effect.Effect<Args, HelpRequested | UnknownOption> =>
+  Effect.gen(function* () {
+    let inputFile: string | undefined;
+    for (const arg of argv) {
+      if (arg === "--help") {
+        return yield* Effect.fail(new HelpRequested());
+      }
+      if (arg.startsWith("-")) {
+        return yield* Effect.fail(new UnknownOption(arg));
+      }
+      inputFile = arg;
+    }
+    return { inputFile };
+  });
+
+// Whether stdin is a terminal. Guarded so importing/testing (where Deno may be
+// absent or stdin unavailable) never throws — it just reports "is a TTY".
+const stdinIsTty = (): boolean => {
+  try {
+    return Deno.stdin.isTerminal();
+  } catch {
+    return true;
+  }
+};
+
+// Drain stdin to completion synchronously. `readSync` needs no permission flag
+// (stdin is always readable) and returns null at EOF. Each chunk is COPIED out
+// of the reused buffer with slice(); a subarray would be a live view and later
+// reads would corrupt earlier chunks.
+const readStdinSync = (): string => {
+  const chunks: Uint8Array[] = [];
+  const buf = new Uint8Array(65536);
+  while (true) {
+    const n = Deno.stdin.readSync(buf);
+    if (n === null) break;
+    chunks.push(buf.subarray(0, n).slice());
+  }
+  const total = chunks.reduce((sum, c) => sum + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return new TextDecoder().decode(out);
+};
+
+const readStdin = (
+  isTty: () => boolean,
+): Effect.Effect<string, NoStdin | StdinReadError> =>
+  Effect.gen(function* () {
+    // Avoid blocking forever waiting for input that will never come.
+    if (isTty()) {
+      return yield* Effect.fail(new NoStdin());
+    }
+    return yield* Effect.try({
+      try: () => readStdinSync(),
+      catch: (cause) => new StdinReadError(cause),
+    });
+  });
+
+const readInput = (
+  args: Args,
+  isTty: () => boolean,
+): Effect.Effect<string, NoStdin | FileReadError | StdinReadError> =>
+  Effect.gen(function* () {
+    if (args.inputFile !== undefined && args.inputFile !== "") {
+      const path = args.inputFile;
+      return yield* Effect.try({
+        try: () => Deno.readTextFileSync(path),
+        catch: (cause) => new FileReadError(path, cause),
+      });
+    }
+    return yield* readStdin(isTty);
+  });
+
+// The core transform, isolated so tests can exercise it directly: validate the
+// text parses as JSON, then escape inner quotes and wrap in outer quotes. The
+// escape replaces `"` with `\"` — exactly the bash `replace(/"/g, '\\"')`.
+const escapeJson = (
+  raw: string,
+): Effect.Effect<string, EmptyInput | InvalidJson> =>
+  Effect.gen(function* () {
+    if (raw.trim() === "") {
+      return yield* Effect.fail(new EmptyInput());
+    }
+    yield* Effect.try({
+      try: () => JSON.parse(raw),
+      catch: (cause) => new InvalidJson(cause),
+    });
+    const escaped = raw.replace(/"/g, '\\"');
+    return `"${escaped}"`;
+  });
+
+const program = (
+  argv: ReadonlyArray<string>,
+  isTty: () => boolean,
+): Effect.Effect<
+  void,
+  | HelpRequested
+  | UnknownOption
+  | NoStdin
+  | EmptyInput
+  | FileReadError
+  | StdinReadError
+  | InvalidJson
+> =>
+  Effect.gen(function* () {
+    const args = yield* parseArgs(argv);
+    const raw = yield* readInput(args, isTty);
+    const escaped = yield* escapeJson(raw);
+    // No trailing newline: this output is meant to be embedded as a field value.
+    // writeSync flushes fully before control returns, so a following Deno.exit
+    // cannot truncate it (which console.log + exit could).
+    yield* Effect.sync(() => {
+      Deno.stdout.writeSync(new TextEncoder().encode(escaped));
+    });
+  });
+
+// Map each failure tag to a single, specific stderr line. --help is not an
+// error: print usage to stdout and succeed. Every other tag is re-failed after
+// logging so the top-level Exit inspection drives exit code 1.
+const main = (
+  argv: ReadonlyArray<string>,
+): Effect.Effect<
+  void,
+  | UnknownOption
+  | NoStdin
+  | EmptyInput
+  | FileReadError
+  | StdinReadError
+  | InvalidJson
+> =>
+  program(argv, stdinIsTty).pipe(
+    Effect.catchTags({
+      HelpRequested: () => Console.log(USAGE.trimEnd()),
+      UnknownOption: (e) =>
+        Console.error(`json-escape: unknown option: ${e.option}`).pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+      NoStdin: () =>
+        Console.error(
+          "json-escape: no input — provide a FILE argument or pipe JSON on stdin",
+        ).pipe(Effect.andThen(Effect.fail(new NoStdin()))),
+      EmptyInput: (e) =>
+        Console.error("json-escape: input was empty").pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+      FileReadError: (e) =>
+        Console.error(`json-escape: cannot read file: ${e.path}`).pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+      StdinReadError: (e) =>
+        Console.error("json-escape: failed to read stdin").pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+      InvalidJson: (e) =>
+        Console.error(
+          `json-escape: input is not valid JSON: ${
+            e.cause instanceof Error ? e.cause.message : String(e.cause)
+          }`,
+        ).pipe(Effect.andThen(Effect.fail(e))),
+    }),
+  );
+
+if (import.meta.main) {
+  // runPromiseExit never throws: the Exit inspection below is a total mapping to
+  // an exit code, so there is no unhandled rejection and exit codes stay precise.
+  const exit = await Effect.runPromiseExit(main(Deno.args));
+  Deno.exit(exit._tag === "Success" ? 0 : 1);
+}
+
+// ===========================================================================
+// Testing. The heart of the tool is `escapeJson`: validate-then-escape with the
+// exact quote rule and outer-quote wrapping. These run fully offline with zero
+// permission flags and never touch stdin/stdout/FS, so they are safe under a
+// bare `deno test json-escape`. Arg parsing is also covered. import.meta.main
+// guards the runtime path so the CLI never fires during tests.
+//
+//   deno test executable_json-escape
+// ===========================================================================
+
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromise(effect as Effect.Effect<A, E, never>);
+
+const runExit = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.runPromiseExit(effect as Effect.Effect<A, E, never>);
+
+// Read the `_tag` of the typed error inside a failed Cause. beta.80 models a
+// Cause as a list of reasons; findErrorOption extracts the first typed Fail
+// error (an object carrying its own `_tag`), or undefined for defects/empty.
+const failTag = <E extends { readonly _tag: string }>(
+  cause: Cause.Cause<E>,
+): string | undefined => {
+  const err = Cause.findErrorOption(cause);
+  return Option.isSome(err) ? err.value._tag : undefined;
+};
+
+Deno.test("escapes inner quotes and wraps in outer quotes", async () => {
+  const out = await run(escapeJson('{"type":"doc","version":1}'));
+  if (out !== '"{\\"type\\":\\"doc\\",\\"version\\":1}"') {
+    throw new Error(`unexpected output: ${out}`);
+  }
+});
+
+Deno.test("output re-parses back to the original value", async () => {
+  const original = '{"id":"10201","nested":{"a":[1,2,3]}}';
+  const out = await run(escapeJson(original));
+  // Strip the outer quotes, then JSON.parse the inner (still-escaped) text as a
+  // JSON string literal to recover the original source, which must re-parse.
+  const innerLiteral = out; // out is itself a valid JSON string literal
+  const recovered = JSON.parse(innerLiteral) as string;
+  if (recovered !== original) {
+    throw new Error(`round-trip mismatch: ${recovered}`);
+  }
+  JSON.parse(recovered); // proves the recovered text is valid JSON
+});
+
+Deno.test("a bare JSON string value is escaped and wrapped", async () => {
+  const out = await run(escapeJson('"hello"'));
+  if (out !== '"\\"hello\\""') {
+    throw new Error(`unexpected output: ${out}`);
+  }
+});
+
+Deno.test("a JSON number is valid input", async () => {
+  const out = await run(escapeJson("42"));
+  if (out !== '"42"') throw new Error(`unexpected output: ${out}`);
+});
+
+Deno.test("whitespace in the source is preserved verbatim", async () => {
+  const src = '{ "a" : 1 }';
+  const out = await run(escapeJson(src));
+  if (out !== '"{ \\"a\\" : 1 }"') {
+    throw new Error(`unexpected output: ${out}`);
+  }
+});
+
+Deno.test("invalid JSON fails with InvalidJson", async () => {
+  const exit = await runExit(escapeJson("{not json"));
+  if (exit._tag !== "Failure" || failTag(exit.cause) !== "InvalidJson") {
+    throw new Error(`expected InvalidJson, got ${JSON.stringify(exit)}`);
+  }
+});
+
+Deno.test("empty input fails with EmptyInput", async () => {
+  const exit = await runExit(escapeJson("   \n  "));
+  if (exit._tag !== "Failure" || failTag(exit.cause) !== "EmptyInput") {
+    throw new Error(`expected EmptyInput, got ${JSON.stringify(exit)}`);
+  }
+});
+
+Deno.test("--help short-circuits arg parsing", async () => {
+  const exit = await runExit(parseArgs(["--help"]));
+  if (exit._tag !== "Failure" || failTag(exit.cause) !== "HelpRequested") {
+    throw new Error(`expected HelpRequested, got ${JSON.stringify(exit)}`);
+  }
+});
+
+Deno.test("unknown option is rejected", async () => {
+  const exit = await runExit(parseArgs(["--bogus"]));
+  if (exit._tag !== "Failure" || failTag(exit.cause) !== "UnknownOption") {
+    throw new Error(`expected UnknownOption, got ${JSON.stringify(exit)}`);
+  }
+});
+
+Deno.test("a bare argument is captured as the input file", async () => {
+  const args = await run(parseArgs(["adf.json"]));
+  if (args.inputFile !== "adf.json") {
+    throw new Error(`expected adf.json, got ${args.inputFile}`);
+  }
+});
+
+Deno.test("no arguments yields an undefined input file (stdin path)", async () => {
+  const args = await run(parseArgs([]));
+  if (args.inputFile !== undefined) {
+    throw new Error(`expected undefined, got ${args.inputFile}`);
+  }
+});
+
+Deno.test("a stdin TTY with no input fails with NoStdin (does not block)", async () => {
+  const exit = await runExit(readStdin(() => true));
+  if (exit._tag !== "Failure" || failTag(exit.cause) !== "NoStdin") {
+    throw new Error(`expected NoStdin, got ${JSON.stringify(exit)}`);
+  }
+});

@@ -34,5 +34,12 @@ done.commit
 **/.claude/settings.local.json
 **/.claude/worktrees/
 **/.sisyphus/
+**/.omo/
 **/AGENTS.local.md
 **/.cursor/rules.local.md
+
+# Smithers workflow runner (local state, never committed)
+**/.smithers/
+**/smithers.db
+**/smithers.db-shm
+**/smithers.db-wal

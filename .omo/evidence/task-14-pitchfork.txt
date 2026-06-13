@@ -1,0 +1,29 @@
+Task: migrate orca-server supervision to Pitchfork
+Date: 2026-06-13
+
+Documentation checked:
+- https://pitchfork.jdx.dev/quickstart.html: documents `mise use -g pitchfork`, `pitchfork start`, `pitchfork stop`, `pitchfork list`, `pitchfork logs`.
+- https://pitchfork.jdx.dev/installation.html: documents mise as the recommended install method and GitHub releases as the release source.
+- https://pitchfork.jdx.dev/reference/configuration.html: documents user-level config at `~/.config/pitchfork/config.toml`, `[daemons.<name>]`, `run`, `env`, `retry`, `boot_start`, and `ready_delay`.
+- GitHub release API for `jdx/pitchfork`: latest release `v2.13.1`, Linux release artifacts available. mise entry uses `github:jdx/pitchfork`, not deprecated `ubi:`.
+
+Implementation evidence:
+- Added Pitchfork to the Linux + `orcaServer` mise block as `"github:jdx/pitchfork" = { version = "2.13.1", exe = "pitchfork" }`.
+- Added `home/private_dot_config/pitchfork/config.toml.tmpl`, rendering to Pitchfork's documented user-level config path.
+- Defined `[daemons.orca-server]` with `run = "orca-serve --pairing-address <workspace>.coder --json"`, `retry = true`, `boot_start = true`, `ready_delay = 2`, and HOME/PATH environment.
+- Removed `home/private_dot_config/systemd/user/orca-server.service.tmpl` because Pitchfork replaces the systemd unit.
+- Reworked `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` to use `pitchfork stop orca-server` and `pitchfork start orca-server`.
+- Left `home/private_dot_local/bin/executable_orca-serve` unchanged.
+- Did not touch paseo-daemon lifecycle files.
+
+Validation evidence:
+- LSP diagnostics attempted on changed `.tmpl` files; no LSP server is configured for `.tmpl`, so shell/template validation was used instead.
+- Rendered a Linux/orcaServer shell body to a temporary file and ran `bash -n`: pass.
+- Ran `shellcheck -e SC1091` on the rendered lifecycle script: pass. SC1091 is excluded because the repo's shared `~/.local/lib/bash-logging.sh` path is runtime-provided by chezmoi.
+- Rendered a representative Pitchfork TOML config and parsed it with Python `tomllib`: pass.
+- Parsed a representative mise TOML with the Linux/orcaServer block included using Python `tomllib`: pass.
+- Ran `chezmoi execute-template --file` for the changed mise and Pitchfork templates on the current host: pass.
+- Ran `chezmoi apply --dry-run --force --no-tty --source /Users/lochlan/.local/share/chezmoi --refresh-externals=never`: pass.
+
+Notes:
+- The Pitchfork docs call the user-level config `~/.config/pitchfork/config.toml`; this repo source path is therefore `home/private_dot_config/pitchfork/config.toml.tmpl` rather than a project-level `pitchfork.toml`.
