@@ -318,8 +318,8 @@ The launchd agent `io.lochlan.dotfiles.drift` runs `mise run drift:notify` once 
 
 The drift report aggregates three sources, each emitting JSON to stdout:
 - **`mise outdated --json`** — every tool mise tracks (latest pins + explicit github/npm pins)
-- **`dotfiles-task-drift-cask`** — macOS Homebrew casks with auto_updates=true (orca, paseo apps that mise can't see)
-- **`dotfiles-task-drift-dotfiles`** — this repo vs origin/main (any OS)
+- **`drift check` (cask sub-checker)** — macOS Homebrew casks with auto_updates=true (orca, paseo apps that mise can't see)
+- **`drift check` (dotfiles sub-checker)** — this repo vs origin/main (any OS)
 
 ### Replacement for the old "ritual"
 
