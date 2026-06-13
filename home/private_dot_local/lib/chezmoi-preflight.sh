@@ -12,13 +12,13 @@
 #   2. Missing binaries (non-fatal): warns if tools that templates depend
 #      on aren't installed. Templates are written to degrade gracefully.
 #
-#   3. BWS token health (non-fatal): probes the token via dotfiles-setup
+#   3. BWS token health (non-fatal): probes the token via df-setup
 #      --probe-bws. Templates fetch secrets through bws-get-or-empty, which
 #      already falls through to empty on any failure, so a bad token won't
 #      crash apply. The preflight still surfaces a warning + a pointer to
-#      dotfiles-setup so silent degradation is visible to the user.
+#      df-setup so silent degradation is visible to the user.
 #
-# dotfiles-setup is the single source of truth for "what state is this
+# df-setup is the single source of truth for "what state is this
 # machine in and what should the user do next". This script is the hook
 # that wires it into chezmoi apply.
 
@@ -120,7 +120,7 @@ _chezmoi_preflight_tools() {
   fi
 }
 
-# Probe BWS token validity via `dotfiles-setup --probe-bws`. Exit codes:
+# Probe BWS token validity via `df-setup --probe-bws`. Exit codes:
 #   0 = token valid
 #   1 = token missing (not configured on this machine — benign)
 #   2 = token present but rejected by BWS server (expired / revoked)
@@ -129,11 +129,11 @@ _chezmoi_preflight_tools() {
 # empty on any error — so an invalid token no longer crashes apply, it
 # just silently produces empty secrets. That silent degradation is worse
 # than a visible warning, so surface state 2 here with a pointer to
-# dotfiles-setup. We do NOT abort: apply with empty secrets is a valid
+# df-setup. We do NOT abort: apply with empty secrets is a valid
 # state (e.g. fresh machine, or user intentionally operating without
 # the secret store).
 _chezmoi_preflight_bws_token() {
-  local setup_bin="${HOME}/.local/bin/dotfiles-setup"
+  local setup_bin="${HOME}/.local/bin/df-setup"
 
   if [ ! -x "$setup_bin" ]; then
     return 0
@@ -149,11 +149,11 @@ _chezmoi_preflight_bws_token() {
     2)
       printf '\033[33m⚠ BWS token is present but rejected by the server\033[0m\n' >&2
       printf '\033[2;37m  Secrets will be empty for this apply. For guidance:\033[0m\n' >&2
-      printf '\033[2;37m  %s/.local/bin/dotfiles-setup\033[0m\n' "$HOME" >&2
+      printf '\033[2;37m  %s/.local/bin/df-setup\033[0m\n' "$HOME" >&2
       return 0
       ;;
     *)
-      printf '\033[33m⚠ dotfiles-setup --probe-bws returned unexpected exit %d\033[0m\n' "$rc" >&2
+      printf '\033[33m⚠ df-setup --probe-bws returned unexpected exit %d\033[0m\n' "$rc" >&2
       return 0
       ;;
   esac

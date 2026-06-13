@@ -59,7 +59,7 @@ main() {
   echo "$token"
 {{ else }}
   if [ -z "${GITHUB_TOKEN:-}" ]; then
-    fatal "GITHUB_TOKEN is not set. Check BWS configuration with 'dotfiles-setup'."
+    fatal "GITHUB_TOKEN is not set. Check BWS configuration with 'df-setup'."
   fi
 
   echo "$GITHUB_TOKEN"

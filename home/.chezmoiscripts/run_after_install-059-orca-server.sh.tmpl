@@ -1,6 +1,6 @@
 {{- if eq .chezmoi.os "linux" -}}
 #!/usr/bin/env bash
-# Runs every chezmoi apply on Linux. Manages the orca-server Pitchfork daemon
+# Runs every chezmoi apply on Linux. Manages the df-orca-server Pitchfork daemon
 # lifecycle. Install is handled by mise (http: backend → AppImage); this
 # script no longer touches apt or downloads anything.
 set -euo pipefail
@@ -16,10 +16,10 @@ setup_session_logging "$(basename "$0")"
 PITCHFORK_BIN=""
 
 #/ Usage:
-#/   run_after_install-059-orca-server.sh
+#/   run_after_install-059-df-orca-server.sh
 #/
 #/ Description:
-#/   Manages the orca-server Pitchfork daemon lifecycle on Linux Coder
+#/   Manages the df-orca-server Pitchfork daemon lifecycle on Linux Coder
 #/   workspaces. Opt-in via the `orcaServer` chezmoi flag.
 #/
 #/   When `orcaServer` is true:
@@ -97,8 +97,8 @@ manage_linux() {
     info "▶ orca server (Linux, opt-out)"
 
     if verify_pitchfork_installed; then
-      "$PITCHFORK_BIN" stop orca-server 2>/dev/null || true
-      info "╍ stopped orca-server daemon"
+      "$PITCHFORK_BIN" stop df-orca-server 2>/dev/null || true
+      info "╍ stopped df-orca-server daemon"
     else
       info "╍ Pitchfork not installed; no daemon to stop"
     fi
@@ -123,15 +123,15 @@ manage_linux() {
   # (mise re-installs in place, but the running process holds the old
   # extracted squashfs view until restart). Pitchfork's start command is
   # idempotent; stop first so a running daemon is replaced cleanly.
-  "$PITCHFORK_BIN" stop orca-server 2>/dev/null || true
-  "$PITCHFORK_BIN" start orca-server
-  info "╍ started orca-server daemon (picks up any AppImage version change)"
+  "$PITCHFORK_BIN" stop df-orca-server 2>/dev/null || true
+  "$PITCHFORK_BIN" start df-orca-server
+  info "╍ started df-orca-server daemon (picks up any AppImage version change)"
 
   sleep 2
-  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'orca-server'; then
-    info "╍ orca-server daemon is registered with Pitchfork"
+  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'df-orca-server'; then
+    info "╍ df-orca-server daemon is registered with Pitchfork"
   else
-    warning "╍ orca-server daemon was not reported by Pitchfork — check: pitchfork logs orca-server"
+    warning "╍ df-orca-server daemon was not reported by Pitchfork — check: pitchfork logs df-orca-server"
   fi
 }
 
