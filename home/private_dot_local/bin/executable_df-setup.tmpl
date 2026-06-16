@@ -1,441 +1,633 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=tput{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }} --allow-read --allow-env --allow-net=api.github.com --allow-ffi
 
-IFS=$'\n\t'
+// deno-fmt-ignore-file
+// df-setup — dotfiles health-check doctor (Deno + Effect v4 beta).
+//
+// This is a strict behavioral port of the previous bash implementation. Keep
+// output/prose/exit-code semantics in lockstep: `chezmoi-preflight.sh` depends
+// on `--probe-bws` returning 0=ok, 1=missing, 2=invalid.
 
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import { Config, Effect, Schema } from "npm:effect@4.0.0-beta.83";
 
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
 
-#/ Usage:
-#/   dotfiles-setup [OPTIONS]
-#/
-#/ Description:
-#/   Checks dotfiles configuration status and provides instructions for
-#/   completing setup. Run this after initial dotfiles installation.
-#/
-#/ Options:
-#/   --help:      Display this help message
-#/   --probe-bws: Probe BWS token validity and exit with status:
-#/                  0 = valid, 1 = missing/unconfigured, 2 = invalid
-#/                Used by chezmoi-preflight.sh as a cheap liveness check.
-usage() { grep '^#/' "$0" | cut -c4-; }
+const HELP = `Usage:
+  dotfiles-setup [OPTIONS]
 
-readonly BWS_TOKEN_PATH="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
-# Canary secret used to probe BWS token validity. Any live secret ID works;
-# GitHub auth token is present on all machines (personal and work) in this
-# repo's Bitwarden project.
-readonly BWS_PROBE_SECRET_ID="{{ .bwsIdGithubAuthToken }}"
+Description:
+  Checks dotfiles configuration status and provides instructions for
+  completing setup. Run this after initial dotfiles installation.
 
-parse_args() {
-  PROBE_ONLY="false"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      --probe-bws)
-        PROBE_ONLY="true"
-        shift
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
+Options:
+  --help:      Display this help message
+  --probe-bws: Probe BWS token validity and exit with status:
+                 0 = valid, 1 = missing/unconfigured, 2 = invalid
+               Used by chezmoi-preflight.sh as a cheap liveness check.`;
+
+const bwsTokenPath: Effect.Effect<string> = Effect.gen(function* () {
+  const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+  return `${home}/.config/chezmoi/secrets/bws-access-token.txt`;
+});
+// Canary secret used to probe BWS token validity. Any live secret ID works;
+// GitHub auth token is present on all machines (personal and work) in this
+// repo's Bitwarden project.
+const BWS_PROBE_SECRET_ID = "{{ .bwsIdGithubAuthToken }}";
+
+const DriftTool = Schema.Struct({
+  name: Schema.String,
+  installed: Schema.String,
+  latest: Schema.String,
+  source: Schema.String,
+});
+type DriftTool = typeof DriftTool.Type;
+
+const DriftReport = Schema.Struct({
+  checked_at: Schema.String,
+  tools: Schema.Array(DriftTool),
+});
+type DriftReport = typeof DriftReport.Type;
+const decodeDriftReport = Schema.decodeUnknownSync(DriftReport);
+
+type BwsState = "ok" | "missing" | "invalid-auth" | "invalid-unknown";
+type ProbeResult =
+  | { readonly state: "ok"; readonly exitCode: 0 }
+  | { readonly state: "missing"; readonly exitCode: 1 }
+  | {
+    readonly state: "invalid-auth" | "invalid-unknown";
+    readonly exitCode: 2;
+  };
+
+type ParseResult =
+  | { readonly kind: "run"; readonly probeOnly: boolean }
+  | { readonly kind: "help" };
+
+interface RunResult {
+  readonly ok: boolean;
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
 }
 
-# Probes the BWS token by fetching a canary secret. Returns:
-#   0  — token file present AND server accepts it (ok)
-#   1  — token file missing (missing)
-#   2  — token file present AND server rejects it (invalid)
-# On state 2, echoes a short classification of the cause to stdout:
-#   "auth"      — server returned invalid_client / 401 / 403 (rotate token)
-#   "unknown"   — other failure (network, server 5xx, bws crash)
-check_bws_token() {
-  if [ ! -f "$BWS_TOKEN_PATH" ]; then
-    return 1
-  fi
+type Color = "red" | "green" | "yellow" | "cyan" | "white";
+type Style = "bold" | "dim";
 
-  if ! command -v bws >/dev/null 2>&1; then
-    # No bws binary — can't probe, treat as "missing" (templates skip anyway).
-    return 1
-  fi
+const RESET = "\x1b[0m";
+const COLORS: Record<Color, string> = {
+  red: "31",
+  green: "32",
+  yellow: "33",
+  cyan: "36",
+  white: "37",
+};
 
-  local token
-  token=$(tr -d '[:space:]' <"$BWS_TOKEN_PATH")
-  if [ -z "$token" ]; then
-    return 1
-  fi
+let colorSupport: boolean | undefined;
 
-  local probe_stderr
-  probe_stderr=$(bws secret get "$BWS_PROBE_SECRET_ID" \
-    --access-token "$token" 2>&1 >/dev/null)
-  local rc=$?
+const supportedColors = (): boolean => {
+  if (colorSupport !== undefined) return colorSupport;
+  try {
+    const result = new Deno.Command("tput", {
+      args: ["colors"],
+      stdout: "piped",
+      stderr: "null",
+    }).outputSync();
+    const colors = Number(new TextDecoder().decode(result.stdout).trim());
+    colorSupport = Number.isFinite(colors) && colors > 8;
+  } catch {
+    colorSupport = false;
+  }
+  return colorSupport;
+};
 
-  if [ "$rc" -eq 0 ]; then
-    return 0
-  fi
+const colorize = (color: Color, styles: readonly Style[], text: string): string => {
+  if (!supportedColors()) return text;
+  const code = [COLORS[color], ...styles.map((style) => style === "bold" ? "1" : "2")]
+    .join(";");
+  return `\x1b[${code}m${text}${RESET}`;
+};
 
-  # Classify the failure so we can give actionable guidance rather than
-  # blaming the user for transient BWS/network issues.
-  #
-  # "auth" covers any token-is-the-problem case:
-  #   - invalid_client        (server rejects the token)
-  #   - 401/403               (auth or authorization failure)
-  #   - not in a valid format (malformed token, e.g. truncated/corrupted)
-  #   - decoding base64       (same — the token string itself is broken)
-  # All of these mean "rotate the token" — either the one in Bitwarden is
-  # dead, or the local copy is corrupted. Either way, user action is the
-  # same as a server-side rejection.
-  if printf '%s' "$probe_stderr" \
-    | grep -qE 'invalid_client|401 Unauthorized|403 Forbidden|not in a valid format|Error decoding base64'; then
-    echo "auth"
-  else
-    echo "unknown"
-  fi
-  return 2
-}
+const print = (color: Color, styles: readonly Style[], text: string): void => {
+  console.log(colorize(color, styles, text));
+};
+
+const printPlain = (text = ""): void => {
+  console.log(text);
+};
+
+const parseArgs = (argv: readonly string[]): ParseResult => {
+  let probeOnly = false;
+  for (const arg of argv) {
+    if (arg === "--help") return { kind: "help" };
+    if (arg === "--probe-bws") {
+      probeOnly = true;
+      continue;
+    }
+    printPlain(HELP);
+    fatal(`Unknown argument: ${arg}`);
+  }
+  return { kind: "run", probeOnly };
+};
+
+const run = (cmd: string, args: readonly string[]): Effect.Effect<RunResult> =>
+  Effect.tryPromise({
+    try: async () => {
+      const command = new Deno.Command(cmd, {
+        args: [...args],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { code, stdout, stderr } = await command.output();
+      const dec = new TextDecoder();
+      return {
+        ok: code === 0,
+        code,
+        stdout: dec.decode(stdout),
+        stderr: dec.decode(stderr),
+      };
+    },
+    catch: () => undefined,
+  }).pipe(
+    Effect.orElseSucceed((): RunResult => ({
+      ok: false,
+      code: 127,
+      stdout: "",
+      stderr: "",
+    })),
+  );
+
+const fileExists = (path: string): Effect.Effect<boolean> =>
+  Effect.tryPromise({
+    try: async () => {
+      const stat = await Deno.stat(path);
+      return stat.isFile;
+    },
+    catch: () => false,
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const pathExists = (path: string): Effect.Effect<boolean> =>
+  Effect.tryPromise({
+    try: async () => {
+      await Deno.stat(path);
+      return true;
+    },
+    catch: () => false,
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const hasCommand = (cmd: string): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (cmd.includes("/")) return yield* pathExists(cmd);
+    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+    for (const dir of pathEnv.split(":")) {
+      if (dir === "") continue;
+      if (yield* pathExists(`${dir}/${cmd}`)) return true;
+    }
+    return false;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const readTextFile = (path: string): Effect.Effect<string | null> =>
+  Effect.tryPromise({
+    try: () => Deno.readTextFile(path),
+    catch: () => null,
+  }).pipe(Effect.orElseSucceed(() => null));
+
+const parseJson = (text: string | null): unknown => {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const trimAllWhitespace = (value: string): string => value.replace(/\s/g, "");
+
+// Probes the BWS token by fetching a canary secret. Returns:
+//   0  — token file present AND server accepts it (ok)
+//   1  — token file missing (missing)
+//   2  — token file present AND server rejects it (invalid)
+const checkBwsToken: Effect.Effect<ProbeResult> = Effect.gen(function* () {
+  const tokenPath = yield* bwsTokenPath;
+  if (!(yield* fileExists(tokenPath))) {
+    return { state: "missing", exitCode: 1 } as const;
+  }
+
+  if (!(yield* hasCommand("bws"))) {
+    return { state: "missing", exitCode: 1 } as const;
+  }
+
+  const token = trimAllWhitespace((yield* readTextFile(tokenPath)) ?? "");
+  if (token === "") {
+    return { state: "missing", exitCode: 1 } as const;
+  }
+
+  const probe = yield* run("bws", [
+    "secret",
+    "get",
+    BWS_PROBE_SECRET_ID,
+    "--access-token",
+    token,
+  ]);
+
+  if (probe.ok) return { state: "ok", exitCode: 0 } as const;
+
+  if (
+    /invalid_client|401 Unauthorized|403 Forbidden|not in a valid format|Error decoding base64/
+      .test(probe.stderr)
+  ) {
+    return { state: "invalid-auth", exitCode: 2 } as const;
+  }
+  return { state: "invalid-unknown", exitCode: 2 } as const;
+});
 
 {{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
 
-check_paseo_daemon() {
-  systemctl --user is-active --quiet paseo-daemon.service
-}
+const checkPaseoDaemon: Effect.Effect<boolean> = run("systemctl", [
+  "--user",
+  "is-active",
+  "--quiet",
+  "paseo-daemon.service",
+]).pipe(Effect.map((result) => result.ok));
 {{- end }}
 
 {{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
 
-check_orca_server() {
-  systemctl --user is-active --quiet orca-server.service
+interface OrcaVersionState {
+  readonly installed: string;
+  readonly latest: string;
 }
 
-# Returns "<installed>|<latest>" — values may be empty on failure.
-# Latest is best-effort (network + GitHub API); failures yield empty string.
-orca_version_state() {
-  local installed="" latest=""
-  # Installed version from mise (http: backend installs orca-linux.AppImage
-  # into ~/.local/share/mise/installs/http-orca/<version>/). Falls back to
-  # dpkg-query for any boxes still on the legacy .deb install.
-  if command -v mise >/dev/null 2>&1; then
-    installed=$(mise current orca 2>/dev/null || echo "")
-  fi
-  if [ -z "$installed" ] && command -v dpkg-query >/dev/null 2>&1; then
-    installed=$(dpkg-query -W -f='${Version}' orca-ide 2>/dev/null || echo "")
-  fi
-  if command -v curl >/dev/null 2>&1; then
-    latest=$(curl -fsSL --max-time 3 "https://api.github.com/repos/stablyai/orca/releases/latest" 2>/dev/null \
-             | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
-  fi
-  printf '%s|%s' "$installed" "$latest"
-}
+// orca runs as a Pitchfork daemon (df-orca-server), not a systemd unit. The
+// install script (run_after_install-059-orca-server) starts it via
+// `pitchfork start df-orca-server`. `pitchfork status` exits 0 and prints
+// `Status: running` for a live daemon, so we match that explicitly rather
+// than trusting exit code alone (a stopped/failed daemon still exits 0).
+const checkOrcaServer: Effect.Effect<boolean> = Effect.gen(function* () {
+  const pitchfork = (yield* hasCommand("pitchfork"))
+    ? "pitchfork"
+    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
+  if (pitchfork === "") return false;
+  const result = yield* run(pitchfork, ["status", "df-orca-server"]);
+  return result.ok && /Status:\s*running/.test(result.stdout);
+});
+
+// Returns "<installed>|<latest>" — values may be empty on failure.
+// Latest is best-effort (network + GitHub API); failures yield empty string.
+const orcaVersionState: Effect.Effect<OrcaVersionState> = Effect.gen(function* () {
+  let installed = "";
+  let latest = "";
+
+  // Installed version from mise (http: backend installs orca-linux.AppImage
+  // into ~/.local/share/mise/installs/http-orca/<version>/). Falls back to
+  // dpkg-query for any boxes still on the legacy .deb install.
+  if (yield* hasCommand("mise")) {
+    const result = yield* run("mise", ["current", "orca"]);
+    installed = result.ok ? result.stdout.trim() : "";
+  }
+  if (installed === "" && (yield* hasCommand("dpkg-query"))) {
+    const result = yield* run("dpkg-query", ["-W", "-f=${Version}", "orca-ide"]);
+    installed = result.ok ? result.stdout.trim() : "";
+  }
+  if (yield* hasCommand("curl")) {
+    const result = yield* run("curl", [
+      "-fsSL",
+      "--max-time",
+      "3",
+      "https://api.github.com/repos/stablyai/orca/releases/latest",
+    ]);
+    const match = result.ok
+      ? result.stdout.match(/"tag_name": *"v{0,1}([^"]*)"/)
+      : null;
+    latest = match?.[1] ?? "";
+  }
+
+  return { installed, latest };
+});
 {{- end }}
 
 {{- if ne "" .emailWork }}
 
-check_gh_auth() {
-  gh auth status 2>&1 | grep -q "Logged in"
-}
+const checkGhAuth: Effect.Effect<boolean> = run("gh", ["auth", "status"]).pipe(
+  Effect.map((result) => result.ok && `${result.stdout}${result.stderr}`.includes("Logged in")),
+);
 
-check_work_config() {
-  # Returns the list of missing work config variable names
-  local missing=()
-  local val
-  val=$(chezmoi execute-template '{{ "{{" }} .signingKey {{ "}}" }}' 2>/dev/null || echo "")
-  [ -z "$val" ] && missing+=("signingKey")
-  val=$(chezmoi execute-template '{{ "{{" }} .npmWorkRegistry {{ "}}" }}' 2>/dev/null || echo "")
-  [ -z "$val" ] && missing+=("npmWorkRegistry")
-  val=$(chezmoi execute-template '{{ "{{" }} .openCodeWorkPlugin {{ "}}" }}' 2>/dev/null || echo "")
-  [ -z "$val" ] && missing+=("openCodeWorkPlugin")
-  val=$(chezmoi execute-template '{{ "{{" }} .jetbrainsLicenseServer {{ "}}" }}' 2>/dev/null || echo "")
-  [ -z "$val" ] && missing+=("jetbrainsLicenseServer")
-  [ "${#missing[@]}" -gt 0 ] && printf '%s\n' "${missing[@]}"
-}
+const workConfigVars = [
+  ["signingKey", '{{ "{{" }} .signingKey {{ "}}" }}'],
+  ["npmWorkRegistry", '{{ "{{" }} .npmWorkRegistry {{ "}}" }}'],
+  ["openCodeWorkPlugin", '{{ "{{" }} .openCodeWorkPlugin {{ "}}" }}'],
+  ["jetbrainsLicenseServer", '{{ "{{" }} .jetbrainsLicenseServer {{ "}}" }}'],
+] as const;
+
+const checkWorkConfig: Effect.Effect<ReadonlyArray<string>> = Effect.gen(function* () {
+  const missing: string[] = [];
+  for (const [name, template] of workConfigVars) {
+    const result = yield* run("chezmoi", ["execute-template", template]);
+    if (!result.ok || result.stdout.trim() === "") missing.push(name);
+  }
+  return missing;
+});
 {{- end }}
 
-print_status() {
-  local bws_state="$1"
+const formatMissingList = (missing: ReadonlyArray<string>): string => missing.join(", ");
+
+const printStatus = (
+  bwsState: BwsState,
 {{- if ne "" .emailWork }}
-  local has_gh_auth="$2"
-  shift 2
-  local -a work_missing=("$@")
+  hasGhAuth: boolean,
+  workMissing: ReadonlyArray<string>,
 {{- end }}
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    printPlain();
+    print("white", ["bold"], "  Dotfiles Configuration Status");
+    printPlain();
 
-  echo ""
-  _print white bold "  Dotfiles Configuration Status"
-  echo ""
-
-  case "$bws_state" in
-    ok)
-      _print green "  ✓ BWS token"
-      _print white dim "    Secrets available (npm auth, GitHub tokens)"
-      ;;
-    invalid-auth)
-      _print red "  ✗ BWS token (invalid — server rejected)"
-      _print white dim "    Token has expired or been revoked in Bitwarden"
-      ;;
-    invalid-unknown)
-      _print red "  ✗ BWS token (unreachable)"
-      _print white dim "    bws probe failed — network, server, or binary issue"
-      ;;
-    missing)
-      _print yellow "  ✗ BWS token (not configured)"
-      _print white dim "    Secrets not available (npm auth, GitHub tokens)"
-      ;;
-  esac
+    switch (bwsState) {
+      case "ok":
+        print("green", [], "  ✓ BWS token");
+        print("white", ["dim"], "    Secrets available (npm auth, GitHub tokens)");
+        break;
+      case "invalid-auth":
+        print("red", [], "  ✗ BWS token (invalid — server rejected)");
+        print("white", ["dim"], "    Token has expired or been revoked in Bitwarden");
+        break;
+      case "invalid-unknown":
+        print("red", [], "  ✗ BWS token (unreachable)");
+        print("white", ["dim"], "    bws probe failed — network, server, or binary issue");
+        break;
+      case "missing":
+        print("yellow", [], "  ✗ BWS token (not configured)");
+        print("white", ["dim"], "    Secrets not available (npm auth, GitHub tokens)");
+        break;
+    }
 {{- if ne "" .emailWork }}
 
-  echo ""
+    printPlain();
 
-  if [ "$has_gh_auth" = "true" ]; then
-    _print green "  ✓ GitHub CLI auth"
-    _print white dim "    Short-lived tokens available via git credential agent"
-  else
-    _print yellow "  ✗ GitHub CLI auth"
-    _print white dim "    Tools needing GitHub access will fail (brew, github-token)"
-  fi
+    if (hasGhAuth) {
+      print("green", [], "  ✓ GitHub CLI auth");
+      print("white", ["dim"], "    Short-lived tokens available via git credential agent");
+    } else {
+      print("yellow", [], "  ✗ GitHub CLI auth");
+      print("white", ["dim"], "    Tools needing GitHub access will fail (brew, github-token)");
+    }
 
-  echo ""
+    printPlain();
 
-  if [ "${#work_missing[@]}" -eq 0 ]; then
-    _print green "  ✓ Work config"
-    _print white dim "    Signing key, npm registry, tooling configured"
-  else
-    _print yellow "  ✗ Work config"
-    local missing_list
-    missing_list=$(printf '%s, ' "${work_missing[@]}")
-    missing_list="${missing_list%, }"
-    _print white dim "    Missing: ${missing_list}"
-  fi
+    if (workMissing.length === 0) {
+      print("green", [], "  ✓ Work config");
+      print("white", ["dim"], "    Signing key, npm registry, tooling configured");
+    } else {
+      print("yellow", [], "  ✗ Work config");
+      print("white", ["dim"], `    Missing: ${formatMissingList(workMissing)}`);
+    }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
 
-  echo ""
+    printPlain();
 
-  if check_paseo_daemon; then
-    _print green "  ✓ paseo daemon"
-    _print white dim "    Listening on :6767 — port-forward from a macbook to connect"
-  else
-    _print yellow "  ✗ paseo daemon"
-    _print white dim "    Opted in but not running. Try: systemctl --user status paseo-daemon"
-  fi
+    if (yield* checkPaseoDaemon) {
+      print("green", [], "  ✓ paseo daemon");
+      print("white", ["dim"], "    Listening on :6767 — port-forward from a macbook to connect");
+    } else {
+      print("yellow", [], "  ✗ paseo daemon");
+      print("white", ["dim"], "    Opted in but not running. Try: systemctl --user status paseo-daemon");
+    }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
 
-  echo ""
+    printPlain();
 
-  local _orca_state _orca_installed _orca_latest
-  _orca_state=$(orca_version_state)
-  _orca_installed="${_orca_state%%|*}"
-  _orca_latest="${_orca_state##*|}"
+    const orcaState = yield* orcaVersionState;
+    const orcaActive = yield* checkOrcaServer;
 
-  if check_orca_server; then
-    if [ -n "$_orca_installed" ]; then
-      _print green "  ✓ orca server (v${_orca_installed})"
-    else
-      _print green "  ✓ orca server"
-    fi
-    _print white dim "    Latest upstream: ${_orca_latest:-unknown}"
-    if [ -n "$_orca_installed" ] && [ -n "$_orca_latest" ] && [ "$_orca_installed" != "$_orca_latest" ]; then
-      _print yellow "    ↑ Upstream ahead. Bump http:orca version in home/private_dot_config/mise/config.toml.tmpl, then chezmoi apply."
-    fi
-    _print white dim "    Pairing URL: journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ \"]*' | tail -1"
-  else
-    _print yellow "  ✗ orca server"
-    _print white dim "    Opted in but not running. Try: systemctl --user status orca-server"
-  fi
+    if (orcaActive) {
+      if (orcaState.installed !== "") {
+        print("green", [], `  ✓ orca server (v${orcaState.installed})`);
+      } else {
+        print("green", [], "  ✓ orca server");
+      }
+      print("white", ["dim"], `    Latest upstream: ${orcaState.latest || "unknown"}`);
+      if (
+        orcaState.installed !== "" && orcaState.latest !== "" &&
+        orcaState.installed !== orcaState.latest
+      ) {
+        print("yellow", [], "    ↑ Upstream ahead. Bump http:orca version in home/private_dot_config/mise/config.toml.tmpl, then chezmoi apply.");
+      }
+      print("white", ["dim"], "    Pairing URL: pitchfork logs df-orca-server --raw | grep -oE 'orca://pair#[^[:space:]]+' | tail -1");
+    } else {
+      print("yellow", [], "  ✗ orca server");
+      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
+    }
 {{- end }}
 
-  # ── Drift report (read-only view of last drift:check) ─────────
-  echo ""
-  local _drift_cache="${HOME}/.cache/dotfiles/drift.json"
-  if [ -f "$_drift_cache" ] && command -v jq >/dev/null 2>&1; then
-    local _drift_count
-    _drift_count=$(jq '.tools | length' "$_drift_cache" 2>/dev/null || echo 0)
-    if [ "$_drift_count" -eq 0 ]; then
-      _print green "  ✓ Tool drift (no tools behind)"
-      _print white dim "    Last checked: $(jq -r '.checked_at' "$_drift_cache" 2>/dev/null)"
-    else
-      _print yellow "  ⚠ Tool drift (${_drift_count} behind)"
-      jq -r '.tools[] | "    \(.name): \(.installed) → \(.latest) [\(.source)]"' "$_drift_cache" 2>/dev/null \
-        | while IFS= read -r line; do _print white dim "$line"; done
+    // ── Drift report (read-only view of last drift:check) ─────────
+    printPlain();
+    const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+    const driftCache = `${home}/.cache/dotfiles/drift.json`;
+    if ((yield* fileExists(driftCache)) && (yield* hasCommand("jq"))) {
+      const parsed = parseJson(yield* readTextFile(driftCache));
+      const drift = decodeDrift(parsed);
+      const driftCount = drift.tools.length;
+      if (driftCount === 0) {
+        print("green", [], "  ✓ Tool drift (no tools behind)");
+        print("white", ["dim"], `    Last checked: ${drift.checked_at}`);
+      } else {
+        print("yellow", [], `  ⚠ Tool drift (${driftCount} behind)`);
+        for (const tool of drift.tools) {
+          print("white", ["dim"], `    ${tool.name}: ${tool.installed} → ${tool.latest} [${tool.source}]`);
+        }
 {{- if eq .chezmoi.os "darwin" }}
-      _print white dim "    Refresh: mise run drift:check  ·  Update everything: mise run update"
+        print("white", ["dim"], "    Refresh: mise run drift:check  ·  Update everything: mise run update");
 {{- else }}
-      _print white dim "    Refresh: mise run drift:check (manual on Linux; no scheduled notifier)"
+        print("white", ["dim"], "    Refresh: mise run drift:check (manual on Linux; no scheduled notifier)");
 {{- end }}
-    fi
-  else
-    _print white dim "  ⋯ Tool drift (no cache)"
+      }
+    } else {
+      print("white", ["dim"], "  ⋯ Tool drift (no cache)");
 {{- if eq .chezmoi.os "darwin" }}
-    _print white dim "    Run: mise run drift:check (also runs daily via launchd agent)"
+      print("white", ["dim"], "    Run: mise run drift:check (also runs daily via launchd agent)");
 {{- else }}
-    _print white dim "    Run: mise run drift:check"
+      print("white", ["dim"], "    Run: mise run drift:check");
 {{- end }}
-  fi
+    }
 
-  echo ""
-}
+    printPlain();
+  });
 
-print_instructions() {
-  local bws_state="$1"
+const decodeDrift = (parsed: unknown): DriftReport => {
+  try {
+    return decodeDriftReport(parsed);
+  } catch {
+    return { checked_at: "", tools: [] };
+  }
+};
+
+const hostname: Effect.Effect<string> = run("hostname", []).pipe(
+  Effect.map((result) => result.ok ? result.stdout.trim() : ""),
+);
+
+const printInstructions = (
+  bwsState: BwsState,
+  tokenPath: string,
 {{- if ne "" .emailWork }}
-  local has_gh_auth="$2"
-  shift 2
-  local -a work_missing=("$@")
-
-  if [ "$bws_state" = "ok" ] && [ "$has_gh_auth" = "true" ] && [ "${#work_missing[@]}" -eq 0 ]; then
+  hasGhAuth: boolean,
+  workMissing: ReadonlyArray<string>,
+{{- end }}
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+{{- if ne "" .emailWork }}
+    if (bwsState === "ok" && hasGhAuth && workMissing.length === 0) {
 {{- else }}
-  if [ "$bws_state" = "ok" ]; then
+    if (bwsState === "ok") {
 {{- end }}
-    _print green bold "  All configuration complete!"
-    echo ""
-    return
-  fi
+      print("green", ["bold"], "  All configuration complete!");
+      printPlain();
+      return;
+    }
 
-  _print cyan bold "  To complete setup:"
-  echo ""
+    print("cyan", ["bold"], "  To complete setup:");
+    printPlain();
 
-  local step=1
+    let step = 1;
 
-  case "$bws_state" in
-    invalid-auth)
-      _print white bold "  ${step}. Rotate BWS access token (currently rejected by server)"
-      echo ""
-      _print white dim "     This machine's token has expired or been revoked."
-      _print white dim "     Host: $(hostname)"
-      echo ""
-      _print white dim "     Steps:"
-      _print white dim "       a. Open Bitwarden Secrets Manager:"
-      _print white dim "          https://vault.bitwarden.com → Secrets Manager → Machine accounts"
-      _print white dim "       b. Find the machine account for this host and rotate its access token"
-      _print white dim "       c. Save the new token:"
-      echo "          echo 'YOUR_NEW_TOKEN' > ${BWS_TOKEN_PATH}"
-      echo "          chmod 600 ${BWS_TOKEN_PATH}"
-      echo ""
-      _print white dim "     Or, to proceed without secrets (empty values), remove the token:"
-      echo "          rm ${BWS_TOKEN_PATH}"
-      echo ""
-      step=$((step + 1))
-      ;;
-    invalid-unknown)
-      _print white bold "  ${step}. Investigate BWS probe failure"
-      echo ""
-      _print white dim "     bws could not validate the token. Possible causes:"
-      _print white dim "       • Network connectivity to vault.bitwarden.com"
-      _print white dim "       • BWS service outage"
-      _print white dim "       • bws binary missing / broken install"
-      echo ""
-      _print white dim "     Reproduce manually to see the raw error:"
-      echo "       bws secret get ${BWS_PROBE_SECRET_ID} \\"
-      echo "         --access-token \"\$(cat ${BWS_TOKEN_PATH})\""
-      echo ""
-      step=$((step + 1))
-      ;;
-    missing)
-      _print white bold "  ${step}. Configure BWS access token"
-      echo ""
-      _print white dim "     Get a token from Bitwarden Secrets Manager:"
-      _print white dim "     https://vault.bitwarden.com → Secrets Manager → Machine accounts"
-      echo ""
-      _print white dim "     Then save it:"
-      echo "     mkdir -p ~/.config/chezmoi/secrets"
-      echo "     echo 'YOUR_TOKEN' > ${BWS_TOKEN_PATH}"
-      echo "     chmod 600 ${BWS_TOKEN_PATH}"
-      echo ""
-      step=$((step + 1))
-      ;;
-  esac
+    switch (bwsState) {
+      case "invalid-auth":
+        print("white", ["bold"], `  ${step}. Rotate BWS access token (currently rejected by server)`);
+        printPlain();
+        print("white", ["dim"], "     This machine's token has expired or been revoked.");
+        print("white", ["dim"], `     Host: ${yield* hostname}`);
+        printPlain();
+        print("white", ["dim"], "     Steps:");
+        print("white", ["dim"], "       a. Open Bitwarden Secrets Manager:");
+        print("white", ["dim"], "          https://vault.bitwarden.com → Secrets Manager → Machine accounts");
+        print("white", ["dim"], "       b. Find the machine account for this host and rotate its access token");
+        print("white", ["dim"], "       c. Save the new token:");
+        printPlain(`          echo 'YOUR_NEW_TOKEN' > ${tokenPath}`);
+        printPlain(`          chmod 600 ${tokenPath}`);
+        printPlain();
+        print("white", ["dim"], "     Or, to proceed without secrets (empty values), remove the token:");
+        printPlain(`          rm ${tokenPath}`);
+        printPlain();
+        step += 1;
+        break;
+      case "invalid-unknown":
+        print("white", ["bold"], `  ${step}. Investigate BWS probe failure`);
+        printPlain();
+        print("white", ["dim"], "     bws could not validate the token. Possible causes:");
+        print("white", ["dim"], "       • Network connectivity to vault.bitwarden.com");
+        print("white", ["dim"], "       • BWS service outage");
+        print("white", ["dim"], "       • bws binary missing / broken install");
+        printPlain();
+        print("white", ["dim"], "     Reproduce manually to see the raw error:");
+        printPlain(`       bws secret get ${BWS_PROBE_SECRET_ID} \\`);
+        printPlain(`         --access-token "\$(cat ${tokenPath})"`);
+        printPlain();
+        step += 1;
+        break;
+      case "missing":
+        print("white", ["bold"], `  ${step}. Configure BWS access token`);
+        printPlain();
+        print("white", ["dim"], "     Get a token from Bitwarden Secrets Manager:");
+        print("white", ["dim"], "     https://vault.bitwarden.com → Secrets Manager → Machine accounts");
+        printPlain();
+        print("white", ["dim"], "     Then save it:");
+        printPlain("     mkdir -p ~/.config/chezmoi/secrets");
+        printPlain(`     echo 'YOUR_TOKEN' > ${tokenPath}`);
+        printPlain(`     chmod 600 ${tokenPath}`);
+        printPlain();
+        step += 1;
+        break;
+      case "ok":
+        break;
+    }
 {{- if ne "" .emailWork }}
 
-  if [ "$has_gh_auth" = "false" ]; then
-    _print white bold "  ${step}. Authenticate GitHub CLI"
-    echo ""
-    _print white dim "     Run:"
-    echo "     gh auth login"
-    echo ""
-    step=$((step + 1))
-  fi
+    if (!hasGhAuth) {
+      print("white", ["bold"], `  ${step}. Authenticate GitHub CLI`);
+      printPlain();
+      print("white", ["dim"], "     Run:");
+      printPlain("     gh auth login");
+      printPlain();
+      step += 1;
+    }
 
-  if [ "${#work_missing[@]}" -gt 0 ]; then
-    _print white bold "  ${step}. Configure work-specific values"
-    echo ""
-    _print white dim "     Run:"
-    echo "     chezmoi edit-config"
-    echo ""
-    _print white dim "     Add under [data]:"
-    for var in "${work_missing[@]}"; do
-      echo "       ${var} = \"...\""
-    done
-    echo ""
-    step=$((step + 1))
-  fi
+    if (workMissing.length > 0) {
+      print("white", ["bold"], `  ${step}. Configure work-specific values`);
+      printPlain();
+      print("white", ["dim"], "     Run:");
+      printPlain("     chezmoi edit-config");
+      printPlain();
+      print("white", ["dim"], "     Add under [data]:");
+      for (const variable of workMissing) {
+        printPlain(`       ${variable} = "..."`);
+      }
+      printPlain();
+      step += 1;
+    }
 {{- end }}
 
-  _print white bold "  ${step}. Re-apply dotfiles"
-  echo ""
-  _print white dim "     Re-apply to pick up changes:"
-  echo "     chezmoi apply --force"
+    print("white", ["bold"], `  ${step}. Re-apply dotfiles`);
+    printPlain();
+    print("white", ["dim"], "     Re-apply to pick up changes:");
+    printPlain("     chezmoi apply --force");
 
-  echo ""
-}
+    printPlain();
+  });
 
-main() {
-  parse_args "$@"
+const main: Effect.Effect<number> = Effect.gen(function* () {
+  const args = parseArgs(Deno.args);
 
-  # --probe-bws: headless mode for chezmoi-preflight.sh.
-  # Exit code conveys state; no output (BASH_LOGGING_QUIET already
-  # handled by session logging infra). Emits nothing on stdout/stderr
-  # so the preflight hook stays noise-free on the happy path.
-  if [ "$PROBE_ONLY" = "true" ]; then
-    set +e
-    check_bws_token >/dev/null 2>&1
-    exit $?
-  fi
+  if (args.kind === "help") {
+    printPlain(HELP);
+    return 0;
+  }
 
-  local bws_state
-  local bws_probe_cause=""
-{{- if ne "" .emailWork }}
-  local has_gh_auth="false"
-{{- end }}
-
-  # Capture the classification stdout while still acting on the exit code.
-  set +e
-  bws_probe_cause=$(check_bws_token)
-  local bws_rc=$?
-  set -e
-  case "$bws_rc" in
-    0) bws_state="ok" ;;
-    1) bws_state="missing" ;;
-    2)
-      if [ "$bws_probe_cause" = "auth" ]; then
-        bws_state="invalid-auth"
-      else
-        bws_state="invalid-unknown"
-      fi
-      ;;
-  esac
+  const bws = yield* checkBwsToken;
+  if (args.probeOnly) {
+    return bws.exitCode;
+  }
 {{- if ne "" .emailWork }}
 
-  if check_gh_auth; then
-    has_gh_auth="true"
-  fi
+  const hasGhAuth = yield* checkGhAuth;
+  const workMissing = yield* checkWorkConfig;
+  const tokenPath = yield* bwsTokenPath;
 
-  local -a work_missing
-  mapfile -t work_missing < <(check_work_config)
-
-  print_status "$bws_state" "$has_gh_auth" "${work_missing[@]}"
-  print_instructions "$bws_state" "$has_gh_auth" "${work_missing[@]}"
+  yield* printStatus(bws.state, hasGhAuth, workMissing);
+  yield* printInstructions(bws.state, tokenPath, hasGhAuth, workMissing);
 {{- else }}
-  print_status "$bws_state"
-  print_instructions "$bws_state"
+  const tokenPath = yield* bwsTokenPath;
+  yield* printStatus(bws.state);
+  yield* printInstructions(bws.state, tokenPath);
 {{- end }}
-}
+  return 0;
+});
 
-main "$@"
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  Effect.runPromiseExit(main).then((exit) => {
+    if (exit._tag === "Success") {
+      Deno.exit(exit.value);
+    }
+    console.error(exit.cause);
+    Deno.exit(1);
+  }).catch((err) => {
+    console.error(err);
+    Deno.exit(1);
+  });
+}

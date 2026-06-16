@@ -1,291 +1,560 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=tput,mise,bw,bws,rustup,chezmoi,coder,cw,delta,deno,fzf,npm,opencode,otter,pnpm,starship --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
-IFS=$'\n\t'
+// install-my-completions — generate zsh completions for managed CLI tools.
+//
+// Chezmoi renders this template before execution. Keep lint/test commands pointed
+// at rendered output, not the raw .tmpl source:
+//   chezmoi execute-template < home/private_dot_local/bin/executable_install-my-completions.tmpl > /tmp/imc.ts
+//   deno check /tmp/imc.ts && deno fmt --check /tmp/imc.ts && deno lint /tmp/imc.ts && deno test /tmp/imc.ts
+//
+// Effect v4 beta design (modules verified against effect@4.0.0-beta.83):
+//   - effect/unstable/cli      Command + a custom Flag.boolean("help"); the flag
+//                              shadows the built-in so `--help` prints the exact
+//                              usage below rather than the auto-generated help.
+//   - effect/FileSystem        directory creation, command-exists probing, and
+//                              the temp-file/rename/cleanup completion writes.
+//   - effect/Path              joins HOME with the completion dir + PATH-augment
+//                              dirs.
+//   - effect/unstable/process  ChildProcessSpawner.string captures stdout+stderr.
+//   - Duration                 Effect.timeout(Duration.seconds(15)) replaces the
+//                              old AbortController/setTimeout per-job deadline.
+//   - Config                   reads HOME / PATH from the environment.
+//
+// PERMISSIONS (minimal):
+//   --allow-run=<allowlist>  spawn mise + the managed tools to source completions
+//   --allow-read             FileSystem.exists / temp + directory reads
+//   --allow-write            FileSystem makeDirectory / temp file / rename / remove
+//   --allow-env              Config (HOME/PATH) + the env @effect/platform-node's
+//                            msgpackr reads at module load (NotCapable otherwise)
+//   --allow-sys=uid          FileSystem.exists -> Node fs.access calls uid()
+// The @effect/platform-node import is dynamic (import.meta.main path only) so the
+// offline `deno test` stays hermetic and permission-free.
 
-# Normalize TMPDIR
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import {
+  Config,
+  Console,
+  Duration,
+  Effect,
+  Logger,
+} from "npm:effect@4.0.0-beta.83";
+import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
+import * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
+import * as Path from "npm:effect@4.0.0-beta.83/Path";
 
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+const REL_COMPLETION_DIR = ".local/share/zsh-completions";
+const JOB_TIMEOUT_SECONDS = 15;
+const CONCURRENCY = 4;
 
-readonly REL_COMPLETION_DIR=".local/share/zsh-completions"
-readonly COMPLETION_DIR="${HOME}/${REL_COMPLETION_DIR}"
+type CompletionJob = {
+  readonly toolName: string;
+  readonly kind: "path" | "mise";
+  readonly miseToolName?: string;
+  readonly command: readonly string[];
+};
 
-# Color codes for TUI rendering
-readonly CYAN='\033[36m'
-readonly GREEN='\033[32m'
-readonly RED='\033[31m'
-readonly RESET='\033[0m'
+type CompletionResult =
+  | { readonly _tag: "success"; readonly toolName: string }
+  | {
+    readonly _tag: "failed";
+    readonly toolName: string;
+    readonly message: string;
+  }
+  | { readonly _tag: "timeout"; readonly toolName: string };
 
-# Job tracking
-declare -A JOB_PIDS=()
-declare -A JOB_NAMES=()
-declare -A JOB_STATUS=()
-declare -A JOB_START_TIMES=()
-declare -a JOB_ORDER=()
-readonly JOB_TMPDIR="${TMPDIR}/install-completions-$$"
-readonly JOB_TIMEOUT_SECONDS=15
+const completionJobs: ReadonlyArray<CompletionJob> = [
+  {
+    toolName: "bw",
+    kind: "mise",
+    miseToolName: "bw",
+    command: ["completion", "--shell", "zsh"],
+  },
+  {
+    toolName: "bws",
+    kind: "mise",
+    miseToolName: "bws",
+    command: ["completions", "zsh"],
+  },
+  {
+    toolName: "cargo",
+    kind: "mise",
+    miseToolName: "rustup",
+    command: ["completions", "zsh", "cargo"],
+  },
+  {
+    toolName: "chezmoi",
+    kind: "mise",
+    miseToolName: "chezmoi",
+    command: ["completion", "zsh"],
+  },
+  { toolName: "coder", kind: "path", command: ["completion", "zsh"] },
+  { toolName: "cw", kind: "path", command: ["completion", "zsh"] },
+  {
+    toolName: "delta",
+    kind: "mise",
+    miseToolName: "delta",
+    command: ["--generate-completion", "zsh"],
+  },
+  {
+    toolName: "deno",
+    kind: "mise",
+    miseToolName: "deno",
+    command: ["completions", "zsh"],
+  },
+  { toolName: "fzf", kind: "mise", miseToolName: "fzf", command: ["--zsh"] },
+  { toolName: "mise", kind: "path", command: ["completion", "zsh"] },
+  {
+    toolName: "npm",
+    kind: "mise",
+    miseToolName: "npm",
+    command: ["completion"],
+  },
+  { toolName: "opencode", kind: "path", command: ["completion"] },
+  { toolName: "otter", kind: "path", command: ["completion", "zsh"] },
+  { toolName: "pnpm", kind: "path", command: ["completion", "zsh"] },
+  {
+    toolName: "rustup",
+    kind: "mise",
+    miseToolName: "rustup",
+    command: ["completions", "zsh"],
+  },
+  {
+    toolName: "starship",
+    kind: "mise",
+    miseToolName: "starship",
+    command: ["completions", "zsh"],
+  },
+];
 
-#/ Usage:
-#/   install-my-completions
-#/
-#/ Description:
-#/   Installs zsh completions for common CLI tools to ~/.local/share/zsh-completions.
-#/   The directory is already configured in fpath, so completions will be automatically
-#/   discovered by zsh's completion system after running this script.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+const usage = `Usage:
+  install-my-completions
 
-setup_job_tracking() {
-  mkdir -p "$JOB_TMPDIR"
-  trap 'rm -rf "$JOB_TMPDIR"' EXIT
+Description:
+  Installs zsh completions for common CLI tools to ~/.local/share/zsh-completions.
+  The directory is already configured in fpath, so completions will be automatically
+  discovered by zsh's completion system after running this script.
+
+Options:
+  --help:      Display this help message`;
+
+// Pure string builder for the target file name. Kept synchronous and
+// Path-service-free so the in-file test pins the `_<tool>` zsh naming offline.
+const completionFile = (dir: string, toolName: string): string =>
+  `${dir}/_${toolName}`;
+
+// PATH-augmenting directories, in the precedence order the bash original built
+// via successive prependPath() calls: brew first on darwin, then mise shims,
+// then ~/.local/bin, ahead of the inherited PATH. Built inside the Effect (with
+// the Path service) so importing the module reads no env and touches no service.
+const augmentPath = (home: string, basePath: string): Effect.Effect<
+  string,
+  never,
+  Path.Path
+> =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const prepend = [
+{{- if eq .chezmoi.os "darwin" }}
+      "{{ .brewprefix }}/bin",
+{{- end }}
+      path.join(home, ".local", "share", "mise", "shims"),
+      path.join(home, ".local", "bin"),
+    ];
+    return [...prepend, basePath].filter((entry) => entry !== "").join(":");
+  });
+
+// `command -v <tool>` — walk the augmented PATH and probe each candidate with
+// FileSystem.exists (replaces the Deno.stat PATH-walk).
+const commandExists = (
+  augmentedPath: string,
+  toolName: string,
+): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    for (const dir of augmentedPath.split(":")) {
+      if (dir === "") continue;
+      const exists = yield* fs.exists(`${dir}/${toolName}`).pipe(
+        Effect.orElseSucceed(() => false),
+      );
+      if (exists) return true;
+    }
+    return false;
+  });
+
+// `mkdir -p` the completion dir if missing (replaces the Deno.stat/Deno.mkdir
+// dance). makeDirectory({ recursive: true }) is idempotent.
+const ensureCompletionDir = (dir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(dir))) {
+      yield* Effect.logInfo(`╍ Creating completion directory: ${dir}`);
+      yield* fs.makeDirectory(dir, { recursive: true });
+    }
+  });
+
+type CommandResult =
+  | { readonly _tag: "ok"; readonly output: string }
+  | { readonly _tag: "failed"; readonly message: string }
+  | { readonly _tag: "timeout" };
+
+// Run a command, capturing stdout+stderr, under a 15s deadline. Timeout ->
+// timeout, spawn/non-zero failure -> failed, otherwise -> ok with the output
+// (replaces Deno.Command + AbortController + setTimeout).
+const runCommand = (
+  augmentedPath: string,
+  command: string,
+  args: readonly string[],
+): Effect.Effect<
+  CommandResult,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const collect = spawner.string(
+      ChildProcess.make(command, args, {
+        env: { PATH: augmentedPath },
+        extendEnv: true,
+      }),
+      { includeStderr: true },
+    );
+    return yield* collect.pipe(
+      Effect.timeout(Duration.seconds(JOB_TIMEOUT_SECONDS)),
+      Effect.map((output): CommandResult => ({ _tag: "ok", output })),
+      Effect.catchTag(
+        "TimeoutError",
+        () => Effect.succeed<CommandResult>({ _tag: "timeout" }),
+      ),
+      Effect.catch(() =>
+        Effect.succeed<CommandResult>({
+          _tag: "failed",
+          message: `failed to run ${command} ${args.join(" ")}`,
+        })
+      ),
+    );
+  });
+
+const checkMiseTool = (
+  augmentedPath: string,
+  toolName: string,
+): Effect.Effect<
+  string | null,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  runCommand(augmentedPath, "mise", ["which", toolName]).pipe(
+    Effect.map((result) => {
+      if (result._tag === "ok") return null;
+      if (result._tag === "timeout") {
+        return `Timed out checking mise tool '${toolName}'`;
+      }
+      return `Tool '${toolName}' not installed in mise`;
+    }),
+  );
+
+const generateCommand = (
+  job: CompletionJob,
+): readonly [string, readonly string[]] => {
+  if (job.kind === "mise") {
+    return ["mise", [
+      "exec",
+      "--",
+      job.miseToolName ?? job.toolName,
+      ...job.command,
+    ]];
+  }
+  return [job.toolName, job.command];
+};
+
+// Atomically install the generated completion: write to a temp file then rename
+// into place; remove the temp on failure (replaces Deno.makeTempFile /
+// writeTextFile / rename / remove).
+const writeCompletion = (
+  dir: string,
+  job: CompletionJob,
+  output: string,
+): Effect.Effect<CompletionResult, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    if (output.length === 0) {
+      return {
+        _tag: "failed" as const,
+        toolName: job.toolName,
+        message: `Generated empty completion output for ${job.toolName}`,
+      };
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const tempFile = yield* fs.makeTempFile({
+      directory: dir,
+      prefix: `.${job.toolName}.`,
+      suffix: ".tmp",
+    });
+    return yield* fs.writeFileString(tempFile, output).pipe(
+      Effect.andThen(fs.rename(tempFile, completionFile(dir, job.toolName))),
+      Effect.as<CompletionResult>({
+        _tag: "success",
+        toolName: job.toolName,
+      }),
+      Effect.catch((cause) =>
+        fs.remove(tempFile, { force: true }).pipe(
+          Effect.ignore,
+          Effect.as<CompletionResult>({
+            _tag: "failed",
+            toolName: job.toolName,
+            message: `Failed to install completion for ${job.toolName}: ${
+              String(cause)
+            }`,
+          }),
+        )
+      ),
+    );
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed<CompletionResult>({
+        _tag: "failed",
+        toolName: job.toolName,
+        message: `Failed to install completion for ${job.toolName}`,
+      })
+    ),
+  );
+
+const generateCompletion = (
+  augmentedPath: string,
+  dir: string,
+  job: CompletionJob,
+): Effect.Effect<
+  CompletionResult,
+  never,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    if (job.kind === "mise") {
+      if (!(yield* commandExists(augmentedPath, "mise"))) {
+        return {
+          _tag: "failed" as const,
+          toolName: job.toolName,
+          message: "mise not found in PATH",
+        };
+      }
+      const miseError = yield* checkMiseTool(
+        augmentedPath,
+        job.miseToolName ?? job.toolName,
+      );
+      if (miseError !== null) {
+        return {
+          _tag: "failed" as const,
+          toolName: job.toolName,
+          message: miseError,
+        };
+      }
+    } else if (!(yield* commandExists(augmentedPath, job.toolName))) {
+      return {
+        _tag: "failed" as const,
+        toolName: job.toolName,
+        message: `Tool '${job.toolName}' not found in PATH`,
+      };
+    }
+
+    const [command, args] = generateCommand(job);
+    const result = yield* runCommand(augmentedPath, command, args);
+    if (result._tag === "timeout") {
+      return { _tag: "timeout" as const, toolName: job.toolName };
+    }
+    if (result._tag === "failed") {
+      return {
+        _tag: "failed" as const,
+        toolName: job.toolName,
+        message:
+          `Failed to generate completion for ${job.toolName}: ${result.message}`,
+      };
+    }
+    return yield* writeCompletion(dir, job, result.output);
+  });
+
+// Custom logger matching bash-logging.sh format:
+//   info <message>    → cyan  (\x1b[36m) on stderr
+//   warning <message> → yellow (\x1b[33m) on stderr
+// No timestamp, no fiber id, no bracketed level — just `<prefix> <message>\n`.
+const enc = new TextEncoder();
+const bashStyleLogger = Logger.make((opts) => {
+  let line: string;
+  if (opts.logLevel === "Warn") {
+    line = `\x1b[33mwarning ${opts.message}\x1b[0m\n`;
+  } else {
+    // Info and everything else falls through as "info"
+    line = `\x1b[36minfo ${opts.message}\x1b[0m\n`;
+  }
+  Deno.stderr.writeSync(enc.encode(line));
+});
+const loggerLayer = Logger.layer([bashStyleLogger]);
+
+const installCompletions = Effect.gen(function* () {
+  const home = yield* Config.string("HOME").pipe(Config.withDefault(""));
+  const basePath = yield* Config.string("PATH").pipe(Config.withDefault(""));
+  const augmentedPath = yield* augmentPath(home, basePath);
+
+  const path = yield* Path.Path;
+  const dir = path.join(home, REL_COMPLETION_DIR);
+  yield* Effect.logInfo(`▶ Installing zsh completions to ${dir}`);
+
+  yield* ensureCompletionDir(dir);
+
+  yield* Effect.logInfo(
+    `╍ Sourcing ${completionJobs.length} completions in parallel...`,
+  );
+  const results = yield* Effect.forEach(
+    completionJobs,
+    (job) => generateCompletion(augmentedPath, dir, job),
+    { concurrency: CONCURRENCY },
+  );
+
+  const successCount = results.filter((result) =>
+    result._tag === "success"
+  ).length;
+  const failed = results.filter((result) => result._tag === "failed");
+  const timedOut = results.filter((result) => result._tag === "timeout");
+
+  yield* Effect.logInfo("▶ Completion installation summary:");
+  yield* Effect.logInfo(`  ✓ Installed: ${successCount}`);
+  if (failed.length > 0) {
+    yield* Effect.logInfo(`  ✗ Failed: ${failed.length}`);
+  }
+  if (timedOut.length > 0) {
+    yield* Effect.logInfo(
+      `  ⏱ Timed out (>${JOB_TIMEOUT_SECONDS}s): ${timedOut.length} (${
+        timedOut.map((job) => job.toolName).join(" ")
+      })`,
+    );
+  }
+
+  if (successCount === 0) {
+    yield* Effect.logWarning(
+      "No completions were successfully installed. Check that mise and required tools are installed.",
+    );
+  }
+});
+
+// One command, one optional `--help` flag. The custom `help` flag shadows the
+// CLI's built-in --help so we print the exact usage string above.
+const command = Command.make(
+  "install-my-completions",
+  { help: Flag.boolean("help") },
+  Effect.fn(function* ({ help }) {
+    if (help) {
+      yield* Console.log(usage);
+      return;
+    }
+    yield* installCompletions;
+  }),
+);
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  // Dynamic import keeps `deno test` hermetic and permission-free. NodeServices
+  // supplies FileSystem / Path / ChildProcessSpawner (the CLI Environment too);
+  // NodeRuntime.runMain installs the signal handlers the parallel child-process
+  // fan-out relies on for graceful teardown.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  command.pipe(
+    Command.run({ version: "1.0.0" }),
+    Effect.provide(NodeServices.layer),
+    Effect.provide(loggerLayer),
+    NodeRuntime.runMain,
+  );
 }
 
-start_job() {
-  local job_id="$1"
-  local job_name="$2"
-  shift 2
-  local job_func="$1"
-  shift
-  local job_args=("$@")
+// === Tests ==================================================================
+// deno test /tmp/imc.ts
 
-  local result_file="${JOB_TMPDIR}/${job_id}"
+Deno.test("completion job inventory matches the bash implementation", () => {
+  const jobs = completionJobs.map((
+    job,
+  ) => [job.toolName, job.kind, job.miseToolName ?? ""]);
+  const expected = [
+    ["bw", "mise", "bw"],
+    ["bws", "mise", "bws"],
+    ["cargo", "mise", "rustup"],
+    ["chezmoi", "mise", "chezmoi"],
+    ["coder", "path", ""],
+    ["cw", "path", ""],
+    ["delta", "mise", "delta"],
+    ["deno", "mise", "deno"],
+    ["fzf", "mise", "fzf"],
+    ["mise", "path", ""],
+    ["npm", "mise", "npm"],
+    ["opencode", "path", ""],
+    ["otter", "path", ""],
+    ["pnpm", "path", ""],
+    ["rustup", "mise", "rustup"],
+    ["starship", "mise", "starship"],
+  ];
+  if (JSON.stringify(jobs) !== JSON.stringify(expected)) {
+    throw new Error(`unexpected jobs: ${JSON.stringify(jobs)}`);
+  }
+});
 
-  (
-    if "$job_func" "${job_args[@]}" > "${result_file}.log" 2>&1; then
-      echo "success" > "$result_file"
-    else
-      echo "failed" > "$result_file"
-    fi
-  ) &
+Deno.test("completion commands match bash command lines", () => {
+  const commands = Object.fromEntries(
+    completionJobs.map((job) => [job.toolName, generateCommand(job)]),
+  );
+  const assertCommand = (
+    toolName: string,
+    expected: readonly [string, readonly string[]],
+  ) => {
+    if (JSON.stringify(commands[toolName]) !== JSON.stringify(expected)) {
+      throw new Error(
+        `unexpected command for ${toolName}: ${
+          JSON.stringify(commands[toolName])
+        }`,
+      );
+    }
+  };
 
-  local pid=$!
-  JOB_PIDS["$job_id"]=$pid
-  JOB_NAMES["$job_id"]="$job_name"
-  JOB_STATUS["$job_id"]="running"
-  JOB_START_TIMES["$job_id"]=$(date +%s)
-  JOB_ORDER+=("$job_id")
-}
+  assertCommand("bw", ["mise", [
+    "exec",
+    "--",
+    "bw",
+    "completion",
+    "--shell",
+    "zsh",
+  ]]);
+  assertCommand("cargo", ["mise", [
+    "exec",
+    "--",
+    "rustup",
+    "completions",
+    "zsh",
+    "cargo",
+  ]]);
+  assertCommand("coder", ["coder", ["completion", "zsh"]]);
+  assertCommand("mise", ["mise", ["completion", "zsh"]]);
+  assertCommand("opencode", ["opencode", ["completion"]]);
+  assertCommand("pnpm", ["pnpm", ["completion", "zsh"]]);
+});
 
-check_job_status() {
-  local job_id="$1"
-  local pid="${JOB_PIDS[$job_id]}"
-  local result_file="${JOB_TMPDIR}/${job_id}"
-
-  if [ -f "$result_file" ]; then
-    JOB_STATUS["$job_id"]=$(cat "$result_file")
-    return 0
-  fi
-
-  if ! kill -0 "$pid" 2>/dev/null; then
-    if [ -f "$result_file" ]; then
-      JOB_STATUS["$job_id"]=$(cat "$result_file")
-    else
-      JOB_STATUS["$job_id"]="failed"
-    fi
-    return 0
-  fi
-
-  # Check for timeout
-  local start_time="${JOB_START_TIMES[$job_id]}"
-  local current_time
-  current_time=$(date +%s)
-  local elapsed=$((current_time - start_time))
-
-  if [ "$elapsed" -ge "$JOB_TIMEOUT_SECONDS" ]; then
-    kill "$pid" 2>/dev/null || true
-    # Also kill any child processes
-    pkill -P "$pid" 2>/dev/null || true
-    JOB_STATUS["$job_id"]="timeout"
-    echo "Killed after ${elapsed}s timeout" > "${result_file}.log"
-    return 0
-  fi
-
-  return 1
-}
-
-wait_for_jobs() {
-  local total=${#JOB_ORDER[@]}
-  local completed=0
-
-  info "╍ Sourcing ${total} completions in parallel..."
-
-  while [ "$completed" -lt "$total" ]; do
-    for job_id in "${JOB_ORDER[@]}"; do
-      if [ "${JOB_STATUS[$job_id]}" = "running" ]; then
-        if check_job_status "$job_id"; then
-          ((++completed))
-        fi
-      fi
-    done
-
-    if [ "$completed" -lt "$total" ]; then
-      sleep 0.1
-    fi
-  done
-}
-
-ensure_completion_dir() {
-  if [ ! -d "$COMPLETION_DIR" ]; then
-    info "╍ Creating completion directory: $COMPLETION_DIR"
-    if ! mkdir -p "$COMPLETION_DIR"; then
-      fatal "Failed to create completion directory at ${COMPLETION_DIR}. Check permissions and disk space."
-    fi
-  fi
-
-  if [ ! -d "$COMPLETION_DIR" ]; then
-    fatal "Completion directory does not exist at ${COMPLETION_DIR} after creation attempt. Check filesystem errors."
-  fi
-}
-
-install_completion() {
-  local tool_name="$1"
-  shift
-  local completion_command=("$@")
-
-  if ! command -v "$tool_name" >/dev/null 2>&1; then
-    echo "Tool '${tool_name}' not found in PATH" >&2
-    return 1
-  fi
-
-  local temp_file
-  temp_file=$(mktemp)
-
-  if ! "${completion_command[@]}" > "$temp_file" 2>&1; then
-    echo "Failed to generate completion for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  if [ ! -s "$temp_file" ]; then
-    echo "Generated empty completion output for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  local completion_file="${COMPLETION_DIR}/_${tool_name}"
-  if ! mv "$temp_file" "$completion_file" 2>&1; then
-    echo "Failed to install completion for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  return 0
-}
-
-install_mise_completion() {
-  local tool_name="$1"
-  local mise_tool_name="$2"
-  shift
-  shift
-  local completion_args=("$@")
-
-  if ! command -v mise >/dev/null 2>&1; then
-    echo "mise not found in PATH" >&2
-    return 1
-  fi
-
-  if ! mise which "$mise_tool_name" >/dev/null 2>&1; then
-    echo "Tool '${mise_tool_name}' not installed in mise" >&2
-    return 1
-  fi
-
-  local temp_file
-  temp_file=$(mktemp)
-
-  if ! mise exec -- "$mise_tool_name" "${completion_args[@]}" > "$temp_file" 2>&1; then
-    echo "Failed to generate completion for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  if [ ! -s "$temp_file" ]; then
-    echo "Generated empty completion output for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  local completion_file="${COMPLETION_DIR}/_${tool_name}"
-  if ! mv "$temp_file" "$completion_file" 2>&1; then
-    echo "Failed to install completion for ${tool_name}" >&2
-    rm -f "$temp_file"
-    return 1
-  fi
-
-  return 0
-}
-
-main() {
-  info "▶ Installing zsh completions to ${COMPLETION_DIR}"
-
-  # Setup PATH to include mise shims and homebrew
-  export PATH="${HOME}/.local/bin:${PATH}"
-  export PATH="${HOME}/.local/share/mise/shims:${PATH}"
-{{ if eq .chezmoi.os "darwin" }}
-  export PATH="{{ .brewprefix }}/bin:${PATH}"
-{{ end }}
-
-  ensure_completion_dir
-  setup_job_tracking
-
-  local job_num=0
-
-  start_job "job-$((job_num++))" "bw" install_mise_completion "bw" bw completion --shell zsh
-  start_job "job-$((job_num++))" "bws" install_mise_completion "bws" bws completions zsh
-  start_job "job-$((job_num++))" "cargo" install_mise_completion "cargo" rustup completions zsh cargo
-  start_job "job-$((job_num++))" "chezmoi" install_mise_completion "chezmoi" chezmoi completion zsh
-  start_job "job-$((job_num++))" "coder" install_completion "coder" coder completion zsh
-  start_job "job-$((job_num++))" "cw" install_completion "cw" cw completion zsh
-  start_job "job-$((job_num++))" "delta" install_mise_completion "delta" delta --generate-completion zsh
-  start_job "job-$((job_num++))" "deno" install_mise_completion "deno" deno completions zsh
-  start_job "job-$((job_num++))" "fzf" install_mise_completion "fzf" fzf --zsh
-  start_job "job-$((job_num++))" "mise" install_completion "mise" mise completion zsh
-  start_job "job-$((job_num++))" "npm" install_mise_completion "npm" npm completion
-  start_job "job-$((job_num++))" "opencode" install_completion "opencode" opencode completion
-  start_job "job-$((job_num++))" "otter" install_completion "otter" otter completion zsh
-  start_job "job-$((job_num++))" "pnpm" install_completion "pnpm" pnpm completion zsh
-  start_job "job-$((job_num++))" "rustup" install_mise_completion "rustup" rustup completions zsh
-  start_job "job-$((job_num++))" "starship" install_mise_completion "starship" starship completions zsh
-
-  wait_for_jobs
-
-  local success_count=0
-  local failed_count=0
-  local timeout_count=0
-  local timed_out_jobs=()
-
-  for job_id in "${JOB_ORDER[@]}"; do
-    case "${JOB_STATUS[$job_id]}" in
-      success)
-        ((++success_count))
-        ;;
-      timeout)
-        ((++timeout_count))
-        timed_out_jobs+=("${JOB_NAMES[$job_id]}")
-        ;;
-      *)
-        ((++failed_count))
-        ;;
-    esac
-  done
-
-  info "▶ Completion installation summary:"
-  info "  ✓ Installed: ${success_count}"
-  if [ "$failed_count" -gt 0 ]; then
-    info "  ✗ Failed: ${failed_count}"
-  fi
-  if [ "$timeout_count" -gt 0 ]; then
-    info "  ⏱ Timed out (>${JOB_TIMEOUT_SECONDS}s): ${timeout_count} (${timed_out_jobs[*]})"
-  fi
-
-  if [ "$success_count" -eq 0 ]; then
-    warning "No completions were successfully installed. Check that mise and required tools are installed."
-  fi
-}
-
-main "$@"
+Deno.test("completion target file keeps zsh underscore naming", () => {
+  if (
+    completionFile("/tmp/zsh-completions", "chezmoi") !==
+      "/tmp/zsh-completions/_chezmoi"
+  ) {
+    throw new Error("completion file path changed");
+  }
+});

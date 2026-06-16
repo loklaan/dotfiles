@@ -1,231 +1,778 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=mise,bash,/opt/Orca/orca-ide --allow-read --allow-write --allow-env --allow-ffi
 
-#/ Usage: orca-serve [ORCA SERVE OPTIONS...]
-#/
-#/ Transparent wrapper around `orca serve` that handles headless Linux
-#/ execution (no Xvfb needed) and filters noisy Electron stderr.
-#/
-#/ All arguments are forwarded directly to `orca serve`.
-#/ Run `orca-serve --help` to see the upstream options.
-#/
-#/ Discovery strategy:
-#/   1. mise-installed AppImage (preferred). The AppImage is opaque to direct
-#/      headless invocation (its bundled Electron rejects --ozone-platform=
-#/      headless before flag-parsing), so we extract it into a versioned cache
-#/      directory and invoke the same way the .deb path does:
-#/        ELECTRON_RUN_AS_NODE=1 <orca-ide> <cli/index.js> serve ...
-#/      Extraction is one-time per version; cached at:
-#/        ~/.cache/dotfiles/orca-extracted/<version>/squashfs-root/
-#/   2. /opt/Orca (legacy .deb install) — used as-is.
-#/
-#/ Environment:
-#/   ORCA_SERVE_EXTRA_ARGS   Additional Chromium flags for the Electron child
+// df-orca-serve — transparent `orca serve` wrapper for headless Linux.
+//
+// Pitchfork launches this process directly. Its contract is load-bearing:
+// resolve a mise AppImage or legacy /opt/Orca install, inject headless Electron
+// flags through ORCA_APP_EXECUTABLE, preserve node-related env handoff, forward
+// all CLI args to `orca serve`, filter noisy Electron stderr, and shut the child
+// down with SIGTERM→SIGKILL when the wrapper is interrupted.
 
-# --- Logging --------------------------------------------------------------
-_log() {
-  local color="$1" label="$2"; shift 2
-  local code
-  case "$color" in
-    green) code="32" ;; cyan) code="36" ;; yellow) code="33" ;; red) code="31" ;;
-    *) code="0" ;;
-  esac
-  printf '\033[%sm[%s]\033[0m %s\n' "$code" "$label" "$*" >&2
-}
-info()  { _log cyan   "orca" "$@"; }
-ok()    { _log green  "orca" "$@"; }
-warn()  { _log yellow "orca" "$@"; }
-error() { _log red    "orca" "$@"; }
+import {
+  Config,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Scope,
+  Stream,
+} from "npm:effect@4.0.0-beta.83";
+import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
-# --- Resolve Orca extraction directory -----------------------------------
-# Both paths converge on a directory layout containing:
-#   <root>/orca-ide                                              (Electron binary)
-#   <root>/resources/app.asar.unpacked/out/cli/index.js          (CLI entry)
-# For the AppImage path, we extract on first use and cache by version. For
-# the .deb path, /opt/Orca already has this layout.
+// ============================================================================
+// Constants and domain types
+// ============================================================================
 
-ORCA_ROOT=""
-ORCA_INSTALL_MODE=""
-EXTRACT_BASE="${HOME}/.cache/dotfiles/orca-extracted"
+const RESET = "\x1b[0m";
+const CYAN = "\x1b[36m";
+const YELLOW = "\x1b[33m";
+const RED = "\x1b[31m";
+const GREEN = "\x1b[32m";
+const FORCE_KILL_AFTER_MS = 8_000;
 
-resolve_appimage_root() {
-  command -v mise >/dev/null 2>&1 || return 1
+type InstallMode = "mise-appimage" | "deb";
 
-  local mise_orca_path
-  mise_orca_path=$(mise which orca 2>/dev/null || true)
-  if [[ -z "$mise_orca_path" || ! -x "$mise_orca_path" ]]; then
-    return 1
-  fi
-
-  # Derive a stable cache key from the install path. mise's install path
-  # contains the version segment (~/.local/share/mise/installs/http-orca/<v>/orca),
-  # so we extract that. Falls back to the AppImage's content checksum if
-  # the path shape changes.
-  local version
-  version=$(printf '%s' "$mise_orca_path" \
-    | grep -oE 'http-orca/[^/]+/' \
-    | head -1 | tr -d '/')
-  version="${version#http-orca}"
-  if [[ -z "$version" ]]; then
-    version="checksum-$(sha256sum "$mise_orca_path" | cut -c1-12)"
-  fi
-
-  local extract_dir="${EXTRACT_BASE}/${version}"
-  local root_dir="${extract_dir}/squashfs-root"
-
-  if [[ ! -x "${root_dir}/orca-ide" ]]; then
-    info "extracting AppImage to ${extract_dir} (one-time per version)"
-    mkdir -p "$extract_dir"
-    if ! ( cd "$extract_dir" && "$mise_orca_path" --appimage-extract >/dev/null 2>&1 ); then
-      error "AppImage extraction failed for ${mise_orca_path}"
-      return 1
-    fi
-  fi
-
-  ORCA_ROOT="$root_dir"
-  ORCA_INSTALL_MODE="mise-appimage"
+interface OrcaInstall {
+  readonly root: string;
+  readonly mode: InstallMode;
 }
 
-resolve_deb_root() {
-  if [[ -x /opt/Orca/orca-ide ]]; then
-    ORCA_ROOT="/opt/Orca"
-    ORCA_INSTALL_MODE="deb"
-  fi
+interface OrcaPaths extends OrcaInstall {
+  readonly electron: string;
+  readonly cli: string;
 }
 
-resolve_appimage_root || true
-if [[ -z "$ORCA_ROOT" ]]; then
-  resolve_deb_root || true
-fi
-
-if [[ -z "$ORCA_ROOT" ]]; then
-  error "could not locate orca install"
-  error "  expected: mise-installed AppImage (\$(mise which orca)) or /opt/Orca (.deb)"
-  error "  fix: ensure mise has installed http:orca, or fall back to apt-installing orca-ide"
-  exit 1
-fi
-
-ELECTRON="$ORCA_ROOT/orca-ide"
-CLI="$ORCA_ROOT/resources/app.asar.unpacked/out/cli/index.js"
-
-[[ -x "$ELECTRON" ]] || { error "Electron binary missing at $ELECTRON"; exit 1; }
-[[ -f "$CLI" ]]      || { error "CLI entrypoint missing at $CLI"; exit 1; }
-
-# --- Pass --help through to the real CLI ----------------------------------
-for arg in "$@"; do
-  if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-    ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" serve --help
-    exit $?
-  fi
-done
-
-# --- Output filter --------------------------------------------------------
-filter_output() {
-  while IFS= read -r line; do
-    case "$line" in
-      *"ERROR:dbus/"*) continue ;;
-      *"ERROR:object_proxy"*) continue ;;
-      *"ERROR:gpu_"*) continue ;;
-      *"ERROR:angle_platform"*) continue ;;
-      *"ERROR:vulkan"*) continue ;;
-      *"Fontconfig"*) continue ;;
-      *"pango"*) continue ;;
-      *"libGL"*) continue ;;
-      *"Mesa"*|*"MESA"*) continue ;;
-      *"DRI"*|*"gbm"*) continue ;;
-      *"InitializeSandbox"*) continue ;;
-      *"sandbox"*) continue ;;
-      *"zygote"*) continue ;;
-      *"crashpad"*) continue ;;
-      *"DevTools listening"*) continue ;;
-      *"extensions"*) continue ;;
-      "") continue ;;
-    esac
-
-    if [[ "$line" == *"server ready"* || "$line" == *"Server ready"* ]]; then
-      ok "$line"
-    elif [[ "$line" == *"FATAL"* || "$line" == *"fatal"* ]]; then
-      error "$line"
-    elif [[ "$line" == *"WARNING"* || "$line" == *"warning"* ]]; then
-      warn "$line"
-    else
-      info "$line"
-    fi
-  done
+interface ProcessStatus {
+  readonly code: number;
+  readonly signal: string | null;
 }
 
-info "starting orca serve (mode=${ORCA_INSTALL_MODE}, headless)"
-
-# --- Headless Electron wrapper --------------------------------------------
-# serveOrcaApp() uses ORCA_APP_EXECUTABLE to resolve the Electron binary.
-# We point it at a thin wrapper that injects --ozone-platform=headless so
-# Electron starts without a display server.
-WRAPPER_BIN=$(mktemp /tmp/orca-headless-XXXXXX)
-cat > "$WRAPPER_BIN" <<EOF
-#!/usr/bin/env bash
-exec "$ELECTRON" --ozone-platform=headless --disable-gpu ${ORCA_SERVE_EXTRA_ARGS:-} "\$@"
-EOF
-chmod +x "$WRAPPER_BIN"
-
-# --- Signal forwarding ----------------------------------------------------
-# Strategy: run orca in the foreground through a FIFO so we retain direct
-# process parentage. A background reader drains the FIFO through the filter.
-# SIGINT/SIGTERM hit THIS script directly; we forward to the child PID.
-
-FIFO=$(mktemp -u /tmp/orca-fifo-XXXXXX)
-mkfifo "$FIFO"
-
-cleanup() {
-  rm -f "${WRAPPER_BIN:-}" "${FIFO:-}" 2>/dev/null || true
+class OrcaServeError extends Error {
+  override readonly name = "OrcaServeError";
 }
-trap cleanup EXIT
 
-# Background: read from FIFO and filter
-filter_output < "$FIFO" &
-FILTER_PID=$!
+type ChildProcessSpawnerService = InstanceType<
+  typeof ChildProcessSpawner.ChildProcessSpawner
+>["Service"];
 
-# Launch via Electron-as-Node, pointing at the unpacked CLI script.
-export ELECTRON_RUN_AS_NODE=1
-export ORCA_APP_EXECUTABLE="$WRAPPER_BIN"
-export ORCA_NODE_OPTIONS="${NODE_OPTIONS:-}"
-export ORCA_NODE_REPL_EXTERNAL_MODULE="${NODE_REPL_EXTERNAL_MODULE:-}"
-unset NODE_OPTIONS 2>/dev/null || true
-unset NODE_REPL_EXTERNAL_MODULE 2>/dev/null || true
+type ChildProcessHandle = ChildProcessSpawner.ChildProcessHandle;
 
-# Foreground: launch orca writing to FIFO. Use setsid so it gets its own
-# process group — this prevents SIGINT from the terminal going directly to
-# Electron (which swallows it). Instead SIGINT hits our script and we
-# forward SIGTERM for a clean shutdown.
-setsid "$ELECTRON" "$CLI" serve "$@" > "$FIFO" 2>&1 &
-ORCA_PID=$!
+// ============================================================================
+// Logging and stderr filtering
+// ============================================================================
 
-shutdown() {
-  info "shutting down..."
-  kill -TERM "$ORCA_PID" 2>/dev/null || true
-  local i=0
-  while kill -0 "$ORCA_PID" 2>/dev/null && (( i < 80 )); do
-    sleep 0.1
-    (( i++ ))
-  done
-  if kill -0 "$ORCA_PID" 2>/dev/null; then
-    warn "force-killing after timeout"
-    kill -KILL "$ORCA_PID" 2>/dev/null || true
-  fi
-  wait "$ORCA_PID" 2>/dev/null || true
-  kill "$FILTER_PID" 2>/dev/null || true
-  wait "$FILTER_PID" 2>/dev/null || true
-  rm -f "$FIFO" "${WRAPPER_BIN:-}" 2>/dev/null || true
-  ok "stopped"
-  # exit in trap replaces the default signal disposition
-  exit 0
+type FilteredLine =
+  | { readonly _tag: "Drop" }
+  | {
+    readonly _tag: "Emit";
+    readonly level: "ok" | "info" | "warning" | "error";
+    readonly line: string;
+  };
+
+// Color-capable line formatting, inlined from the former deno-logging.ts
+// dependency with identical behavior: ANSI color is applied only when the
+// terminal advertises >8 colors via `tput colors`, otherwise (including when
+// --allow-run does not permit tput, as in this tool) output stays plain text.
+let _colorEnabled: boolean | undefined;
+const colorEnabled = (): boolean => {
+  if (_colorEnabled !== undefined) return _colorEnabled;
+  _colorEnabled = false;
+  return _colorEnabled;
+};
+
+const _formatLine = (colorCode: string, msg: string): string =>
+  colorEnabled() ? `${colorCode}${msg}${RESET}` : msg;
+
+const formatOrcaLine = (
+  level: "ok" | "info" | "warning" | "error",
+  line: string,
+): string => {
+  const color = level === "ok"
+    ? GREEN
+    : level === "warning"
+    ? YELLOW
+    : level === "error"
+    ? RED
+    : CYAN;
+  return _formatLine(color, `[orca] ${line}`);
+};
+
+const emitOrca = (
+  level: "ok" | "info" | "warning" | "error",
+  line: string,
+): void => {
+  Deno.stderr.writeSync(
+    new TextEncoder().encode(formatOrcaLine(level, line) + "\n"),
+  );
+};
+
+const NOISY_SUBSTRINGS = [
+  "ERROR:dbus/",
+  "ERROR:object_proxy",
+  "ERROR:gpu_",
+  "ERROR:angle_platform",
+  "ERROR:vulkan",
+  "Fontconfig",
+  "pango",
+  "libGL",
+  "InitializeSandbox",
+  "sandbox",
+  "zygote",
+  "crashpad",
+  "DevTools listening",
+  "extensions",
+] as const;
+
+export const filterStderrLine = (line: string): FilteredLine => {
+  if (line === "") return { _tag: "Drop" };
+  if (NOISY_SUBSTRINGS.some((fragment) => line.includes(fragment))) {
+    return { _tag: "Drop" };
+  }
+  if (line.includes("Mesa") || line.includes("MESA")) return { _tag: "Drop" };
+  if (line.includes("DRI") || line.includes("gbm")) return { _tag: "Drop" };
+
+  if (line.includes("server ready") || line.includes("Server ready")) {
+    return { _tag: "Emit", level: "ok", line };
+  }
+  if (line.includes("FATAL") || line.includes("fatal")) {
+    return { _tag: "Emit", level: "error", line };
+  }
+  if (line.includes("WARNING") || line.includes("warning")) {
+    return { _tag: "Emit", level: "warning", line };
+  }
+  return { _tag: "Emit", level: "info", line };
+};
+
+const isEmittedLine = (
+  line: FilteredLine,
+): line is Extract<FilteredLine, { readonly _tag: "Emit" }> =>
+  line._tag === "Emit";
+
+const filterStderrStream = (
+  handle: ChildProcessHandle,
+): Effect.Effect<void, OrcaServeError> =>
+  handle.all.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.map((line) => filterStderrLine(line.replace(/\r$/, ""))),
+    Stream.filter(isEmittedLine),
+    Stream.runForEach((line) =>
+      Effect.sync(() => emitOrca(line.level, line.line))
+    ),
+    Effect.mapError((cause) =>
+      new OrcaServeError(`failed to filter orca stderr: ${String(cause)}`)
+    ),
+  );
+
+// ============================================================================
+// Pure path/env helpers
+// ============================================================================
+
+const homeDir = Config.string("HOME").pipe(Config.withDefault(""));
+
+export const deriveAppImageVersion = (miseOrcaPath: string): string | null => {
+  const match = miseOrcaPath.match(/http-orca\/([^/]+)\//);
+  return match?.[1] ?? null;
+};
+
+export const buildAppImageInstall = (
+  home: string,
+  miseOrcaPath: string,
+  checksumPrefix: string,
+): OrcaInstall => {
+  const version = deriveAppImageVersion(miseOrcaPath) ??
+    `checksum-${checksumPrefix}`;
+  return {
+    root: `${home}/.cache/dotfiles/orca-extracted/${version}/squashfs-root`,
+    mode: "mise-appimage",
+  };
+};
+
+export const buildOrcaPaths = (install: OrcaInstall): OrcaPaths => ({
+  ...install,
+  electron: `${install.root}/orca-ide`,
+  cli: `${install.root}/resources/app.asar.unpacked/out/cli/index.js`,
+});
+
+export const buildServeArgs = (
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+  "serve",
+  ...args,
+];
+
+const buildElectronArgs = (
+  paths: OrcaPaths,
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+  paths.cli,
+  ...buildServeArgs(args),
+];
+
+const buildHelpArgs = (paths: OrcaPaths): ReadonlyArray<string> => [
+  paths.cli,
+  "serve",
+  "--help",
+];
+
+const buildBashExecArgs = (
+  command: string,
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+  "-c",
+  'exec "$1" "${@:2}"',
+  "bash",
+  command,
+  ...args,
+];
+
+const hasHelpArg = (args: ReadonlyArray<string>): boolean =>
+  args.some((arg) => arg === "--help" || arg === "-h");
+
+const buildChildEnv = (wrapperBin: string): Record<string, string> => {
+  const env = Deno.env.toObject();
+  env.ELECTRON_RUN_AS_NODE = "1";
+  env.ORCA_APP_EXECUTABLE = wrapperBin;
+  env.ORCA_NODE_OPTIONS = env.NODE_OPTIONS ?? "";
+  env.ORCA_NODE_REPL_EXTERNAL_MODULE = env.NODE_REPL_EXTERNAL_MODULE ?? "";
+  delete env.NODE_OPTIONS;
+  delete env.NODE_REPL_EXTERNAL_MODULE;
+  return env;
+};
+
+const singleQuote = (value: string): string =>
+  `'${value.replaceAll("'", `'\\''`)}'`;
+
+const wrapperScript = (electron: string): string =>
+  `#!/usr/bin/env bash\nexec ${
+    singleQuote(electron)
+  } --ozone-platform=headless --disable-gpu \${ORCA_SERVE_EXTRA_ARGS:-} "$@"\n`;
+
+// ============================================================================
+// Filesystem and process effects
+// ============================================================================
+
+const fileExists = (path: string): Effect.Effect<boolean, never, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    return yield* fs.stat(path).pipe(
+      Effect.as(true),
+      Effect.catch(() => Effect.succeed(false)),
+    );
+  });
+
+const isExecutableFile = (
+  path: string,
+): Effect.Effect<boolean, never, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    return yield* fs.stat(path).pipe(
+      Effect.map((stat) => stat.type === "File"),
+      Effect.catch(() => Effect.succeed(false)),
+    );
+  });
+
+const ensureDir = (
+  dir: string,
+): Effect.Effect<void, OrcaServeError, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    yield* fs.makeDirectory(dir, { recursive: true }).pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(`failed to create ${dir}: ${String(cause)}`)
+      ),
+    );
+  });
+
+const checksumPrefix = (
+  file: string,
+): Effect.Effect<string, OrcaServeError, FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    const data = yield* fs.readFile(file).pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(`failed to checksum ${file}: ${String(cause)}`)
+      ),
+    );
+    const digest = yield* Effect.tryPromise({
+      try: () =>
+        crypto.subtle.digest(
+          "SHA-256",
+          data.buffer.slice(
+            data.byteOffset,
+            data.byteOffset + data.byteLength,
+          ) as ArrayBuffer,
+        ),
+      catch: (cause) =>
+        new OrcaServeError(`failed to checksum ${file}: ${String(cause)}`),
+    });
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 12);
+  });
+
+const runString = (
+  spawner: ChildProcessSpawnerService,
+  command: ChildProcess.Command,
+  options?: { readonly includeStderr?: boolean },
+): Effect.Effect<string, OrcaServeError> =>
+  spawner.string(command, options).pipe(
+    Effect.mapError((cause) =>
+      new OrcaServeError(`failed to run command: ${String(cause)}`)
+    ),
+  );
+
+const runExitCode = (
+  spawner: ChildProcessSpawnerService,
+  command: ChildProcess.Command,
+): Effect.Effect<number, OrcaServeError> =>
+  spawner.exitCode(command).pipe(
+    Effect.map((code) => Number(code)),
+    Effect.mapError((cause) =>
+      new OrcaServeError(`failed to run command: ${String(cause)}`)
+    ),
+  );
+
+const resolveAppImageRoot = (
+  spawner: ChildProcessSpawnerService,
+): Effect.Effect<OrcaInstall | null, OrcaServeError, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const miseOrcaPath = yield* runString(
+      spawner,
+      ChildProcess.make("mise", ["which", "orca"], { stderr: "ignore" }),
+    ).pipe(
+      Effect.orElseSucceed(() => ""),
+      Effect.map((output) => output.trim()),
+    );
+    if (miseOrcaPath === "" || !(yield* isExecutableFile(miseOrcaPath))) {
+      return null;
+    }
+
+    const prefix = deriveAppImageVersion(miseOrcaPath) === null
+      ? yield* checksumPrefix(miseOrcaPath)
+      : "";
+    const home = yield* homeDir.pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(`failed to read HOME config: ${String(cause)}`)
+      ),
+    );
+    const install = buildAppImageInstall(home, miseOrcaPath, prefix);
+    const path = yield* Path;
+    const extractDir = path.dirname(install.root);
+    const electron = `${install.root}/orca-ide`;
+
+    if (!(yield* isExecutableFile(electron))) {
+      emitOrca(
+        "info",
+        `extracting AppImage to ${extractDir} (one-time per version)`,
+      );
+      yield* ensureDir(extractDir);
+      const extractedCode = yield* runExitCode(
+        spawner,
+        ChildProcess.make(
+          "bash",
+          [
+            // Keep Deno's --allow-run static while preserving the original behavior:
+            // bash execs the mise-resolved AppImage inside the versioned cache dir.
+            "-c",
+            'cd "$1" && "$2" --appimage-extract >/dev/null 2>&1',
+            "bash",
+            extractDir,
+            miseOrcaPath,
+          ],
+        ),
+      );
+      if (extractedCode !== 0) {
+        throw new OrcaServeError(
+          `AppImage extraction failed for ${miseOrcaPath}`,
+        );
+      }
+    }
+
+    return install;
+  });
+
+const resolveDebRoot = (): Effect.Effect<
+  OrcaInstall | null,
+  never,
+  FileSystem
+> =>
+  isExecutableFile("/opt/Orca/orca-ide").pipe(
+    Effect.map((exists) =>
+      exists ? { root: "/opt/Orca", mode: "deb" as const } : null
+    ),
+  );
+
+const resolveOrcaPaths = (
+  spawner: ChildProcessSpawnerService,
+): Effect.Effect<OrcaPaths, OrcaServeError, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const install = (yield* resolveAppImageRoot(spawner)) ??
+      (yield* resolveDebRoot());
+    if (install === null) {
+      throw new OrcaServeError(
+        "could not locate orca install\n" +
+          "  expected: mise-installed AppImage ($(mise which orca)) or /opt/Orca (.deb)\n" +
+          "  fix: ensure mise has installed http:orca, or fall back to apt-installing orca-ide",
+      );
+    }
+
+    const paths = buildOrcaPaths(install);
+    if (!(yield* isExecutableFile(paths.electron))) {
+      throw new OrcaServeError(`Electron binary missing at ${paths.electron}`);
+    }
+    if (!(yield* fileExists(paths.cli))) {
+      throw new OrcaServeError(`CLI entrypoint missing at ${paths.cli}`);
+    }
+    return paths;
+  });
+
+const writeWrapper = (
+  electron: string,
+): Effect.Effect<string, OrcaServeError, FileSystem | Path | Scope.Scope> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    const path = yield* Path;
+    const wrapper = yield* fs.makeTempFileScoped({
+      prefix: "orca-headless-",
+      directory: path.join(path.sep, "tmp"),
+    }).pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(
+          `failed to create headless wrapper: ${String(cause)}`,
+        )
+      ),
+    );
+    yield* fs.writeFileString(wrapper, wrapperScript(electron)).pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(
+          `failed to create headless wrapper: ${String(cause)}`,
+        )
+      ),
+    );
+    yield* fs.chmod(wrapper, 0o700).pipe(
+      Effect.mapError((cause) =>
+        new OrcaServeError(
+          `failed to create headless wrapper: ${String(cause)}`,
+        )
+      ),
+    );
+    return wrapper;
+  });
+
+const exitCodeFromStatus = (status: ProcessStatus): number => {
+  if (status.signal === null) return status.code;
+  const signalNumbers: Record<string, number> = {
+    SIGHUP: 1,
+    SIGINT: 2,
+    SIGQUIT: 3,
+    SIGKILL: 9,
+    SIGTERM: 15,
+  };
+  return 128 + (signalNumbers[status.signal] ?? 0);
+};
+
+const signalFromProcessError = (cause: unknown): string | null => {
+  const match = String(cause).match(/signal: '([^']+)'/);
+  return match?.[1] ?? null;
+};
+
+const waitForStatus = (
+  child: ChildProcessHandle,
+): Effect.Effect<ProcessStatus, OrcaServeError> =>
+  child.exitCode.pipe(
+    Effect.map((code) => ({ code: Number(code), signal: null })),
+    Effect.catch((cause) => {
+      const signal = signalFromProcessError(cause);
+      return signal === null
+        ? Effect.fail(
+          new OrcaServeError(`orca serve failed: ${String(cause)}`),
+        )
+        : Effect.succeed({ code: 0, signal });
+    }),
+  );
+
+const terminateChild = (
+  child: ChildProcessHandle,
+): Effect.Effect<ProcessStatus, OrcaServeError> =>
+  Effect.gen(function* () {
+    emitOrca("info", "shutting down...");
+    const graceful = yield* child.kill({ killSignal: "SIGTERM" }).pipe(
+      Effect.ignore,
+      Effect.andThen(waitForStatus(child)),
+      Effect.timeoutOption(Duration.millis(FORCE_KILL_AFTER_MS)),
+      Effect.catch(() => Effect.succeed(Option.none<ProcessStatus>())),
+    );
+    if (Option.isSome(graceful)) {
+      emitOrca("ok", "stopped");
+      return graceful.value;
+    }
+
+    emitOrca("warning", "force-killing after timeout");
+    const forced = yield* child.kill({ killSignal: "SIGKILL" }).pipe(
+      Effect.ignore,
+      Effect.andThen(waitForStatus(child)),
+      Effect.orElseSucceed((): ProcessStatus => ({
+        code: 137,
+        signal: "SIGKILL",
+      })),
+    );
+    emitOrca("ok", "stopped");
+    return forced;
+  });
+
+const superviseServe = (
+  spawner: ChildProcessSpawnerService,
+  paths: OrcaPaths,
+  wrapperBin: string,
+  args: ReadonlyArray<string>,
+  onInterruptedStatus: (status: ProcessStatus) => void,
+): Effect.Effect<number, OrcaServeError> => {
+  let settled = false;
+
+  const acquireChild: Effect.Effect<
+    ChildProcessHandle,
+    OrcaServeError,
+    Scope.Scope
+  > = spawner.spawn(
+    ChildProcess.make(
+      // The extracted AppImage path is versioned and user-specific, so the
+      // shebang keeps --allow-run static by allowing bash; bash immediately
+      // execs Electron, preserving PID/status/signal behavior.
+      "bash",
+      buildBashExecArgs(
+        paths.electron,
+        buildElectronArgs(paths, args),
+      ),
+      {
+        env: buildChildEnv(wrapperBin),
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "pipe",
+        detached: true,
+      },
+    ),
+  ).pipe(
+    Effect.mapError((cause) =>
+      new OrcaServeError(`failed to start orca serve: ${String(cause)}`)
+    ),
+  );
+
+  return Effect.acquireRelease(
+    acquireChild,
+    (acquired) =>
+      Effect.gen(function* () {
+        if (!settled) {
+          const status = yield* terminateChild(acquired);
+          onInterruptedStatus(status);
+        }
+      }).pipe(Effect.ignore),
+  ).pipe(
+    Effect.flatMap((acquired) =>
+      Effect.gen(function* () {
+        const filterFiber = yield* filterStderrStream(acquired).pipe(
+          Effect.catch(() => Effect.void),
+          Effect.forkScoped,
+        );
+        const status = yield* waitForStatus(acquired);
+        settled = true;
+        yield* Fiber.join(filterFiber).pipe(Effect.ignore);
+        return exitCodeFromStatus(status);
+      })
+    ),
+  ).pipe(Effect.scoped);
+};
+
+const runHelp = (
+  spawner: ChildProcessSpawnerService,
+  paths: OrcaPaths,
+): Effect.Effect<number, OrcaServeError> =>
+  Effect.gen(function* () {
+    const output = yield* runString(
+      spawner,
+      ChildProcess.make(
+        "bash",
+        buildBashExecArgs(paths.electron, buildHelpArgs(paths)),
+        {
+          env: { ...Deno.env.toObject(), ELECTRON_RUN_AS_NODE: "1" },
+          stdin: "inherit",
+          stderr: "inherit",
+        },
+      ),
+    );
+    if (output !== "") {
+      Deno.stdout.writeSync(new TextEncoder().encode(output));
+    }
+    return 0;
+  });
+
+const program = (
+  spawner: ChildProcessSpawnerService,
+  args: ReadonlyArray<string>,
+  onInterruptedStatus: (status: ProcessStatus) => void,
+): Effect.Effect<number, OrcaServeError, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const paths = yield* resolveOrcaPaths(spawner);
+    if (hasHelpArg(args)) return yield* runHelp(spawner, paths);
+
+    emitOrca("info", `starting orca serve (mode=${paths.mode}, headless)`);
+    const wrapperBin = yield* writeWrapper(paths.electron);
+    return yield* superviseServe(
+      spawner,
+      paths,
+      wrapperBin,
+      args,
+      onInterruptedStatus,
+    );
+  }).pipe(Effect.scoped);
+
+// ============================================================================
+// Entry point
+// ============================================================================
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const [{ NodeRuntime, NodeServices }] = await Promise.all([
+    import("npm:@effect/platform-node@4.0.0-beta.83"),
+  ]);
+  let interruptedStatus: ProcessStatus | null = null;
+  const main = Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* program(spawner, Deno.args, (status) => {
+      interruptedStatus = status;
+    });
+  }).pipe(Effect.provide(NodeServices.layer));
+
+  NodeRuntime.runMain(main, {
+    disableErrorReporting: true,
+    teardown: (exit, onExit) => {
+      if (Exit.isSuccess(exit)) {
+        onExit(exit.value as number);
+        return;
+      }
+      if (interruptedStatus !== null) {
+        onExit(exitCodeFromStatus(interruptedStatus));
+        return;
+      }
+      const message = String(exit.cause).replace(/^Error: /, "");
+      for (const line of message.split("\n")) console.error(`error ${line}`);
+      onExit(1);
+    },
+  });
 }
-trap 'shutdown' SIGTERM SIGINT SIGHUP
 
-# Wait for orca to exit (signals interrupt wait → trap fires)
-while kill -0 "$ORCA_PID" 2>/dev/null; do
-  wait "$ORCA_PID" 2>/dev/null || true
-done
-wait "$ORCA_PID" 2>/dev/null || true
-kill "$FILTER_PID" 2>/dev/null || true
-rm -f "$FIFO" "${WRAPPER_BIN:-}" 2>/dev/null || true
-exit 0
+// ============================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-orca-serve
+// ============================================================================
+
+if (!import.meta.main) {
+  Deno.test("arg passthrough preserves pairing/json options after serve", () => {
+    assertEquals(
+      buildServeArgs(["--pairing-address", "devbox.coder", "--json"]),
+      ["serve", "--pairing-address", "devbox.coder", "--json"],
+    );
+    assertEquals(
+      buildBashExecArgs("/cache/orca-ide", [
+        "/cache/resources/app.asar.unpacked/out/cli/index.js",
+        ...buildServeArgs(["--pairing-address", "devbox.coder", "--json"]),
+      ]),
+      [
+        "-c",
+        'exec "$1" "${@:2}"',
+        "bash",
+        "/cache/orca-ide",
+        "/cache/resources/app.asar.unpacked/out/cli/index.js",
+        "serve",
+        "--pairing-address",
+        "devbox.coder",
+        "--json",
+      ],
+    );
+  });
+
+  Deno.test("stderr filtering drops Electron noise and classifies important lines", () => {
+    assertEquals(
+      filterStderrLine("ERROR:gpu_process_host something")._tag,
+      "Drop",
+    );
+    assertEquals(
+      filterStderrLine("DevTools listening on ws://127.0.0.1")._tag,
+      "Drop",
+    );
+    assertEquals(filterStderrLine("server ready on 127.0.0.1"), {
+      _tag: "Emit",
+      level: "ok",
+      line: "server ready on 127.0.0.1",
+    });
+    assertEquals(filterStderrLine("FATAL bad state"), {
+      _tag: "Emit",
+      level: "error",
+      line: "FATAL bad state",
+    });
+    assertEquals(filterStderrLine("WARNING degraded"), {
+      _tag: "Emit",
+      level: "warning",
+      line: "WARNING degraded",
+    });
+  });
+
+  Deno.test("AppImage path resolution uses mise http-orca version cache", () => {
+    const install = buildAppImageInstall(
+      "/home/lochy",
+      "/home/lochy/.local/share/mise/installs/http-orca/1.4.30/orca",
+      "deadbeefcafe",
+    );
+    assertEquals(install, {
+      root: "/home/lochy/.cache/dotfiles/orca-extracted/1.4.30/squashfs-root",
+      mode: "mise-appimage",
+    });
+    assertEquals(
+      buildOrcaPaths(install).cli,
+      "/home/lochy/.cache/dotfiles/orca-extracted/1.4.30/squashfs-root/resources/app.asar.unpacked/out/cli/index.js",
+    );
+  });
+
+  Deno.test("AppImage path resolution falls back to checksum cache", () => {
+    const install = buildAppImageInstall(
+      "/home/lochy",
+      "/tmp/orca.AppImage",
+      "abc123def456",
+    );
+    assertEquals(
+      install.root,
+      "/home/lochy/.cache/dotfiles/orca-extracted/checksum-abc123def456/squashfs-root",
+    );
+  });
+}
+
+function assertEquals<T>(actual: T, expected: T): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+}

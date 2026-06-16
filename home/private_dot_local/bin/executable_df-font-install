@@ -1,87 +1,486 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=fc-cache --allow-env --allow-read --allow-ffi
 
-IFS=$'\n\t'
+// df-font-install (Deno + Effect v4 beta). Behavioral twin of the bash
+// original: refresh the OS font cache after fonts are dropped into
+// ~/.local/share/fonts. Linux updates the cache with `fc-cache -f`; macOS is a
+// no-op (Core Text reads the directory directly); windows/android are
+// explicitly unsupported; anything else is an unknown-OS fatal.
+//
+// SUPERVISE (deno-effect-tools.md §9): the fc-cache child inherits stdout/stderr
+// so its progress streams straight to the terminal, and the parent captures the
+// exit code to mirror it (and to gate the success message). Run under
+// NodeRuntime.runMain so a Ctrl-C gracefully tears the child down
+// (SIGTERM -> SIGKILL). fc-cache presence is probed first via a soft-fail
+// `fc-cache --version` exit-code check (mirrors bash `command -v fc-cache`).
+//
+// IDEMPOTENT: `fc-cache -f` is inherently re-runnable (it rebuilds the cache);
+// the only guard is the bash-faithful "font dir missing -> warn + succeed".
+//
+// PERMISSIONS (minimal):
+//   --allow-run=fc-cache  spawn fc-cache (presence probe + the real run)
+//   --allow-env           HOME (font dir) + the env @effect/platform-node's
+//                         msgpackr reads at module load (NotCapable otherwise)
+//   --allow-read          stat the font directory
+// `--help` and arg parsing run BEFORE the dynamic platform-node import, so they
+// still succeed under a bare `deno run --allow-run=fc-cache` (the lint/verify
+// gate). The platform-node import is dynamic (import.meta.main path only) to
+// keep `deno test` hermetic and permission-free.
+//
+// Session logging is intentionally NOT set up here (unlike the bash original's
+// setup_session_logging): the only caller, run_after_install-100-install-fonts,
+// installs a global `exec > >(tee -a "$log"); exec 2>&1` redirect before
+// invoking us, so this child's stderr is already captured into the chezmoi
+// session log via inherited FDs. Re-running setup here would double-log.
+//
+// Logging: `info`/`warning` use Effect's native logger (`Effect.logInfo`/
+// `Effect.logWarning`) inside the Effect programs; the entrypoint's fatal paths
+// use a small local `fatal` helper that prints "fatal <msg>" to stderr and exits
+// 1. Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+import { Config, Data, Effect, Layer, Stream } from "npm:effect@4.0.0-beta.83";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
-#/ Usage:
-#/   font-install
-#/
-#/ Description:
-#/   Updates font cache for newly installed fonts.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+/** Print "fatal <msg>" to stderr and exit 1 (entrypoint argument/OS-fatal paths). */
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
 
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
+// --------------------------------------------------------------------------
+// Usage (mirrors the bash `#/`-comment header rendered by `usage()`).
+// --------------------------------------------------------------------------
+
+const USAGE = `Usage:
+  font-install
+
+Description:
+  Updates font cache for newly installed fonts.
+
+Options:
+  --help    Display this help message`;
+
+// --------------------------------------------------------------------------
+// Pure argument classification (mirrors bash parse_args, which inspects only
+// $1). Kept free of side effects so the in-file tests pin the contract with
+// ZERO permission flags.
+// --------------------------------------------------------------------------
+
+export type ArgAction =
+  | { readonly kind: "help" }
+  | { readonly kind: "run" }
+  | { readonly kind: "unknown"; readonly arg: string };
+
+/**
+ * Classify argv exactly like the bash `case "$1"`:
+ *   no args        -> run
+ *   `--help`       -> help (usage on stdout + exit 0)
+ *   any other arg  -> unknown (usage + fatal)
+ */
+export const classifyArgs = (args: ReadonlyArray<string>): ArgAction => {
+  const first = args[0];
+  if (first === undefined) return { kind: "run" };
+  if (first === "--help") return { kind: "help" };
+  return { kind: "unknown", arg: first };
+};
+
+// --------------------------------------------------------------------------
+// Pure OS classification. Two steps mirroring the bash original verbatim:
+//   getOsKind   == bash get_os_kind (normalise the platform name)
+//   osDisposition == bash main's `case $os_kind` (decide what to do)
+// Deno.build.os is already normalised (no cygwin/mingw/msys variants and
+// android is reported directly), so the mapping is a faithful subset of the
+// bash uname switch. Keeping both pure lets the tests document the full
+// platform -> action contract offline.
+// --------------------------------------------------------------------------
+
+/** Normalise Deno.build.os into the bash get_os_kind vocabulary. */
+export const getOsKind = (buildOs: string): string => {
+  switch (buildOs) {
+    case "darwin":
+      return "macos";
+    case "windows":
+      return "windows";
+    case "android":
+      return "android";
+    case "linux":
+      return "linux";
+    default:
+      return buildOs;
+  }
+};
+
+export type OsDisposition =
+  | { readonly kind: "unsupported"; readonly os: string }
+  | { readonly kind: "macos" }
+  | { readonly kind: "linux" }
+  | { readonly kind: "unknown"; readonly os: string };
+
+/** Decide the action for a normalised OS kind (bash main's case). */
+export const osDisposition = (osKind: string): OsDisposition => {
+  switch (osKind) {
+    case "windows":
+    case "android":
+      return { kind: "unsupported", os: osKind };
+    case "macos":
+      return { kind: "macos" };
+    case "linux":
+      return { kind: "linux" };
+    default:
+      return { kind: "unknown", os: osKind };
+  }
+};
+
+// --------------------------------------------------------------------------
+// Pure Linux decision tree (bash linux branch). Given the two live signals —
+// does the font dir exist, is fc-cache available — pick the outcome. The
+// runtime gathers the signals and executes the chosen action; this stays pure
+// so the branch logic is tested without filesystem or subprocess access.
+// --------------------------------------------------------------------------
+
+export type LinuxAction =
+  | { readonly kind: "no-font-dir" }
+  | { readonly kind: "no-fc-cache" }
+  | { readonly kind: "update" };
+
+export const planLinux = (
+  fontDirExists: boolean,
+  fcCacheAvailable: boolean,
+): LinuxAction => {
+  if (!fontDirExists) return { kind: "no-font-dir" };
+  if (!fcCacheAvailable) return { kind: "no-fc-cache" };
+  return { kind: "update" };
+};
+
+// --------------------------------------------------------------------------
+// Errors — one cause per error, structured. Both fatal OS cases are modelled as
+// a typed failure carrying the bash-faithful message, so the entrypoint (not
+// the core logic) owns the fatal/exit side effect and `program` stays
+// observable under test.
+// --------------------------------------------------------------------------
+
+class FontInstallFatalError extends Data.TaggedError("FontInstallFatalError")<{
+  readonly message: string;
+}> {}
+
+// --------------------------------------------------------------------------
+// Filesystem + subprocess helpers.
+// --------------------------------------------------------------------------
+
+/** `$HOME/.local/share/fonts` — Effect so importing the module never reads env. */
+const fontDirPath: Effect.Effect<string, Config.ConfigError> = Effect.gen(
+  function* () {
+    const home = yield* Config.string("HOME").pipe(Config.withDefault(""));
+    return `${home}/.local/share/fonts`;
+  },
+);
+
+/** `[ -d "$path" ]` — true only when path exists AND is a directory. */
+const statIsDir = (path: string): Effect.Effect<boolean> =>
+  Effect.tryPromise(async () => (await Deno.stat(path)).isDirectory).pipe(
+    Effect.orElseSucceed(() => false),
+  );
+
+/** `command -v fc-cache` — soft-fail presence probe via `fc-cache --version`. */
+const probeFcCache: Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* spawner
+    .exitCode(
+      ChildProcess.make("fc-cache", ["--version"], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    )
+    .pipe(
+      Effect.map((code) => code === 0),
+      Effect.orElseSucceed(() => false),
+    );
+});
+
+/** `fc-cache -f "$font_dir"` — inherit stdio, return the child's exit code. */
+const runFcCache = (
+  fontDir: string,
+): Effect.Effect<number, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner
+      .exitCode(
+        ChildProcess.make("fc-cache", ["-f", fontDir], {
+          stdout: "inherit",
+          stderr: "inherit",
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => 1));
+  });
+
+// --------------------------------------------------------------------------
+// Runtime programs (SUPERVISE). Require ChildProcessSpawner, supplied by
+// NodeServices.layer at the entrypoint.
+// --------------------------------------------------------------------------
+
+const linuxProgram: Effect.Effect<
+  number,
+  Config.ConfigError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  yield* Effect.logInfo("▶ Updating font cache");
+
+  const fontDir = yield* fontDirPath;
+  const fontDirExists = yield* statIsDir(fontDir);
+  // Short-circuit like the bash original: only probe fc-cache once we know the
+  // font directory exists (bash returns early before reaching `command -v`).
+  const fcCacheAvailable = fontDirExists ? yield* probeFcCache : false;
+  const action = planLinux(fontDirExists, fcCacheAvailable);
+
+  switch (action.kind) {
+    case "no-font-dir":
+      yield* Effect.logWarning(`Font directory does not exist: ${fontDir}`);
+      return 0;
+    case "no-fc-cache":
+      yield* Effect.logWarning("╍ fc-cache not found, font cache not updated");
+      yield* Effect.logWarning(
+        "╍ Install fontconfig package to enable font cache updates",
+      );
+      return 0;
+    case "update": {
+      const code = yield* runFcCache(fontDir);
+      // bash `set -e`: the success line only prints when fc-cache succeeded.
+      if (code === 0) {
+        yield* Effect.logInfo(
+          "▶ Done installing fonts! Updated font cache with fc-cache.",
+        );
+      }
+      return code;
+    }
+  }
+});
+
+const program: Effect.Effect<
+  number,
+  FontInstallFatalError | Config.ConfigError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const disposition = osDisposition(getOsKind(Deno.build.os));
+  switch (disposition.kind) {
+    case "unsupported":
+      return yield* Effect.fail(
+        new FontInstallFatalError({
+          message: `Font installation for ${disposition.os} is not supported.`,
+        }),
+      );
+    case "unknown":
+      return yield* Effect.fail(
+        new FontInstallFatalError({
+          message: `Unknown OS: ${disposition.os}`,
+        }),
+      );
+    case "macos":
+      yield* Effect.logInfo(
+        "▶ Done installing fonts! MacOS does not require font cache update.",
+      );
+      return 0;
+    case "linux":
+      return yield* linuxProgram;
+  }
+});
+
+// --------------------------------------------------------------------------
+// Entry point
+// --------------------------------------------------------------------------
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const action = classifyArgs(Deno.args);
+  if (action.kind === "help") {
+    console.log(USAGE);
+    Deno.exit(0);
+  }
+  if (action.kind === "unknown") {
+    console.log(USAGE);
+    // fatal prints "fatal Unknown argument: <arg>" then exits 1.
+    fatal(`Unknown argument: ${action.arg}`);
+  }
+
+  // Dynamic import keeps `deno test` permission-free (see header). NodeServices
+  // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
+  // handlers SUPERVISE relies on for graceful child teardown.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  program.pipe(
+    // unsupported/unknown OS -> "fatal <message>" + exit 1 (local fatal helper).
+    Effect.catchTag(
+      "FontInstallFatalError",
+      (error) => Effect.sync(() => fatal(error.message)),
+    ),
+    // Config read failure (HOME env) -> fatal.
+    Effect.catchTag(
+      "ConfigError",
+      (error) => Effect.sync(() => fatal(String(error))),
+    ),
+    // Propagate the resolved exit code verbatim (0 for macos/no-op linux paths,
+    // fc-cache's code for the update path).
+    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
-main() {
-  parse_args "$@"
+// === Tests =================================================================
+// Run offline with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-font-install
+// The import.meta.main guard keeps the CLI (and the Node platform import) from
+// firing under test. These cover the pure classifiers (arg/OS/linux decision
+// trees) and the SUPERVISE fc-cache helpers against a mock spawner — all
+// without spawning real fc-cache or touching the filesystem.
 
-  os_kind=$(get_os_kind)
-  case $os_kind in
-    windows|android)
-      fatal "Font installation for $os_kind is not supported."
-      ;;
-    macos)
-      info "▶ Done installing fonts! MacOS does not require font cache update."
-      ;;
-    linux)
-      info "▶ Updating font cache"
-      local font_dir="$HOME/.local/share/fonts"
-      if [ ! -d "$font_dir" ]; then
-        warning "Font directory does not exist: $font_dir"
-        return 0
-      fi
+const assertEq = <T>(actual: T, expected: T, msg: string): void => {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${msg}: ${a} !== ${e}`);
+};
 
-      if command -v fc-cache >/dev/null 2>&1; then
-        fc-cache -f "$font_dir"
-        info "▶ Done installing fonts! Updated font cache with fc-cache."
-      else
-        warning "╍ fc-cache not found, font cache not updated"
-        warning "╍ Install fontconfig package to enable font cache updates"
-      fi
-      ;;
-    *)
-      fatal "Unknown OS: $os_kind"
-      ;;
-  esac
-}
+// Mock ChildProcessSpawner whose exit code is decided from the command's args,
+// so the presence probe (`fc-cache --version`) and the run (`fc-cache -f DIR`)
+// can be steered independently. Only `exitCode` is exercised; the rest are
+// deliberately unimplemented stubs that fail loudly if ever reached.
+const argsOf = (command: unknown): ReadonlyArray<string> =>
+  (command as { readonly args?: ReadonlyArray<string> }).args ?? [];
 
-get_os_kind() {
-  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  case "${os}" in
-    cygwin_nt*) goos="windows" ;;
-    linux)
-      if command -v termux-info >/dev/null 2>&1; then
-        goos="android"
-      else
-        goos="linux"
-      fi
-      ;;
-    mingw*) goos="windows" ;;
-    msys_nt*) goos="windows" ;;
-    darwin*) goos="macos" ;;
-    *) goos="${os}" ;;
-  esac
-  printf '%s' "${goos}"
-}
+const mockSpawnerLayer = (
+  exitFor: (args: ReadonlyArray<string>) => number,
+): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.ChildProcessSpawner.of({
+      spawn: () => Effect.die("mock spawner: spawn() unused"),
+      exitCode: (command) =>
+        Effect.succeed(ChildProcessSpawner.ExitCode(exitFor(argsOf(command)))),
+      streamString: () => Stream.die("mock spawner: streamString() unused"),
+      streamLines: () => Stream.die("mock spawner: streamLines() unused"),
+      lines: () => Effect.die("mock spawner: lines() unused"),
+      string: () => Effect.die("mock spawner: string() unused"),
+    }),
+  );
 
-main "$@"
+Deno.test("classifyArgs: no args -> run", () => {
+  assertEq(classifyArgs([]), { kind: "run" }, "empty argv");
+});
+
+Deno.test("classifyArgs: --help -> help (entry maps to usage + exit 0)", () => {
+  assertEq(classifyArgs(["--help"]), { kind: "help" }, "--help");
+});
+
+Deno.test("classifyArgs: unknown first arg -> unknown (entry maps to fatal)", () => {
+  assertEq(
+    classifyArgs(["--bogus"]),
+    { kind: "unknown", arg: "--bogus" },
+    "unknown arg",
+  );
+});
+
+Deno.test("getOsKind mirrors bash get_os_kind", () => {
+  assertEq(getOsKind("darwin"), "macos", "darwin");
+  assertEq(getOsKind("linux"), "linux", "linux");
+  assertEq(getOsKind("windows"), "windows", "windows");
+  assertEq(getOsKind("android"), "android", "android");
+  // Unmapped platforms fall through unchanged (bash returns the raw name).
+  assertEq(getOsKind("freebsd"), "freebsd", "freebsd");
+});
+
+Deno.test("osDisposition mirrors bash main case", () => {
+  assertEq(osDisposition("macos"), { kind: "macos" }, "macos -> macos");
+  assertEq(osDisposition("linux"), { kind: "linux" }, "linux -> linux");
+  assertEq(
+    osDisposition("windows"),
+    { kind: "unsupported", os: "windows" },
+    "windows -> unsupported",
+  );
+  assertEq(
+    osDisposition("android"),
+    { kind: "unsupported", os: "android" },
+    "android -> unsupported",
+  );
+  assertEq(
+    osDisposition("freebsd"),
+    { kind: "unknown", os: "freebsd" },
+    "freebsd -> unknown",
+  );
+});
+
+Deno.test("planLinux: missing font dir -> no-font-dir (fc-cache irrelevant)", () => {
+  assertEq(
+    planLinux(false, true),
+    { kind: "no-font-dir" },
+    "no dir, fc present",
+  );
+  assertEq(
+    planLinux(false, false),
+    { kind: "no-font-dir" },
+    "no dir, fc absent",
+  );
+});
+
+Deno.test("planLinux: dir present, fc-cache absent -> no-fc-cache", () => {
+  assertEq(planLinux(true, false), { kind: "no-fc-cache" }, "dir, no fc");
+});
+
+Deno.test("planLinux: dir present, fc-cache available -> update", () => {
+  assertEq(planLinux(true, true), { kind: "update" }, "dir + fc");
+});
+
+Deno.test("probeFcCache: fc-cache present (exit 0) -> true", async () => {
+  const present = await Effect.runPromise(
+    probeFcCache.pipe(Effect.provide(mockSpawnerLayer(() => 0))),
+  );
+  assertEq(present, true, "present");
+});
+
+Deno.test("probeFcCache: fc-cache absent (exit 127) -> false", async () => {
+  const present = await Effect.runPromise(
+    probeFcCache.pipe(Effect.provide(mockSpawnerLayer(() => 127))),
+  );
+  assertEq(present, false, "absent");
+});
+
+Deno.test("runFcCache: passes `-f DIR` and propagates exit code 0", async () => {
+  const code = await Effect.runPromise(
+    runFcCache("/tmp/fonts").pipe(
+      Effect.provide(
+        mockSpawnerLayer((args) =>
+          args.includes("-f") && args.includes("/tmp/fonts") ? 0 : 1
+        ),
+      ),
+    ),
+  );
+  assertEq(code, 0, "exit code");
+});
+
+Deno.test("runFcCache: propagates fc-cache's non-zero exit code verbatim", async () => {
+  const code = await Effect.runPromise(
+    runFcCache("/tmp/fonts").pipe(
+      Effect.provide(mockSpawnerLayer(() => 7)),
+    ),
+  );
+  assertEq(code, 7, "propagated exit code");
+});

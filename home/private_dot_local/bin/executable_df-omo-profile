@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=chezmoi --allow-read --allow-write --allow-env
+#!/usr/bin/env -S mise exec -- deno run --allow-run=chezmoi --allow-read --allow-write --allow-env --allow-ffi
 
 // omo-profile (Deno + Effect v4 beta). Switches the oh-my-openagent (omo) cost
 // profile without a full `chezmoi apply`. Profiles trade model quality for token
@@ -26,7 +26,7 @@
 // NodeRuntime from @effect/platform-node run under Deno via its node:
 // compatibility layer; NodeServices provides FileSystem, Path, and the
 // ChildProcessSpawner used for the targeted apply. Effect v4 beta import paths
-// verified against effect@4.0.0-beta.80.
+// verified against effect@4.0.0-beta.83.
 //
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
 // `import.meta.main` block, never at module top level. Its static import graph
@@ -50,11 +50,11 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-beta.80";
+} from "npm:effect@4.0.0-beta.83";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.80/unstable/process";
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
@@ -485,11 +485,26 @@ const runnable = (
   );
 
 if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
   // Dynamic import: @effect/platform-node's static graph reads process.env at
   // load time (via ioredis -> msgpackr), which would force --allow-env onto
   // `deno test`. Loading it only here keeps the test surface permission-free.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.80"
+    "npm:@effect/platform-node@4.0.0-beta.83"
   );
   runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }

@@ -1,0 +1,197 @@
+# runtime-tiers.yaml — declarative manifest of every runnable in this repo.
+#
+# Merged into chezmoi template data at apply time under the `runtimeTiers` key,
+# so `{{ .runtimeTiers.runnables }}` is the canonical list. The runtime-tier
+# linter (Task 2) reads THIS source file directly, not a deployed copy.
+#
+# Schema (one entry per runnable):
+#   path    chezmoi SOURCE path, relative to repo root (keeps executable_/.tmpl)
+#   tier    bootstrap | runtime | na
+#             bootstrap = runs before/during deno install in 050-install-packages
+#             runtime   = runs after deno is available (deno tools + bash candidates)
+#             na        = not a tiered runnable (stubs, sourced libs)
+#   lang    bash | deno | stub  — derived from the file's ACTUAL line-1 shebang:
+#             `deno run`        -> deno
+#             bash / sh / uv    -> bash
+#             mise tool-stub    -> stub
+#             zsh-only / none   -> bash
+#   sourced present (true) ONLY for libs that are sourced, never executed directly.
+#
+# NOTE: lang reflects the real shebang read from disk. Several lib files and
+# executable_github-token.tmpl carry a `#!/usr/bin/env bash` shebang (zsh libs
+# resolve to bash per the rule above), so their lang is `bash`, not `stub`. The
+# only genuine stub is executable_d2.tmpl (a mise tool-stub).
+
+runtimeTiers:
+  runnables:
+    # --- repo root (1) ---
+    - path: install.sh
+      tier: bootstrap
+      lang: bash
+
+    # --- home/private_dot_local/bin (19) ---
+    - path: home/private_dot_local/bin/executable_cw
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_d2.tmpl
+      tier: na
+      lang: stub
+    - path: home/private_dot_local/bin/executable_df-drift
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-font-install
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-json-escape
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-lint-runtimes
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-omo-profile
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-orca-serve
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-setup.tmpl
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-task-chezmoi-apply
+      tier: bootstrap
+      lang: bash
+    - path: home/private_dot_local/bin/executable_df-task-chezmoi-update
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-task-mise-upgrade
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_github-token.tmpl
+      tier: na
+      lang: bash
+    - path: home/private_dot_local/bin/executable_install-my-completions.tmpl
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_install-my-packages.tmpl
+      tier: bootstrap
+      lang: bash
+    - path: home/private_dot_local/bin/executable_notify
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_opencode-tokenizer-check
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_safe-rm
+      tier: bootstrap
+      lang: bash
+    - path: home/private_dot_local/bin/executable_transcribe
+      tier: runtime
+      lang: deno
+
+    # --- home/.chezmoiscripts (19) ---
+    #
+    # POLICY: The 16 post-050 chezmoiscripts (056 and above) are INTENTIONALLY
+    # tier:runtime / lang:bash — this is deliberate policy, NOT a conversion backlog.
+    # Rationale: deno cold-start latency on every-apply, run_onchange hash churn from
+    # deno import maps, and unattended-exec risk outweigh any benefit for lifecycle glue.
+    # Only 045 (pre-deno) and run_before_install-060 (before_install phase) are bootstrap.
+    #
+    - path: home/.chezmoiscripts/run_after_install-045-setup-zplug.sh
+      tier: bootstrap
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-050-install-packages.sh.tmpl
+      tier: bootstrap
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-056-mcpproxy-daemon.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-058-fix-system-gitconfig-refspec.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-060-link-private-skills.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-060-patch-external-skills.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-061-drift-notifier.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-070-pack-claude-skills.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-100-install-fonts.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-100-install-zsh-completions.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-900-setup-status.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_before_install-060-reset-external-skills.sh.tmpl
+      tier: bootstrap
+      lang: bash
+    - path: home/.chezmoiscripts/run_once_after_install-055-setup-peon-ping.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_once_after_install-100-change-term.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-100-canva-misc.sh.tmpl
+      tier: runtime
+      lang: bash
+
+    # --- home/private_dot_local/lib (10, all sourced) ---
+    - path: home/private_dot_local/lib/bash-logging.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/chezmoi-preflight.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/executable_bws-get-or-empty
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/tool-cache-sync.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/brew.zsh.tmpl
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/open.sh
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/shell-aliases.sh
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/ssh.sh
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/term.zsh
+      tier: na
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/tmux-resurrect-code-agents
+      tier: na
+      lang: bash
+      sourced: true

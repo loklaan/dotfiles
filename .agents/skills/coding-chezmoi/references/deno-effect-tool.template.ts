@@ -1,8 +1,8 @@
-#!/usr/bin/env -S deno run --allow-env --allow-read
+#!/usr/bin/env -S deno run --allow-env --allow-read --allow-ffi
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
 import {
   Config,
@@ -10,10 +10,14 @@ import {
   Effect,
   Layer,
   Schema,
-} from "npm:effect@4.0.0-beta.80";
-// NodeRuntime is imported lazily in the `serve` branch (see entry point) so that
-// `deno test` runs offline with no permission flags: @effect/platform-node pulls
-// in msgpackr, which reads process.env at module load and needs --allow-env.
+} from "npm:effect@4.0.0-beta.83";
+import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+// @effect/platform-node is imported dynamically in import.meta.main only.
+// It transitively loads msgpackr, which reads process.env at module load and
+// throws NotCapable without --allow-env. Dynamic import keeps deno test
+// zero-flag offline.
 
 // --- Domain types --------------------------------------------------------
 class MyServiceError
@@ -33,6 +37,8 @@ class MyService extends Context.Service<MyService, {
   static readonly layer = Layer.effect(
     MyService,
     Effect.gen(function* () {
+      // Config reads are deferred to Effect execution time — never call
+      // Deno.env.get() directly (throws without --allow-env at module load).
       const prefix = yield* Config.string("MY_SERVICE_PREFIX").pipe(
         Config.withDefault("echo: "),
       );
@@ -52,42 +58,38 @@ class MyService extends Context.Service<MyService, {
   );
 }
 
-// --- Wiring --------------------------------------------------------------
-const runOnce = (message: string) =>
-  Effect.gen(function* () {
-    const svc = yield* MyService;
-    const result = yield* svc.echo(message);
-    yield* Effect.sync(() => console.log(result.message));
-  }).pipe(Effect.provide(MyService.layer));
+// --- CLI command definition (top-level safe — no platform-node import) ---
+const verbose = Flag.boolean("verbose").pipe(Flag.withAlias("v"));
 
-const ServerLayer = Layer.effectDiscard(
+const myCommand = Command.make("my-tool", { verbose }, ({ verbose: _v }) =>
   Effect.gen(function* () {
     const svc = yield* MyService;
-    const banner = yield* svc.echo("server started; awaiting work");
-    yield* Effect.logInfo(banner.message);
-  }),
-).pipe(Layer.provide(MyService.layer));
+    const result = yield* svc.echo(Deno.args[1] ?? "hello");
+    yield* Effect.sync(() => console.log(result.message));
+  }).pipe(Effect.provide(MyService.layer)));
 
 // --- Entry point ---------------------------------------------------------
 if (import.meta.main) {
-  const command = Deno.args[0];
-  if (command === "echo") {
-    Effect.runPromiseExit(runOnce(Deno.args[1] ?? "")).then((exit) => {
-      Deno.exit(exit._tag === "Success" ? 0 : 1);
-    });
-  } else if (command === "serve") {
-    const { NodeRuntime } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.80"
-    );
-    Layer.launch(ServerLayer).pipe(NodeRuntime.runMain);
-  } else {
-    console.error("usage: deno-effect-tool <echo TEXT | serve>");
-    Deno.exit(command === undefined ? 0 : 1);
-  }
+  // Dynamic import keeps @effect/platform-node out of the module graph during
+  // `deno test`. NodeFileSystem + NodePath provide FileSystem and Path services.
+  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+
+  Command.run(myCommand, {
+    version: "0.0.0",
+  }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // === Tests ===============================================================
 // deno test --allow-env --allow-read deno-effect-tool.template.ts
+// Offline unit tests must pass with ZERO permission flags:
+//   deno test deno-effect-tool.template.ts
 
 const decodeEcho = Schema.decodeUnknownSync(EchoResult);
 
@@ -133,3 +135,10 @@ itEffect(
   }).pipe(Effect.provide(MyService.layer)),
   { ignore: !hasEnv("MY_SERVICE_KEY") },
 );
+
+// Suppress unused-import warnings for FileSystem and Path — they are
+// demonstrated in the imports above and used in real tools via Effect.gen.
+const _fs: typeof FileSystem = FileSystem;
+const _path: typeof Path = Path;
+void _fs;
+void _path;

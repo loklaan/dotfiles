@@ -1,0 +1,451 @@
+#!/usr/bin/env -S mise exec -- deno run --allow-read --allow-env --allow-ffi
+
+// df-lint-runtimes — enforce the runtime-tier manifest contract.
+//
+// Reads home/.chezmoidata/runtime-tiers.yaml from the chezmoi source repo and
+// compares it with runnable source files on disk. The manifest is the source of
+// truth for bootstrap/runtime tiering and shebang-derived language labels.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+
+import {
+  Array as Arr,
+  Console,
+  Effect,
+  Schema,
+} from "npm:effect@4.0.0-beta.83";
+import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import { Command } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import { parse as parseYaml } from "jsr:@std/yaml@^1";
+
+// ============================================================================
+// Manifest schema
+// ============================================================================
+
+const Runnable = Schema.Struct({
+  path: Schema.String,
+  tier: Schema.Union([
+    Schema.Literal("bootstrap"),
+    Schema.Literal("runtime"),
+    Schema.Literal("na"),
+  ]),
+  lang: Schema.Union([
+    Schema.Literal("bash"),
+    Schema.Literal("deno"),
+    Schema.Literal("stub"),
+  ]),
+  sourced: Schema.optional(Schema.Literal(true)),
+});
+type Runnable = typeof Runnable.Type;
+type Lang = Runnable["lang"];
+
+const Manifest = Schema.Struct({
+  runtimeTiers: Schema.Struct({
+    runnables: Schema.Array(Runnable),
+  }),
+});
+type Manifest = typeof Manifest.Type;
+
+const decodeManifest = Schema.decodeUnknownSync(Manifest);
+
+// ============================================================================
+// Domain logic
+// ============================================================================
+
+const MANIFEST_PATH = "home/.chezmoidata/runtime-tiers.yaml";
+
+type Violation =
+  | { readonly _tag: "Unaccounted"; readonly path: string }
+  | {
+    readonly _tag: "Mismatch";
+    readonly path: string;
+    readonly declared: Lang;
+    readonly actual: Lang;
+  }
+  | { readonly _tag: "BootstrapViolation"; readonly path: string };
+
+interface CheckedEntry {
+  readonly entry: Runnable;
+  readonly actualLang: Lang;
+  readonly violations: ReadonlyArray<Violation>;
+}
+
+const detectLang = (line: string): Lang => {
+  if (line.includes("deno run")) return "deno";
+  if (line.includes("mise tool-stub") || line.includes("mise run")) {
+    return "stub";
+  }
+  return "bash";
+};
+
+const checkEntry = (
+  entry: Runnable,
+  actualLang: Lang,
+): ReadonlyArray<Violation> => {
+  const violations: Violation[] = [];
+  if (entry.lang !== actualLang) {
+    violations.push({
+      _tag: "Mismatch",
+      path: entry.path,
+      declared: entry.lang,
+      actual: actualLang,
+    });
+  }
+  if (entry.tier === "bootstrap" && actualLang === "deno") {
+    violations.push({ _tag: "BootstrapViolation", path: entry.path });
+  }
+  return violations;
+};
+
+const checkCoverage = (
+  actualPaths: ReadonlyArray<string>,
+  manifestPaths: ReadonlySet<string>,
+): ReadonlyArray<Violation> =>
+  actualPaths.flatMap((path) =>
+    manifestPaths.has(path) ? [] : [{ _tag: "Unaccounted", path }]
+  );
+
+const countLangs = (langs: ReadonlyArray<Lang>) => ({
+  bash: langs.filter((lang) => lang === "bash").length,
+  deno: langs.filter((lang) => lang === "deno").length,
+  stub: langs.filter((lang) => lang === "stub").length,
+});
+
+const formatViolation = (violation: Violation): string => {
+  switch (violation._tag) {
+    case "Unaccounted":
+      return `FAIL  ${violation.path}  [unaccounted]`;
+    case "Mismatch":
+      return `FAIL  ${violation.path}  [mismatch: declared=${violation.declared} actual=${violation.actual}]`;
+    case "BootstrapViolation":
+      return `FAIL  ${violation.path}  [bootstrap-violation: deno shebang on bootstrap script]`;
+  }
+};
+
+// ============================================================================
+// Filesystem helpers
+// ============================================================================
+
+// Read a file's full text via Effect FileSystem service.
+const readTextFile = (path: string): Effect.Effect<string, Error, FileSystem> =>
+  FileSystem.pipe(
+    Effect.flatMap((fs) =>
+      fs.readFileString(path).pipe(
+        Effect.mapError(
+          (cause) => new Error(`failed to read ${path}: ${String(cause)}`),
+        ),
+      )
+    ),
+  );
+
+// Read the first line of a file (or "" if it's a directory) via FileSystem.
+// FileSystem.stat is used to check isDirectory; readFileString for content.
+const readFirstLine = (
+  path: string,
+): Effect.Effect<string, Error, FileSystem> =>
+  FileSystem.pipe(
+    Effect.flatMap((fs) =>
+      Effect.gen(function* () {
+        const info = yield* fs.stat(path).pipe(
+          Effect.mapError(
+            (cause) => new Error(`failed to read ${path}: ${String(cause)}`),
+          ),
+        );
+        if (info.type === "Directory") return "";
+        const content = yield* fs.readFileString(path).pipe(
+          Effect.mapError(
+            (cause) => new Error(`failed to read ${path}: ${String(cause)}`),
+          ),
+        );
+        return content.split(/\r?\n/, 1)[0] ?? "";
+      })
+    ),
+  );
+
+// List files matching a predicate in a directory.
+// Decision: FileSystem at beta.80 does not expose readDirectory/readDir.
+// Keeping Deno.readDir wrapped in Effect.tryPromise for directory listing.
+// Revisit when effect/FileSystem gains readDirectory in a stable release.
+const listMatchingFiles = (
+  repoRoot: string,
+  dir: string,
+  predicate: (name: string) => boolean,
+): Effect.Effect<ReadonlyArray<string>, Error, Path> =>
+  Path.pipe(
+    Effect.flatMap((path) =>
+      Effect.tryPromise({
+        try: async () => {
+          const entries: string[] = [];
+          for await (
+            const entry of Deno.readDir(path.join(repoRoot, dir))
+          ) {
+            if (entry.isFile && predicate(entry.name)) {
+              entries.push(`${dir}/${entry.name}`);
+            }
+          }
+          return entries.sort();
+        },
+        catch: (cause) => new Error(`failed to list ${dir}: ${String(cause)}`),
+      })
+    ),
+  );
+
+const readManifest = (
+  repoRoot: string,
+): Effect.Effect<Manifest, Error, FileSystem | Path> =>
+  Path.pipe(
+    Effect.flatMap((path) =>
+      readTextFile(path.join(repoRoot, MANIFEST_PATH)).pipe(
+        Effect.flatMap((content) =>
+          Effect.try({
+            try: () => decodeManifest(parseYaml(content)),
+            catch: (cause) =>
+              new Error(
+                `failed to parse ${MANIFEST_PATH}: ${String(cause)}`,
+              ),
+          })
+        ),
+      )
+    ),
+  );
+
+const actualRunnables = (
+  repoRoot: string,
+): Effect.Effect<ReadonlyArray<string>, Error, Path> =>
+  Effect.gen(function* () {
+    const bin = yield* listMatchingFiles(
+      repoRoot,
+      "home/private_dot_local/bin",
+      (name) => name.startsWith("executable_"),
+    );
+    const scripts = yield* listMatchingFiles(
+      repoRoot,
+      "home/.chezmoiscripts",
+      (name) => name.startsWith("run_"),
+    );
+    return [...bin, ...scripts, "install.sh"].sort();
+  });
+
+// ============================================================================
+// Linter
+// ============================================================================
+
+const lintRuntimes = (
+  repoRoot: string,
+): Effect.Effect<number, Error, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const manifest = yield* readManifest(repoRoot);
+    const entries = manifest.runtimeTiers.runnables;
+    const actualPaths = yield* actualRunnables(repoRoot);
+    const manifestPaths = new Set(Arr.map(entries, (entry) => entry.path));
+
+    const coverageViolations = checkCoverage(actualPaths, manifestPaths);
+    const checkedEntries = yield* Effect.forEach(
+      entries,
+      (entry) =>
+        Path.pipe(
+          Effect.flatMap((path) =>
+            readFirstLine(path.join(repoRoot, entry.path)).pipe(
+              Effect.map(detectLang),
+              Effect.map((actualLang): CheckedEntry => ({
+                entry,
+                actualLang,
+                violations: checkEntry(entry, actualLang),
+              })),
+            )
+          ),
+        ),
+    );
+
+    const entryViolations = checkedEntries.flatMap((checked) =>
+      checked.violations
+    );
+    const violations = [...coverageViolations, ...entryViolations];
+
+    if (violations.length > 0) {
+      for (const line of Arr.map(violations, formatViolation)) {
+        yield* Console.error(line);
+      }
+      yield* Console.error(
+        `${violations.length} violation(s). Run: mise run lint:runtimes`,
+      );
+      return 1;
+    }
+
+    const counts = countLangs(
+      Arr.map(checkedEntries, (entry) => entry.actualLang),
+    );
+    yield* Console.log(
+      `PASS  ${checkedEntries.length} runnables checked (${counts.deno} deno · ${counts.bash} bash · ${counts.stub} stub)`,
+    );
+    return 0;
+  });
+
+// ============================================================================
+// CLI command definition (top-level safe — no platform-node import)
+// ============================================================================
+
+const lintCommand = Command.make(
+  "df-lint-runtimes",
+  {},
+  () =>
+    lintRuntimes(Deno.cwd()).pipe(
+      Effect.flatMap((code) =>
+        Effect.sync(() => {
+          Deno.exit(code);
+        })
+      ),
+    ),
+);
+
+// ============================================================================
+// Entry point
+// ============================================================================
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  // @effect/platform-node must be dynamically imported to avoid --allow-env
+  // requirement during `deno test` (msgpackr reads process.env at load time).
+  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+
+  Command.run(lintCommand, {
+    version: "0.0.0",
+  }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// ============================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-lint-runtimes
+// import.meta.main is false under `deno test`, so the CLI never fires.
+// ============================================================================
+
+const itEffect = <E>(
+  name: string,
+  effect: Effect.Effect<unknown, E>,
+  options?: { readonly ignore?: boolean },
+) =>
+  Deno.test({
+    name,
+    ignore: options?.ignore ?? false,
+    fn: async () => {
+      const exit = await Effect.runPromiseExit(effect);
+      if (exit._tag === "Failure") {
+        throw new Error(`Effect failed: ${JSON.stringify(exit.cause)}`);
+      }
+    },
+  });
+
+const assert = (cond: boolean, msg: string) =>
+  cond ? Effect.void : Effect.fail(new Error(msg));
+
+const fixtureEntry = (fields: Partial<Runnable> = {}): Runnable => ({
+  path: "home/private_dot_local/bin/executable_fixture",
+  tier: "runtime",
+  lang: "deno",
+  ...fields,
+});
+
+if (!import.meta.main) {
+  Deno.test("detectLang derives language from shebang text", () => {
+    assertEq(detectLang("#!/usr/bin/env -S deno run"), "deno");
+    assertEq(detectLang("#!/usr/bin/env bash"), "bash");
+    assertEq(detectLang("#!/usr/bin/env -S mise tool-stub"), "stub");
+    assertEq(detectLang(""), "bash");
+    // mise-exec blanket shebang: must classify as deno, not stub
+    assertEq(
+      detectLang("#!/usr/bin/env -S mise exec -- deno run --allow-read"),
+      "deno",
+    );
+  });
+
+  itEffect(
+    "checkEntry reports bootstrap deno violation",
+    Effect.gen(function* () {
+      const violations = checkEntry(
+        fixtureEntry({ tier: "bootstrap", lang: "deno" }),
+        "deno",
+      );
+      yield* assert(
+        violations.some((violation) => violation._tag === "BootstrapViolation"),
+        `unexpected violations: ${JSON.stringify(violations)}`,
+      );
+    }),
+  );
+
+  itEffect(
+    "checkEntry reports runtime language mismatch",
+    Effect.gen(function* () {
+      const violations = checkEntry(
+        fixtureEntry({ tier: "runtime", lang: "bash" }),
+        "deno",
+      );
+      yield* assert(
+        violations.length === 1 && violations[0]._tag === "Mismatch",
+        `unexpected violations: ${JSON.stringify(violations)}`,
+      );
+    }),
+  );
+
+  itEffect(
+    "checkEntry passes matching runtime deno entry",
+    Effect.gen(function* () {
+      const violations = checkEntry(
+        fixtureEntry({ tier: "runtime", lang: "deno" }),
+        "deno",
+      );
+      yield* assert(
+        violations.length === 0,
+        `unexpected violations: ${JSON.stringify(violations)}`,
+      );
+    }),
+  );
+
+  Deno.test("checkCoverage reports actual path missing from manifest", () => {
+    const violations = checkCoverage(
+      ["home/private_dot_local/bin/executable_missing"],
+      new Set(["install.sh"]),
+    );
+    assertEq(violations.length, 1);
+    assertEq(violations[0]._tag, "Unaccounted");
+  });
+
+  Deno.test("Manifest schema decodes runtime tier entries", () => {
+    const manifest = decodeManifest({
+      runtimeTiers: {
+        runnables: [fixtureEntry({ sourced: undefined })],
+      },
+    });
+    assertEq(manifest.runtimeTiers.runnables.length, 1);
+  });
+}
+
+function assertEq<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+}

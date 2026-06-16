@@ -1,4 +1,6 @@
 {{- $extHash := include ".chezmoiexternals/opencode.toml.tmpl" | sha256sum -}}
+{{- $registrySrc := includeTemplate "opencode-tokenizer-registry-mjs" . -}}
+{{- $aliasesSrc := includeTemplate "opencode-tokenizer-aliases-json" . -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -12,16 +14,31 @@ TMPDIR="${TMPDIR%/}"
 source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
-# content-hash: {{ $extHash }}
+# content-hash: {{ printf "%s|%s|%s" $extHash ($registrySrc | sha256sum) ($aliasesSrc | sha256sum) | sha256sum }}
 
 #/ Usage:
 #/   run_onchange_after_install-065-setup-opencode-plugin.sh
 #/
 #/ Description:
-#/   Installs vendor tokenizer dependencies for the OpenCode context-usage
-#/   plugin, and patches tokenizer-aliases.json with additional provider
-#/   mappings (e.g. amazon-bedrock). Re-runs when the opencode external
-#/   archive definition changes.
+#/   Sets up the OpenCode context-usage plugin's tokenizer layer. Three jobs:
+#/
+#/     1. Vendor the tokenizer npm deps (js-tiktoken, @huggingface/transformers)
+#/        into plugin/vendor at PINNED versions.
+#/     2. Write plugin/tokenizer-registry.mjs — a LOCAL PATCH of the upstream
+#/        registry that adds a family-substring matcher so models served via a
+#/        single provider (amazon-bedrock) resolve to the right HF tokenizer
+#/        regardless of the "global.anthropic." prefix or dated version suffix.
+#/     3. Write plugin/tokenizer-aliases.json — the upstream alias maps plus an
+#/        ordered "families" table the patched registry reads.
+#/
+#/   This script OWNS both files. The opencode external archive
+#/   (.chezmoiexternals/opencode.toml.tmpl) explicitly EXCLUDES them so chezmoi
+#/   does not track them and re-extract pristine upstream copies every apply —
+#/   that double-ownership was what produced the recurring
+#/   "tokenizer-aliases.json has changed since chezmoi last wrote it" prompt.
+#/
+#/   Re-runs when the opencode external definition, the registry source, or the
+#/   aliases source changes (composite content-hash above).
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -30,68 +47,56 @@ usage() { grep '^#/' "$0" | cut -c4-; }
 PLUGIN_DIR="${HOME}/.config/opencode/plugin"
 VENDOR_DIR="${PLUGIN_DIR}/vendor"
 ALIASES_FILE="${PLUGIN_DIR}/tokenizer-aliases.json"
+REGISTRY_FILE="${PLUGIN_DIR}/tokenizer-registry.mjs"
 
-# Provider aliases to inject. Each entry is "key=hub" where key is the
-# provider ID and hub is the HuggingFace tokenizer identifier.
-EXTRA_PROVIDERS=(
-  "amazon-bedrock=Xenova/claude-tokenizer"
-)
+# Pinned tokenizer dependency versions. Bump deliberately, not via @latest:
+# @huggingface/transformers 4.x is a major bump from the 3.x line the upstream
+# plugin targets (its manifest pins "^3.3.3"), so we hold at a known-good 3.x.
+TIKTOKEN_VERSION="1.0.21"
+TRANSFORMERS_VERSION="3.8.1"
 
-patch_aliases() {
-  if [ ! -f "$ALIASES_FILE" ]; then
-    warning "╍ tokenizer-aliases.json not found, skipping alias patching"
+write_registry() {
+  local tmp="${REGISTRY_FILE}.tmp"
+  cat > "$tmp" <<'TOKENIZER_REGISTRY_MJS_EOF'
+{{ $registrySrc }}
+TOKENIZER_REGISTRY_MJS_EOF
+
+  if [ -f "$REGISTRY_FILE" ] && cmp -s "$tmp" "$REGISTRY_FILE"; then
+    rm -f "$tmp"
     return 0
   fi
+  mv "$tmp" "$REGISTRY_FILE"
+  info "╍ Wrote patched tokenizer-registry.mjs"
+}
 
-  local changed=false
+write_aliases() {
   local tmp="${ALIASES_FILE}.tmp"
-  cp "$ALIASES_FILE" "$tmp"
+  cat > "$tmp" <<'TOKENIZER_ALIASES_JSON_EOF'
+{{ $aliasesSrc }}
+TOKENIZER_ALIASES_JSON_EOF
 
-  for entry in "${EXTRA_PROVIDERS[@]}"; do
-    local key="${entry%%=*}"
-    local value="${entry#*=}"
-
-    # Check if the key already exists in .providers
-    if node -e "
-      const fs = require('fs');
-      const data = JSON.parse(fs.readFileSync('${tmp}', 'utf8'));
-      process.exit((data.providers && data.providers['${key}']) ? 0 : 1);
-    " 2>/dev/null; then
-      continue
-    fi
-
-    # Inject the key
-    node -e "
-      const fs = require('fs');
-      const data = JSON.parse(fs.readFileSync('${tmp}', 'utf8'));
-      if (!data.providers) data.providers = {};
-      data.providers['${key}'] = '${value}';
-      fs.writeFileSync('${tmp}', JSON.stringify(data, null, 2) + '\n');
-    "
-    changed=true
-    info "╍ Added provider alias: ${key} -> ${value}"
-  done
-
-  if [ "$changed" = true ]; then
-    mv "$tmp" "$ALIASES_FILE"
-  else
+  # Fail loudly if the rendered JSON is malformed rather than shipping a broken
+  # manifest the plugin would silently fall back from.
+  if ! node -e "JSON.parse(require('fs').readFileSync('${tmp}','utf8'))" 2>/dev/null; then
     rm -f "$tmp"
+    fatal "╍ Rendered tokenizer-aliases.json is not valid JSON"
   fi
+
+  if [ -f "$ALIASES_FILE" ] && cmp -s "$tmp" "$ALIASES_FILE"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  mv "$tmp" "$ALIASES_FILE"
+  info "╍ Wrote tokenizer-aliases.json (with amazon-bedrock family table)"
 }
 
 install_vendor_deps() {
-  if [ ! -d "$PLUGIN_DIR" ]; then
-    warning "╍ Plugin directory not found: ${PLUGIN_DIR}"
-    warning "╍ The opencode external archive may not have been applied yet"
-    return 0
-  fi
-
   mkdir -p "$VENDOR_DIR"
 
-  info "╍ Installing vendor tokenizer packages"
+  info "╍ Installing vendor tokenizer packages (pinned)"
   npm install --prefix "$VENDOR_DIR" \
-    js-tiktoken@latest \
-    "@huggingface/transformers@^3.3.3" \
+    "js-tiktoken@${TIKTOKEN_VERSION}" \
+    "@huggingface/transformers@${TRANSFORMERS_VERSION}" \
     --silent
 }
 
@@ -111,10 +116,18 @@ main() {
     return 0
   fi
 
+  if [ ! -d "$PLUGIN_DIR" ]; then
+    warning "▶ OpenCode plugin setup"
+    warning "╍ Plugin directory not found: ${PLUGIN_DIR}"
+    warning "╍ The opencode external archive may not have been applied yet"
+    return 0
+  fi
+
   info "▶ OpenCode plugin setup"
 
   install_vendor_deps
-  patch_aliases
+  write_registry
+  write_aliases
 
   info "╍ Done"
 }
