@@ -913,7 +913,13 @@ const listFleetWorkspaces = (
 const fleetCommandString = (
   task: string,
   args: ReadonlyArray<string>,
-): string => ["mise", "run", task, ...args.map(shellQuote)].join(" ");
+): string =>
+  [
+    'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"',
+    `cd "$HOME/.local/share/chezmoi" && mise run ${shellQuote(task)} ${
+      args.map(shellQuote).join(" ")
+    }`.trimEnd(),
+  ].join("; ");
 
 const runFleetLocal = (
   _env: FleetEnv,
@@ -1878,6 +1884,13 @@ if (!import.meta.main) {
       { _tag: "Left", left: { host: "c", code: 2, logFile: "/tmp/c.log" } },
     ]);
     assertEq(code, 7);
+  });
+
+  Deno.test("fleet remote command seeds PATH and runs from source repo", () => {
+    assertEq(
+      fleetCommandString("update", ["--fast"]),
+      `export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"; cd "$HOME/.local/share/chezmoi" && mise run 'update' '--fast'`,
+    );
   });
 
   Deno.test("connect ssh uses hand-over stdio and mirrors child code", async () => {
