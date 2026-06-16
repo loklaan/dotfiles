@@ -921,6 +921,9 @@ const fleetCommandString = (
     }`.trimEnd(),
   ].join("; ");
 
+const remoteZshCommand = (cmd: string): string =>
+  `/usr/bin/zsh -lc ${shellQuote(cmd)}`;
+
 const runFleetLocal = (
   _env: FleetEnv,
   options: FleetOptions,
@@ -972,9 +975,7 @@ const runFleetRemote = (
       "-o",
       "ConnectTimeout=15",
       `coder.${ws}`,
-      "/usr/bin/zsh",
-      "-lc",
-      cmd,
+      remoteZshCommand(cmd),
     ]);
     yield* writeTextFile(logFile, res.stdout + res.stderr);
     if (res.code === 0) {
@@ -1890,6 +1891,13 @@ if (!import.meta.main) {
     assertEq(
       fleetCommandString("update", ["--fast"]),
       `export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"; cd "$HOME/.local/share/chezmoi" && mise run 'update' '--fast'`,
+    );
+  });
+
+  Deno.test("fleet ssh command preserves multiword remote command", () => {
+    assertEq(
+      remoteZshCommand("mise run 'update'"),
+      "/usr/bin/zsh -lc 'mise run '\\''update'\\'''",
     );
   });
 
