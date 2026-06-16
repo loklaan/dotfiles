@@ -132,8 +132,16 @@ main() {
   fi
 
   {{ $taps := list
+       "peonping/tap"
        "smart-mcp-proxy/mcpproxy"
        "stablyai/orca" -}}
+
+  # Homebrew 6+ refuses to load formulae/casks from non-official taps unless
+  # they are explicitly trusted (gated by HOMEBREW_REQUIRE_TAP_TRUST). Trust
+  # each third-party tap before `brew bundle` so the install is non-interactive.
+  for tap in {{ range ($taps | sortAlpha | uniq) }}{{ . | quote }} {{ end }}; do
+    run_quiet brew trust --tap "$tap" || true
+  done
 
   # Brew managed programs/libraries
   run_quiet brew bundle --file=/dev/stdin <<EOF
