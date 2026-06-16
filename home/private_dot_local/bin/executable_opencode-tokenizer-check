@@ -1,0 +1,787 @@
+#!/usr/bin/env -S mise exec -- deno run --allow-read --allow-net=raw.githubusercontent.com,api.github.com,github.com --allow-env --allow-ffi
+
+// opencode-tokenizer-check — local drift guard for the patched OpenCode
+// context-usage tokenizer resolver. This intentionally does NOT couple to the
+// live upstream plugin at test time: offline checks lock the local source files;
+// `drift-json --refresh-upstream` is the only network path.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+
+import { Console, Effect, Schema } from "npm:effect@4.0.0-beta.83";
+import { Command } from "npm:effect@4.0.0-beta.83/unstable/cli";
+// @effect/platform-node is imported dynamically in import.meta.main only.
+// It transitively loads msgpackr, which reads process.env at module load and
+// throws NotCapable without --allow-env. Dynamic import keeps deno test
+// zero-flag offline.
+
+// ============================================================================
+// Constants locked to the reviewed local patch and upstream archive.
+// ============================================================================
+
+const EXPECTED_UPSTREAM_COMMIT = "3676b9f2";
+const KNOWN_UPSTREAM_TRANSFORMERS_RANGE = "^3.3.3";
+const KNOWN_UPSTREAM_TIKTOKEN_RANGE = "latest";
+const EXPECTED_TRANSFORMERS_PIN = "3.8.1";
+const EXPECTED_TIKTOKEN_PIN = "1.0.21";
+
+const ALIASES_PATH = "home/.chezmoitemplates/opencode-tokenizer-aliases-json";
+const REGISTRY_PATH = "home/.chezmoitemplates/opencode-tokenizer-registry-mjs";
+const SETUP_SCRIPT_PATH =
+  "home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl";
+const EXTERNAL_PATH = "home/.chezmoiexternals/opencode.toml.tmpl";
+
+const UPSTREAM_README_URL =
+  `https://raw.githubusercontent.com/IgorWarzocha/Opencode-Context-Analysis-Plugin/${EXPECTED_UPSTREAM_COMMIT}/README.md`;
+
+// Qwen3 decision, verified 2026-06-16:
+// - HF API for Qwen/Qwen3-32B shows tokenizer.json, tokenizer_config.json, and
+//   vocab.json.
+// - `AutoTokenizer.from_pretrained("Qwen/Qwen3-32B")` loads under
+//   @huggingface/transformers@3.8.1.
+// - tokenizer.json differs from Qwen/Qwen2.5-Coder-32B-Instruct:
+//   Qwen3-32B sha256 aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4
+//   Qwen2.5-Coder sha256 c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539
+// Therefore qwen* Bedrock IDs intentionally resolve to the Qwen3 hub, not the
+// old Qwen2.5 guess and not char/4.
+const QWEN3_HUB = "Qwen/Qwen3-32B";
+
+type TokenizerSpec =
+  | { readonly kind: "transformers"; readonly hub: string }
+  | { readonly kind: "tiktoken"; readonly model: string }
+  | { readonly kind: "approx"; readonly method: "char/4" };
+
+interface ResolutionCase {
+  readonly modelID: string;
+  readonly expected: TokenizerSpec;
+  readonly note: string;
+}
+
+// The 16 amazon-bedrock whitelist IDs from modify_opencode.json. These are the
+// high-value lock: dotted single-provider IDs exercise the local family tier,
+// including unsupported families that deliberately fall through to char/4.
+const BEDROCK_WHITELIST_CASES: ReadonlyArray<ResolutionCase> = [
+  tf(
+    "global.anthropic.claude-opus-4-8",
+    "Xenova/claude-tokenizer",
+    "claude family",
+  ),
+  tf(
+    "global.anthropic.claude-opus-4-7",
+    "Xenova/claude-tokenizer",
+    "claude family",
+  ),
+  tf(
+    "global.anthropic.claude-opus-4-6-v1",
+    "Xenova/claude-tokenizer",
+    "claude family",
+  ),
+  tf(
+    "global.anthropic.claude-opus-4-5-20251101-v1:0",
+    "Xenova/claude-tokenizer",
+    "claude before colon split",
+  ),
+  tf(
+    "global.anthropic.claude-sonnet-4-6",
+    "Xenova/claude-tokenizer",
+    "claude family",
+  ),
+  tf(
+    "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "Xenova/claude-tokenizer",
+    "claude before colon split",
+  ),
+  tf(
+    "global.anthropic.claude-sonnet-4-20250514-v1:0",
+    "Xenova/claude-tokenizer",
+    "claude before colon split",
+  ),
+  tf(
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "Xenova/claude-tokenizer",
+    "claude before colon split",
+  ),
+  approx("moonshotai.kimi-k2.5", "no trustworthy public Kimi tokenizer"),
+  tf(
+    "deepseek.v3.2",
+    "deepseek-ai/DeepSeek-V3",
+    "deliberate point-version lock",
+  ),
+  tf("qwen.qwen3-coder-next", QWEN3_HUB, "verified Qwen3 tokenizer hub"),
+  approx("minimax.minimax-m2.5", "no trustworthy public Minimax tokenizer"),
+  tf(
+    "mistral.mistral-large-3-675b-instruct",
+    "Xenova/mistral-tokenizer-v3",
+    "mistral family",
+  ),
+  approx(
+    "nvidia.nemotron-super-3-120b",
+    "no trustworthy public Nemotron tokenizer",
+  ),
+  tf(
+    "meta.llama4-scout-17b-instruct-v1:0",
+    "Xenova/llama4-tokenizer",
+    "llama family before colon split",
+  ),
+  tf(
+    "mistral.magistral-small-2509",
+    "Xenova/mistral-tokenizer-v3",
+    "magistral ordered before mistral",
+  ),
+];
+
+// Additional contract probes for exact transformer aliases, provider defaults,
+// and OpenAI fallback. These keep the non-Bedrock tiers from silently changing.
+const EXTRA_RESOLUTION_CASES: ReadonlyArray<ResolutionCase> = [
+  tf("claude-opus-4", "Xenova/claude-tokenizer", "exact transformer alias"),
+  tf("deepseek-v3", "deepseek-ai/DeepSeek-V3", "exact transformer alias"),
+  tf("mistral-large", "Xenova/mistral-tokenizer-v3", "exact transformer alias"),
+  tk("gpt-4o", "gpt-4o", "builtin OpenAI fallback"),
+];
+
+function tf(modelID: string, hub: string, note: string): ResolutionCase {
+  return { modelID, expected: { kind: "transformers", hub }, note };
+}
+
+function tk(modelID: string, model: string, note: string): ResolutionCase {
+  return { modelID, expected: { kind: "tiktoken", model }, note };
+}
+
+function approx(modelID: string, note: string): ResolutionCase {
+  return { modelID, expected: { kind: "approx", method: "char/4" }, note };
+}
+
+// ============================================================================
+// Schemas and diagnostic types.
+// ============================================================================
+
+const DriftTool = Schema.Struct({
+  name: Schema.String,
+  installed: Schema.String,
+  latest: Schema.String,
+  behind: Schema.Number,
+  source: Schema.String,
+});
+type DriftTool = typeof DriftTool.Type;
+const encodeDriftTool = Schema.encodeSync(DriftTool);
+
+type Severity = "error" | "warning";
+
+interface Finding {
+  readonly severity: Severity;
+  readonly name: string;
+  readonly installed: string;
+  readonly expected: string;
+  readonly source: string;
+  readonly message: string;
+}
+
+interface AliasManifest {
+  readonly transformers: Record<string, string>;
+  readonly providers: Record<string, string>;
+  readonly families: ReadonlyArray<readonly [string, string]>;
+}
+
+interface SourceBundle {
+  readonly aliases: AliasManifest;
+  readonly aliasesRaw: string;
+  readonly registrySource: string;
+  readonly setupScript: string;
+  readonly externalSource: string;
+}
+
+// ============================================================================
+// Pure resolution model mirroring tokenizer-registry.mjs precedence.
+// ============================================================================
+
+const BUILTIN_OPENAI_FALLBACK: Record<string, string> = {
+  "gpt-5": "gpt-4o",
+  "o4-mini": "gpt-4o",
+  "o3": "gpt-4o",
+  "o3-mini": "gpt-4o",
+  "o1": "gpt-4o",
+  "o1-pro": "gpt-4o",
+  "gpt-4.1": "gpt-4o",
+  "gpt-4.1-mini": "gpt-4o",
+  "gpt-4o": "gpt-4o",
+  "gpt-4o-mini": "gpt-4o-mini",
+  "gpt-4-turbo": "gpt-4",
+  "gpt-4": "gpt-4",
+  "gpt-3.5-turbo": "gpt-3.5-turbo",
+  "text-embedding-3-large": "text-embedding-3-large",
+  "text-embedding-3-small": "text-embedding-3-small",
+  "text-embedding-ada-002": "text-embedding-ada-002",
+};
+
+const normalizeModelKey = (value: string): string =>
+  value.toLowerCase().replace(/[\s_]+/g, "-").trim();
+
+function buildAliasKeys(alias: string): ReadonlyArray<string> {
+  const keys = new Set<string>();
+  const normalized = normalizeModelKey(alias);
+  if (normalized) keys.add(normalized);
+  if (normalized.includes(":")) {
+    keys.add(normalized.split(":")[0] ?? normalized);
+  }
+  if (normalized.endsWith("-latest")) keys.add(normalized.slice(0, -7));
+  return [...keys];
+}
+
+function buildTransformerMap(
+  aliases: AliasManifest,
+): Map<string, TokenizerSpec> {
+  const map = new Map<string, TokenizerSpec>();
+  for (const [alias, hub] of Object.entries(aliases.transformers)) {
+    for (const key of buildAliasKeys(alias)) {
+      if (!map.has(key)) map.set(key, { kind: "transformers", hub });
+    }
+  }
+  return map;
+}
+
+function buildOpenAIMap(): Map<string, TokenizerSpec> {
+  const map = new Map<string, TokenizerSpec>();
+  for (const [alias, model] of Object.entries(BUILTIN_OPENAI_FALLBACK)) {
+    for (const key of buildAliasKeys(alias)) {
+      if (!map.has(key)) map.set(key, { kind: "tiktoken", model });
+    }
+  }
+  return map;
+}
+
+function resolveMapping(
+  modelID: string,
+  aliases: AliasManifest,
+): TokenizerSpec {
+  const normalized = normalizeModelKey(modelID);
+  const openai = buildOpenAIMap();
+  const transformers = buildTransformerMap(aliases);
+
+  const directOpenAI = lookupOpenAI(openai, normalized);
+  if (directOpenAI) return directOpenAI;
+
+  const directTransformer = transformers.get(normalized);
+  if (directTransformer) return directTransformer;
+
+  // Family substring tier: ordered and intentionally before colon-base lookup.
+  for (const [pattern, hub] of aliases.families) {
+    if (normalized.includes(pattern)) return { kind: "transformers", hub };
+  }
+
+  const base = normalized.split(":")[0] ?? normalized;
+  if (base !== normalized) {
+    const baseTransformer = transformers.get(base);
+    if (baseTransformer) return baseTransformer;
+  }
+
+  return { kind: "approx", method: "char/4" };
+}
+
+function lookupOpenAI(
+  map: Map<string, TokenizerSpec>,
+  modelID: string,
+): TokenizerSpec | undefined {
+  const direct = map.get(modelID);
+  if (direct) return direct;
+  const trimmed = modelID.replace(/-latest$/, "");
+  if (trimmed !== modelID) return map.get(trimmed);
+  const base = modelID.split(":")[0] ?? modelID;
+  if (base !== modelID) return map.get(base);
+  return undefined;
+}
+
+function specKey(spec: TokenizerSpec): string {
+  switch (spec.kind) {
+    case "transformers":
+      return `transformers:${spec.hub}`;
+    case "tiktoken":
+      return `tiktoken:${spec.model}`;
+    case "approx":
+      return "approx:char/4";
+  }
+}
+
+// ============================================================================
+// Source checks.
+// ============================================================================
+
+function parseAliases(raw: string): AliasManifest {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const transformers = asStringRecord(parsed.transformers);
+  const providers = asStringRecord(parsed.providers);
+  const families = Array.isArray(parsed.families)
+    ? parsed.families.flatMap((
+      pair,
+    ): ReadonlyArray<readonly [string, string]> =>
+      Array.isArray(pair) && typeof pair[0] === "string" &&
+        typeof pair[1] === "string"
+        ? [[pair[0], pair[1]]]
+        : []
+    )
+    : [];
+  return { transformers, providers, families };
+}
+
+function asStringRecord(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  const out: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string") out[key] = item;
+  }
+  return out;
+}
+
+function checkResolutionLock(aliases: AliasManifest): ReadonlyArray<Finding> {
+  const findings: Finding[] = [];
+  for (
+    const testCase of [...BEDROCK_WHITELIST_CASES, ...EXTRA_RESOLUTION_CASES]
+  ) {
+    const actual = resolveMapping(testCase.modelID, aliases);
+    if (specKey(actual) !== specKey(testCase.expected)) {
+      findings.push({
+        severity: "error",
+        name: `opencode.tokenizer.${testCase.modelID}`,
+        installed: specKey(actual),
+        expected: specKey(testCase.expected),
+        source: "opencode-tokenizer:resolution",
+        message: `${testCase.modelID} resolved incorrectly (${testCase.note})`,
+      });
+    }
+  }
+  return findings;
+}
+
+function checkAliasComment(aliasesRaw: string): ReadonlyArray<Finding> {
+  const parsed = JSON.parse(aliasesRaw) as Record<string, unknown>;
+  return typeof parsed._comment === "string" &&
+      parsed._comment.includes("families[]")
+    ? []
+    : [{
+      severity: "warning",
+      name: "opencode.tokenizer.alias-comment",
+      installed: typeof parsed._comment === "string"
+        ? parsed._comment
+        : "missing",
+      expected: "top-level _comment documenting families[] precedence",
+      source: "opencode-tokenizer:aliases",
+      message:
+        "tokenizer aliases file lacks the local precedence warning comment",
+    }];
+}
+
+function checkVendorPins(setupScript: string): ReadonlyArray<Finding> {
+  const transformers = extractShellPin(setupScript, "TRANSFORMERS_VERSION");
+  const tiktoken = extractShellPin(setupScript, "TIKTOKEN_VERSION");
+  const findings: Finding[] = [];
+
+  if (transformers !== EXPECTED_TRANSFORMERS_PIN) {
+    findings.push(
+      pinFinding(
+        "TRANSFORMERS_VERSION",
+        transformers,
+        EXPECTED_TRANSFORMERS_PIN,
+        "error",
+      ),
+    );
+  } else if (!satisfiesCaret(transformers, KNOWN_UPSTREAM_TRANSFORMERS_RANGE)) {
+    findings.push(
+      pinFinding(
+        "TRANSFORMERS_VERSION",
+        transformers,
+        KNOWN_UPSTREAM_TRANSFORMERS_RANGE,
+        "warning",
+      ),
+    );
+  }
+
+  if (tiktoken !== EXPECTED_TIKTOKEN_PIN) {
+    findings.push(
+      pinFinding("TIKTOKEN_VERSION", tiktoken, EXPECTED_TIKTOKEN_PIN, "error"),
+    );
+  }
+
+  return findings;
+}
+
+function pinFinding(
+  name: string,
+  installed: string,
+  expected: string,
+  severity: Severity,
+): Finding {
+  return {
+    severity,
+    name: `opencode.tokenizer.${name}`,
+    installed: installed || "missing",
+    expected,
+    source: "opencode-tokenizer:vendor-pins",
+    message:
+      `${name} drifted from the reviewed upstream tokenizer dependency contract`,
+  };
+}
+
+function extractShellPin(source: string, name: string): string {
+  return source.match(new RegExp(`^${name}="([^"]+)"`, "m"))?.[1] ?? "";
+}
+
+function satisfiesCaret(version: string, range: string): boolean {
+  const match = range.match(/^\^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return true;
+  const lower = parseSemver(`${match[1]}.${match[2]}.${match[3]}`);
+  const actual = parseSemver(version);
+  if (!lower || !actual) return false;
+  return actual.major === lower.major && compareSemver(actual, lower) >= 0;
+}
+
+interface Semver {
+  readonly major: number;
+  readonly minor: number;
+  readonly patch: number;
+}
+
+function parseSemver(version: string): Semver | null {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+}
+
+function compareSemver(a: Semver, b: Semver): number {
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
+}
+
+function checkModuleShape(registrySource: string): ReadonlyArray<Finding> {
+  const required = ["resolveTokenModel", "TokenizerResolutionError"];
+  return required.flatMap((name): Finding[] =>
+    new RegExp(`export\\s+(?:async\\s+function|function|class)\\s+${name}\\b`)
+        .test(registrySource)
+      ? []
+      : [{
+        severity: "error",
+        name: `opencode.tokenizer.export.${name}`,
+        installed: "missing",
+        expected: "exported from tokenizer-registry.mjs",
+        source: "opencode-tokenizer:module-shape",
+        message: `tokenizer-registry.mjs no longer exports ${name}`,
+      }]
+  );
+}
+
+function checkCommentIgnoredByRegistry(
+  registrySource: string,
+): ReadonlyArray<Finding> {
+  const readsOnlyKnownKeys = [
+    /return data\.transformers \|\| \{\}/,
+    /return parsed\.providers \|\| \{\}/,
+    /Array\.isArray\(parsed\.families\)/,
+  ].every((pattern) => pattern.test(registrySource));
+  return readsOnlyKnownKeys ? [] : [{
+    severity: "warning",
+    name: "opencode.tokenizer.alias-comment-ignore",
+    installed: "registry parse shape changed",
+    expected: "registry reads only .transformers/.providers/.families",
+    source: "opencode-tokenizer:module-shape",
+    message: "confirm _comment remains ignored before changing aliases JSON",
+  }];
+}
+
+function checkExternalStamp(externalSource: string): ReadonlyArray<Finding> {
+  const commit =
+    externalSource.match(/archive\/([0-9a-f]{8,40})\.tar\.gz/)?.[1] ?? "";
+  return commit === EXPECTED_UPSTREAM_COMMIT ? [] : [{
+    severity: "warning",
+    name: "opencode.tokenizer.upstream-commit",
+    installed: commit || "missing",
+    expected: EXPECTED_UPSTREAM_COMMIT,
+    source: "opencode-tokenizer:external-stamp",
+    message:
+      "opencode external archive changed; re-review tokenizer aliases and resolver patch",
+  }];
+}
+
+async function checkUpstreamReadme(): Promise<ReadonlyArray<Finding>> {
+  try {
+    const response = await fetch(UPSTREAM_README_URL);
+    if (!response.ok) return [];
+    const text = await response.text();
+    const expectedLine =
+      `npm install js-tiktoken@${KNOWN_UPSTREAM_TIKTOKEN_RANGE} @huggingface/transformers@${KNOWN_UPSTREAM_TRANSFORMERS_RANGE}`;
+    return text.includes(expectedLine) ? [] : [{
+      severity: "warning",
+      name: "opencode.tokenizer.upstream-dependency-line",
+      installed: "changed-or-missing",
+      expected: expectedLine,
+      source: "opencode-tokenizer:upstream-network",
+      message:
+        `upstream dependency guidance at ${EXPECTED_UPSTREAM_COMMIT} no longer matches the recorded tokenizer constraints`,
+    }];
+  } catch {
+    return [];
+  }
+}
+
+function findingToDriftTool(finding: Finding): DriftTool {
+  return {
+    name: finding.name,
+    installed: finding.installed,
+    latest: finding.expected,
+    behind: 1,
+    source: finding.source,
+  };
+}
+
+function runAllChecks(bundle: SourceBundle): ReadonlyArray<Finding> {
+  return [
+    ...checkResolutionLock(bundle.aliases),
+    ...checkAliasComment(bundle.aliasesRaw),
+    ...checkVendorPins(bundle.setupScript),
+    ...checkModuleShape(bundle.registrySource),
+    ...checkCommentIgnoredByRegistry(bundle.registrySource),
+    ...checkExternalStamp(bundle.externalSource),
+  ];
+}
+
+// ============================================================================
+// Filesystem / CLI.
+// ============================================================================
+
+const readTextFile = (path: string): Effect.Effect<string, Error> =>
+  Effect.tryPromise({
+    try: () => Deno.readTextFile(path),
+    catch: (cause) => new Error(`failed to read ${path}: ${String(cause)}`),
+  });
+
+const loadSources = (repoRoot: string): Effect.Effect<SourceBundle, Error> =>
+  Effect.gen(function* () {
+    const aliasesRaw = yield* readTextFile(`${repoRoot}/${ALIASES_PATH}`);
+    const registrySource = yield* readTextFile(`${repoRoot}/${REGISTRY_PATH}`);
+    const setupScript = yield* readTextFile(`${repoRoot}/${SETUP_SCRIPT_PATH}`);
+    const externalSource = yield* readTextFile(`${repoRoot}/${EXTERNAL_PATH}`);
+    return {
+      aliases: parseAliases(aliasesRaw),
+      aliasesRaw,
+      registrySource,
+      setupScript,
+      externalSource,
+    };
+  });
+
+const checkCommand = (repoRoot: string): Effect.Effect<number> =>
+  Effect.gen(function* () {
+    const bundle = yield* loadSources(repoRoot);
+    const findings = runAllChecks(bundle);
+    for (const finding of findings) {
+      const prefix = finding.severity === "error" ? "FAIL" : "WARN";
+      yield* Console.error(`${prefix} ${finding.name}: ${finding.message}`);
+      yield* Console.error(
+        `     ${finding.installed} -> ${finding.expected} [${finding.source}]`,
+      );
+    }
+    if (findings.length === 0) {
+      yield* Console.log(
+        `PASS opencode tokenizer guard (${BEDROCK_WHITELIST_CASES.length} bedrock IDs locked)`,
+      );
+    }
+    return findings.some((finding) => finding.severity === "error") ? 1 : 0;
+  }).pipe(
+    Effect.catch((error: Error) =>
+      Console.error(String(error)).pipe(Effect.as(1))
+    ),
+  );
+
+const driftJsonCommand = (
+  repoRoot: string,
+  refreshUpstream: boolean,
+): Effect.Effect<number> =>
+  Effect.gen(function* () {
+    const bundle = yield* loadSources(repoRoot);
+    const localFindings = runAllChecks(bundle);
+    const networkFindings = refreshUpstream
+      ? yield* Effect.promise(() => checkUpstreamReadme())
+      : [];
+    const tools = [...localFindings, ...networkFindings].map((finding) =>
+      encodeDriftTool(findingToDriftTool(finding))
+    );
+    yield* Console.log(JSON.stringify(tools, null, 2));
+    return 0;
+  }).pipe(Effect.catch(() => Console.log("[]").pipe(Effect.as(0))));
+
+const USAGE = `Usage:
+  opencode-tokenizer-check check [--repo-root PATH]
+  opencode-tokenizer-check drift-json [--repo-root PATH] [--refresh-upstream]
+  opencode-tokenizer-check --help`;
+
+function parseArgs(argv: readonly string[]): {
+  readonly command: "check" | "drift-json" | "help";
+  readonly repoRoot: string;
+  readonly refreshUpstream: boolean;
+} {
+  const [command = "check", ...rest] = argv;
+  if (command === "--help" || command === "-h") {
+    return { command: "help", repoRoot: Deno.cwd(), refreshUpstream: false };
+  }
+  if (command !== "check" && command !== "drift-json") {
+    return { command: "help", repoRoot: Deno.cwd(), refreshUpstream: false };
+  }
+  let repoRoot = Deno.cwd();
+  let refreshUpstream = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--repo-root") {
+      repoRoot = rest[i + 1] ?? repoRoot;
+      i += 1;
+      continue;
+    }
+    if (arg === "--refresh-upstream") {
+      refreshUpstream = true;
+      continue;
+    }
+  }
+  return { command, repoRoot, refreshUpstream };
+}
+
+const tokenizerCommand = Command.make("opencode-tokenizer-check", {}, () => {
+  const args = parseArgs(Deno.args);
+  if (args.command === "help") return Console.error(USAGE).pipe(Effect.as(0));
+  if (args.command === "drift-json") {
+    return driftJsonCommand(args.repoRoot, args.refreshUpstream);
+  }
+  return checkCommand(args.repoRoot);
+});
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  Command.run(tokenizerCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// === Tests ==================================================================
+// Offline unit tests must pass with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_opencode-tokenizer-check
+
+if (!import.meta.main) {
+  const fixtureAliases: AliasManifest = {
+    transformers: {
+      "claude-opus-4": "Xenova/claude-tokenizer",
+      "deepseek-v3": "deepseek-ai/DeepSeek-V3",
+      "mistral-large": "Xenova/mistral-tokenizer-v3",
+      "llama-4": "Xenova/llama4-tokenizer",
+    },
+    providers: {},
+    families: [
+      ["claude", "Xenova/claude-tokenizer"],
+      ["llama", "Xenova/llama4-tokenizer"],
+      ["codestral", "Xenova/mistral-tokenizer-v3"],
+      ["magistral", "Xenova/mistral-tokenizer-v3"],
+      ["mistral", "Xenova/mistral-tokenizer-v3"],
+      ["deepseek", "deepseek-ai/DeepSeek-V3"],
+      ["qwen", QWEN3_HUB],
+    ],
+  };
+
+  Deno.test("resolution lock: 16 Bedrock whitelist IDs map to expected tokenizer specs", () => {
+    assertEq(BEDROCK_WHITELIST_CASES.length, 16);
+    const failures = checkResolutionLock(fixtureAliases).filter((finding) =>
+      finding.source === "opencode-tokenizer:resolution"
+    );
+    if (failures.length > 0) {
+      throw new Error(failures.map((finding) => finding.message).join("\n"));
+    }
+  });
+
+  Deno.test("resolution lock: family tier runs before colon-base fallback", () => {
+    assertEq(
+      specKey(
+        resolveMapping("meta.llama4-scout-17b-instruct-v1:0", fixtureAliases),
+      ),
+      "transformers:Xenova/llama4-tokenizer",
+    );
+  });
+
+  Deno.test("resolution lock: unsupported families deliberately fall to char/4", () => {
+    assertEq(
+      specKey(resolveMapping("moonshotai.kimi-k2.5", fixtureAliases)),
+      "approx:char/4",
+    );
+    assertEq(
+      specKey(resolveMapping("nvidia.nemotron-super-3-120b", fixtureAliases)),
+      "approx:char/4",
+    );
+  });
+
+  Deno.test("resolution lock: deepseek point-version and qwen3 hub are deliberate", () => {
+    assertEq(
+      specKey(resolveMapping("deepseek.v3.2", fixtureAliases)),
+      "transformers:deepseek-ai/DeepSeek-V3",
+    );
+    assertEq(
+      specKey(resolveMapping("qwen.qwen3-coder-next", fixtureAliases)),
+      `transformers:${QWEN3_HUB}`,
+    );
+  });
+
+  Deno.test("vendor pin compatibility accepts held Transformers.js pin within upstream caret", () => {
+    if (
+      !satisfiesCaret(
+        EXPECTED_TRANSFORMERS_PIN,
+        KNOWN_UPSTREAM_TRANSFORMERS_RANGE,
+      )
+    ) {
+      throw new Error(
+        "expected held @huggingface/transformers pin to satisfy reviewed upstream range",
+      );
+    }
+  });
+
+  Deno.test("module-shape regex detects required exports", () => {
+    const source =
+      `export class TokenizerResolutionError extends Error {}\nexport async function resolveTokenModel() {}`;
+    assertEq(checkModuleShape(source).length, 0);
+  });
+
+  Deno.test("external stamp warns when archive commit changes", () => {
+    assertEq(
+      checkExternalStamp(
+        `url = "https://example/archive/${EXPECTED_UPSTREAM_COMMIT}.tar.gz"`,
+      ).length,
+      0,
+    );
+    assertEq(
+      checkExternalStamp('url = "https://example/archive/deadbeef.tar.gz"')
+        .length,
+      1,
+    );
+  });
+}
+
+function assertEq<T>(actual: T, expected: T): void {
+  if (actual !== expected) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+}

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-read
+#!/usr/bin/env -S mise exec -- deno run --allow-read
 
 // json-escape (Deno + Effect v4 beta). Escapes a JSON value for embedding in a
 // quoted key=value field string: validates the input parses as JSON, then emits
@@ -22,7 +22,7 @@
 //
 // IMPORTANT — why this tool does NOT use @effect/platform-node:
 // The shebang grants only `--allow-read`. Importing anything from
-// @effect/platform-node@4.0.0-beta.80 transitively loads `msgpackr`, which reads
+// @effect/platform-node@4.0.0-beta.83 transitively loads `msgpackr`, which reads
 // the env var MSGPACKR_NATIVE_ACCELERATION_DISABLED at module-evaluation time.
 // Under Deno that throws `NotCapable: Requires env access ...` unless --allow-env
 // is granted — which would both break this tool's shebang AND force the in-file
@@ -33,9 +33,9 @@
 // NodeRuntime.runMain. Do NOT "helpfully" re-add @effect/platform-node: it is
 // empirically incompatible with the --allow-read-only shebang.
 //
-// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
-import { Cause, Console, Effect, Option } from "npm:effect@4.0.0-beta.80";
+import { Cause, Console, Effect, Option } from "npm:effect@4.0.0-beta.83";
 
 const USAGE = `Usage:
   json-escape [OPTIONS] [FILE]
@@ -260,6 +260,21 @@ const main = (
   );
 
 if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
   // runPromiseExit never throws: the Exit inspection below is a total mapping to
   // an exit code, so there is no unhandled rejection and exit codes stay precise.
   const exit = await Effect.runPromiseExit(main(Deno.args));

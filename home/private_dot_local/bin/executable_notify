@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com
+#!/usr/bin/env -S mise exec -- deno run --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com --allow-ffi
 
 // notify (Deno + Effect v4 beta). Two faces of one tool:
 //
@@ -22,7 +22,7 @@
 // @effect/platform-node (NodeRuntime/NodeStdio) is imported lazily inside the
 // `mcp` branch: it transitively loads msgpackr, which reads process.env at module
 // load and throws NotCapable without --allow-env, breaking flag-free `deno test`.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
 import {
   Config,
@@ -33,7 +33,7 @@ import {
   Redacted,
   Runtime,
   Schema,
-} from "npm:effect@4.0.0-beta.80";
+} from "npm:effect@4.0.0-beta.83";
 // NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
 // `mcp` branch and the env-gated annotation test — it transitively loads
 // msgpackr, which reads process.env at module load and throws NotCapable
@@ -43,7 +43,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.80/unstable/http";
+} from "npm:effect@4.0.0-beta.83/unstable/http";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -435,7 +435,7 @@ class Pushbullet extends Context.Service<Pushbullet, {
 // only called from the `mcp` branch (and the env-gated annotation test).
 const buildMcp = async () => {
   const { McpServer, Tool, Toolkit } = await import(
-    "npm:effect@4.0.0-beta.80/unstable/ai"
+    "npm:effect@4.0.0-beta.83/unstable/ai"
   );
 
   const SendNotification = Tool.make("send_notification", {
@@ -571,6 +571,21 @@ const buildMcp = async () => {
 // ===========================================================================
 
 if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
   const command = Deno.args[0];
 
   if (command === "mcp") {
@@ -579,7 +594,7 @@ if (import.meta.main) {
     // means flag-free `deno test` never triggers it. buildMcp() lazily imports
     // `unstable/ai` (also msgpackr-tainted) for the same reason.
     const { NodeRuntime, NodeStdio } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.80"
+      "npm:@effect/platform-node@4.0.0-beta.83"
     );
     const { ServerLayer } = await buildMcp();
 

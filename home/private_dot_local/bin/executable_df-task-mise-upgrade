@@ -1,48 +1,277 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=mise --allow-env --allow-ffi --allow-read
 
-IFS=$'\n\t'
+// df-task-mise-upgrade (Deno + Effect v4 beta). Wrapper around `mise upgrade`
+// (refreshes tools whose pin is `latest`), invoked from the
+// `[tasks."mise:upgrade"]` mise task. Behavioral twin of the bash original:
+// probe `mise` on PATH, fail loudly if absent, otherwise run `mise upgrade -y`
+// with stdio inherited and propagate the child's exit code verbatim.
+//
+// SUPERVISE (deno-effect-tools.md §9): the mise child inherits stdout/stderr so
+// its progress streams straight to the terminal, and the parent captures the
+// exit code to mirror it. Run under NodeRuntime.runMain so a Ctrl-C gracefully
+// tears the child down (SIGTERM -> SIGKILL).
+//
+// PERMISSIONS: --allow-run=mise (spawn mise) + --allow-env. The --allow-env is
+// load-bearing: the SUPERVISE ChildProcessSpawner is supplied by
+// @effect/platform-node's NodeServices.layer, whose dependency chain pulls in
+// msgpackr, which reads process.env at module-load time. Without --allow-env the
+// real upgrade path dies with NotCapable (verified empirically). This matches
+// the sibling df-task-chezmoi-update, which grants --allow-env for the same
+// reason. `--help` and argument parsing run BEFORE the dynamic platform-node
+// import, so they still succeed under a bare `deno run --allow-run=mise`
+// invocation (the lint/verify gate). The platform-node import is dynamic
+// (import.meta.main path only) to keep `deno test` hermetic and permission-free.
+//
+// Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
+// exits 1); progress is reported via Effect.logInfo from inside the gen block.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import { Data, Effect, Layer, Stream } from "npm:effect@4.0.0-beta.83";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+// Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
 
-#/ Usage:
-#/   df-task-mise-upgrade
-#/
-#/ Description:
-#/   Runs `mise upgrade` to refresh tools whose pin is `latest`.
-#/   Tools with explicit version pins (e.g. orca via .orcaVersion in
-#/   chezmoi data, paseo via .paseoVersion) are unaffected — bump those
-#/   in home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their
-#/   upgrade lifecycle.
-#/
-#/   Hoisted out of mise.toml so the task body lives next to other
-#/   dotfiles-task-* scripts and is debuggable in isolation.
-#/
-#/ Options:
-#/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+// --------------------------------------------------------------------------
+// Usage (mirrors the bash `#/`-comment header rendered by `usage()`).
+// --------------------------------------------------------------------------
 
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
+const USAGE = `Usage:
+  df-task-mise-upgrade
+
+Description:
+  Runs \`mise upgrade\` to refresh tools whose pin is \`latest\`.
+  Tools with explicit version pins (e.g. orca via .orcaVersion in
+  chezmoi data, paseo via .paseoVersion) are unaffected — bump those
+  in home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their
+  upgrade lifecycle.
+
+  Hoisted out of mise.toml so the task body lives next to other
+  dotfiles-task-* scripts and is debuggable in isolation.
+
+Options:
+  --help    Display this help message`;
+
+// --------------------------------------------------------------------------
+// Pure argument classification (mirrors bash parse_args, which inspects only
+// $1). Kept free of any side effects so the in-file tests pin the contract with
+// ZERO permission flags.
+// --------------------------------------------------------------------------
+
+export type ArgAction =
+  | { readonly kind: "help" }
+  | { readonly kind: "run" }
+  | { readonly kind: "unknown"; readonly arg: string };
+
+/**
+ * Classify argv exactly like the bash `case "$1"`:
+ *   no args        -> run
+ *   `--help`       -> help (usage on stdout + exit 0)
+ *   any other arg  -> unknown (usage + fatal)
+ */
+export const classifyArgs = (args: ReadonlyArray<string>): ArgAction => {
+  const first = args[0];
+  if (first === undefined) return { kind: "run" };
+  if (first === "--help") return { kind: "help" };
+  return { kind: "unknown", arg: first };
+};
+
+// --------------------------------------------------------------------------
+// Errors — one cause per error, structured. The "mise absent" decision is a
+// typed failure so the entrypoint (not the core logic) owns the fatal/exit side
+// effect, keeping `program` observable under test.
+// --------------------------------------------------------------------------
+
+class MiseNotOnPathError
+  extends Data.TaggedError("MiseNotOnPathError")<Record<never, never>> {}
+
+// --------------------------------------------------------------------------
+// Runtime program (SUPERVISE). Requires ChildProcessSpawner, supplied by
+// NodeServices.layer at the entrypoint. Returns the exit code to propagate;
+// fails with MiseNotOnPathError when mise is absent.
+// --------------------------------------------------------------------------
+
+const program: Effect.Effect<
+  number,
+  MiseNotOnPathError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  // Probe mise on PATH (mirrors bash `command -v mise`). Any failure to even
+  // start the probe counts as absent.
+  const hasMise = yield* spawner
+    .exitCode(
+      ChildProcess.make("mise", ["--version"], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    )
+    .pipe(
+      Effect.map((code) => code === 0),
+      Effect.orElseSucceed(() => false),
+    );
+
+  if (!hasMise) {
+    return yield* Effect.fail(new MiseNotOnPathError());
+  }
+
+  yield* Effect.logInfo("running mise upgrade -y");
+
+  // Inherit stdio so mise's progress/output goes straight to the terminal.
+  // Propagate mise's exit code verbatim (bash `set -e` + tail invocation); a
+  // spawner-level failure after the presence probe is treated as exit 1.
+  return yield* spawner
+    .exitCode(
+      ChildProcess.make("mise", ["upgrade", "-y"], {
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
+    )
+    .pipe(Effect.orElseSucceed(() => 1));
+});
+
+// --------------------------------------------------------------------------
+// Entry point
+// --------------------------------------------------------------------------
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const action = classifyArgs(Deno.args);
+  if (action.kind === "help") {
+    console.log(USAGE);
+    Deno.exit(0);
+  }
+  if (action.kind === "unknown") {
+    console.log(USAGE);
+    // fatal prints "fatal Unknown argument: <arg>" then exits 1.
+    fatal(`Unknown argument: ${action.arg}`);
+  }
+
+  // Dynamic import keeps `deno test` permission-free (see header). NodeServices
+  // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
+  // handlers SUPERVISE relies on for graceful child teardown.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  program.pipe(
+    // mise absent -> "fatal mise not on PATH" + exit 1.
+    Effect.catchTag(
+      "MiseNotOnPathError",
+      () => Effect.sync(() => fatal("mise not on PATH")),
+    ),
+    // Propagate mise's exit code verbatim.
+    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
-main() {
-  parse_args "$@"
+// === Tests =================================================================
+// Run offline with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-task-mise-upgrade
+// The import.meta.main guard keeps the CLI (and the Node platform import) from
+// firing under test. These cover the pure arg classifier (which drives "--help
+// exits 0") and the SUPERVISE program against a mock spawner (mise-absent ->
+// fatal mapping, and exit-code propagation) — all without spawning real mise.
 
-  if ! command -v mise >/dev/null 2>&1; then
-    fatal "mise not on PATH"
-  fi
+const assertEq = <T>(actual: T, expected: T, msg: string): void => {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${msg}: ${a} !== ${e}`);
+};
 
-  mise upgrade -y
-}
+// Mock ChildProcessSpawner whose exit code is decided from the command's args,
+// so the probe (`mise --version`) and the run (`mise upgrade -y`) can be steered
+// independently. Only `exitCode` is exercised by `program`; the rest are
+// deliberately unimplemented stubs that fail loudly if ever reached.
+const argsOf = (command: unknown): ReadonlyArray<string> =>
+  (command as { readonly args?: ReadonlyArray<string> }).args ?? [];
 
-main "$@"
+const mockSpawnerLayer = (
+  exitFor: (args: ReadonlyArray<string>) => number,
+): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.ChildProcessSpawner.of({
+      spawn: () => Effect.die("mock spawner: spawn() unused"),
+      exitCode: (command) =>
+        Effect.succeed(ChildProcessSpawner.ExitCode(exitFor(argsOf(command)))),
+      streamString: () => Stream.die("mock spawner: streamString() unused"),
+      streamLines: () => Stream.die("mock spawner: streamLines() unused"),
+      lines: () => Effect.die("mock spawner: lines() unused"),
+      string: () => Effect.die("mock spawner: string() unused"),
+    }),
+  );
+
+Deno.test("classifyArgs: no args -> run", () => {
+  assertEq(classifyArgs([]), { kind: "run" }, "empty argv");
+});
+
+Deno.test("classifyArgs: --help -> help (entry maps to usage + exit 0)", () => {
+  assertEq(classifyArgs(["--help"]), { kind: "help" }, "--help");
+});
+
+Deno.test("classifyArgs: unknown first arg -> unknown (entry maps to fatal)", () => {
+  assertEq(
+    classifyArgs(["--bogus"]),
+    { kind: "unknown", arg: "--bogus" },
+    "unknown arg",
+  );
+});
+
+Deno.test(
+  "program: mise absent -> fails with MiseNotOnPathError (entry maps to fatal)",
+  async () => {
+    // Probe (`mise --version`) returns 127 -> mise treated as absent.
+    const err = await Effect.runPromise(
+      program.pipe(
+        Effect.provide(mockSpawnerLayer(() => 127)),
+        Effect.flip,
+      ),
+    );
+    assertEq(err._tag, "MiseNotOnPathError", "error tag");
+  },
+);
+
+Deno.test("program: mise present, upgrade exits 0 -> returns 0", async () => {
+  const code = await Effect.runPromise(
+    program.pipe(Effect.provide(mockSpawnerLayer(() => 0))),
+  );
+  assertEq(code, 0, "exit code");
+});
+
+Deno.test(
+  "program: propagates mise upgrade's non-zero exit code verbatim",
+  async () => {
+    // Probe (`mise --version`) -> 0 (present); `mise upgrade -y` -> 7.
+    const code = await Effect.runPromise(
+      program.pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => (args.includes("upgrade") ? 7 : 0)),
+        ),
+      ),
+    );
+    assertEq(code, 7, "propagated exit code");
+  },
+);

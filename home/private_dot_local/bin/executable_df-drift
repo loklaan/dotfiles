@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=mise,git,brew,chezmoi,oh-my-openagent,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env
+#!/usr/bin/env -S mise exec -- deno run --allow-run=mise,git,brew,chezmoi,oh-my-openagent,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-ffi
 
 // drift — version-drift detection for the dotfiles fleet (Deno + Effect v4 beta).
 //
@@ -23,7 +23,7 @@
 //
 // The four checkers are Effect services so they compose and are individually
 // testable; each yields ReadonlyArray<DriftTool> and never fails the pipeline.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.80.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
 import {
   Context,
@@ -31,12 +31,12 @@ import {
   Layer,
   Logger,
   Schema,
-} from "npm:effect@4.0.0-beta.80";
+} from "npm:effect@4.0.0-beta.83";
 import {
   FetchHttpClient,
   HttpClient,
-} from "npm:effect@4.0.0-beta.80/unstable/http";
-import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.80";
+} from "npm:effect@4.0.0-beta.83/unstable/http";
+import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.83";
 
 // ===========================================================================
 // Schema — the on-disk contract consumed by dotfiles-setup.
@@ -610,6 +610,46 @@ class OmoChecker extends Context.Service<OmoChecker, {
   ).pipe(Layer.provide(FetchHttpClient.layer));
 }
 
+// ===========================================================================
+// Checker: OpenCode tokenizer resolver local drift guard
+// ===========================================================================
+// The dedicated checker owns tokenizer-specific assertions and emits this
+// shared DriftTool JSON shape. Keep df-drift as the aggregator only.
+
+class OpencodeTokenizerChecker
+  extends Context.Service<OpencodeTokenizerChecker, {
+    readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+  }>()("drift/OpencodeTokenizerChecker") {
+  static readonly layer = Layer.succeed(OpencodeTokenizerChecker)(
+    OpencodeTokenizerChecker.of({
+      tools: () =>
+        Effect.gen(function* () {
+          if (!(yield* hasCommand("opencode-tokenizer-check"))) return [];
+          const res = yield* run("opencode-tokenizer-check", ["drift-json"]);
+          if (!res.ok) return [];
+          const parsed = parseJson(res.stdout);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.flatMap((entry): DriftTool[] => {
+            if (typeof entry !== "object" || entry === null) return [];
+            const e = entry as Record<string, unknown>;
+            const name = typeof e.name === "string" ? e.name : "";
+            const installed = typeof e.installed === "string"
+              ? e.installed
+              : "";
+            const latest = typeof e.latest === "string" ? e.latest : "";
+            const source = typeof e.source === "string"
+              ? e.source
+              : "opencode-tokenizer";
+            const behind = typeof e.behind === "number" ? e.behind : 1;
+            return name === ""
+              ? []
+              : [{ name, installed, latest, behind, source }];
+          });
+        }).pipe(Effect.orElseSucceed(() => [])),
+    }),
+  );
+}
+
 const asRecord = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 
@@ -625,18 +665,27 @@ const runCheck = Effect.gen(function* () {
   const cask = yield* CaskChecker;
   const dotfiles = yield* DotfilesChecker;
   const omo = yield* OmoChecker;
+  const tokenizer = yield* OpencodeTokenizerChecker;
 
   // Independent checkers run concurrently; each already soft-fails to [].
-  const [miseTools, caskTools, repoTools, omoTools] = yield* Effect.all([
-    mise.tools(),
-    cask.tools(),
-    dotfiles.tools(),
-    omo.tools(),
-  ], { concurrency: "unbounded" });
+  const [miseTools, caskTools, repoTools, omoTools, tokenizerTools] =
+    yield* Effect.all([
+      mise.tools(),
+      cask.tools(),
+      dotfiles.tools(),
+      omo.tools(),
+      tokenizer.tools(),
+    ], { concurrency: "unbounded" });
 
   const report: DriftReport = {
     checked_at: rfc3339Now(),
-    tools: [...miseTools, ...caskTools, ...repoTools, ...omoTools],
+    tools: [
+      ...miseTools,
+      ...caskTools,
+      ...repoTools,
+      ...omoTools,
+      ...tokenizerTools,
+    ],
   };
 
   yield* ensureDir(cacheDir());
@@ -652,6 +701,7 @@ const runCheck = Effect.gen(function* () {
   Effect.provide(CaskChecker.layer),
   Effect.provide(DotfilesChecker.layer),
   Effect.provide(OmoChecker.layer),
+  Effect.provide(OpencodeTokenizerChecker.layer),
 );
 
 // ===========================================================================
@@ -758,6 +808,21 @@ const main = (argv: readonly string[]): Effect.Effect<number> => {
 };
 
 if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
   Effect.runPromiseExit(main(Deno.args)).then((exit) => {
     if (exit._tag === "Success") {
       Deno.exit(exit.value);

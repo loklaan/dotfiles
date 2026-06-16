@@ -1,918 +1,159 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-# Source shared logging library (session logging deferred to subcommands)
-source "${HOME}/.local/lib/bash-logging.sh"
-
-#/ Usage:
-#/   cw <subcommand> [args...]
-#/   cw <workspace> [mode] [directory]    (shorthand for `cw connect ...`)
-#/
-#/ Description:
-#/   One-stop CLI for Coder dev boxes. Connect to a single workspace, fan a
-#/   mise task across the whole fleet, or migrate working state between boxes.
-#/
-#/ Subcommands:
-#/   connect <ws> [mode] [dir]   Attach to a workspace (ssh/vscode/claude/app)
-#/   fleet [opts] <mise-task>    Run a mise task across running workspaces
-#/   migrate [opts]              Pull working state from an old devbox to a new one
-#/   completion zsh              Output zsh completion script
-#/
-#/   Bare `cw <workspace> ...` is shorthand for `cw connect <workspace> ...`.
-#/
-#/ Examples:
-#/   cw for-tasks                # SSH into for-tasks
-#/   cw connect for-tasks-2 vscode
-#/   cw fleet --include-local update
-#/   cw migrate
-#/
-#/ Options:
-#/   --help    Display this message (or `cw <subcommand> --help` for a subcommand)
-# Top-level help: untagged `#/` lines, in order (preserving blank `#/` lines).
-# A tagged line like `#/connect:` has a non-space after `#/`, so the
-# `#/[ ]` / `#/$` match excludes subcommand blocks.
-usage_top() { sed -n 's|^#/ ||p; s|^#/$||p' "$0"; }
-
-# Per-subcommand help blocks are tagged `#/<name>:` and rendered in order.
-usage_sub() {
-  local name="$1"
-  sed -n "s|^#/${name}: ||p; s|^#/${name}:\$||p" "$0"
-}
-
-# ── Workspace helpers ────────────────────────────────────────
-
-coder_is_running() {
-  local name="$1"
-  coder list -o json 2>/dev/null \
-    | jq -e --arg ws "$name" '.[] | select(.name == $ws and .latest_build.status == "running")' \
-    >/dev/null 2>&1
-}
-
-# ═════════════════════════════════════════════════════════════
-# connect — attach to a single workspace
-# ═════════════════════════════════════════════════════════════
-#
-#/connect: Usage:
-#/connect:   cw connect <workspace> [mode] [directory]
-#/connect:
-#/connect: Description:
-#/connect:   Connect to a Coder workspace in various modes. Built-in modes handle
-#/connect:   SSH, VSCode, and Claude Code sessions. Any other mode is passed through
-#/connect:   to `coder open app` as a workspace app slug (so like: intellij, cursor).
-#/connect:
-#/connect: Arguments:
-#/connect:   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
-#/connect:   mode         ssh (default), vscode, claude, ccyolo, or any app slug
-#/connect:                available on the coder box (cursor, intellij, code-server)
-#/connect:   directory    Project path on the remote (~/dev/me/<project>)
-#/connect:
-#/connect: Examples:
-#/connect:   cw connect for-tasks                # SSH into for-tasks
-#/connect:   cw connect for-tasks-2 vscode       # Open in VS Code
-#/connect:   cw connect for-tasks-2 cursor       # Open Cursor via coder
-#/connect:   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
-#/connect:   cw connect for-tasks code-server    # Open code-server in browser
-#/connect:   cw connect for-tasks claude         # SSH + Claude Code
-#/connect:   cw connect for-prs ccyolo           # YOLO mode
-
-# ── Preflight SSH ────────────────────────────────────────────
-#
-# Single pre-flight SSH that handles all remote setup for Coder
-# workspace connections. Each module prepares local data,
-# contributes a subshell to the remote script, and parses its
-# results from labeled output lines.
-#
-# Modules:
-#   GPG      — imports keys, returns socket path for forwarding
-#   Terminfo — installs xterm-ghostty via Homebrew ncurses
-#
-# Outputs (set as side-effects):
-#   GPG_SSH_OPTS  — SSH opts for GPG agent reverse tunnel
-
-GPG_SSH_OPTS=()
-
-coder_preflight() {
-  local host="$1"
-
-  local script=""
-  local gpg_local_socket=""
-
-  # ── GPG: prepare keys for agent forwarding ──
-  if command -v gpgconf >/dev/null 2>&1 && command -v gpg >/dev/null 2>&1; then
-    gpg_local_socket=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null) || true
-    if [[ -n "$gpg_local_socket" ]]; then
-      gpgconf --launch gpg-agent 2>/dev/null
-      local pubkeys_b64 ownertrust_b64
-      pubkeys_b64=$(gpg --armor --export 2>/dev/null | base64 | tr -d '\n') || true
-      ownertrust_b64=$(gpg --export-ownertrust 2>/dev/null | base64 | tr -d '\n') || true
-      if [[ -n "$pubkeys_b64" ]]; then
-        info "🔑  Forwarding GPG agent…"
-        script+='(
-gpg_socket=$(gpgconf --list-dirs agent-socket 2>/dev/null) || exit 0
-gpgconf --kill gpg-agent 2>/dev/null || true
-[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
-sleep 1
-'
-        script+="printf '%s' '${pubkeys_b64}' | base64 -d | gpg --batch --import 2>/dev/null || true
-printf '%s' '${ownertrust_b64}' | base64 -d | gpg --batch --import-ownertrust 2>/dev/null || true
-"
-        script+='gpgconf --kill gpg-agent 2>/dev/null || true
-[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
-echo "GPG_SOCKET:${gpg_socket}"
-)
-'
-      fi
-    fi
-  fi
-
-  # ── Terminfo: install xterm-ghostty ──
-  if [[ -n "${GHOSTTY_RESOURCES_DIR:-}" ]]; then
-    local infocmp="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/ncurses/bin/infocmp"
-    if [[ -x "$infocmp" ]]; then
-      local terminfo_b64
-      terminfo_b64=$("$infocmp" -x xterm-ghostty 2>/dev/null | base64 | tr -d '\n') || true
-      if [[ -n "$terminfo_b64" ]]; then
-        info "🖥️  Installing xterm-ghostty terminfo…"
-        script+="(printf '%s' '${terminfo_b64}' | base64 -d | tic -x - 2>/dev/null && echo 'TERMINFO_OK:1' || echo 'TERMINFO_OK:0')
-"
-      fi
-    fi
-  fi
-
-  # ── SSH pubkey: write agent keys to disk for tools that expect key files ──
-  if ssh-add -L >/dev/null 2>&1; then
-    info "🔑  Forwarding SSH public key…"
-    script+='(
-mkdir -p ~/.ssh
-if ssh-add -L > ~/.ssh/id_rsa.pub 2>/dev/null; then
-  chmod 644 ~/.ssh/id_rsa.pub
-  echo "SSH_PUBKEY_OK:1"
-else
-  rm -f ~/.ssh/id_rsa.pub
-  echo "SSH_PUBKEY_OK:0"
-fi
-)
-'
-  fi
-
-  [[ -n "$script" ]] || return 0
-
-  # On machines with coder.conf.sh, the SSH config includes a LocalCommand
-  # that regenerates port/socket assignments and RemoteForward for roo. Suppress
-  # both during preflight so they don't interfere with the main SSH session.
-  local preflight_opts=(-o ConnectTimeout=10)
-  if [[ -x "$HOME/.ssh/coder.conf.sh" ]]; then
-    preflight_opts+=(-o PermitLocalCommand=no -o ClearAllForwardings=yes)
-  fi
-
-  local output
-  output=$(printf '%s' "$script" | ssh "${preflight_opts[@]}" "$host" /bin/sh 2>/dev/null) || return 0
-
-  # Parse labeled output
-  local line
-  while IFS= read -r line; do
-    case "$line" in
-      GPG_SOCKET:*)
-        local remote_socket="${line#GPG_SOCKET:}"
-        if [[ -n "$remote_socket" && -n "$gpg_local_socket" ]]; then
-          GPG_SSH_OPTS+=(-o StreamLocalBindUnlink=yes)
-          GPG_SSH_OPTS+=(-o "RemoteForward ${remote_socket}:${gpg_local_socket}")
-        fi
-        ;;
-      TERMINFO_OK:1)
-        GPG_SSH_OPTS+=("-o SendEnv TERM_PROGRAM -o SendEnv TERM_PROGRAM_VERSION -o SendEnv COLORTERM")
-        ;;
-    esac
-  done <<< "$output"
-}
-
-cmd_connect() {
-  if [[ "${1:-}" == "--help" ]]; then
-    usage_sub connect
-    exit 0
-  fi
-  if [[ $# -lt 1 ]]; then
-    usage_sub connect >&2
-    fatal "connect requires a workspace name"
-  fi
-
-  setup_session_logging "cw"
-
-  local ws="$1"
-  local mode="${2:-ssh}"
-  local directory="${3:-}"
-
-  if ! command -v coder >/dev/null 2>&1; then
-    fatal "coder CLI not found"
-  fi
-  if ! command -v jq >/dev/null 2>&1; then
-    fatal "jq not found"
-  fi
-
-  if ! coder_is_running "$ws"; then
-    info "workspace '${ws}' is not running — starting it…"
-    coder start "$ws"
-  fi
-
-  local host="coder.${ws}"
-
-  # Preflight SSH setup (only for modes that SSH directly)
-  case "$mode" in
-    ssh|claude|ccyolo) coder_preflight "$host" ;;
-  esac
-
-  # Don't exec ssh — this process may hold sockets (e.g. Roo / GPG forwarding)
-  # that would be closed if the process were replaced. Ensure -tt for
-  # interactive sessions that require a TTY (e.g. everything).
-  case "$mode" in
-    ssh)
-      local cmd=""
-      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      cmd+="/usr/bin/zsh -l"
-      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "$cmd"
-      exit $?
-      ;;
-
-    vscode)
-      local vscode_args=("$ws")
-      [[ -n "$directory" ]] && vscode_args+=("$directory")
-      info "Opening VS Code: ${ws}${directory:+ at ${directory}}"
-      coder open vscode --generate-token "${vscode_args[@]}"
-      ;;
-
-    claude)
-      local cmd=""
-      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      cmd+="claude"
-      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "/usr/bin/zsh -lc '${cmd}'"
-      exit $?
-      ;;
-
-    ccyolo)
-      local cmd=""
-      [[ -n "$directory" ]] && cmd+="cd ${directory} && "
-      cmd+="claude --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-7"
-      ssh -tt "${GPG_SSH_OPTS[@]}" "$host" "/usr/bin/zsh -lc '${cmd}'"
-      exit $?
-      ;;
-
-    *)
-      info "Opening ${mode}: ${ws}"
-      coder open app "$ws" "$mode"
-      ;;
-  esac
-}
-
-# ═════════════════════════════════════════════════════════════
-# fleet — run a mise task across running workspaces
-# ═════════════════════════════════════════════════════════════
-#
-#/fleet: Usage:
-#/fleet:   cw fleet [OPTIONS] -- <mise-task> [args...]
-#/fleet:   cw fleet [OPTIONS] <mise-task> [args...]
-#/fleet:
-#/fleet: Description:
-#/fleet:   Run a mise task on every running Coder workspace, in parallel.
-#/fleet:   A small composable primitive, not a workflow-aware orchestrator.
-#/fleet:   Whatever task you can `mise run` locally, you can run on the fleet.
-#/fleet:
-#/fleet:   Discovery is dynamic via `coder list -o json` (filtered to running
-#/fleet:   workspaces by default). No static inventory.
-#/fleet:
-#/fleet: Options:
-#/fleet:   --include-local       Also run the task on this machine (before the fleet)
-#/fleet:   --local-only          Run only on this machine (skip the fleet)
-#/fleet:   --filter <expr>       jq filter against `coder list -o json`
-#/fleet:                         (default: '.[] | select(.latest_build.status == "running") | .name')
-#/fleet:   --parallel <N>        Max concurrent SSH targets (default: 4)
-#/fleet:   --dry-run             Print the matrix; don't execute
-#/fleet:
-#/fleet: Examples:
-#/fleet:   cw fleet update                          # `mise run update` on every running box
-#/fleet:   cw fleet --include-local update          # me first, then every box
-#/fleet:   cw fleet --local-only drift:check        # local convergence only
-#/fleet:   cw fleet --dry-run update                # preview the fan-out
-#/fleet:
-#/fleet: Output:
-#/fleet:   Per-host structured: [<ws>] ok | [<ws>] FAIL: <reason>
-#/fleet:   Per-host stdout/stderr captured to $TMPDIR/cw-fleet-<ts>/<ws>.log
-#/fleet:   Aggregate exit code = max of per-host codes (0 only if all succeeded)
-
-FLEET_INCLUDE_LOCAL=0
-FLEET_LOCAL_ONLY=0
-FLEET_FILTER='.[] | select(.latest_build.status == "running") | .name'
-FLEET_PARALLEL=4
-FLEET_DRY_RUN=0
-FLEET_TASK_AND_ARGS=()
-
-fleet_parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage_sub fleet; exit 0 ;;
-      --include-local) FLEET_INCLUDE_LOCAL=1; shift ;;
-      --local-only) FLEET_LOCAL_ONLY=1; shift ;;
-      --filter) FLEET_FILTER="$2"; shift 2 ;;
-      --parallel) FLEET_PARALLEL="$2"; shift 2 ;;
-      --dry-run) FLEET_DRY_RUN=1; shift ;;
-      --) shift; FLEET_TASK_AND_ARGS=("$@"); return ;;
-      -*) usage_sub fleet >&2; fatal "Unknown option: $1" ;;
-      *) FLEET_TASK_AND_ARGS=("$@"); return ;;
-    esac
-  done
-}
-
-fleet_require_tools() {
-  command -v mise >/dev/null 2>&1 || fatal "mise not on PATH"
-  if [ "$FLEET_LOCAL_ONLY" -ne 1 ]; then
-    command -v coder >/dev/null 2>&1 || fatal "coder CLI not found (needed for fleet dispatch)"
-    command -v jq    >/dev/null 2>&1 || fatal "jq not found"
-  fi
-}
-
-fleet_list_workspaces() {
-  coder list -o json 2>/dev/null | jq -r "$FLEET_FILTER"
-}
-
-fleet_run_local() {
-  local task="$1"; shift
-  info "[local] mise run $task $*"
-  if [ "$FLEET_DRY_RUN" -eq 1 ]; then return 0; fi
-  if mise run "$task" "$@"; then
-    _print green "[local] ok" >&2
-    return 0
-  else
-    local rc=$?
-    _print red "[local] FAIL ($rc)" >&2
-    return "$rc"
-  fi
-}
-
-fleet_run_remote() {
-  local ws="$1" log_dir="$2"; shift 2
-  local task="$1"; shift
-  local log_file="${log_dir}/${ws}.log"
-  local cmd="mise run $task"
-  for a in "$@"; do
-    cmd="$cmd $(printf '%q' "$a")"
-  done
-  info "[$ws] $cmd"
-  if [ "$FLEET_DRY_RUN" -eq 1 ]; then return 0; fi
-  # Run through a login shell so mise (and ~/.local/bin) are on PATH. A bare
-  # `ssh host "mise run ..."` uses a non-login, non-interactive shell that never
-  # sources the rc files that add mise to PATH, so mise resolves to 127.
-  if ssh -o ConnectTimeout=15 "coder.${ws}" "/usr/bin/zsh -lc $(printf '%q' "$cmd")" >"$log_file" 2>&1; then
-    _print green "[$ws] ok" >&2
-    return 0
-  else
-    local rc=$?
-    _print red "[$ws] FAIL ($rc) — see $log_file" >&2
-    return "$rc"
-  fi
-}
-
-cmd_fleet() {
-  fleet_parse_args "$@"
-
-  if [ "${#FLEET_TASK_AND_ARGS[@]}" -eq 0 ]; then
-    usage_sub fleet >&2
-    fatal "no mise task specified"
-  fi
-
-  fleet_require_tools
-
-  local task="${FLEET_TASK_AND_ARGS[0]}"
-  local task_args=("${FLEET_TASK_AND_ARGS[@]:1}")
-  local ts log_dir
-  ts=$(date +"%Y%m%d_%H%M%S")
-  log_dir="${TMPDIR}/cw-fleet-${ts}"
-  mkdir -p "$log_dir"
-
-  local max_rc=0
-
-  # 1. Optional local-first run
-  if [ "$FLEET_INCLUDE_LOCAL" -eq 1 ] || [ "$FLEET_LOCAL_ONLY" -eq 1 ]; then
-    if ! fleet_run_local "$task" "${task_args[@]}"; then
-      max_rc=$?
-    fi
-  fi
-
-  if [ "$FLEET_LOCAL_ONLY" -eq 1 ]; then
-    [ "$max_rc" -ne 0 ] && return "$max_rc"
-    return 0
-  fi
-
-  # 2. Fleet dispatch
-  local workspaces
-  workspaces=$(fleet_list_workspaces)
-  if [ -z "$workspaces" ]; then
-    warning "no running workspaces matched filter"
-    return "$max_rc"
-  fi
-
-  info "fan-out: $(echo "$workspaces" | wc -l | tr -d ' ') workspace(s) · parallelism=$FLEET_PARALLEL · log_dir=$log_dir"
-
-  local pids=() ws
-  local running=0
-  while IFS= read -r ws; do
-    [ -z "$ws" ] && continue
-    while [ "$running" -ge "$FLEET_PARALLEL" ]; do
-      wait -n 2>/dev/null || true
-      running=$((running - 1))
-    done
-    fleet_run_remote "$ws" "$log_dir" "$task" "${task_args[@]}" &
-    pids+=("$!")
-    running=$((running + 1))
-  done <<< "$workspaces"
-
-  local pid rc
-  for pid in "${pids[@]}"; do
-    rc=0
-    wait "$pid" || rc=$?
-    [ "$rc" -gt "$max_rc" ] && max_rc=$rc
-  done
-
-  if [ "$max_rc" -eq 0 ]; then
-    _print green "cw fleet: all targets ok"
-  else
-    _print yellow "cw fleet: completed with $max_rc max-rc — inspect $log_dir"
-  fi
-  return "$max_rc"
-}
-
-# ═════════════════════════════════════════════════════════════
-# migrate — pull working state from an old devbox to a new one
-# ═════════════════════════════════════════════════════════════
-#
-#/migrate: Usage:
-#/migrate:   cw migrate [OPTIONS]
-#/migrate:
-#/migrate: Description:
-#/migrate:   Migrates working state from an old devbox to a new one.
-#/migrate:   Run on the DESTINATION (new) devbox — it pulls from the source via SSH.
-#/migrate:
-#/migrate:   Transfers small repos, shell history, tool configs, and editor state.
-#/migrate:   Large repos should be re-cloned on the new devbox.
-#/migrate:
-#/migrate:   Before transferring, audits source repos for unpushed branches to
-#/migrate:   prevent data loss.
-#/migrate:
-#/migrate: Default Migration Paths:
-#/migrate:   dev/                          Small git repos
-#/migrate:   .claude/                      Claude Code state
-#/migrate:   .claude.json                  Claude Code config
-#/migrate:   .zsh_history                  Shell history
-#/migrate:   .z                            Directory jump history
-#/migrate:   .local/share/tmux/resurrect   Tmux resurrect session snapshots
-#/migrate:
-#/migrate: Default Audit Paths:
-#/migrate:   dev/             Scanned recursively for git repos
-#/migrate:
-#/migrate: Options:
-#/migrate:   --manifest PATH:  Custom manifest file (default: ~/.config/cw-migrate/manifest)
-#/migrate:
-#/migrate: Manifest Format (~/.config/cw-migrate/manifest):
-#/migrate:   # Paths relative to $HOME
-#/migrate:   [migrate]
-#/migrate:   dev
-#/migrate:   .claude
-#/migrate:   .claude.json
-#/migrate:
-#/migrate:   [audit]
-#/migrate:   dev
-
-readonly MIGRATE_DEFAULT_MANIFEST="${HOME}/.config/cw-migrate/manifest"
-
-MIGRATE_MANIFEST_PATH=""
-MIGRATE_SOURCE_HOST=""
-MIGRATE_PATHS=()
-MIGRATE_AUDIT_PATHS=()
-MIGRATE_EXISTING_PATHS=()
-
-MIGRATE_DEFAULT_PATHS=(
-  "dev"
-  ".claude"
-  ".claude.json"
-  ".zsh_history"
-  ".z"
-  ".local/share/tmux/resurrect"
-)
-
-MIGRATE_DEFAULT_AUDIT_PATHS=(
-  "dev"
-)
-
-migrate_parse_args() {
-  MIGRATE_MANIFEST_PATH="${MIGRATE_DEFAULT_MANIFEST}"
-
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --manifest)
-        if [ -z "${2:-}" ]; then
-          fatal "--manifest requires a path argument"
-        fi
-        MIGRATE_MANIFEST_PATH="$2"
-        shift 2
-        ;;
-      --help)
-        usage_sub migrate
-        exit 0
-        ;;
-      *)
-        usage_sub migrate >&2
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
-
-migrate_load_manifest() {
-  if [ ! -f "${MIGRATE_MANIFEST_PATH}" ]; then
-    if [ "${MIGRATE_MANIFEST_PATH}" = "${MIGRATE_DEFAULT_MANIFEST}" ]; then
-      info "╍ No manifest found, using defaults"
-      MIGRATE_PATHS=("${MIGRATE_DEFAULT_PATHS[@]}")
-      MIGRATE_AUDIT_PATHS=("${MIGRATE_DEFAULT_AUDIT_PATHS[@]}")
-      return
-    else
-      fatal "Manifest not found: ${MIGRATE_MANIFEST_PATH}"
-    fi
-  fi
-
-  info "╍ Loading manifest from ${MIGRATE_MANIFEST_PATH}"
-
-  local section=""
-  MIGRATE_PATHS=()
-  MIGRATE_AUDIT_PATHS=()
-
-  while IFS= read -r line; do
-    line="${line%%#*}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "${line}" ]] && continue
-
-    if [[ "${line}" =~ ^\[(.+)\]$ ]]; then
-      section="${BASH_REMATCH[1]}"
-      continue
-    fi
-
-    case "${section}" in
-      migrate) MIGRATE_PATHS+=("${line}") ;;
-      audit) MIGRATE_AUDIT_PATHS+=("${line}") ;;
-      *) warning "Unknown manifest section: [${section}]" ;;
-    esac
-  done < "${MIGRATE_MANIFEST_PATH}"
-
-  if [ ${#MIGRATE_PATHS[@]} -eq 0 ]; then
-    fatal "Manifest has no [migrate] entries"
-  fi
-}
-
-migrate_connect_source() {
-  echo ""
-  _print cyan bold "Source devbox"
-  echo ""
-  _print white dim "Enter the SSH host of the OLD devbox to pull from."
-  _print white dim "  - Coder devbox:  coder.<workspace-name>"
-  _print white dim "  - Any SSH host:  user@hostname"
-  echo ""
-  read -rp "Source host: " MIGRATE_SOURCE_HOST
-
-  if [[ -z "${MIGRATE_SOURCE_HOST}" ]]; then
-    fatal "No source host specified"
-  fi
-
-  info "▶ Testing SSH connection to ${MIGRATE_SOURCE_HOST}"
-  if ! ssh -o ConnectTimeout=10 "${MIGRATE_SOURCE_HOST}" "echo ok" &>/dev/null; then
-    error "Cannot connect to ${MIGRATE_SOURCE_HOST}"
-    _print white dim "Try: coder config-ssh"
-    exit 1
-  fi
-  info "╍ Connection OK"
-}
-
-migrate_audit_repos() {
-  if [ ${#MIGRATE_AUDIT_PATHS[@]} -eq 0 ]; then
-    info "╍ No audit paths configured, skipping repo check"
-    return
-  fi
-
-  local paths_str
-  paths_str=$(printf '%s\n' "${MIGRATE_AUDIT_PATHS[@]}")
-
-  echo ""
-  _print cyan bold "Checking source repos for unpushed branches..."
-  echo ""
-
-  local audit_output
-  audit_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
-    set -euo pipefail
-
-    audit_paths=()
-    while IFS= read -r p; do
-      [[ -z "\${p}" ]] && continue
-      audit_paths+=("\${p}")
-    done <<< '${paths_str}'
-
-    for audit_path in "\${audit_paths[@]}"; do
-      full_path="\${HOME}/\${audit_path}"
-      if [[ ! -d "\${full_path}" ]]; then
-        continue
-      fi
-
-      while IFS= read -r git_dir; do
-        [[ -z "\${git_dir}" ]] && continue
-        repo_dir=\$(dirname "\${git_dir}")
-        repo_rel="\${repo_dir#\${HOME}/}"
-
-        has_issues=false
-        while IFS= read -r branch; do
-          [[ -z "\${branch}" ]] && continue
-
-          upstream_ref=\$(git -C "\${repo_dir}" rev-parse --abbrev-ref "\${branch}@{upstream}" 2>/dev/null || true)
-
-          if [[ -z "\${upstream_ref}" ]]; then
-            echo "ISSUE|\${repo_rel}|\${branch} (no remote tracking branch)"
-            has_issues=true
-          else
-            ahead_count=\$(git -C "\${repo_dir}" rev-list --count "\${upstream_ref}..\${branch}" 2>/dev/null || echo "0")
-            if [[ "\${ahead_count}" -gt 0 ]]; then
-              echo "ISSUE|\${repo_rel}|\${branch} (\${ahead_count} unpushed commit(s))"
-              has_issues=true
-            fi
-          fi
-        done < <(git -C "\${repo_dir}" for-each-ref --format='%(refname:short)' refs/heads/)
-
-        if [[ "\${has_issues}" == "false" ]]; then
-          echo "OK|\${repo_rel}"
-        fi
-      done < <(find "\${full_path}" -name .git -type d 2>/dev/null)
-    done
-REMOTE_SCRIPT
-  )
-
-  if [[ -z "${audit_output}" ]]; then
-    info "╍ No git repos found in audit paths"
-    return
-  fi
-
-  local has_unpushed=false
-  local current_repo=""
-
-  while IFS='|' read -r status repo_path detail; do
-    [[ -z "${status}" ]] && continue
-    case "${status}" in
-      OK)
-        _print green "  ~/${repo_path} — all branches pushed"
-        ;;
-      ISSUE)
-        if [[ "${repo_path}" != "${current_repo}" ]]; then
-          _print red "  ~/${repo_path}"
-          current_repo="${repo_path}"
-        fi
-        _print yellow "    [ ] ${detail}"
-        has_unpushed=true
-        ;;
-    esac
-  done <<< "${audit_output}"
-
-  echo ""
-  if ${has_unpushed}; then
-    warning "Unpushed branches found! Push them first or they will be lost."
-    echo ""
-    read -rp "Continue anyway? [y/N]: " confirm
-    if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
-      info "Aborted. Push branches on the source and re-run."
-      exit 0
-    fi
-  else
-    info "╍ All repo branches are pushed"
-  fi
-}
-
-migrate_validate_paths() {
-  local paths_str
-  paths_str=$(printf '%s\n' "${MIGRATE_PATHS[@]}")
-
-  local check_output
-  check_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
-    set -euo pipefail
-    while IFS= read -r path; do
-      [[ -z "\${path}" ]] && continue
-      if [[ -e "\${HOME}/\${path}" ]]; then
-        echo "EXISTS|\${path}"
-      else
-        echo "MISSING|\${path}"
-      fi
-    done <<< '${paths_str}'
-REMOTE_SCRIPT
-  )
-
-  MIGRATE_EXISTING_PATHS=()
-
-  while IFS='|' read -r status path; do
-    case "${status}" in
-      EXISTS) MIGRATE_EXISTING_PATHS+=("${path}") ;;
-      MISSING) warning "Not found on source: ~/${path}" ;;
-    esac
-  done <<< "${check_output}"
-
-  local found=${#MIGRATE_EXISTING_PATHS[@]}
-  info "╍ Found ${found}/${#MIGRATE_PATHS[@]} items to migrate"
-
-  if [[ ${found} -eq 0 ]]; then
-    fatal "Nothing to migrate!"
-  fi
-}
-
-migrate_show_summary() {
-  echo ""
-  _print cyan bold "Items to migrate:"
-  echo ""
-
-  local paths_str
-  paths_str=$(printf '%s\n' "${MIGRATE_EXISTING_PATHS[@]}")
-
-  local size_output
-  size_output=$(ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
-    set -euo pipefail
-    size_args=()
-    while IFS= read -r path; do
-      [[ -z "\${path}" ]] && continue
-      size=\$(du -sh "\${HOME}/\${path}" 2>/dev/null | cut -f1)
-      echo "\${path}|\${size}"
-      size_args+=("\${HOME}/\${path}")
-    done <<< '${paths_str}'
-    total=\$(du -shc "\${size_args[@]}" 2>/dev/null | tail -1 | cut -f1)
-    echo "TOTAL|\${total}"
-REMOTE_SCRIPT
-  )
-
-  while IFS='|' read -r path size; do
-    if [[ "${path}" == "TOTAL" ]]; then
-      echo ""
-      _print white bold "  Total: ${size}"
-    else
-      printf "  %-45s %s\n" "~/${path}" "${size}"
-    fi
-  done <<< "${size_output}"
-
-  echo ""
-}
-
-migrate_do_rsync() {
-  echo ""
-  warning "This will overwrite matching paths locally. Continue? [y/N]"
-  read -rn 1 confirm
-  echo ""
-  if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
-    info "Aborted"
-    exit 0
-  fi
-
-  info "▶ Creating local directory structure"
-  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
-    local parent
-    parent=$(dirname "${path}")
-    if [[ "${parent}" != "." ]]; then
-      mkdir -p "${HOME}/${parent}"
-    fi
-  done
-
-  local failed=0
-  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
-    local parent
-    parent=$(dirname "${path}")
-    local local_dir="${HOME}/"
-    if [[ "${parent}" != "." ]]; then
-      local_dir="${HOME}/${parent}/"
-    fi
-
-    info "╍ Pulling ~/${path}"
-    if rsync -az "${MIGRATE_SOURCE_HOST}:~/${path}" "${local_dir}"; then
-      _print white dim "    done"
-    else
-      error "Failed to pull ~/${path}"
-      ((failed++)) || true
-    fi
-  done
-
-  echo ""
-  if [[ ${failed} -eq 0 ]]; then
-    info "▶ Migration complete! All ${#MIGRATE_EXISTING_PATHS[@]} items pulled."
-  else
-    warning "Migration finished with ${failed} failure(s)"
-  fi
-}
-
-migrate_do_tar() {
-  local archive_name="devbox-migration-$(date +%Y%m%d_%H%M%S).tar.gz"
-  local remote_archive="/tmp/${archive_name}"
-
-  echo ""
-  _print cyan bold "Creating tar archive on source"
-  echo ""
-
-  local paths_str
-  paths_str=$(printf '%s\n' "${MIGRATE_EXISTING_PATHS[@]}")
-
-  info "▶ Creating archive on ${MIGRATE_SOURCE_HOST}"
-  ssh "${MIGRATE_SOURCE_HOST}" bash -s <<REMOTE_SCRIPT
-    set -euo pipefail
-    paths=()
-    while IFS= read -r path; do
-      [[ -z "\${path}" ]] && continue
-      paths+=("\${path}")
-    done <<< '${paths_str}'
-    tar -czf "${remote_archive}" -C "\${HOME}" "\${paths[@]}"
-REMOTE_SCRIPT
-
-  info "╍ Pulling archive"
-  scp "${MIGRATE_SOURCE_HOST}:${remote_archive}" "/tmp/${archive_name}"
-
-  local archive_size
-  archive_size=$(du -sh "/tmp/${archive_name}" | cut -f1)
-
-  info "╍ Archive saved: /tmp/${archive_name} (${archive_size})"
-  echo ""
-  _print white dim "To extract:"
-  _print white dim "  cd ~ && tar -xzf /tmp/${archive_name}"
-  echo ""
-
-  info "╍ Cleaning up remote archive"
-  ssh "${MIGRATE_SOURCE_HOST}" "rm -f ${remote_archive}"
-}
-
-migrate_do_checklist() {
-  echo ""
-  _print cyan bold "Migration Checklist"
-  echo ""
-  _print white dim "Pull these paths from ${MIGRATE_SOURCE_HOST}:~ to local ~:"
-  echo ""
-
-  for path in "${MIGRATE_EXISTING_PATHS[@]}"; do
-    printf "  [ ] ~/%s\n" "${path}"
-  done
-
-  echo ""
-  _print white dim "Example for each:"
-  _print white dim "  rsync -az ${MIGRATE_SOURCE_HOST}:~/PATH ~/PATH"
-  echo ""
-  _print white dim "After copying:"
-  echo ""
-  printf "  [ ] Run chezmoi apply to restore dotfiles\n"
-  printf "  [ ] Verify git repos have correct remotes\n"
-  echo ""
-}
-
-cmd_migrate() {
-  migrate_parse_args "$@"
-
-  setup_session_logging "cw-migrate"
-
-  echo ""
-  _print cyan bold "Devbox Migration"
-  echo ""
-
-  migrate_load_manifest
-  migrate_connect_source
-  migrate_audit_repos
-  migrate_validate_paths
-  migrate_show_summary
-
-  _print cyan bold "Transfer method"
-  echo ""
-  echo "  1) rsync  — pull directly over SSH"
-  echo "  2) tar    — archive on source, pull here, extract manually"
-  echo "  3) list   — just show what to copy"
-  echo ""
-  read -rp "Choose [1/2/3]: " choice
-
-  case "${choice}" in
-    1) migrate_do_rsync ;;
-    2) migrate_do_tar ;;
-    3) migrate_do_checklist ;;
-    *)
-      fatal "Invalid choice: ${choice}"
-      ;;
-  esac
-
-  echo ""
-  warning "Credentials are NOT included — migrate these yourself:"
-  _print white dim "  ~/.ssh/  ~/.aws/  ~/.gnupg/  ~/.npmrc"
-  echo ""
-  warning "Run chezmoi apply on this devbox to restore dotfiles."
-  echo ""
-}
-
-# ── Completion output ────────────────────────────────────────
-
-completion_zsh() {
-  cat <<'ZSH_COMPLETION'
-#compdef cw
+#!/usr/bin/env -S mise exec -- deno run --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env
+
+// cw — Coder Workspaces CLI. Deno + Effect v4 rewrite of the original bash
+// tool. Preserves the three public subcommands (`connect`, `fleet`, `migrate`),
+// the bare workspace shorthand, and the zsh completion output.
+
+import {
+  Config,
+  Console,
+  Effect,
+  Layer,
+  Schema,
+  Sink,
+  Stream,
+} from "npm:effect@4.0.0-beta.83";
+import {
+  FileSystem,
+  layerNoop as fileSystemLayerNoop,
+} from "npm:effect@4.0.0-beta.83/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0-beta.83/Path";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
+
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
+
+// ============================================================================
+// Usage text
+// ============================================================================
+
+const TOP_USAGE = `Usage:
+  cw <subcommand> [args...]
+  cw <workspace> [mode] [directory]    (shorthand for \`cw connect ...\`)
+
+Description:
+  One-stop CLI for Coder dev boxes. Connect to a single workspace, fan a
+  mise task across the whole fleet, or migrate working state between boxes.
+
+Subcommands:
+  connect <ws> [mode] [dir]   Attach to a workspace (ssh/vscode/claude/app)
+  fleet [opts] <mise-task>    Run a mise task across running workspaces
+  migrate [opts]              Pull working state from an old devbox to a new one
+  completion zsh              Output zsh completion script
+
+  Bare \`cw <workspace> ...\` is shorthand for \`cw connect <workspace> ...\`.
+
+Examples:
+  cw for-tasks                # SSH into for-tasks
+  cw connect for-tasks-2 vscode
+  cw fleet --include-local update
+  cw migrate
+
+Options:
+  --help    Display this message (or \`cw <subcommand> --help\` for a subcommand)
+`;
+
+const CONNECT_USAGE = `Usage:
+  cw connect <workspace> [mode] [directory]
+
+Description:
+  Connect to a Coder workspace in various modes. Built-in modes handle
+  SSH, VSCode, and Claude Code sessions. Any other mode is passed through
+  to \`coder open app\` as a workspace app slug (so like: intellij, cursor).
+
+Arguments:
+  workspace    Workspace name (e.g. for-tasks, for-tasks-2)
+  mode         ssh (default), vscode, claude, ccyolo, or any app slug
+               available on the coder box (cursor, intellij, code-server)
+  directory    Project path on the remote (~/dev/me/<project>)
+
+Examples:
+  cw connect for-tasks                # SSH into for-tasks
+  cw connect for-tasks-2 vscode       # Open in VS Code
+  cw connect for-tasks-2 cursor       # Open Cursor via coder
+  cw connect for-tasks-2 intellij     # Open IntelliJ via coder
+  cw connect for-tasks code-server    # Open code-server in browser
+  cw connect for-tasks claude         # SSH + Claude Code
+  cw connect for-prs ccyolo           # YOLO mode
+`;
+
+const FLEET_USAGE = `Usage:
+  cw fleet [OPTIONS] -- <mise-task> [args...]
+  cw fleet [OPTIONS] <mise-task> [args...]
+
+Description:
+  Run a mise task on every running Coder workspace, in parallel.
+  A small composable primitive, not a workflow-aware orchestrator.
+  Whatever task you can \`mise run\` locally, you can run on the fleet.
+
+  Discovery is dynamic via \`coder list -o json\` (filtered to running
+  workspaces by default). No static inventory.
+
+Options:
+  --include-local       Also run the task on this machine (before the fleet)
+  --local-only          Run only on this machine (skip the fleet)
+  --filter <expr>       jq filter against \`coder list -o json\`
+                        (default: '.[] | select(.latest_build.status == "running") | .name')
+  --parallel <N>        Max concurrent SSH targets (default: 4)
+  --dry-run             Print the matrix; don't execute
+
+Examples:
+  cw fleet update                          # \`mise run update\` on every running box
+  cw fleet --include-local update          # me first, then every box
+  cw fleet --local-only drift:check        # local convergence only
+  cw fleet --dry-run update                # preview the fan-out
+
+Output:
+  Per-host structured: [<ws>] ok | [<ws>] FAIL: <reason>
+  Per-host stdout/stderr captured to $TMPDIR/cw-fleet-<ts>/<ws>.log
+  Aggregate exit code = max of per-host codes (0 only if all succeeded)
+`;
+
+const MIGRATE_USAGE = `Usage:
+  cw migrate [OPTIONS]
+
+Description:
+  Migrates working state from an old devbox to a new one.
+  Run on the DESTINATION (new) devbox — it pulls from the source via SSH.
+
+  Transfers small repos, shell history, tool configs, and editor state.
+  Large repos should be re-cloned on the new devbox.
+
+  Before transferring, audits source repos for unpushed branches to
+  prevent data loss.
+
+Default Migration Paths:
+  dev/                          Small git repos
+  .claude/                      Claude Code state
+  .claude.json                  Claude Code config
+  .zsh_history                  Shell history
+  .z                            Directory jump history
+  .local/share/tmux/resurrect   Tmux resurrect session snapshots
+
+Default Audit Paths:
+  dev/             Scanned recursively for git repos
+
+Options:
+  --manifest PATH:  Custom manifest file (default: ~/.config/cw-migrate/manifest)
+
+Manifest Format (~/.config/cw-migrate/manifest):
+  # Paths relative to $HOME
+  [migrate]
+  dev
+  .claude
+  .claude.json
+
+  [audit]
+  dev
+`;
+
+const ZSH_COMPLETION = String.raw`#compdef cw
 
 _cw() {
   local -a subcommands
@@ -926,7 +167,7 @@ _cw() {
   _cw_workspaces() {
     local -a workspaces
     if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-      workspaces=("${(@f)$(coder list -o json 2>/dev/null | jq -r '.[].name')}")
+      workspaces=("\${(@f)$(coder list -o json 2>/dev/null | jq -r '.[].name')}")
     fi
     _describe 'workspace' workspaces
   }
@@ -941,12 +182,12 @@ _cw() {
     )
     if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
       local -a apps
-      apps=("${(@f)$(coder list -o json 2>/dev/null | jq -r --arg ws "$ws" '
+      apps=("\${(@f)$(coder list -o json 2>/dev/null | jq -r --arg ws "$ws" '
         .[] | select(.name == $ws)
         | .latest_build.resources[].agents[]?.apps[]?
         | .slug + ":" + .display_name
       ' 2>/dev/null)}")
-      [[ ${#apps} -gt 0 && -n "${apps[1]}" ]] && modes+=("${apps[@]}")
+      [[ \${#apps} -gt 0 && -n "\${apps[1]}" ]] && modes+=("\${apps[@]}")
     fi
     _describe 'mode' modes
   }
@@ -954,17 +195,15 @@ _cw() {
   _cw_mise_tasks() {
     local -a tasks
     if command -v mise >/dev/null 2>&1; then
-      tasks=("${(@f)$(mise tasks ls --no-header 2>/dev/null | awk '{print $1}')}")
+      tasks=("\${(@f)$(mise tasks ls --no-header 2>/dev/null | awk '{print $1}')}")
     fi
     _describe 'mise task' tasks
   }
 
-  # Determine the subcommand (word 2), if any.
-  local sub="${words[2]}"
+  local sub="\${words[2]}"
 
   case "$sub" in
     connect)
-      # cw connect <ws> <mode> <dir>
       case $CURRENT in
         3) _cw_workspaces ;;
         4) _cw_modes "$words[3]" ;;
@@ -992,12 +231,10 @@ _cw() {
       _describe 'shell' '(zsh:zsh completion)'
       ;;
     *)
-      # Word 2: offer subcommands AND workspace names (bare `cw <ws>`).
       if [[ $CURRENT -eq 2 ]]; then
         _describe 'subcommand' subcommands
         _cw_workspaces
       elif [[ $CURRENT -eq 3 ]]; then
-        # Bare `cw <ws> <mode>` shorthand.
         _cw_modes "$words[2]"
       elif [[ $CURRENT -eq 4 ]]; then
         _message 'remote directory path (optional)'
@@ -1007,51 +244,1676 @@ _cw() {
 }
 
 _cw "$@"
-ZSH_COMPLETION
+`;
+
+// ============================================================================
+// Small platform helpers
+// ============================================================================
+
+interface CommandResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
 }
 
-# ── Main ─────────────────────────────────────────────────────
+type StdioOption = "inherit" | "piped" | "null";
 
-main() {
-  if [[ $# -lt 1 ]]; then
-    usage_top
-    exit 1
-  fi
+interface RunOptions {
+  readonly stdin?: StdioOption;
+  readonly stdout?: StdioOption;
+  readonly stderr?: StdioOption;
+  readonly input?: string;
+  readonly cwd?: string;
+}
 
-  case "$1" in
-    --help|help)
-      usage_top
-      exit 0
-      ;;
-    completion)
-      if [[ "${2:-}" == "zsh" ]]; then
-        completion_zsh
+const text = new TextEncoder();
+
+const pipeInput = (value: string): Stream.Stream<Uint8Array> =>
+  Stream.make(text.encode(value));
+
+const stdinOption = (
+  options: RunOptions,
+): ChildProcess.CommandOptions["stdin"] =>
+  options.input !== undefined
+    ? pipeInput(options.input)
+    : options.stdin === "inherit"
+    ? "inherit"
+    : options.stdin === "piped"
+    ? "pipe"
+    : "ignore";
+
+const outputOption = (
+  option: StdioOption | undefined,
+): ChildProcess.CommandOptions["stdout"] =>
+  option === "inherit" ? "inherit" : option === "null" ? "ignore" : "pipe";
+
+const streamText = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.runFold(() => "", (acc, chunk) => acc + chunk),
+    Effect.orElseSucceed(() => ""),
+  );
+
+const runCommand = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  cmd: string,
+  args: ReadonlyArray<string>,
+  options: RunOptions = {},
+): Effect.Effect<CommandResult> =>
+  Effect.gen(function* () {
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(cmd, args, {
+        cwd: options.cwd,
+        stdin: stdinOption(options),
+        stdout: outputOption(options.stdout),
+        stderr: outputOption(options.stderr),
+      }),
+    );
+    const collected = yield* Effect.all({
+      stdout: streamText(handle.stdout),
+      stderr: streamText(handle.stderr),
+      code: handle.exitCode,
+    }, { concurrency: "unbounded" });
+    return {
+      code: Number(collected.code),
+      stdout: collected.stdout,
+      stderr: collected.stderr,
+    };
+  }).pipe(
+    Effect.scoped,
+    Effect.orElseSucceed(() => ({ code: 127, stdout: "", stderr: "" })),
+  );
+
+const runChild = (
+  cmd: string,
+  args: ReadonlyArray<string>,
+  options?: RunOptions,
+): Effect.Effect<
+  CommandResult,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* runCommand(spawner, cmd, args, options);
+  });
+
+const consoleValue = (value: string): string =>
+  value.endsWith("\n") ? value.slice(0, -1) : value;
+
+const writeStdout = (value: string): Effect.Effect<void> =>
+  Console.log(consoleValue(value));
+
+const writeStderr = (value: string): Effect.Effect<void> =>
+  Console.error(consoleValue(value));
+
+const logInfo = (value: string): Effect.Effect<void> =>
+  writeStderr(`[INFO] ${value}\n`);
+
+const logWarning = (value: string): Effect.Effect<void> =>
+  writeStderr(`[WARN] ${value}\n`);
+
+const logError = (value: string): Effect.Effect<void> =>
+  writeStderr(`[ERROR] ${value}\n`);
+
+const tmpdir = Config.string("TMPDIR").pipe(
+  Config.withDefault("/tmp"),
+  Effect.orDie,
+  Effect.map((value) => value.replace(/\/$/, "")),
+);
+
+const home = Config.string("HOME").pipe(Config.withDefault(""), Effect.orDie);
+
+const pad2 = (n: number): string => n.toString().padStart(2, "0");
+const timestamp = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_` +
+    `${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+};
+
+const shellQuote = (value: string): string =>
+  value === "" ? "''" : `'${value.replaceAll("'", `'\\''`)}'`;
+
+const maxCode = (codes: ReadonlyArray<number>): number =>
+  codes.reduce((max, code) => Math.max(max, code), 0);
+
+const mkdirp = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    yield* fs.makeDirectory(path, { recursive: true });
+  }).pipe(
+    Effect.mapError((cause) =>
+      new Error(`failed to create ${path}: ${String(cause)}`)
+    ),
+  );
+
+const writeTextFile = (
+  path: string,
+  value: string,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    yield* fs.writeFileString(path, value);
+  }).pipe(
+    Effect.mapError((cause) =>
+      new Error(`failed to write ${path}: ${String(cause)}`)
+    ),
+  );
+
+const readTextFile = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    return yield* fs.readFileString(path);
+  }).pipe(Effect.orElseSucceed(() => null));
+
+const fileExists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    yield* fs.stat(path);
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const hasCommand = (cmd: string) =>
+  Effect.gen(function* () {
+    if (cmd.includes("/")) return yield* fileExists(cmd);
+    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""));
+    const path = yield* Path;
+    for (const dir of pathEnv.split(":")) {
+      if (dir !== "" && (yield* fileExists(path.join(dir, cmd)))) return true;
+    }
+    return false;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const requireCommand = (cmd: string, message: string) =>
+  Effect.gen(function* () {
+    if (!(yield* hasCommand(cmd))) fatal(message);
+  });
+
+// ============================================================================
+// Coder JSON schema
+// ============================================================================
+
+const CoderWorkspace = Schema.Struct({
+  name: Schema.String,
+  latest_build: Schema.Struct({
+    status: Schema.String,
+    resources: Schema.optional(Schema.Array(Schema.Unknown)),
+  }),
+});
+type CoderWorkspace = typeof CoderWorkspace.Type;
+
+const CoderWorkspaces = Schema.Array(CoderWorkspace);
+const decodeWorkspaces = Schema.decodeUnknownSync(CoderWorkspaces);
+
+const parseJson = (value: string): unknown => JSON.parse(value) as unknown;
+
+const coderListJson = (): Effect.Effect<
+  string,
+  Error,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  runChild("coder", ["list", "-o", "json"]).pipe(
+    Effect.flatMap((res) =>
+      res.code === 0
+        ? Effect.succeed(res.stdout)
+        : Effect.fail(new Error("coder list failed"))
+    ),
+  );
+
+const listCoderWorkspaces = (): Effect.Effect<
+  ReadonlyArray<CoderWorkspace>,
+  Error,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  coderListJson().pipe(
+    Effect.flatMap((json) =>
+      Effect.try({
+        try: () => decodeWorkspaces(parseJson(json)),
+        catch: (cause) =>
+          new Error(`failed to decode coder list: ${String(cause)}`),
+      })
+    ),
+  );
+
+const isRunning = (ws: CoderWorkspace): boolean =>
+  ws.latest_build.status === "running";
+
+const coderIsRunning = (name: string) =>
+  listCoderWorkspaces().pipe(
+    Effect.map((workspaces) =>
+      workspaces.some((ws) => ws.name === name && isRunning(ws))
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+
+// ============================================================================
+// connect — HAND-OVER terminal attach
+// ============================================================================
+
+interface ConnectEnv {
+  readonly log: boolean;
+  readonly preflight: boolean;
+  readonly checkCommands: boolean;
+}
+
+const defaultConnectEnv: ConnectEnv = {
+  log: true,
+  preflight: true,
+  checkCommands: true,
+};
+
+const gpgSshOptionsFromPreflightOutput = (
+  output: string,
+  localSocket: string,
+): ReadonlyArray<string> => {
+  const options: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("GPG_SOCKET:")) {
+      const remoteSocket = line.slice("GPG_SOCKET:".length);
+      if (remoteSocket !== "" && localSocket !== "") {
+        options.push("-o", "StreamLocalBindUnlink=yes");
+        options.push("-o", `RemoteForward ${remoteSocket}:${localSocket}`);
+      }
+    } else if (line === "TERMINFO_OK:1") {
+      options.push(
+        "-o",
+        "SendEnv TERM_PROGRAM -o SendEnv TERM_PROGRAM_VERSION -o SendEnv COLORTERM",
+      );
+    }
+  }
+  return options;
+};
+
+const coderPreflight = (
+  env: ConnectEnv,
+  host: string,
+) =>
+  Effect.gen(function* () {
+    if (!env.preflight) return [];
+
+    let script = "";
+    let gpgLocalSocket = "";
+
+    if ((yield* hasCommand("gpgconf")) && (yield* hasCommand("gpg"))) {
+      const socketRes = yield* runChild("gpgconf", [
+        "--list-dirs",
+        "agent-extra-socket",
+      ]);
+      gpgLocalSocket = socketRes.code === 0 ? socketRes.stdout.trim() : "";
+      if (gpgLocalSocket !== "") {
+        yield* runChild("gpgconf", ["--launch", "gpg-agent"], {
+          stdout: "null",
+          stderr: "null",
+        });
+        const pubkeys = yield* runChild("gpg", ["--armor", "--export"], {
+          stderr: "null",
+        });
+        const ownertrust = yield* runChild(
+          "gpg",
+          ["--export-ownertrust"],
+          {
+            stderr: "null",
+          },
+        );
+        if (pubkeys.code === 0 && pubkeys.stdout !== "") {
+          yield* logInfo("🔑  Forwarding GPG agent…");
+          const pubkeysB64 = btoa(pubkeys.stdout);
+          const ownertrustB64 = ownertrust.code === 0
+            ? btoa(ownertrust.stdout)
+            : "";
+          script += `(
+gpg_socket=$(gpgconf --list-dirs agent-socket 2>/dev/null) || exit 0
+gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+sleep 1
+printf '%s' '${pubkeysB64}' | base64 -d | gpg --batch --import 2>/dev/null || true
+printf '%s' '${ownertrustB64}' | base64 -d | gpg --batch --import-ownertrust 2>/dev/null || true
+gpgconf --kill gpg-agent 2>/dev/null || true
+[ -S "$gpg_socket" ] && rm -f "$gpg_socket"
+echo "GPG_SOCKET:${"${gpg_socket}"}"
+)
+`;
+        }
+      }
+    }
+
+    const ghosttyResources = yield* Config.string("GHOSTTY_RESOURCES_DIR").pipe(
+      Config.withDefault(""),
+    );
+    if (ghosttyResources !== "") {
+      const homebrewPrefix = yield* Config.string("HOMEBREW_PREFIX").pipe(
+        Config.withDefault("/opt/homebrew"),
+      );
+      const path = yield* Path;
+      const infocmp = path.join(homebrewPrefix, "opt/ncurses/bin/infocmp");
+      if (yield* fileExists(infocmp)) {
+        const terminfo = yield* runChild(
+          infocmp,
+          ["-x", "xterm-ghostty"],
+          {
+            stderr: "null",
+          },
+        );
+        if (terminfo.code === 0 && terminfo.stdout !== "") {
+          yield* logInfo("🖥️  Installing xterm-ghostty terminfo…");
+          script += `(printf '%s' '${
+            btoa(terminfo.stdout)
+          }' | base64 -d | tic -x - 2>/dev/null && echo 'TERMINFO_OK:1' || echo 'TERMINFO_OK:0')\n`;
+        }
+      }
+    }
+
+    const sshAdd = yield* runChild("ssh-add", ["-L"], {
+      stdout: "piped",
+      stderr: "null",
+    });
+    if (sshAdd.code === 0) {
+      yield* logInfo("🔑  Forwarding SSH public key…");
+      script += `(
+mkdir -p ~/.ssh
+if ssh-add -L > ~/.ssh/id_rsa.pub 2>/dev/null; then
+  chmod 644 ~/.ssh/id_rsa.pub
+  echo "SSH_PUBKEY_OK:1"
+else
+  rm -f ~/.ssh/id_rsa.pub
+  echo "SSH_PUBKEY_OK:0"
+fi
+)
+`;
+    }
+
+    if (script === "") return [];
+
+    const opts = ["-o", "ConnectTimeout=10"];
+    const homeDir = yield* home;
+    if (yield* fileExists(`${homeDir}/.ssh/coder.conf.sh`)) {
+      opts.push("-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes");
+    }
+    const preflight = yield* runChild("ssh", [...opts, host, "/bin/sh"], {
+      input: script,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "null",
+    });
+    if (preflight.code !== 0) return [];
+    return gpgSshOptionsFromPreflightOutput(preflight.stdout, gpgLocalSocket);
+  }).pipe(Effect.orElseSucceed(() => []));
+
+const connectCommand = (
+  args: ReadonlyArray<string>,
+  env: ConnectEnv = defaultConnectEnv,
+) =>
+  Effect.gen(function* () {
+    if (args[0] === "--help") {
+      yield* writeStdout(CONNECT_USAGE);
+      return 0;
+    }
+    if (args.length < 1) {
+      yield* writeStderr(CONNECT_USAGE);
+      fatal("connect requires a workspace name");
+    }
+    if (env.checkCommands) {
+      yield* requireCommand("coder", "coder CLI not found");
+    }
+
+    const ws = args[0];
+    const mode = args[1] ?? "ssh";
+    const directory = args[2] ?? "";
+
+    if (!(yield* coderIsRunning(ws))) {
+      yield* logInfo(`workspace '${ws}' is not running — starting it…`);
+      const start = yield* runChild("coder", ["start", ws], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      if (start.code !== 0) return start.code;
+    }
+
+    const host = `coder.${ws}`;
+    const sshOpts = ["ssh", "claude", "ccyolo"].includes(mode)
+      ? yield* coderPreflight(env, host)
+      : [];
+
+    switch (mode) {
+      case "ssh": {
+        const remote = directory === ""
+          ? "/usr/bin/zsh -l"
+          : `cd ${shellQuote(directory)} && /usr/bin/zsh -l`;
+        const res = yield* runChild("ssh", [
+          "-tt",
+          ...sshOpts,
+          host,
+          remote,
+        ], {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        return res.code;
+      }
+      case "vscode": {
+        const vscodeArgs = ["open", "vscode", "--generate-token", ws];
+        if (directory !== "") vscodeArgs.push(directory);
+        yield* logInfo(
+          `Opening VS Code: ${ws}${directory ? ` at ${directory}` : ""}`,
+        );
+        const res = yield* runChild("coder", vscodeArgs, {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        return res.code;
+      }
+      case "claude":
+      case "ccyolo": {
+        const base = mode === "claude"
+          ? "claude"
+          : "claude --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-7";
+        const cmd = directory === ""
+          ? base
+          : `cd ${shellQuote(directory)} && ${base}`;
+        const res = yield* runChild("ssh", [
+          "-tt",
+          ...sshOpts,
+          host,
+          "/usr/bin/zsh",
+          "-lc",
+          cmd,
+        ], {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        return res.code;
+      }
+      default: {
+        yield* logInfo(`Opening ${mode}: ${ws}`);
+        const res = yield* runChild("coder", ["open", "app", ws, mode], {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        return res.code;
+      }
+    }
+  });
+
+// ============================================================================
+// fleet — bounded FAN-OUT
+// ============================================================================
+
+const DEFAULT_FLEET_FILTER =
+  '.[] | select(.latest_build.status == "running") | .name';
+
+interface FleetOptions {
+  readonly includeLocal: boolean;
+  readonly localOnly: boolean;
+  readonly filter: string;
+  readonly parallel: number;
+  readonly dryRun: boolean;
+  readonly taskAndArgs: ReadonlyArray<string>;
+}
+
+type FleetParseResult =
+  | { readonly _tag: "Ok"; readonly options: FleetOptions }
+  | { readonly _tag: "Help" }
+  | { readonly _tag: "Error"; readonly message: string };
+
+const fleetIncludeLocalFlag = Flag.boolean("include-local");
+const fleetLocalOnlyFlag = Flag.boolean("local-only");
+const fleetFilterFlag = Flag.string("filter").pipe(
+  Flag.withDefault(DEFAULT_FLEET_FILTER),
+);
+const fleetParallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
+const fleetDryRunFlag = Flag.boolean("dry-run");
+const fleetTaskArgs = Argument.string("mise-task").pipe(Argument.variadic);
+const fleetCli = Command.make("fleet", {
+  includeLocal: fleetIncludeLocalFlag,
+  localOnly: fleetLocalOnlyFlag,
+  filter: fleetFilterFlag,
+  parallel: fleetParallelFlag,
+  dryRun: fleetDryRunFlag,
+  taskAndArgs: fleetTaskArgs,
+});
+
+const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
+  void fleetCli;
+  let includeLocal = false;
+  let localOnly = false;
+  let filter = DEFAULT_FLEET_FILTER;
+  let parallel = 4;
+  let dryRun = false;
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    switch (arg) {
+      case "--help":
+        return { _tag: "Help" };
+      case "--include-local":
+        includeLocal = true;
+        i++;
+        break;
+      case "--local-only":
+        localOnly = true;
+        i++;
+        break;
+      case "--filter":
+        if (args[i + 1] === undefined) {
+          return { _tag: "Error", message: "--filter requires an expression" };
+        }
+        filter = args[i + 1];
+        i += 2;
+        break;
+      case "--parallel": {
+        if (args[i + 1] === undefined) {
+          return { _tag: "Error", message: "--parallel requires a number" };
+        }
+        const parsed = Number.parseInt(args[i + 1], 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          return {
+            _tag: "Error",
+            message: "--parallel must be a positive integer",
+          };
+        }
+        parallel = parsed;
+        i += 2;
+        break;
+      }
+      case "--dry-run":
+        dryRun = true;
+        i++;
+        break;
+      case "--":
+        return {
+          _tag: "Ok",
+          options: {
+            includeLocal,
+            localOnly,
+            filter,
+            parallel,
+            dryRun,
+            taskAndArgs: args.slice(i + 1),
+          },
+        };
+      default:
+        if (arg.startsWith("-")) {
+          return { _tag: "Error", message: `Unknown option: ${arg}` };
+        }
+        return {
+          _tag: "Ok",
+          options: {
+            includeLocal,
+            localOnly,
+            filter,
+            parallel,
+            dryRun,
+            taskAndArgs: args.slice(i),
+          },
+        };
+    }
+  }
+  return {
+    _tag: "Ok",
+    options: {
+      includeLocal,
+      localOnly,
+      filter,
+      parallel,
+      dryRun,
+      taskAndArgs: [],
+    },
+  };
+};
+
+interface FleetEnv {
+  readonly checkCommands: boolean;
+}
+
+interface FleetTargetOk {
+  readonly host: string;
+  readonly code: 0;
+  readonly logFile?: string;
+}
+
+interface FleetTargetFail {
+  readonly host: string;
+  readonly code: number;
+  readonly logFile?: string;
+}
+
+type HostEither =
+  | { readonly _tag: "Right"; readonly right: FleetTargetOk }
+  | { readonly _tag: "Left"; readonly left: FleetTargetFail };
+
+const chooseDefaultFleetWorkspaces = (
+  workspaces: ReadonlyArray<CoderWorkspace>,
+): ReadonlyArray<string> => workspaces.filter(isRunning).map((ws) => ws.name);
+
+const listFleetWorkspaces = (
+  _env: FleetEnv,
+  filter: string,
+) =>
+  Effect.gen(function* () {
+    const json = yield* coderListJson();
+    const workspaces = decodeWorkspaces(parseJson(json));
+    if (filter === DEFAULT_FLEET_FILTER) {
+      return chooseDefaultFleetWorkspaces(workspaces);
+    }
+
+    // Preserve the legacy --filter CLI as a jq expression. The JSON is still
+    // schema-decoded first, so malformed coder output fails before jq runs.
+    const jq = yield* runChild("jq", ["-r", filter], { input: json });
+    if (jq.code !== 0) {
+      return yield* Effect.fail(new Error(`jq filter failed (${jq.code})`));
+    }
+    return jq.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  });
+
+const fleetCommandString = (
+  task: string,
+  args: ReadonlyArray<string>,
+): string => ["mise", "run", task, ...args.map(shellQuote)].join(" ");
+
+const runFleetLocal = (
+  _env: FleetEnv,
+  options: FleetOptions,
+  task: string,
+  args: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    yield* logInfo(
+      `[local] mise run ${task} ${args.join(" ")}`.trimEnd(),
+    );
+    if (options.dryRun) {
+      return { _tag: "Right", right: { host: "local", code: 0 } } as HostEither;
+    }
+    const res = yield* runChild("mise", ["run", task, ...args], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (res.code === 0) {
+      yield* writeStderr("[local] ok\n");
+      return { _tag: "Right", right: { host: "local", code: 0 } } as HostEither;
+    }
+    yield* writeStderr(`[local] FAIL (${res.code})\n`);
+    return {
+      _tag: "Left",
+      left: { host: "local", code: res.code },
+    } as HostEither;
+  });
+
+const runFleetRemote = (
+  _env: FleetEnv,
+  options: FleetOptions,
+  ws: string,
+  logDir: string,
+  task: string,
+  args: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const logFile = `${logDir}/${ws}.log`;
+    const cmd = fleetCommandString(task, args);
+    yield* logInfo(`[${ws}] ${cmd}`);
+    if (options.dryRun) {
+      return {
+        _tag: "Right",
+        right: { host: ws, code: 0, logFile },
+      } as HostEither;
+    }
+    const res = yield* runChild("ssh", [
+      "-o",
+      "ConnectTimeout=15",
+      `coder.${ws}`,
+      "/usr/bin/zsh",
+      "-lc",
+      cmd,
+    ]);
+    yield* writeTextFile(logFile, res.stdout + res.stderr);
+    if (res.code === 0) {
+      yield* writeStderr(`[${ws}] ok\n`);
+      return {
+        _tag: "Right",
+        right: { host: ws, code: 0, logFile },
+      } as HostEither;
+    }
+    yield* writeStderr(`[${ws}] FAIL (${res.code}) — see ${logFile}\n`);
+    return {
+      _tag: "Left",
+      left: { host: ws, code: res.code, logFile },
+    } as HostEither;
+  });
+
+const fleetResultCode = (results: ReadonlyArray<HostEither>): number =>
+  maxCode(
+    results.map((result) =>
+      result._tag === "Right" ? result.right.code : result.left.code
+    ),
+  );
+
+const fleetCommand = (
+  args: ReadonlyArray<string>,
+  env: FleetEnv = { checkCommands: true },
+) =>
+  Effect.gen(function* () {
+    const parsed = parseFleetArgs(args);
+    if (parsed._tag === "Help") {
+      yield* writeStdout(FLEET_USAGE);
+      return 0;
+    }
+    if (parsed._tag === "Error") {
+      yield* writeStderr(FLEET_USAGE);
+      return fatal(parsed.message);
+    }
+    const options = parsed.options;
+    if (options.taskAndArgs.length === 0) {
+      yield* writeStderr(FLEET_USAGE);
+      fatal("no mise task specified");
+    }
+
+    if (env.checkCommands) yield* requireCommand("mise", "mise not on PATH");
+    if (env.checkCommands && !options.localOnly) {
+      yield* requireCommand(
+        "coder",
+        "coder CLI not found (needed for fleet dispatch)",
+      );
+      if (options.filter !== DEFAULT_FLEET_FILTER) {
+        yield* requireCommand("jq", "jq not found");
+      }
+    }
+
+    const [task, ...taskArgs] = options.taskAndArgs;
+    const tmp = yield* tmpdir;
+    const logDir = `${tmp}/cw-fleet-${timestamp()}`;
+    return yield* Effect.acquireRelease(
+      mkdirp(logDir).pipe(Effect.as(logDir)),
+      () => Effect.void,
+    ).pipe(
+      Effect.flatMap((scopedLogDir) =>
+        runFleetWithLogDir(env, options, task, taskArgs, scopedLogDir)
+      ),
+      Effect.scoped,
+    );
+  });
+
+const runFleetWithLogDir = (
+  env: FleetEnv,
+  options: FleetOptions,
+  task: string,
+  taskArgs: ReadonlyArray<string>,
+  logDir: string,
+) =>
+  Effect.gen(function* () {
+    const localResults: HostEither[] = [];
+    if (options.includeLocal || options.localOnly) {
+      localResults.push(yield* runFleetLocal(env, options, task, taskArgs));
+    }
+
+    if (options.localOnly) {
+      return fleetResultCode(localResults);
+    }
+
+    const workspaces = yield* listFleetWorkspaces(env, options.filter);
+    if (workspaces.length === 0) {
+      yield* logWarning("no running workspaces matched filter");
+      return fleetResultCode(localResults);
+    }
+
+    yield* logInfo(
+      `fan-out: ${workspaces.length} workspace(s) · parallelism=${options.parallel} · log_dir=${logDir}`,
+    );
+    const remoteResults = yield* Effect.forEach(
+      workspaces,
+      (ws) => runFleetRemote(env, options, ws, logDir, task, taskArgs),
+      { concurrency: options.parallel },
+    );
+
+    const code = fleetResultCode([...localResults, ...remoteResults]);
+    if (code === 0) {
+      yield* writeStdout("cw fleet: all targets ok\n");
+    } else {
+      yield* writeStdout(
+        `cw fleet: completed with ${code} max-rc — inspect ${logDir}\n`,
+      );
+    }
+    return code;
+  });
+
+// ============================================================================
+// migrate — supervised subprocess workflow
+// ============================================================================
+
+const MIGRATE_DEFAULT_PATHS = [
+  "dev",
+  ".claude",
+  ".claude.json",
+  ".zsh_history",
+  ".z",
+  ".local/share/tmux/resurrect",
+];
+
+const MIGRATE_DEFAULT_AUDIT_PATHS = ["dev"];
+
+interface MigrateManifest {
+  readonly migrate: ReadonlyArray<string>;
+  readonly audit: ReadonlyArray<string>;
+}
+
+interface MigrateState extends MigrateManifest {
+  readonly sourceHost: string;
+  readonly existingPaths: ReadonlyArray<string>;
+}
+
+const defaultManifestPath = home.pipe(
+  Effect.map((homeDir) => `${homeDir}/.config/cw-migrate/manifest`),
+);
+
+type MigrateParseResult =
+  | { readonly _tag: "Ok"; readonly manifestPath: string }
+  | { readonly _tag: "Help" }
+  | { readonly _tag: "Error"; readonly message: string };
+
+const migrateManifestFlag = Flag.string("manifest").pipe(
+  Flag.withDescription("Custom manifest file"),
+);
+const migrateCli = Command.make("migrate", { manifest: migrateManifestFlag });
+
+const parseMigrateArgs = (
+  args: ReadonlyArray<string>,
+): Effect.Effect<MigrateParseResult> =>
+  Effect.gen(function* () {
+    void migrateCli;
+    let manifest = yield* defaultManifestPath;
+    for (let i = 0; i < args.length; i++) {
+      switch (args[i]) {
+        case "--manifest":
+          if (args[i + 1] === undefined) {
+            return {
+              _tag: "Error",
+              message: "--manifest requires a path argument",
+            };
+          }
+          manifest = args[i + 1];
+          i++;
+          break;
+        case "--help":
+          return { _tag: "Help" };
+        default:
+          return { _tag: "Error", message: `Unknown argument: ${args[i]}` };
+      }
+    }
+    return { _tag: "Ok", manifestPath: manifest };
+  });
+
+const parseManifest = (content: string): MigrateManifest => {
+  let section = "";
+  const migrate: string[] = [];
+  const audit: string[] = [];
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (line === "") continue;
+    const heading = /^\[(.+)]$/.exec(line);
+    if (heading) {
+      section = heading[1];
+      continue;
+    }
+    if (section === "migrate") migrate.push(line);
+    else if (section === "audit") audit.push(line);
+    else console.error(`warning Unknown manifest section: [${section}]`);
+  }
+  if (migrate.length === 0) fatal("Manifest has no [migrate] entries");
+  return { migrate, audit };
+};
+
+const loadMigrateManifest = (
+  manifestPath: string,
+) =>
+  Effect.gen(function* () {
+    const content = yield* readTextFile(manifestPath);
+    if (content === null) {
+      if (manifestPath === (yield* defaultManifestPath)) {
+        yield* logInfo("╍ No manifest found, using defaults");
+        return {
+          migrate: MIGRATE_DEFAULT_PATHS,
+          audit: MIGRATE_DEFAULT_AUDIT_PATHS,
+        };
+      }
+      return fatal(`Manifest not found: ${manifestPath}`);
+    }
+    yield* logInfo(`╍ Loading manifest from ${manifestPath}`);
+    return parseManifest(content);
+  });
+
+const promptRequired = (label: string): string => {
+  const value = prompt(label) ?? "";
+  return value.trim();
+};
+
+type MigrateSourceConnection =
+  | { readonly _tag: "Connected"; readonly sourceHost: string }
+  | { readonly _tag: "Failed" };
+
+const connectMigrateSource = () =>
+  Effect.gen(function* () {
+    yield* writeStdout("\nSource devbox\n\n");
+    yield* writeStdout("Enter the SSH host of the OLD devbox to pull from.\n");
+    yield* writeStdout("  - Coder devbox:  coder.<workspace-name>\n");
+    yield* writeStdout("  - Any SSH host:  user@hostname\n\n");
+    const sourceHost = promptRequired("Source host: ");
+    if (sourceHost === "") fatal("No source host specified");
+    yield* logInfo(`▶ Testing SSH connection to ${sourceHost}`);
+    const res = yield* runChild("ssh", [
+      "-o",
+      "ConnectTimeout=10",
+      sourceHost,
+      "echo ok",
+    ], {
+      stdout: "null",
+      stderr: "null",
+    });
+    if (res.code !== 0) {
+      yield* logError(`Cannot connect to ${sourceHost}`);
+      yield* writeStderr("Try: coder config-ssh\n");
+      return { _tag: "Failed" } as MigrateSourceConnection;
+    }
+    yield* logInfo("╍ Connection OK");
+    return { _tag: "Connected", sourceHost } as MigrateSourceConnection;
+  });
+
+const remoteHereDoc = (values: ReadonlyArray<string>): string =>
+  values.join("\n");
+
+const auditRepos = (
+  sourceHost: string,
+  auditPaths: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    if (auditPaths.length === 0) {
+      yield* logInfo("╍ No audit paths configured, skipping repo check");
+      return 0;
+    }
+    yield* writeStdout("\nChecking source repos for unpushed branches...\n\n");
+    const paths = remoteHereDoc(auditPaths);
+    const script = `set -euo pipefail
+audit_paths=()
+while IFS= read -r p; do
+  [[ -z "\${p}" ]] && continue
+  audit_paths+=("\${p}")
+done <<< ${shellQuote(paths)}
+for audit_path in "\${audit_paths[@]}"; do
+  full_path="\${HOME}/\${audit_path}"
+  if [[ ! -d "\${full_path}" ]]; then continue; fi
+  while IFS= read -r git_dir; do
+    [[ -z "\${git_dir}" ]] && continue
+    repo_dir=$(dirname "\${git_dir}")
+    repo_rel="\${repo_dir#\${HOME}/}"
+    has_issues=false
+    while IFS= read -r branch; do
+      [[ -z "\${branch}" ]] && continue
+      upstream_ref=$(git -C "\${repo_dir}" rev-parse --abbrev-ref "\${branch}@{upstream}" 2>/dev/null || true)
+      if [[ -z "\${upstream_ref}" ]]; then
+        echo "ISSUE|\${repo_rel}|\${branch} (no remote tracking branch)"
+        has_issues=true
       else
-        usage_top >&2
-        fatal "Unknown completion shell: ${2:-}. Supported: zsh"
+        ahead_count=$(git -C "\${repo_dir}" rev-list --count "\${upstream_ref}..\${branch}" 2>/dev/null || echo "0")
+        if [[ "\${ahead_count}" -gt 0 ]]; then
+          echo "ISSUE|\${repo_rel}|\${branch} (\${ahead_count} unpushed commit(s))"
+          has_issues=true
+        fi
       fi
-      ;;
-    connect)
-      shift
-      cmd_connect "$@"
-      ;;
-    fleet)
-      shift
-      cmd_fleet "$@"
-      ;;
-    migrate)
-      shift
-      cmd_migrate "$@"
-      ;;
-    -*)
-      usage_top >&2
-      fatal "Unknown option: $1"
-      ;;
-    *)
-      # Bare `cw <workspace> [mode] [dir]` — shorthand for `cw connect`.
-      cmd_connect "$@"
-      ;;
-  esac
+    done < <(git -C "\${repo_dir}" for-each-ref --format='%(refname:short)' refs/heads/)
+    if [[ "\${has_issues}" == "false" ]]; then echo "OK|\${repo_rel}"; fi
+  done < <(find "\${full_path}" -name .git -type d 2>/dev/null)
+done
+`;
+    const res = yield* runChild("ssh", [sourceHost, "bash", "-s"], {
+      input: script,
+    });
+    const output = res.stdout.trim();
+    if (output === "") {
+      yield* logInfo("╍ No git repos found in audit paths");
+      return 0;
+    }
+    let hasUnpushed = false;
+    let currentRepo = "";
+    for (const line of output.split(/\r?\n/)) {
+      const [status, repoPath, detail] = line.split("|");
+      if (status === "OK") {
+        yield* writeStdout(`  ~/${repoPath} — all branches pushed\n`);
+      }
+      if (status === "ISSUE") {
+        if (repoPath !== currentRepo) {
+          yield* writeStdout(`  ~/${repoPath}\n`);
+          currentRepo = repoPath;
+        }
+        yield* writeStdout(`    [ ] ${detail}\n`);
+        hasUnpushed = true;
+      }
+    }
+    yield* writeStdout("\n");
+    if (hasUnpushed) {
+      yield* logWarning(
+        "Unpushed branches found! Push them first or they will be lost.",
+      );
+      const confirm = promptRequired("Continue anyway? [y/N]: ");
+      if (confirm !== "y" && confirm !== "Y") {
+        yield* logInfo(
+          "Aborted. Push branches on the source and re-run.",
+        );
+        return 1;
+      }
+    } else {
+      yield* logInfo("╍ All repo branches are pushed");
+    }
+    return 0;
+  });
+
+const validateMigratePaths = (
+  sourceHost: string,
+  paths: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const script = `set -euo pipefail
+while IFS= read -r path; do
+  [[ -z "\${path}" ]] && continue
+  if [[ -e "\${HOME}/\${path}" ]]; then echo "EXISTS|\${path}"; else echo "MISSING|\${path}"; fi
+done <<< ${shellQuote(remoteHereDoc(paths))}
+`;
+    const res = yield* runChild("ssh", [sourceHost, "bash", "-s"], {
+      input: script,
+    });
+    const existing: string[] = [];
+    for (const line of res.stdout.split(/\r?\n/)) {
+      const [status, path] = line.split("|");
+      if (status === "EXISTS") existing.push(path);
+      if (status === "MISSING") {
+        yield* logWarning(`Not found on source: ~/${path}`);
+      }
+    }
+    yield* logInfo(
+      `╍ Found ${existing.length}/${paths.length} items to migrate`,
+    );
+    if (existing.length === 0) fatal("Nothing to migrate!");
+    return existing;
+  });
+
+const showMigrateSummary = (
+  sourceHost: string,
+  paths: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    yield* writeStdout("\nItems to migrate:\n\n");
+    const script = `set -euo pipefail
+size_args=()
+while IFS= read -r path; do
+  [[ -z "\${path}" ]] && continue
+  size=$(du -sh "\${HOME}/\${path}" 2>/dev/null | cut -f1)
+  echo "\${path}|\${size}"
+  size_args+=("\${HOME}/\${path}")
+done <<< ${shellQuote(remoteHereDoc(paths))}
+total=$(du -shc "\${size_args[@]}" 2>/dev/null | tail -1 | cut -f1)
+echo "TOTAL|\${total}"
+`;
+    const res = yield* runChild("ssh", [sourceHost, "bash", "-s"], {
+      input: script,
+    });
+    for (const line of res.stdout.split(/\r?\n/)) {
+      if (line === "") continue;
+      const [path, size] = line.split("|");
+      if (path === "TOTAL") yield* writeStdout(`\n  Total: ${size}\n`);
+      else yield* writeStdout(`  ${`~/${path}`.padEnd(45)} ${size}\n`);
+    }
+    yield* writeStdout("\n");
+  });
+
+const parentOf = (path: string): string => {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "." : path.slice(0, idx);
+};
+
+const doRsync = (state: MigrateState) =>
+  Effect.gen(function* () {
+    yield* writeStdout("\n");
+    yield* logWarning(
+      "This will overwrite matching paths locally. Continue? [y/N]",
+    );
+    const confirm = promptRequired("");
+    if (confirm !== "y" && confirm !== "Y") {
+      yield* logInfo("Aborted");
+      return 0;
+    }
+    yield* logInfo("▶ Creating local directory structure");
+    for (const path of state.existingPaths) {
+      const parent = parentOf(path);
+      const homeDir = yield* home;
+      if (parent !== ".") yield* mkdirp(`${homeDir}/${parent}`);
+    }
+    let failed = 0;
+    for (const path of state.existingPaths) {
+      const parent = parentOf(path);
+      const homeDir = yield* home;
+      const localDir = parent === "." ? `${homeDir}/` : `${homeDir}/${parent}/`;
+      yield* logInfo(`╍ Pulling ~/${path}`);
+      const res = yield* runChild("rsync", [
+        "-az",
+        `${state.sourceHost}:~/${path}`,
+        localDir,
+      ], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      if (res.code === 0) yield* writeStdout("    done\n");
+      else {
+        yield* logError(`Failed to pull ~/${path}`);
+        failed++;
+      }
+    }
+    yield* writeStdout("\n");
+    if (failed === 0) {
+      yield* logInfo(
+        `▶ Migration complete! All ${state.existingPaths.length} items pulled.`,
+      );
+    } else {
+      yield* logWarning(`Migration finished with ${failed} failure(s)`);
+    }
+    return failed === 0 ? 0 : 1;
+  });
+
+const doTar = (state: MigrateState) =>
+  Effect.gen(function* () {
+    const archiveName = `devbox-migration-${timestamp()}.tar.gz`;
+    const remoteArchive = `/tmp/${archiveName}`;
+    yield* writeStdout("\nCreating tar archive on source\n\n");
+    const script = `set -euo pipefail
+paths=()
+while IFS= read -r path; do
+  [[ -z "\${path}" ]] && continue
+  paths+=("\${path}")
+done <<< ${shellQuote(remoteHereDoc(state.existingPaths))}
+tar -czf ${shellQuote(remoteArchive)} -C "\${HOME}" "\${paths[@]}"
+`;
+    yield* logInfo(`▶ Creating archive on ${state.sourceHost}`);
+    let res = yield* runChild("ssh", [state.sourceHost, "bash", "-s"], {
+      input: script,
+      stdin: "piped",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (res.code !== 0) return res.code;
+    yield* logInfo("╍ Pulling archive");
+    res = yield* runChild("scp", [
+      `${state.sourceHost}:${remoteArchive}`,
+      `/tmp/${archiveName}`,
+    ], {
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (res.code !== 0) return res.code;
+    const size = yield* runChild("du", ["-sh", `/tmp/${archiveName}`]);
+    yield* logInfo(
+      `╍ Archive saved: /tmp/${archiveName} (${
+        size.stdout.split(/\s+/, 1)[0] ?? "?"
+      })`,
+    );
+    yield* writeStdout(
+      "\nTo extract:\n  cd ~ && tar -xzf /tmp/${archiveName}\n\n",
+    );
+    yield* logInfo("╍ Cleaning up remote archive");
+    yield* runChild("ssh", [state.sourceHost, "rm", "-f", remoteArchive]);
+    return 0;
+  });
+
+const doChecklist = (state: MigrateState) =>
+  Effect.gen(function* () {
+    yield* writeStdout("\nMigration Checklist\n\n");
+    yield* writeStdout(
+      `Pull these paths from ${state.sourceHost}:~ to local ~:\n\n`,
+    );
+    for (const path of state.existingPaths) {
+      yield* writeStdout(`  [ ] ~/${path}\n`);
+    }
+    yield* writeStdout("\nExample for each:\n");
+    yield* writeStdout(`  rsync -az ${state.sourceHost}:~/PATH ~/PATH\n\n`);
+    yield* writeStdout("After copying:\n\n");
+    yield* writeStdout("  [ ] Run chezmoi apply to restore dotfiles\n");
+    yield* writeStdout("  [ ] Verify git repos have correct remotes\n\n");
+    return 0;
+  });
+
+const migrateCommand = (
+  args: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const parsed = yield* parseMigrateArgs(args);
+    if (parsed._tag === "Help") {
+      yield* writeStdout(MIGRATE_USAGE);
+      return 0;
+    }
+    if (parsed._tag === "Error") {
+      yield* writeStderr(MIGRATE_USAGE);
+      return fatal(parsed.message);
+    }
+    const manifestPath = parsed.manifestPath;
+    yield* writeStdout("\nDevbox Migration\n\n");
+    const manifest = yield* loadMigrateManifest(manifestPath);
+    const sourceConnection: MigrateSourceConnection =
+      yield* connectMigrateSource();
+    if (sourceConnection._tag === "Failed") return 1;
+    const sourceHost = sourceConnection.sourceHost;
+    const auditCode = yield* auditRepos(sourceHost, manifest.audit);
+    if (auditCode !== 0) return 0;
+    const existingPaths = yield* validateMigratePaths(
+      sourceHost,
+      manifest.migrate,
+    );
+    yield* showMigrateSummary(sourceHost, existingPaths);
+    const state: MigrateState = { ...manifest, sourceHost, existingPaths };
+    yield* writeStdout("Transfer method\n\n");
+    yield* writeStdout("  1) rsync  — pull directly over SSH\n");
+    yield* writeStdout(
+      "  2) tar    — archive on source, pull here, extract manually\n",
+    );
+    yield* writeStdout("  3) list   — just show what to copy\n\n");
+    const choice = promptRequired("Choose [1/2/3]: ");
+    const code = choice === "1"
+      ? yield* doRsync(state)
+      : choice === "2"
+      ? yield* doTar(state)
+      : choice === "3"
+      ? yield* doChecklist(state)
+      : (() => fatal(`Invalid choice: ${choice}`))();
+    yield* writeStdout("\n");
+    yield* logWarning(
+      "Credentials are NOT included — migrate these yourself:",
+    );
+    yield* writeStdout("  ~/.ssh/  ~/.aws/  ~/.gnupg/  ~/.npmrc\n\n");
+    yield* logWarning(
+      "Run chezmoi apply on this devbox to restore dotfiles.",
+    );
+    yield* writeStdout("\n");
+    return code;
+  });
+
+// ============================================================================
+// main
+// ============================================================================
+
+const main = (args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    if (args.length < 1) {
+      yield* writeStdout(TOP_USAGE);
+      return 1;
+    }
+    const [command, ...rest] = args;
+    switch (command) {
+      case "--help":
+      case "help":
+        yield* writeStdout(TOP_USAGE);
+        return 0;
+      case "completion":
+        if (rest[0] === "zsh") {
+          yield* writeStdout(ZSH_COMPLETION);
+          return 0;
+        }
+        yield* writeStderr(TOP_USAGE);
+        fatal(`Unknown completion shell: ${rest[0] ?? ""}. Supported: zsh`);
+        return 1;
+      case "connect":
+        return yield* connectCommand(rest);
+      case "fleet":
+        return yield* fleetCommand(rest);
+      case "migrate":
+        return yield* migrateCommand(rest);
+      default:
+        if (command.startsWith("-")) {
+          yield* writeStderr(TOP_USAGE);
+          fatal(`Unknown option: ${command}`);
+        }
+        return yield* connectCommand(args);
+    }
+  });
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const command = Deno.args[0];
+  const serviceFree = command === undefined || command === "--help" ||
+    command === "help" ||
+    (command === "connect" && Deno.args[1] === "--help") ||
+    (command === "fleet" && Deno.args[1] === "--help") ||
+    (command === "migrate" && Deno.args[1] === "--help") ||
+    (command === "completion" && Deno.args[1] === "zsh");
+  const program = serviceFree ? main(Deno.args) : Effect.promise(async () => {
+    const childProcess = await import("node:child_process");
+    const fs = await import("node:fs/promises");
+    const nodeFileSystemLayer = fileSystemLayerNoop({
+      makeDirectory: (path, options) =>
+        Effect.tryPromise({
+          try: () =>
+            fs.mkdir(path, {
+              recursive: options?.recursive,
+              mode: options?.mode,
+            }),
+          catch: (cause) => cause as never,
+        }).pipe(Effect.asVoid),
+      readFileString: (path, encoding = "utf8") =>
+        Effect.tryPromise({
+          try: () =>
+            fs.readFile(path, { encoding: encoding as BufferEncoding }),
+          catch: (cause) => cause as never,
+        }),
+      stat: (path) =>
+        Effect.tryPromise({
+          try: () => fs.stat(path),
+          catch: (cause) => cause as never,
+        }).pipe(Effect.map((stat) => stat as never)),
+      writeFileString: (path, content) =>
+        Effect.tryPromise({
+          try: () => fs.writeFile(path, content),
+          catch: (cause) => cause as never,
+        }).pipe(Effect.asVoid),
+    });
+    const nodeChildProcessLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.fail(
+              new Error("piped commands are unsupported") as never,
+            );
+          }
+          const stdin = command.options.stdin ?? "pipe";
+          const stdout = command.options.stdout ?? "pipe";
+          const stderr = command.options.stderr ?? "pipe";
+          const stdio = [
+            stdin === "inherit"
+              ? "inherit"
+              : stdin === "ignore"
+              ? "ignore"
+              : "pipe",
+            stdout === "inherit"
+              ? "inherit"
+              : stdout === "ignore"
+              ? "ignore"
+              : "pipe",
+            stderr === "inherit"
+              ? "inherit"
+              : stderr === "ignore"
+              ? "ignore"
+              : "pipe",
+          ];
+          const child = childProcess.spawn(command.command, [...command.args], {
+            cwd: command.options.cwd,
+            detached: command.options.detached,
+            env: command.options.extendEnv === false
+              ? command.options.env as NodeJS.ProcessEnv | undefined
+              : { ...process.env, ...command.options.env },
+            shell: command.options.shell,
+            stdio: stdio as never,
+          }) as unknown as {
+            readonly pid?: number;
+            readonly exitCode: number | null;
+            readonly stdin: NodeJS.WritableStream | null;
+            readonly stdout: NodeJS.ReadableStream | null;
+            readonly stderr: NodeJS.ReadableStream | null;
+            once(event: "exit", listener: (code: number | null) => void): void;
+            once(event: "error", listener: () => void): void;
+            kill(signal?: NodeJS.Signals): boolean;
+            unref(): void;
+            ref(): void;
+          };
+          if (typeof stdin !== "string" && child.stdin !== null) {
+            yield* (stdin as Stream.Stream<Uint8Array>).pipe(
+              Stream.runForEach((chunk) =>
+                Effect.promise(() =>
+                  new Promise<void>((resolve, reject) => {
+                    child.stdin!.write(
+                      chunk,
+                      (error?: Error | null) => {
+                        if (!error) return resolve();
+                        const code = (error as NodeJS.ErrnoException)?.code;
+                        if (
+                          code === "EPIPE" ||
+                          code === "ERR_STREAM_DESTROYED" ||
+                          code === "ERR_STREAM_WRITE_AFTER_END"
+                        ) {
+                          return resolve();
+                        }
+                        reject(error);
+                      },
+                    );
+                  })
+                )
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  try {
+                    child.stdin?.end();
+                  } catch {
+                    // already closed
+                  }
+                }),
+              ),
+              Effect.catchCause(() => Effect.void),
+              Effect.forkChild,
+            );
+          }
+          const exitCode = Effect.promise(() =>
+            new Promise<number>((resolve) => {
+              child.once("exit", (code) => resolve(code ?? 1));
+              child.once("error", () => resolve(127));
+            })
+          ).pipe(Effect.map(ChildProcessSpawner.ExitCode));
+          const outputStream = (stream: NodeJS.ReadableStream | null) =>
+            stream === null ? Stream.empty : Stream.fromAsyncIterable(
+              stream as AsyncIterable<Uint8Array>,
+              (cause) => cause as never,
+            );
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(child.pid ?? 0),
+            exitCode,
+            isRunning: Effect.sync(() => child.exitCode === null),
+            kill: (options) =>
+              Effect.sync(() =>
+                void child.kill(options?.killSignal ?? "SIGTERM")
+              ),
+            stdin: Sink.drain,
+            stdout: outputStream(child.stdout),
+            stderr: outputStream(child.stderr),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.sync(() => {
+              child.unref();
+              return Effect.sync(() => child.ref());
+            }),
+          });
+        })
+      ),
+    );
+    return Layer.mergeAll(
+      nodeChildProcessLayer,
+      nodeFileSystemLayer,
+      pathLayer,
+    );
+  })
+    .pipe(
+      Effect.flatMap((runtimeLayer) =>
+        main(Deno.args).pipe(Effect.provide(runtimeLayer))
+      ),
+    );
+  Effect.runPromiseExit(program as Effect.Effect<number, Error>).then(
+    (exit) => {
+      if (exit._tag === "Success") Deno.exit(exit.value);
+      console.error(exit.cause);
+      Deno.exit(1);
+    },
+  ).catch((err) => {
+    console.error(err);
+    Deno.exit(1);
+  });
 }
 
-main "$@"
+// ============================================================================
+// Tests — pure/mocked. Must pass offline:
+//   deno test home/private_dot_local/bin/executable_cw
+// ============================================================================
+
+const assertEq = <T>(actual: T, expected: T): void => {
+  if (actual !== expected) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+};
+
+class MockChildProcessSpawner {
+  readonly calls: Array<
+    { cmd: string; args: ReadonlyArray<string>; options?: RunOptions }
+  > = [];
+  constructor(private readonly results: ReadonlyArray<CommandResult>) {}
+
+  readonly service = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) {
+      return Effect.fail(
+        new Error("mock only supports standard commands") as never,
+      );
+    }
+    const options = command.options;
+    this.calls.push({
+      cmd: command.command,
+      args: command.args,
+      options: {
+        cwd: options.cwd,
+        stdin: options.stdin === "inherit"
+          ? "inherit"
+          : options.stdin === "ignore"
+          ? "null"
+          : "piped",
+        stdout: options.stdout === "inherit"
+          ? "inherit"
+          : options.stdout === "ignore"
+          ? "null"
+          : "piped",
+        stderr: options.stderr === "inherit"
+          ? "inherit"
+          : options.stderr === "ignore"
+          ? "null"
+          : "piped",
+      },
+    });
+    const result = this.results[this.calls.length - 1] ??
+      { code: 0, stdout: "", stderr: "" };
+    return Effect.succeed(ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(this.calls.length),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      stdin: Sink.drain,
+      stdout: result.stdout === ""
+        ? Stream.empty
+        : Stream.make(text.encode(result.stdout)),
+      stderr: result.stderr === ""
+        ? Stream.empty
+        : Stream.make(text.encode(result.stderr)),
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    }));
+  });
+
+  readonly layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    this.service,
+  );
+}
+
+if (!import.meta.main) {
+  Deno.test("fleet parser preserves options and task args", () => {
+    const parsed = parseFleetArgs([
+      "--include-local",
+      "--parallel",
+      "2",
+      "--",
+      "update",
+      "--fast",
+    ]);
+    if (parsed._tag !== "Ok") throw new Error("expected ok parse");
+    assertEq(parsed.options.includeLocal, true);
+    assertEq(parsed.options.parallel, 2);
+    assertEq(parsed.options.taskAndArgs.join("\0"), "update\0--fast");
+  });
+
+  Deno.test("fleet default filter selects running workspace names", () => {
+    const selected = chooseDefaultFleetWorkspaces([
+      { name: "one", latest_build: { status: "running" } },
+      { name: "two", latest_build: { status: "stopped" } },
+    ]);
+    assertEq(selected.join(","), "one");
+  });
+
+  Deno.test("fleet aggregation returns max partial-failure exit", () => {
+    const code = fleetResultCode([
+      { _tag: "Right", right: { host: "a", code: 0 } },
+      { _tag: "Left", left: { host: "b", code: 7, logFile: "/tmp/b.log" } },
+      { _tag: "Left", left: { host: "c", code: 2, logFile: "/tmp/c.log" } },
+    ]);
+    assertEq(code, 7);
+  });
+
+  Deno.test("connect ssh uses hand-over stdio and mirrors child code", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 23, stdout: "", stderr: "" },
+    ]);
+    const code = await Effect.runPromise(
+      connectCommand(["box"], {
+        log: false,
+        preflight: false,
+        checkCommands: false,
+      }).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    assertEq(code, 23);
+    const ssh = spawner.calls[1];
+    assertEq(ssh.cmd, "ssh");
+    assertEq(ssh.options?.stdin, "inherit");
+    assertEq(ssh.options?.stdout, "inherit");
+    assertEq(ssh.options?.stderr, "inherit");
+  });
+
+  Deno.test("coder list schema rejects missing build status", () => {
+    let failed = false;
+    try {
+      decodeWorkspaces([{ name: "bad", latest_build: {} }]);
+    } catch {
+      failed = true;
+    }
+    assertEq(failed, true);
+  });
+}

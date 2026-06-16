@@ -1,8 +1,13 @@
 [tools]
 
+[tasks."lint:runtimes"]
+description = "Check every runnable is in the runtime-tier manifest with matching lang"
+run = "deno run --allow-read --allow-env home/private_dot_local/bin/executable_df-lint-runtimes"
+
 [tasks.lint]
-description = "Format-check and lint all Deno+Effect tools"
+description = "Format-check, lint, and tier-check all Deno+Effect tools"
+depends = ["lint:runtimes"]
 run = [
-  "deno fmt --ext=ts --check home/private_dot_local/bin/executable_df-json-escape home/private_dot_local/bin/executable_df-drift home/private_dot_local/bin/executable_df-omo-profile home/private_dot_local/bin/executable_notify home/private_dot_local/bin/executable_transcribe",
-  "deno lint --ext=ts home/private_dot_local/bin/executable_df-json-escape home/private_dot_local/bin/executable_df-drift home/private_dot_local/bin/executable_df-omo-profile home/private_dot_local/bin/executable_notify home/private_dot_local/bin/executable_transcribe",
+  """deno fmt --ext=ts --check $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  """deno lint --rules-exclude=no-import-prefix --ext=ts $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
 ]

@@ -6,4 +6,16 @@
     include = ["*/.opencode", "*/.opencode/**"]
     # Opencode auto-loads every file in plugin/, so .d.ts type declarations
     # crash plugin loading. Exclude them from the extracted archive.
-    exclude = ["**/*.d.ts"]
+    #
+    # tokenizer-aliases.json and tokenizer-registry.mjs are excluded because
+    # run_onchange-065 owns them: it writes a patched registry (family-substring
+    # matcher) and an extended aliases file (amazon-bedrock model families).
+    # If the external also wrote them, chezmoi would re-extract the pristine
+    # upstream copies every apply, conflict with 065's edits, and prompt
+    # "...has changed since chezmoi last wrote it". Excluding them here makes
+    # 065 the sole owner — no conflict, no prompt.
+    exclude = [
+        "**/*.d.ts",
+        "**/plugin/tokenizer-aliases.json",
+        "**/plugin/tokenizer-registry.mjs",
+    ]

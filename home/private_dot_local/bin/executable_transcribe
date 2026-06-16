@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-net --allow-read --allow-write --allow-env --allow-run=ffmpeg --unstable-webgpu
+#!/usr/bin/env -S mise exec -- deno run --allow-net --allow-read --allow-write --allow-env --allow-run=ffmpeg --unstable-webgpu --allow-ffi
 
 // Transcribe audio/video with any HuggingFace ASR model, grouped into
 // fixed-duration chunks. Deno + Effect v4 beta rewrite of the original
@@ -18,7 +18,7 @@
 //   -l/--language      source language code, or "auto" (default en)
 //   --no-timestamps    print plain text only
 //
-// Effect v4 beta import paths verified against effect@4.0.0-beta.80. The CLI,
+// Effect v4 beta import paths verified against effect@4.0.0-beta.83. The CLI,
 // process, and platform-node submodules live under the `unstable/` path prefix
 // (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
 // transcript on stdout stays clean and copy-pasteable.
@@ -30,12 +30,12 @@ import {
   Effect,
   Layer,
   Stream,
-} from "npm:effect@4.0.0-beta.80";
-import { Command, Flag } from "npm:effect@4.0.0-beta.80/unstable/cli";
+} from "npm:effect@4.0.0-beta.83";
+import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.80/unstable/process";
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
 // `@effect/platform-node` is imported LAZILY (runtime dynamic import in the
 // CLI entrypoint) rather than at the top level. Its dependency chain pulls in
@@ -46,12 +46,12 @@ import {
 // `import.meta.main` path only.
 type NodePlatform = {
   readonly NodeRuntime:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.80").NodeRuntime;
+    typeof import("npm:@effect/platform-node@4.0.0-beta.83").NodeRuntime;
   readonly NodeServices:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.80").NodeServices;
+    typeof import("npm:@effect/platform-node@4.0.0-beta.83").NodeServices;
 };
 
-const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.80"]
+const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.83"]
   .join("/");
 
 const loadNodePlatform = (): Promise<NodePlatform> =>
@@ -446,6 +446,21 @@ const cli = transcribeCommand.pipe(
 );
 
 if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
   // Load the Node platform lazily so importing this file (under the test
   // runner) never pulls in msgpackr's env-touching load-time code.
   loadNodePlatform().then(({ NodeRuntime, NodeServices }) => {

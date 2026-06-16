@@ -1,77 +1,448 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env -S mise exec -- deno run --allow-run=chezmoi,git --allow-env --allow-ffi --allow-read
 
-IFS=$'\n\t'
+// df-task-chezmoi-update (Deno + Effect v4 beta). Fast-forwards the chezmoi
+// SOURCE repo to origin and applies it, invoked from the
+// `[tasks."chezmoi:update"]` mise task. Owns the git step EXPLICITLY — fetch
+// origin, then `git merge --ff-only origin/<branch>` — then runs `chezmoi
+// apply` (NOT `chezmoi update`, since we now own the pull).
+//
+// Why not `chezmoi update`: chezmoi has no ff-only knob, so its built-in pull
+// can silently create a merge commit / diverge from origin (it did: a stray
+// `Merge branch ...` commit + a 304/317 divergence on a remote box). Doing the
+// git step here enforces the repo's linear-history / ff-only rule for the
+// dotfiles repo itself. A non-fast-forward is a LOUD hard-fail (non-zero exit +
+// clear message), never a silent auto-merge or `git pull` fallback.
+//
+// Steps:
+//   1. probe chezmoi on PATH (fatal if absent)
+//   2. probe git on PATH (fatal if absent)
+//   3. resolve the source repo via `chezmoi source-path`
+//   4. `git -C <src> fetch origin` (fatal on failure)
+//   5. `git -C <src> merge --ff-only origin/<branch>` (fatal, non-zero, on a
+//      non-fast-forward — reconcile manually; we refuse to auto-merge)
+//   6. `chezmoi apply` with the TTY-aware mode flags below
+//   7. propagate chezmoi apply's exit code verbatim
+//
+// <branch> is the source repo's current branch (`git rev-parse --abbrev-ref
+// HEAD`), defaulting to `main` (also for a detached HEAD).
+//
+// Mode resolution for the apply step (preserved verbatim from the bash original):
+//   CHEZMOI_INTERACTIVE=1     keep prompts (no force flags) even without a TTY
+//   CHEZMOI_INTERACTIVE=0     force non-interactive (--force --no-tty) even on a TTY
+//   CHEZMOI_INTERACTIVE unset auto-detect: stdin is a TTY -> prompts; else force
+//   CHEZMOI_VERBOSE=1         append -v after the mode flags
+//
+// SUPERVISE (deno-effect-tools.md §9): each child inherits all stdio (so
+// prompts/output reach the terminal and the interactive apply reads the real
+// stdin TTY) and the parent propagates the apply child's exit code. Run under
+// NodeRuntime.runMain so a Ctrl-C gracefully tears the child down.
+//
+// @effect/platform-node is imported DYNAMICALLY inside import.meta.main: its
+// static graph reads process.env at load (via msgpackr), which would force
+// --allow-env onto `deno test`. Deferring it keeps the in-file tests runnable
+// with ZERO permission flags — they only exercise the pure resolvers.
+//
+// Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
+// exits 1). Effect v4 beta import paths verified against effect@4.0.0-beta.83.
 
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
+import { Config, Effect } from "npm:effect@4.0.0-beta.83";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+// Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
 
-#/ Usage:
-#/   df-task-chezmoi-update
-#/
-#/ Description:
-#/   Wrapper around `chezmoi update` (git pull on the source repo, then
-#/   apply). Sibling to dotfiles-task-chezmoi-apply; same TTY-aware
-#/   semantics so unattended runs (agent shells, CI, piped invocations)
-#/   converge instead of dying on the "X has changed since last write"
-#/   prompt with "could not open a new TTY".
-#/
-#/   In interactive shells (stdin attached to a TTY) it runs plain
-#/   `chezmoi update` so prompts still surface for the human at the
-#/   keyboard.
-#/
-#/ Environment:
-#/   CHEZMOI_VERBOSE       When set to "1", invokes chezmoi with -v.
-#/   CHEZMOI_INTERACTIVE   When set to "1", keeps prompts even without a TTY.
-#/                         When "0", forces non-interactive even with a TTY.
-#/                         Unset: auto-detect from stdin.
-#/
-#/ Options:
-#/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+// --------------------------------------------------------------------------
+// Usage (mirrors the bash `#/`-comment header rendered by `usage()`).
+// --------------------------------------------------------------------------
 
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
+const USAGE = `Usage:
+  df-task-chezmoi-update
+
+Description:
+  Fast-forwards the chezmoi source repo to origin and applies it: fetch
+  origin, then \`git merge --ff-only origin/<branch>\`, then \`chezmoi apply\`.
+  Owns the git step explicitly so the pull can NEVER silently create a merge
+  commit or diverge from origin (chezmoi's built-in pull has no ff-only knob).
+  A non-fast-forward is a loud hard-fail — reconcile manually, never an
+  auto-merge or \`git pull\` fallback.
+
+  <branch> is the source repo's current branch, defaulting to main.
+
+  Sibling to df-task-chezmoi-apply; same TTY-aware semantics for the apply
+  step so unattended runs (agent shells, CI, piped invocations) converge with
+  \`--force --no-tty\` instead of dying on the "X has changed since last write"
+  prompt with "could not open a new TTY". In interactive shells (stdin a TTY)
+  prompts still surface for the human at the keyboard.
+
+Environment:
+  CHEZMOI_VERBOSE       When set to "1", invokes chezmoi apply with -v.
+  CHEZMOI_INTERACTIVE   When set to "1", keeps prompts even without a TTY.
+                        When "0", forces non-interactive even with a TTY.
+                        Unset: auto-detect from stdin.
+
+Options:
+  --help    Display this help message`;
+
+// --------------------------------------------------------------------------
+// Pure resolvers (mirror bash resolve_mode_flags + the verbose append, plus the
+// branch/ff-only-merge argv this task now owns).
+//
+// Deliberately free of env/TTY/subprocess access so the in-file tests pin the
+// contract with ZERO permission flags. The runtime entrypoint feeds them the
+// live signals (CHEZMOI_INTERACTIVE, stdin TTY, CHEZMOI_VERBOSE, the resolved
+// source path + branch).
+// --------------------------------------------------------------------------
+
+/** Force-flag pair chezmoi needs to converge without a usable TTY. */
+const FORCE_FLAGS = ["--force", "--no-tty"] as const;
+
+/**
+ * Resolve the interactive vs non-interactive `chezmoi apply` flags.
+ *
+ * Matches the bash `case` exactly: only "1" and "0" are special; an unset
+ * (`undefined`), empty, or any other value defers to the stdin TTY check.
+ *
+ * @param interactiveOverride raw CHEZMOI_INTERACTIVE value (undefined if unset)
+ * @param isTTY whether stdin is attached to a terminal
+ */
+export const resolveModeFlags = (
+  interactiveOverride: string | undefined,
+  isTTY: boolean,
+): ReadonlyArray<string> => {
+  if (interactiveOverride === "1") return [];
+  if (interactiveOverride === "0") return [...FORCE_FLAGS];
+  return isTTY ? [] : [...FORCE_FLAGS];
+};
+
+/**
+ * Full argv following the `chezmoi` binary: the `apply` subcommand, the mode
+ * flags, then the optional `-v`. We run `apply` (not `update`) because this
+ * task already did the git pull explicitly. Single source of truth for what the
+ * apply child is invoked with, so the tests assert the complete command line.
+ */
+export const resolveApplyArgs = (
+  interactiveOverride: string | undefined,
+  isTTY: boolean,
+  verbose: boolean,
+): ReadonlyArray<string> => [
+  "apply",
+  ...resolveModeFlags(interactiveOverride, isTTY),
+  ...(verbose ? ["-v"] : []),
+];
+
+/**
+ * Resolve the branch to fast-forward against. Trims whitespace; defaults to
+ * "main" for empty input or a detached HEAD ("HEAD" from
+ * `git rev-parse --abbrev-ref HEAD`).
+ */
+export const resolveBranch = (raw: string | undefined): string => {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "" || trimmed === "HEAD") return "main";
+  return trimmed;
+};
+
+/**
+ * Pure ff-only merge argv (following `git -C <src>`): refuse anything but a
+ * fast-forward of the tracked origin branch. Extracted so the tests pin the
+ * exact shape and can't regress into a plain `merge`/`pull`.
+ */
+export const resolveMergeArgs = (branch: string): ReadonlyArray<string> => [
+  "merge",
+  "--ff-only",
+  `origin/${branch}`,
+];
+
+// --------------------------------------------------------------------------
+// Runtime program (SUPERVISE). Requires ChildProcessSpawner, supplied by
+// NodeServices.layer at the entrypoint.
+// --------------------------------------------------------------------------
+
+const program: Effect.Effect<
+  never,
+  Config.ConfigError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  // Soft probe: does `<bin> --version` start and exit 0? Any failure -> false.
+  // Defined inside the gen so it closes over the inferred spawner shape —
+  // annotating a spawner parameter would reference the Tag, not the service.
+  const probeOnPath = (bin: string) =>
+    spawner
+      .exitCode(
+        ChildProcess.make(bin, ["--version"], {
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      )
+      .pipe(
+        Effect.map((code) => code === 0),
+        Effect.orElseSucceed(() => false),
+      );
+
+  // 1. Probe chezmoi on PATH (mirrors bash `command -v chezmoi`).
+  if (!(yield* probeOnPath("chezmoi"))) {
+    return yield* Effect.sync(() => fatal("chezmoi not on PATH"));
+  }
+
+  // 2. Probe git on PATH — we now drive the pull ourselves, so git is required.
+  if (!(yield* probeOnPath("git"))) {
+    return yield* Effect.sync(() => fatal("git not on PATH"));
+  }
+
+  // 3. Resolve the chezmoi SOURCE repo. `.string` captures stdout and fails on
+  // a non-zero exit; collapse that to "" and treat an empty result as fatal.
+  const sourcePath = (yield* spawner
+    .string(
+      ChildProcess.make("chezmoi", ["source-path"], { stderr: "inherit" }),
+    )
+    .pipe(Effect.orElseSucceed(() => ""))).trim();
+  if (sourcePath === "") {
+    return yield* Effect.sync(() =>
+      fatal(
+        "could not resolve chezmoi source path (chezmoi source-path failed)",
+      )
+    );
+  }
+
+  // Current branch of the source repo; default main (also for a detached HEAD,
+  // where `rev-parse --abbrev-ref HEAD` prints "HEAD").
+  const branchRaw = yield* spawner
+    .string(
+      ChildProcess.make(
+        "git",
+        ["-C", sourcePath, "rev-parse", "--abbrev-ref", "HEAD"],
+        { stderr: "ignore" },
+      ),
+    )
+    .pipe(Effect.orElseSucceed(() => ""));
+  const branch = resolveBranch(branchRaw);
+
+  // 4. Fetch origin (inherit stdio so progress surfaces). Fatal on failure.
+  const fetchCode = yield* spawner
+    .exitCode(
+      ChildProcess.make("git", ["-C", sourcePath, "fetch", "origin"], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
+    )
+    .pipe(Effect.orElseSucceed(() => 1));
+  if (fetchCode !== 0) {
+    return yield* Effect.sync(() =>
+      fatal(`git fetch origin failed in ${sourcePath} (exit ${fetchCode})`)
+    );
+  }
+
+  // 5. Fast-forward ONLY. A non-ff merge is a loud hard-fail — never a silent
+  // merge commit or `git pull` fallback.
+  const mergeCode = yield* spawner
+    .exitCode(
+      ChildProcess.make(
+        "git",
+        ["-C", sourcePath, ...resolveMergeArgs(branch)],
+        {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        },
+      ),
+    )
+    .pipe(Effect.orElseSucceed(() => 1));
+  if (mergeCode !== 0) {
+    return yield* Effect.sync(() =>
+      fatal(
+        `chezmoi source is not a fast-forward of origin/${branch} — reconcile manually (git -C ${sourcePath} status), refusing to auto-merge`,
+      )
+    );
+  }
+
+  // 6. Apply. We own the pull now, so this is `chezmoi apply`, with the same
+  // TTY-aware mode flags as the bash twin.
+  const interactiveOverride = yield* Config.string("CHEZMOI_INTERACTIVE").pipe(
+    Config.option,
+    Effect.map((opt) => opt._tag === "Some" ? opt.value : undefined),
+  );
+  const verbose =
+    (yield* Config.string("CHEZMOI_VERBOSE").pipe(Config.withDefault(""))) ===
+      "1";
+  const isTTY = Deno.stdin.isTerminal();
+  const args = resolveApplyArgs(interactiveOverride, isTTY, verbose);
+
+  // Inherit stdio so chezmoi's prompts/output go straight to the terminal and
+  // (interactive path) chezmoi reads from the real stdin TTY.
+  const exitCode = yield* spawner
+    .exitCode(
+      ChildProcess.make("chezmoi", [...args], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
+    )
+    .pipe(Effect.orElseSucceed(() => 1));
+
+  // 7. Propagate chezmoi apply's exit code verbatim (bash `set -e` + tail).
+  return yield* Effect.sync(() => Deno.exit(exitCode));
+});
+
+// --------------------------------------------------------------------------
+// Entry point
+// --------------------------------------------------------------------------
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  // Argument handling mirrors the bash parse_args, which inspects only $1:
+  // `--help` -> usage on stdout + exit 0; any other first arg -> usage + fatal.
+  const first = Deno.args[0];
+  if (first === "--help") {
+    console.log(USAGE);
+    Deno.exit(0);
+  }
+  if (first !== undefined) {
+    console.log(USAGE);
+    fatal(`Unknown argument: ${first}`);
+  }
+
+  // Dynamic import keeps `deno test` permission-free (see header). NodeServices
+  // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
+  // handlers SUPERVISE relies on for graceful child teardown.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  program.pipe(
+    // Config read failure (env vars) -> fatal.
+    Effect.catchTag(
+      "ConfigError",
+      (error) => Effect.sync(() => fatal(String(error))),
+    ),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
-resolve_mode_flags() {
-  local override="${CHEZMOI_INTERACTIVE:-}"
-  case "$override" in
-    1) return 0 ;;
-    0) printf '%s\n' --force --no-tty; return 0 ;;
-  esac
-  if [ -t 0 ]; then
-    return 0
-  fi
-  printf '%s\n' --force --no-tty
-}
+// === Tests =================================================================
+// Run offline with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-task-chezmoi-update
+// The import.meta.main guard keeps the CLI (and the Node platform import) from
+// firing under test; these cover the pure resolvers — the TTY/env mode contract
+// inherited verbatim from the bash original, plus the branch + ff-only merge
+// argv this task now owns.
 
-main() {
-  parse_args "$@"
+const assertEq = <T>(actual: T, expected: T, msg: string): void => {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${msg}: ${a} !== ${e}`);
+};
 
-  if ! command -v chezmoi >/dev/null 2>&1; then
-    fatal "chezmoi not on PATH"
-  fi
+Deno.test("TTY with no override -> plain apply (no force flags)", () => {
+  assertEq(resolveModeFlags(undefined, true), [], "interactive flags");
+  assertEq(
+    resolveApplyArgs(undefined, true, false),
+    ["apply"],
+    "interactive argv",
+  );
+});
 
-  local -a mode_flags=()
-  while IFS= read -r flag; do
-    [ -n "$flag" ] && mode_flags+=("$flag")
-  done < <(resolve_mode_flags)
+Deno.test("non-TTY with no override -> --force --no-tty", () => {
+  assertEq(
+    resolveModeFlags(undefined, false),
+    ["--force", "--no-tty"],
+    "non-interactive flags",
+  );
+  assertEq(
+    resolveApplyArgs(undefined, false, false),
+    ["apply", "--force", "--no-tty"],
+    "non-interactive argv",
+  );
+});
 
-  local -a verbose_flags=()
-  if [ "${CHEZMOI_VERBOSE:-0}" = "1" ]; then
-    verbose_flags+=(-v)
-  fi
+Deno.test("CHEZMOI_INTERACTIVE=1 keeps prompts even without a TTY", () => {
+  assertEq(resolveModeFlags("1", false), [], "override=1 on non-TTY");
+  assertEq(resolveModeFlags("1", true), [], "override=1 on TTY");
+});
 
-  chezmoi update "${mode_flags[@]}" "${verbose_flags[@]}"
-}
+Deno.test("CHEZMOI_INTERACTIVE=0 forces non-interactive even on a TTY", () => {
+  assertEq(
+    resolveModeFlags("0", true),
+    ["--force", "--no-tty"],
+    "override=0 on TTY",
+  );
+  assertEq(
+    resolveModeFlags("0", false),
+    ["--force", "--no-tty"],
+    "override=0 on non-TTY",
+  );
+});
 
-main "$@"
+Deno.test("unrecognised override falls through to TTY auto-detect", () => {
+  // Only "1"/"0" are special; "" and any other value defer to the TTY check.
+  assertEq(resolveModeFlags("", true), [], "empty override on TTY");
+  assertEq(
+    resolveModeFlags("yes", false),
+    ["--force", "--no-tty"],
+    "garbage override on non-TTY",
+  );
+});
+
+Deno.test("CHEZMOI_VERBOSE appends -v after the mode flags", () => {
+  assertEq(
+    resolveApplyArgs(undefined, true, true),
+    ["apply", "-v"],
+    "verbose interactive",
+  );
+  assertEq(
+    resolveApplyArgs(undefined, false, true),
+    ["apply", "--force", "--no-tty", "-v"],
+    "verbose non-interactive",
+  );
+});
+
+Deno.test("resolveBranch defaults to main for empty / detached HEAD", () => {
+  assertEq(resolveBranch(undefined), "main", "undefined -> main");
+  assertEq(resolveBranch(""), "main", "empty -> main");
+  assertEq(resolveBranch("   "), "main", "whitespace -> main");
+  assertEq(resolveBranch("HEAD"), "main", "detached HEAD -> main");
+  assertEq(
+    resolveBranch("to-reproducible\n"),
+    "to-reproducible",
+    "trims trailing newline",
+  );
+  assertEq(
+    resolveBranch("feature/x"),
+    "feature/x",
+    "passes a real branch through",
+  );
+});
+
+Deno.test("resolveMergeArgs is ff-only against origin/<branch>", () => {
+  assertEq(
+    resolveMergeArgs("main"),
+    ["merge", "--ff-only", "origin/main"],
+    "main ff-only argv",
+  );
+  assertEq(
+    resolveMergeArgs("to-reproducible"),
+    ["merge", "--ff-only", "origin/to-reproducible"],
+    "feature-branch ff-only argv",
+  );
+});
