@@ -1,0 +1,19 @@
+{
+  "deno.config": "./deno.json",
+  "deno.enable": true,
+  "deno.enablePaths": ["home/private_dot_local/bin"],
+  "files.associations": {
+    "**/home/private_dot_local/bin/executable_cw": "typescript",
+    "**/home/private_dot_local/bin/executable_df-drift": "typescript",
+    "**/home/private_dot_local/bin/executable_df-font-install": "typescript",
+    "**/home/private_dot_local/bin/executable_df-json-escape": "typescript",
+    "**/home/private_dot_local/bin/executable_df-lint-runtimes": "typescript",
+    "**/home/private_dot_local/bin/executable_df-omo-profile": "typescript",
+    "**/home/private_dot_local/bin/executable_df-orca-serve": "typescript",
+    "**/home/private_dot_local/bin/executable_df-task-chezmoi-update": "typescript",
+    "**/home/private_dot_local/bin/executable_df-task-mise-upgrade": "typescript",
+    "**/home/private_dot_local/bin/executable_notify": "typescript",
+    "**/home/private_dot_local/bin/executable_opencode-tokenizer-check": "typescript",
+    "**/home/private_dot_local/bin/executable_transcribe": "typescript"
+  }
+}
