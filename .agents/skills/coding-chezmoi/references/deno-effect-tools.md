@@ -86,9 +86,11 @@ peer no longer matches the `effect@X` you pinned, so Deno prints a peer-dependen
 `deno.json` declares `home/private_dot_local/bin` as a workspace member so IDEs
 opened at the chezmoi root attach Deno tooling to the managed scripts. The member
 config at `home/private_dot_local/bin/deno.json` carries Deno-native
-`compilerOptions` and deploys to `~/.local/bin/deno.json`; the committed
-`deno.lock` beside it pins the *transitive* `platform-node-shared` so it can't
-float. Do **not** add `nodeModulesDir` (we keep the no-`node_modules` convention).
+`compilerOptions` and deploys to `~/.local/bin/deno.json`; `tsconfig.json` beside
+it is only an editor compatibility shim for TypeScript servers that do not read
+Deno config. The committed `deno.lock` beside them pins the *transitive*
+`platform-node-shared` so it can't float. Do **not** add `nodeModulesDir` (we
+keep the no-`node_modules` convention).
 
 **Ritual when bumping Effect.** Bump *every* occurrence to the same new beta in lock-step
 (`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one and the lock is
