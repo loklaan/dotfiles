@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-read --allow-net=raw.githubusercontent.com,api.github.com,github.com --allow-env --allow-ffi
+#!/usr/bin/env -S deno run --allow-read --allow-net=raw.githubusercontent.com,api.github.com,github.com --allow-env --allow-ffi
 
 // opencode-tokenizer-check — local drift guard for the patched OpenCode
 // context-usage tokenizer resolver. This intentionally does NOT couple to the

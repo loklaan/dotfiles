@@ -39,6 +39,13 @@
 {{-   $config = $config | setValueAtPath "autoupdate" false -}}
 {{- end -}}
 
+{{- /* Canva Coder boxes: disable filesystem snapshots globally for the user.
+       A ~/work/canva project config would not reliably apply inside nested Git
+       repos because opencode walks only to the nearest Git root. */ -}}
+{{- if and (ne "" (env "CODER")) (ne "" .emailWork) -}}
+{{-   $config = $config | setValueAtPath "snapshot" false -}}
+{{- end -}}
+
 {{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
 {{-   $bedrockOpus := "global.anthropic.claude-opus-4-8" -}}
 {{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}

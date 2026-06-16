@@ -19,6 +19,10 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
 
 - `-S` splits the argument string so multiple `--allow-*` flags work in a shebang
 - Permissions are declared **inline** — no separate `deno.json`
+- Invoke Deno directly in the shebang. Runtime contexts must put
+  `~/.local/share/mise/shims` on `PATH`, so `deno` still resolves to the
+  mise-managed version without coupling global tools to the caller cwd's
+  `.mise.toml` trust state.
 - **No wildcard `--allow-run`** — always explicit binary allowlists:
   ```bash
   # WRONG
@@ -320,7 +324,7 @@ Without `--allow-ffi`, Deno prompts interactively at runtime — breaking non-TT
 execution and CI.
 
 ```bash
-#!/usr/bin/env -S mise exec -- deno run --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S deno run --allow-read --allow-env --allow-ffi
 ```
 
 This applies to all SUPERVISE / FAN-OUT / HAND-OVER tools (anything that calls

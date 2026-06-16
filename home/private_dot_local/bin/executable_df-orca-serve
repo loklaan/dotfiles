@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-run=mise,bash,/opt/Orca/orca-ide --allow-read --allow-write --allow-env --allow-ffi
+#!/usr/bin/env -S deno run --allow-run=mise,bash,/opt/Orca/orca-ide --allow-read --allow-write --allow-env --allow-ffi
 
 // df-orca-serve — transparent `orca serve` wrapper for headless Linux.
 //
