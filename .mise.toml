@@ -9,5 +9,6 @@ description = "Format-check, lint, and tier-check all Deno+Effect tools"
 depends = ["lint:runtimes"]
 run = [
   """deno fmt --ext=ts --check $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",
   """deno lint --rules-exclude=no-import-prefix --ext=ts $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
 ]

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=fc-cache --allow-env --allow-read --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=fc-cache --allow-env --allow-read --allow-ffi
 
 // df-font-install (Deno + Effect v4 beta). Behavioral twin of the bash
 // original: refresh the OS font cache after fonts are dropped into

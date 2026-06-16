@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env
 
 // cw — Coder Workspaces CLI. Deno + Effect v4 rewrite of the original bash
 // tool. Preserves the three public subcommands (`connect`, `fleet`, `migrate`),
@@ -98,7 +98,7 @@ Description:
 Options:
   --include-local       Also run the task on this machine (before the fleet)
   --local-only          Run only on this machine (skip the fleet)
-  --filter <expr>       jq filter against \`coder list -o json\`
+  --filter <jq-expr>    jq filter against \`coder list -o json\`; output workspace names
                         (default: '.[] | select(.latest_build.status == "running") | .name')
   --parallel <N>        Max concurrent SSH targets (default: 4)
   --dry-run             Print the matrix; don't execute
@@ -107,6 +107,7 @@ Examples:
   cw fleet update                          # \`mise run update\` on every running box
   cw fleet --include-local update          # me first, then every box
   cw fleet --local-only drift:check        # local convergence only
+  cw fleet --filter '.[] | select(.name == "for-tasks-1") | .name' update
   cw fleet --dry-run update                # preview the fan-out
 
 Output:
@@ -214,7 +215,7 @@ _cw() {
       local -a fleet_opts=(
         '--include-local:Also run on this machine'
         '--local-only:Run only on this machine'
-        '--filter:jq filter against coder list'
+        '--filter:jq expression that outputs workspace names'
         '--parallel:Max concurrent SSH targets'
         '--dry-run:Print the matrix; do not execute'
       )
