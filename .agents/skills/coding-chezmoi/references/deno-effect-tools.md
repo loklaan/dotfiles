@@ -84,8 +84,9 @@ peer no longer matches the `effect@X` you pinned, so Deno prints a peer-dependen
 
 **The fix — a committed lock beside the tools.** `home/private_dot_local/bin/deno.json` (an
 empty `{}` anchor, deployed to `~/.local/bin/deno.json`) plus a committed `deno.lock` next
-to it pin the *transitive* `platform-node-shared` so it can't float. Deno auto-discovers
-both on a bare `deno run <abs-path>` from **any** cwd, so there are **no `--lock`/`--frozen`
+to it pin the *transitive* `platform-node-shared` so it can't float. `tsconfig.json` lives
+beside them for editor TypeScript defaults. Deno auto-discovers `deno.json` + `deno.lock`
+on a bare `deno run <abs-path>` from **any** cwd, so there are **no `--lock`/`--frozen`
 flags in any shebang** — zero shebang changes. The anchor stays `{}`: do **not** add
 `nodeModulesDir` (we keep the no-`node_modules` convention).
 
