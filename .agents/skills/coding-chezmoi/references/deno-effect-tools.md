@@ -1,7 +1,8 @@
 # Deno + Effect Tools
 
-Single-file Deno + Effect v4 tools for this dotfiles repo. Every tool follows the
-pattern established in `executable_pushbullet-mcp` — the canonical reference.
+Single-file Deno + Effect v4 tools for this dotfiles repo. Every tool follows
+the pattern established in `executable_pushbullet-mcp` — the canonical
+reference.
 
 For the copy-paste starting point, see:
 [deno-effect-tool.template.ts](deno-effect-tool.template.ts)
@@ -14,10 +15,14 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
 ## 1. Shebang + Permissions
 
 ```bash
-#!/usr/bin/env -S deno run --allow-net=api.example.com --allow-env
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=api.example.com --allow-env
 ```
 
-- `-S` splits the argument string so multiple `--allow-*` flags work in a shebang
+- `-S` splits the argument string so multiple `--allow-*` flags work in a
+  shebang
+- `DENO_NO_PACKAGE_JSON=1` prevents caller-cwd `package.json` settings from
+  changing global dotfile CLI execution; Deno config still comes from the tool's
+  `deno.json`
 - Permissions are declared **inline** — no separate `deno.json`
 - Invoke Deno directly in the shebang. Runtime contexts must put
   `~/.local/share/mise/shims` on `PATH`, so `deno` still resolves to the
@@ -26,12 +31,13 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
 - **No wildcard `--allow-run`** — always explicit binary allowlists:
   ```bash
   # WRONG
-  #!/usr/bin/env -S deno run --allow-run
+  #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run
 
   # RIGHT
-  #!/usr/bin/env -S deno run --allow-run=terminal-notifier,osascript,notify-send
+  #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=terminal-notifier,osascript,notify-send
   ```
-- Deno version: **2.8.1** (pinned in `home/private_dot_config/mise/config.toml.tmpl`)
+- Deno version: **2.8.1** (pinned in
+  `home/private_dot_config/mise/config.toml.tmpl`)
 - Minimal grants: only add permissions the tool actually uses
 
 ---
@@ -71,30 +77,32 @@ import {
 // import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-beta.83";
 ```
 
-**Pin**: `npm:effect@4.0.0-beta.83` + `npm:@effect/platform-node@4.0.0-beta.83` — every
-tool in this repo pins the **same** beta. The Effect packages publish in lock-step, so a
-mixed tree (some `.80`, some `.83`) is unsupported and produces an inconsistent lock.
+**Pin**: `npm:effect@4.0.0-beta.83` + `npm:@effect/platform-node@4.0.0-beta.83`
+— every tool in this repo pins the **same** beta. The Effect packages publish in
+lock-step, so a mixed tree (some `.80`, some `.83`) is unsupported and produces
+an inconsistent lock.
 
-**Why same-beta matters (the peer-dependency warning).** `@effect/platform-node@X`
-declares `@effect/platform-node-shared: "^X"` — a *caret*. Left unpinned that caret floats
-to the newest published beta, which then demands `effect@^<newer>` as a peer; the floated
-peer no longer matches the `effect@X` you pinned, so Deno prints a peer-dependency warning.
-(When `X` already *is* the newest beta the caret has nowhere to float, so the warning hides
-— until the next beta ships and it silently returns.)
+**Why same-beta matters (the peer-dependency warning).**
+`@effect/platform-node@X` declares `@effect/platform-node-shared: "^X"` — a
+_caret_. Left unpinned that caret floats to the newest published beta, which
+then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
+`effect@X` you pinned, so Deno prints a peer-dependency warning. (When `X`
+already _is_ the newest beta the caret has nowhere to float, so the warning
+hides — until the next beta ships and it silently returns.)
 
 **The fix — a committed Deno workspace + lock beside the tools.** The repo root
 `deno.json` declares `home/private_dot_local/bin` as a workspace member so IDEs
-opened at the chezmoi root attach Deno tooling to the managed scripts. The member
-config at `home/private_dot_local/bin/deno.json` carries Deno-native
-`compilerOptions` and deploys to `~/.local/bin/deno.json`; `tsconfig.json` beside
-it is only an editor compatibility shim for TypeScript servers that do not read
-Deno config. The committed `deno.lock` beside them pins the *transitive*
-`platform-node-shared` so it can't float. Do **not** add `nodeModulesDir` (we
-keep the no-`node_modules` convention).
+opened at the chezmoi root attach Deno tooling to the managed scripts. The
+member config at `home/private_dot_local/bin/deno.json` carries Deno-native
+`compilerOptions` and deploys to `~/.local/bin/deno.json`; `tsconfig.json`
+beside it is only an editor compatibility shim for TypeScript servers that do
+not read Deno config. The committed `deno.lock` beside them pins the
+_transitive_ `platform-node-shared` so it can't float. Do **not** add
+`nodeModulesDir` (we keep the no-`node_modules` convention).
 
-**Ritual when bumping Effect.** Bump *every* occurrence to the same new beta in lock-step
-(`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one and the lock is
-inconsistent), then regenerate the lock so it doesn't go stale:
+**Ritual when bumping Effect.** Bump _every_ occurrence to the same new beta in
+lock-step (`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one
+and the lock is inconsistent), then regenerate the lock so it doesn't go stale:
 
 ```bash
 cd home/private_dot_local/bin
@@ -104,10 +112,10 @@ for f in executable_*; do deno cache --lock=deno.lock "$f" 2>/dev/null || true; 
 grep platform-node-shared deno.lock   # confirm it now pins the new beta
 ```
 
-**Dynamic import rule**: `@effect/platform-node` transitively loads `msgpackr`, which
-reads `process.env` at module load and throws `NotCapable` without `--allow-env`.
-Always import it dynamically inside `if (import.meta.main)` so `deno test` runs with
-zero permission flags:
+**Dynamic import rule**: `@effect/platform-node` transitively loads `msgpackr`,
+which reads `process.env` at module load and throws `NotCapable` without
+`--allow-env`. Always import it dynamically inside `if (import.meta.main)` so
+`deno test` runs with zero permission flags:
 
 ```typescript
 if (import.meta.main) {
@@ -126,8 +134,9 @@ if (import.meta.main) {
 **Do NOT** statically import `NodeRuntime`, `NodeFileSystem`, `NodePath`, or
 `NodeServices` at file top level — this breaks the zero-flag offline test rule.
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is unresolvable at
-this pin. Use `npm:effect@4.0.0-beta.83/FileSystem` and `.../Path` instead.
+**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is
+unresolvable at this pin. Use `npm:effect@4.0.0-beta.83/FileSystem` and
+`.../Path` instead.
 
 ---
 
@@ -150,7 +159,9 @@ class MyService extends Context.Service<MyService, {
       // Config: required secret (held as Redacted, never logged)
       const token = yield* Config.redacted("MY_API_TOKEN");
       // Config: optional with default
-      const prefix = yield* Config.string("MY_PREFIX").pipe(Config.withDefault(""));
+      const prefix = yield* Config.string("MY_PREFIX").pipe(
+        Config.withDefault(""),
+      );
 
       // Named operations (appear in traces)
       const doThing = Effect.fn("MyService.doThing")(function* (input: string) {
@@ -165,6 +176,7 @@ class MyService extends Context.Service<MyService, {
 ```
 
 Key points:
+
 - Tag string convention: `"tool-name/ServiceName"` (matches pushbullet-mcp)
 - `Effect.fn("Name.op")` wraps operations for named tracing
 - `Config.redacted()` for secrets — value is `<redacted>` in logs
@@ -174,12 +186,12 @@ Key points:
 
 ## 4. CLI Structure
 
-Use `effect/unstable/cli` (`Command` / `Flag` / `Argument`) for ALL tools — complex
-and simple alike. Import path: `npm:effect@4.0.0-beta.83/unstable/cli`.
+Use `effect/unstable/cli` (`Command` / `Flag` / `Argument`) for ALL tools —
+complex and simple alike. Import path: `npm:effect@4.0.0-beta.83/unstable/cli`.
 
 Static import is top-level-safe: defining commands and flags does not pull
-`@effect/platform-node` at load time, so `deno test` stays zero-flag.
-Command execution requires `NodeServices.layer` — keep the `Command.run(...)` tail
+`@effect/platform-node` at load time, so `deno test` stays zero-flag. Command
+execution requires `NodeServices.layer` — keep the `Command.run(...)` tail
 behind the dynamic `import.meta.main` import.
 
 ```typescript
@@ -188,11 +200,15 @@ import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
 // --- Command definition (top-level safe) ------------------------------------
 const verbose = Flag.boolean("verbose").pipe(Flag.withAlias("v"));
 
-const myCommand = Command.make("my-tool", { verbose }, ({ verbose }) =>
-  Effect.gen(function* () {
-    if (verbose) yield* Effect.logDebug("verbose mode on");
-    // ... implementation
-  }));
+const myCommand = Command.make(
+  "my-tool",
+  { verbose },
+  ({ verbose }) =>
+    Effect.gen(function* () {
+      if (verbose) yield* Effect.logDebug("verbose mode on");
+      // ... implementation
+    }),
+);
 
 // --- Entry point (dynamic import, runtime only) -----------------------------
 if (import.meta.main) {
@@ -211,14 +227,16 @@ if (import.meta.main) {
 - `import.meta.main` guard — tests run without triggering the entry point
 - `Command.make` + `Flag` / `Argument` for all argument parsing
 - `NodeRuntime.runMain` handles signal registration and graceful shutdown
-- For MCP stdio servers, use `Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)` instead of `Command.run`
+- For MCP stdio servers, use
+  `Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)` instead of `Command.run`
 
 ---
 
 ## 4a. FileSystem + Path
 
-Use `npm:effect@4.0.0-beta.83/FileSystem` and `npm:effect@4.0.0-beta.83/Path` for all
-filesystem and path operations. Both are top-level-safe for static imports.
+Use `npm:effect@4.0.0-beta.83/FileSystem` and `npm:effect@4.0.0-beta.83/Path`
+for all filesystem and path operations. Both are top-level-safe for static
+imports.
 
 Runtime: provided by `NodeFileSystem.layer` + `NodePath.layer` from the dynamic
 `@effect/platform-node` import in `import.meta.main`.
@@ -227,7 +245,9 @@ Runtime: provided by `NodeFileSystem.layer` + `NodePath.layer` from the dynamic
 import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
 import { Path } from "npm:effect@4.0.0-beta.83/Path";
 
-const readConfig = (dir: string): Effect.Effect<string, Error, FileSystem | Path> =>
+const readConfig = (
+  dir: string,
+): Effect.Effect<string, Error, FileSystem | Path> =>
   Effect.gen(function* () {
     const path = yield* Path;
     const fs = yield* FileSystem;
@@ -239,19 +259,22 @@ const readConfig = (dir: string): Effect.Effect<string, Error, FileSystem | Path
 ```
 
 Permission notes:
+
 - `fs.stat(path)` / `fs.readFileString(path)`: `--allow-read`
 - `fs.writeFileString(path, text)`: `--allow-write`
-- `fs.exists(path)`: `--allow-read --allow-sys=uid` — avoid if possible; use `fs.stat` instead
+- `fs.exists(path)`: `--allow-read --allow-sys=uid` — avoid if possible; use
+  `fs.stat` instead
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is unresolvable at
-this pin. The `effect` package itself exports `FileSystem` and `Path` directly.
+**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is
+unresolvable at this pin. The `effect` package itself exports `FileSystem` and
+`Path` directly.
 
 ---
 
 ## 4b. Config + Redacted
 
-Use `Config` for all environment variable reads. Config reads are deferred to Effect
-execution time (not module load), so `deno test` stays permission-free.
+Use `Config` for all environment variable reads. Config reads are deferred to
+Effect execution time (not module load), so `deno test` stays permission-free.
 
 ```typescript
 import { Config, Redacted } from "npm:effect@4.0.0-beta.83";
@@ -264,9 +287,9 @@ const token = yield* Config.redacted("MY_API_TOKEN");
 const rawToken = Redacted.value(token); // unwrap only when needed
 ```
 
-The default `ConfigProvider` reads from `process.env` under `NodeServices.layer`.
-Never call `Deno.env.get()` directly — it throws without `--allow-env` and bypasses
-the deferred-read guarantee.
+The default `ConfigProvider` reads from `process.env` under
+`NodeServices.layer`. Never call `Deno.env.get()` directly — it throws without
+`--allow-env` and bypasses the deferred-read guarantee.
 
 ---
 
@@ -298,9 +321,9 @@ Never use `Schedule.forever` — always bound with `Schedule.recurs(N)` or
 
 ## 4d. Scope
 
-Use `Effect.acquireRelease` and `Scope` for all resource lifecycle management: temp
-files, child process handles, directory handles. Wrap the program in `Effect.scoped`
-where needed.
+Use `Effect.acquireRelease` and `Scope` for all resource lifecycle management:
+temp files, child process handles, directory handles. Wrap the program in
+`Effect.scoped` where needed.
 
 ```typescript
 const withTempFile = Effect.acquireRelease(
@@ -321,13 +344,13 @@ const program = Effect.scoped(
 
 ## 4e. --allow-ffi
 
-Add `--allow-ffi` to every tool that dynamically imports `@effect/platform-node`.
-`msgpackr` (a transitive dependency) attempts to load a native `.node` addon via FFI.
-Without `--allow-ffi`, Deno prompts interactively at runtime — breaking non-TTY
-execution and CI.
+Add `--allow-ffi` to every tool that dynamically imports
+`@effect/platform-node`. `msgpackr` (a transitive dependency) attempts to load a
+native `.node` addon via FFI. Without `--allow-ffi`, Deno prompts interactively
+at runtime — breaking non-TTY execution and CI.
 
 ```bash
-#!/usr/bin/env -S deno run --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-read --allow-env --allow-ffi
 ```
 
 This applies to all SUPERVISE / FAN-OUT / HAND-OVER tools (anything that calls
@@ -356,10 +379,10 @@ const MyTool = Tool.make("my_tool", {
       return { result };
     }),
 })
-  .annotate(Tool.Readonly, false)      // mutates state
-  .annotate(Tool.Destructive, false)   // not destructive
+  .annotate(Tool.Readonly, false) // mutates state
+  .annotate(Tool.Destructive, false) // not destructive
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);     // may access external resources
+  .annotate(Tool.OpenWorld, true); // may access external resources
 
 // Bundle tools into a toolkit
 const MyToolkit = Toolkit.make({ tools: [MyTool] });
@@ -367,12 +390,13 @@ const MyToolkit = Toolkit.make({ tools: [MyTool] });
 // Wire the MCP server layer
 const ServerLayer = McpServer.toolkit(MyToolkit).pipe(
   Layer.provide(MyService.layer),
-  Layer.provide(NodeStdio.layer),   // stdio transport
+  Layer.provide(NodeStdio.layer), // stdio transport
   Layer.provide(FetchHttpClient.layer),
 );
 ```
 
 Annotations:
+
 - `Tool.Readonly` — read-only, no side effects
 - `Tool.Destructive` — irreversible action
 - `Tool.Idempotent` — safe to retry
@@ -388,7 +412,8 @@ Annotations:
 
 // Permission-safe env gate (raw Deno.env.get throws without --allow-env)
 const hasEnv = (key: string): boolean =>
-  Deno.permissions.querySync({ name: "env", variable: key }).state === "granted" &&
+  Deno.permissions.querySync({ name: "env", variable: key }).state ===
+    "granted" &&
   Boolean(Deno.env.get(key));
 
 // itEffect adapter: run an Effect as a Deno test
@@ -427,11 +452,15 @@ itEffect(
 ```
 
 Rules:
-- **Offline tests** run unconditionally — `deno test <file>` with no flags must pass
-- **Integration tests** gated on `hasEnv("KEY")` — never fail in CI without credentials
+
+- **Offline tests** run unconditionally — `deno test <file>` with no flags must
+  pass
+- **Integration tests** gated on `hasEnv("KEY")` — never fail in CI without
+  credentials
 - **Destructive tests** double-gated on two env vars
 - Test command comment at top of test block (see above)
-- Use `hasEnv()` not raw `Deno.env.get()` — the latter throws without `--allow-env`
+- Use `hasEnv()` not raw `Deno.env.get()` — the latter throws without
+  `--allow-env`
 
 ---
 
@@ -450,7 +479,8 @@ run = [
 - **Explicit file list** — NOT a glob (`executable_*` would catch bash scripts)
 - Add new tools to the list in `.mise.toml` when creating them
 - Run with `mise run lint`
-- `deno fmt`/`deno lint` skip files that don't exist yet — safe to add future names
+- `deno fmt`/`deno lint` skip files that don't exist yet — safe to add future
+  names
 
 ---
 
@@ -467,20 +497,20 @@ statements inside `if (import.meta.main) {` (inside the guard, so `deno test`
 stays hermetic — the listeners never register during tests):
 
 ```typescript
-  // Last-resort backstop: catch anything that escapes the Effect runtime
-  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
-  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
-  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
-  globalThis.addEventListener("unhandledrejection", (event) => {
-    event.preventDefault();
-    console.error(`error uncaught rejection: ${event.reason}`);
-    Deno.exit(1);
-  });
-  globalThis.addEventListener("error", (event) => {
-    event.preventDefault();
-    console.error(`error uncaught: ${event.message}`);
-    Deno.exit(1);
-  });
+// Last-resort backstop: catch anything that escapes the Effect runtime
+// (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+// NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+// against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+globalThis.addEventListener("unhandledrejection", (event) => {
+  event.preventDefault();
+  console.error(`error uncaught rejection: ${event.reason}`);
+  Deno.exit(1);
+});
+globalThis.addEventListener("error", (event) => {
+  event.preventDefault();
+  console.error(`error uncaught: ${event.message}`);
+  Deno.exit(1);
+});
 ```
 
 The Deno-native `globalThis` listeners are sufficient — **do NOT add
@@ -493,8 +523,8 @@ just double-fire.
 **Companion rules (the inner layers).** The backstop is belt-and-braces; keep
 the runtime clean so it rarely fires:
 
-- Use `Effect.tryPromise`, never `Effect.promise`, for anything that can reject —
-  `Effect.promise` turns a rejection into an untyped **defect** that escapes
+- Use `Effect.tryPromise`, never `Effect.promise`, for anything that can reject
+  — `Effect.promise` turns a rejection into an untyped **defect** that escapes
   `catchTag`.
 - Wrap every forked-fiber body (`Effect.forkChild` / `forkScoped`) in
   `Effect.catchCause(() => Effect.void)` so its defect can't escape the parent
@@ -508,44 +538,53 @@ Shell out via `effect/unstable/process` — never raw `Deno.Command`. Three mode
 chosen by one question: **does the parent do anything after the child exits?**
 
 ```typescript
-import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0-beta.83/unstable/process";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
 **Permissions**: all SUPERVISE / FAN-OUT / HAND-OVER tools dynamically import
 `@effect/platform-node`, so they require `--allow-env` (msgpackr baseline) and
-`--allow-ffi` (msgpackr native addon probe) in addition to any `--allow-run=<cmd>`
-grants. Add both to the shebang.
+`--allow-ffi` (msgpackr native addon probe) in addition to any
+`--allow-run=<cmd>` grants. Add both to the shebang.
 
 `ChildProcess.make` takes a template (`` `git status` ``), `({opts})`-tag, or
 `(bin, args, opts)`. Spawner methods: `.string(cmd)` (stdout, fails on nonzero),
 `.exitCode(cmd)`, `.streamLines(cmd)`, `.lines(cmd)`, `.spawn(cmd)` (handle).
 `stdin/stdout/stderr`: `"pipe" | "inherit" | "ignore"`. Pipe with
 `ChildProcess.pipeTo`, set ctx with `.setCwd`/`.setEnv`. Interrupting the fiber
-sends SIGTERM→SIGKILL (`forceKillAfter`); commands ARE Effects — no async wrapper.
+sends SIGTERM→SIGKILL (`forceKillAfter`); commands ARE Effects — no async
+wrapper.
 
 ### SUPERVISE — parent captures/aggregates/chains after the child
 
 ```typescript
-const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-const sha = yield* spawner.string(ChildProcess.make`git rev-parse --short HEAD`);
+const spawner = yield * ChildProcessSpawner.ChildProcessSpawner;
+const sha = yield *
+  spawner.string(ChildProcess.make`git rev-parse --short HEAD`);
 // soft-fail variant (drift-style: never throws):
-const probe = spawner.exitCode(ChildProcess.make(bin, ["--version"], { stdout: "ignore", stderr: "ignore" }))
+const probe = spawner.exitCode(
+  ChildProcess.make(bin, ["--version"], { stdout: "ignore", stderr: "ignore" }),
+)
   .pipe(Effect.map((c) => c === 0), Effect.orElseSucceed(() => false));
 ```
+
 Run under `NodeRuntime.runMain` (signal handlers ON — graceful fiber shutdown).
 
 ### FAN-OUT — N children, typed partial-failure aggregation (e.g. `cw fleet`)
 
 ```typescript
-const results = yield* Effect.forEach(
+const results = yield * Effect.forEach(
   hosts,
   (h) => runOn(h).pipe(Effect.either, Effect.map((r) => [h, r] as const)),
   { concurrency: 5 },
 ); // → Array<[Host, Either<E, A>]>; Ctrl-C tears down all children
 ```
-Children use `stdout: "pipe"` (capture per-host). The prize bash/zx lack: bounded
-concurrency + typed results + crash-safe interruption, free.
+
+Children use `stdout: "pipe"` (capture per-host). The prize bash/zx lack:
+bounded concurrency + typed results + crash-safe interruption, free.
 
 ### HAND-OVER — child is the terminal leaf, nothing after (e.g. `cw connect`)
 
@@ -556,21 +595,24 @@ spawn detached + inherit stdio + mirror exit code, and **do NOT trap signals**.
 // detached → child gets its OWN process group, so terminal SIGINT/SIGTSTP reach
 // the child, not Deno. Without this, runMain's SIGINT handler fires first and
 // exits Deno out from under the child, orphaning it.
-const code = yield* spawner.exitCode(
+const code = yield * spawner.exitCode(
   ChildProcess.make("coder", ["ssh", host], {
-    stdin: "inherit", stdout: "inherit", stderr: "inherit", // detached: own pgrp
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit", // detached: own pgrp
   }),
 );
 // run WITHOUT NodeRuntime.runMain (plain runtime — no signal trap), then:
 Deno.exit(code);
 ```
+
 Residue: Deno stays resident (~30MB, inert) for the session. Cosmetic.
 
 ### Decision rule (stated, not inferred)
 
 > Last act is handing the terminal to another program → HAND-OVER (detach, no
-> signal trap, mirror exit). Anything after the child (capture, aggregate, chain,
-> cleanup) → SUPERVISE. Many independent children → FAN-OUT.
+> signal trap, mirror exit). Anything after the child (capture, aggregate,
+> chain, cleanup) → SUPERVISE. Many independent children → FAN-OUT.
 
 ---
 
@@ -580,23 +622,25 @@ Deno is unavailable only during base-OS bootstrap. After initial install it is
 guaranteed. So the bash-only set is small and specific:
 
 - **`install.sh`** — entry point, runs before mise/deno exist.
-- **mise `postinstall` hook target** (`df-task-chezmoi-apply`) — fires during the
-  first `mise use` in bootstrap, before deno installs.
+- **mise `postinstall` hook target** (`df-task-chezmoi-apply`) — fires during
+  the first `mise use` in bootstrap, before deno installs.
 - **`run_after_install-050-install-packages`** (+ `bash-logging.sh`) — installs
   deno; cannot depend on it.
-- **`chezmoi-preflight.sh`** — apply/update pre-hook, runs on the bootstrap apply.
+- **`chezmoi-preflight.sh`** — apply/update pre-hook, runs on the bootstrap
+  apply.
 - **`safe-rm`** — early-PATH safety, deliberately portable.
 
-Everything post-bootstrap (manual/scheduled tasks, service run-targets, completions,
-fonts, daily CLIs) may be Deno+Effect. SSH/interactive-attach is NOT a reason to
-stay bash — `stdio: inherit` + detached hand-over covers it.
+Everything post-bootstrap (manual/scheduled tasks, service run-targets,
+completions, fonts, daily CLIs) may be Deno+Effect. SSH/interactive-attach is
+NOT a reason to stay bash — `stdio: inherit` + detached hand-over covers it.
 
 ---
 
 ## 11. Chezmoi Source Path
 
-Tools live at `home/private_dot_local/bin/executable_<name>` in the chezmoi source
-and deploy to `~/.local/bin/<name>`. The `executable_` prefix sets the execute bit.
+Tools live at `home/private_dot_local/bin/executable_<name>` in the chezmoi
+source and deploy to `~/.local/bin/<name>`. The `executable_` prefix sets the
+execute bit.
 
-**Never write to `~/.local/bin/` directly** — always edit the chezmoi source file.
-Use `chezmoi source-path ~/.local/bin/<name>` to find the source path.
+**Never write to `~/.local/bin/` directly** — always edit the chezmoi source
+file. Use `chezmoi source-path ~/.local/bin/<name>` to find the source path.
