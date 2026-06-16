@@ -82,13 +82,13 @@ peer no longer matches the `effect@X` you pinned, so Deno prints a peer-dependen
 (When `X` already *is* the newest beta the caret has nowhere to float, so the warning hides
 — until the next beta ships and it silently returns.)
 
-**The fix — a committed lock beside the tools.** `home/private_dot_local/bin/deno.json` (an
-empty `{}` anchor, deployed to `~/.local/bin/deno.json`) plus a committed `deno.lock` next
-to it pin the *transitive* `platform-node-shared` so it can't float. `tsconfig.json` lives
-beside them for editor TypeScript defaults. Deno auto-discovers `deno.json` + `deno.lock`
-on a bare `deno run <abs-path>` from **any** cwd, so there are **no `--lock`/`--frozen`
-flags in any shebang** — zero shebang changes. The anchor stays `{}`: do **not** add
-`nodeModulesDir` (we keep the no-`node_modules` convention).
+**The fix — a committed Deno workspace + lock beside the tools.** The repo root
+`deno.json` declares `home/private_dot_local/bin` as a workspace member so IDEs
+opened at the chezmoi root attach Deno tooling to the managed scripts. The member
+config at `home/private_dot_local/bin/deno.json` carries Deno-native
+`compilerOptions` and deploys to `~/.local/bin/deno.json`; the committed
+`deno.lock` beside it pins the *transitive* `platform-node-shared` so it can't
+float. Do **not** add `nodeModulesDir` (we keep the no-`node_modules` convention).
 
 **Ritual when bumping Effect.** Bump *every* occurrence to the same new beta in lock-step
 (`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one and the lock is
