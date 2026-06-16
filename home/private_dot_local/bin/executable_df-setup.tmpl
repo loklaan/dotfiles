@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-run=tput{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }} --allow-read --allow-env --allow-net=api.github.com --allow-ffi
+#!/usr/bin/env -S deno run --allow-run=tput{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }} --allow-read --allow-env --allow-net=api.github.com --allow-ffi
 
 // deno-fmt-ignore-file
 // df-setup — dotfiles health-check doctor (Deno + Effect v4 beta).

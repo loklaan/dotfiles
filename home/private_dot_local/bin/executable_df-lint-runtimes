@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S deno run --allow-read --allow-env --allow-ffi
 
 // df-lint-runtimes — enforce the runtime-tier manifest contract.
 //
@@ -372,9 +372,9 @@ if (!import.meta.main) {
     assertEq(detectLang("#!/usr/bin/env bash"), "bash");
     assertEq(detectLang("#!/usr/bin/env -S mise tool-stub"), "stub");
     assertEq(detectLang(""), "bash");
-    // mise-exec blanket shebang: must classify as deno, not stub
+    // deno shebangs with runtime flags classify as deno, not stub
     assertEq(
-      detectLang("#!/usr/bin/env -S mise exec -- deno run --allow-read"),
+      detectLang("#!/usr/bin/env -S deno run --allow-read"),
       "deno",
     );
   });

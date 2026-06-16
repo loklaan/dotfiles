@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-read
+#!/usr/bin/env -S deno run --allow-read
 
 // json-escape (Deno + Effect v4 beta). Escapes a JSON value for embedding in a
 // quoted key=value field string: validates the input parses as JSON, then emits

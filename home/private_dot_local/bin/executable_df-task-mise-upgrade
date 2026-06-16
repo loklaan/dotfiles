@@ -1,4 +1,4 @@
-#!/usr/bin/env -S mise exec -- deno run --allow-run=mise --allow-env --allow-ffi --allow-read
+#!/usr/bin/env -S deno run --allow-run=mise --allow-env --allow-ffi --allow-read
 
 // df-task-mise-upgrade (Deno + Effect v4 beta). Wrapper around `mise upgrade`
 // (refreshes tools whose pin is `latest`), invoked from the
