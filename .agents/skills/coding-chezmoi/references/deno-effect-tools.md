@@ -90,26 +90,40 @@ then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
 already _is_ the newest beta the caret has nowhere to float, so the warning
 hides — until the next beta ships and it silently returns.)
 
-**The fix — a committed Deno workspace + lock beside the tools.** The repo root
-`deno.json` declares `home/private_dot_local/bin` as a workspace member so IDEs
-opened at the chezmoi root attach Deno tooling to the managed scripts. The
-member config at `home/private_dot_local/bin/deno.json` carries Deno-native
-`compilerOptions` and deploys to `~/.local/bin/deno.json`; `tsconfig.json`
-beside it is only an editor compatibility shim for TypeScript servers that do
-not read Deno config. The committed `deno.lock` beside them pins the
-_transitive_ `platform-node-shared` so it can't float. Do **not** add
-`nodeModulesDir` (we keep the no-`node_modules` convention).
+**The fix — one canonical config at the repo root, projected to runtime.** The
+repo root holds the canonical `deno.json` (flat `compilerOptions` + `lock`
+pointer, no workspace key), `tsconfig.json` (editor shim for TS servers that do
+not read Deno config), and `deno.lock` (pins the _transitive_
+`platform-node-shared` so it can't float). These are the single control plane —
+the files you edit, and what drives the IDE when the repo is opened at root.
+
+The runtime copies in `home/private_dot_local/bin/` are chezmoi `.tmpl`
+re-projections of those root files, deploying to `~/.local/bin/`:
+
+- `deno.json.tmpl` plucks just `compilerOptions` from the root `deno.json`
+  (`include "../deno.json" | fromJson | dig "compilerOptions"`). It must NOT
+  carry a `workspace` key — a workspace member key at a leaf dir makes Deno
+  hard-error trying to resolve the member path.
+- `tsconfig.json.tmpl` and `deno.lock.tmpl` `include "../<file>"` verbatim.
+
+`include` reaches the repo root via `../` because the chezmoi source root is
+`home/` (set by `.chezmoiroot`), one level below the repo root where the
+canonical files live. Do **not** add `nodeModulesDir` (we keep the
+no-`node_modules` convention). Do **not** edit the member `.tmpl` outputs or the
+deployed `~/.local/bin/*` files directly — change the root canonical files only.
 
 **Ritual when bumping Effect.** Bump _every_ occurrence to the same new beta in
 lock-step (`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one
-and the lock is inconsistent), then regenerate the lock so it doesn't go stale:
+and the lock is inconsistent), then regenerate the canonical root lock so it
+doesn't go stale:
 
 ```bash
-cd home/private_dot_local/bin
+# Re-cache each deno tool into the canonical root lock (non-deno/.tmpl files
+# fail parse, harmless). Run from the repo root where deno.json + deno.lock live:
 rm -f deno.lock
-# Re-cache each deno tool into the shared lock (non-deno/.tmpl files fail parse, harmless):
-for f in executable_*; do deno cache --lock=deno.lock "$f" 2>/dev/null || true; done
+for f in home/private_dot_local/bin/executable_*; do deno cache --lock=deno.lock "$f" 2>/dev/null || true; done
 grep platform-node-shared deno.lock   # confirm it now pins the new beta
+chezmoi apply ~/.local/bin/deno.lock  # re-project to runtime
 ```
 
 **Dynamic import rule**: `@effect/platform-node` transitively loads `msgpackr`,

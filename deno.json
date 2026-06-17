@@ -1,4 +1,10 @@
 {
-  "lock": "./home/private_dot_local/bin/deno.lock",
-  "workspace": ["./home/private_dot_local/bin"]
+  "lock": "./deno.lock",
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.ns", "deno.unstable", "dom", "ESNext"],
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "strict": true
+  }
 }
