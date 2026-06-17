@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=chezmoi,git --allow-env --allow-ffi --allow-read
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run --allow-env --allow-ffi --allow-read
 
 // df-task-chezmoi-update (Deno + Effect v4 beta). Fast-forwards the chezmoi
 // SOURCE repo to origin and applies it, invoked from the
@@ -36,6 +36,18 @@
 // prompts/output reach the terminal and the interactive apply reads the real
 // stdin TTY) and the parent propagates the apply child's exit code. Run under
 // NodeRuntime.runMain so a Ctrl-C gracefully tears the child down.
+//
+// EXCEPTION to the repo's "no wildcard --allow-run" rule (deno-effect-tools.md
+// §1): this tool uses unscoped `--allow-run`. When a child is still running at
+// fiber teardown (e.g. Ctrl-C mid-`chezmoi apply`), @effect/platform-node's
+// CommandExecutor kills the child PROCESS GROUP via node-compat
+// `process.kill(-pid)`. Deno gates `process.kill(<other-pid>)` behind
+// all-or-nothing `--allow-run` — there is NO scoped form that grants signalling
+// without full run access (denoland/deno#34344). A scoped allowlist
+// (`--allow-run=chezmoi,git`) therefore makes teardown trip an interactive
+// permission prompt, which hangs this non-interactive task. Broad `--allow-run`
+// is the narrowest available grant that fixes it without rewriting the tool off
+// Effect's process API. Revisit if Deno ships scoped signal permissions.
 //
 // @effect/platform-node is imported DYNAMICALLY inside import.meta.main: its
 // static graph reads process.env at load (via msgpackr), which would force
