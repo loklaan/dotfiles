@@ -103,14 +103,21 @@ if is_interactive_shell && command -v jq &> /dev/null; then
     if [[ "$_drift_show" == "true" ]]; then
       _drift_count=$(jq '.tools | length' "$_drift_cache" 2>/dev/null || echo 0)
       if [[ "$_drift_count" -gt 0 ]]; then
+        # Different drift sources need different remediations: mise:/git: are
+        # fixed by `mise run update`, but cask: (Homebrew) and omo: are not —
+        # suggesting `mise run update` for cask drift sends the user in circles.
+        _drift_has_mise=$(jq -e 'any(.tools[].source; startswith("mise:") or startswith("git:"))' "$_drift_cache" >/dev/null 2>&1 && echo 1 || echo 0)
+        _drift_casks=$(jq -r '[.tools[] | select(.source | startswith("cask:")) | .source[5:]] | join(" ")' "$_drift_cache" 2>/dev/null)
         echo ""
-        print -P "%F{yellow}⚠ ${_drift_count} tool(s) behind.%f Run %F{cyan}df-setup%f for details, or %F{cyan}mise run update%f to refresh."
+        print -P "%F{yellow}⚠ ${_drift_count} tool(s) behind.%f Run %F{cyan}df-setup%f for details."
+        [[ "$_drift_has_mise" == "1" ]] && print -P "  mise/repo: %F{cyan}mise run update%f"
+        [[ -n "$_drift_casks" ]] && print -P "  casks: %F{cyan}brew upgrade --greedy --cask ${_drift_casks}%f"
         echo ""
         mkdir -p "${HOME}/.cache/dotfiles"
         touch "$_drift_login_marker"
       fi
     fi
-    unset _drift_show _drift_now _drift_age _drift_count
+    unset _drift_show _drift_now _drift_age _drift_count _drift_has_mise _drift_casks
   fi
   unset _drift_cache _drift_login_marker
 fi
