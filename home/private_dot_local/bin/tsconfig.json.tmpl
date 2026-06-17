@@ -1,0 +1,5 @@
+{{/* Runtime projection of the repo-root tsconfig.json (deploys to
+     ~/.local/bin/tsconfig.json). An editor shim for TS servers that do not read
+     Deno config; Deno itself ignores it. Single control plane: verbatim copy of
+     the canonical repo-root tsconfig.json. */ -}}
+{{ include "../tsconfig.json" -}}

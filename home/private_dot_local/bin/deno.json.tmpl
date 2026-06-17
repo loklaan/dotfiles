@@ -1,0 +1,6 @@
+{{/* Runtime projection of the repo-root deno.json (deploys to ~/.local/bin/deno.json,
+     read by Deno when executing the tools). Single control plane: the canonical
+     config is the repo-root deno.json; here we project only its compilerOptions.
+     The root's workspace/lock keys are deliberately dropped — a workspace member
+     key at a leaf dir makes Deno hard-error trying to resolve the member path. */ -}}
+{{ dict "compilerOptions" (include "../deno.json" | fromJson | dig "compilerOptions" dict) | toPrettyJson }}

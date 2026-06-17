@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "lib": ["deno.window", "deno.ns", "deno.unstable", "dom", "ESNext"],
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "noImplicitReturns": true,
-    "strict": true
-  }
-}
