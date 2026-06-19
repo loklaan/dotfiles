@@ -11,18 +11,28 @@ setup_session_logging "$(basename "$0")"
 #/   fix-system-gitconfig-refspec.sh
 #/
 #/ Description:
-#/   Removes a `^refs/heads/*` negative-glob fetch refspec from the system
-#/   gitconfig when an external provisioning tool writes one.
+#/   Scrubs two recurring corruptions an external provisioning tool writes into
+#/   the system gitconfig (the `[managedconfig]`-tagged tool on work machines):
 #/
-#/   Negative globs are valid git syntax but rejected by every Rust-based git
-#/   implementation (gix/gitoxide/jj), which panics tools like mise on every
-#/   invocation. The source writing the refspec re-applies it on each run,
-#/   so a one-shot manual fix doesn't stick. This script runs on every
-#/   chezmoi apply to keep the file clean.
+#/   1. A `^refs/heads/*` negative-glob fetch refspec on remote.origin.fetch.
+#/      Negative globs are valid git syntax but rejected by every Rust-based git
+#/      implementation (gix/gitoxide/jj), which panics tools like mise on every
+#/      invocation.
 #/
-#/   Also registers a `managedconfig.optout` entry on the remote.origin.fetch
-#/   key — a convention some enterprise provisioning tools honour to skip
-#/   re-managing specific keys. Belt and suspenders: if the opt-out is
+#/   2. A whitespace-only `credential.helper` entry (literally `helper = " "`).
+#/      git expands a non-empty helper value into `git credential-<value>`, so a
+#/      single space invokes `git-credential- ` — printing
+#/      `git: 'credential-' is not a git command` on every HTTPS git operation.
+#/      An EMPTY value means "reset the helper list", so the fix is to remove the
+#/      whitespace entry (not blank it), leaving the real osxkeychain/oauth
+#/      helpers intact.
+#/
+#/   The source re-applies both on each run, so a one-shot manual fix doesn't
+#/   stick. This script runs on every chezmoi apply to keep the file clean.
+#/
+#/   Also registers `managedconfig.optout` entries (remote.origin.fetch and
+#/   credential.helper) — a convention some enterprise provisioning tools honour
+#/   to skip re-managing specific keys. Belt and suspenders: if the opt-out is
 #/   respected we're done; if not, this script's own cleanup runs next apply.
 #/
 #/   Work-machine only — gated on `.emailWork`. Personal machines don't
@@ -74,18 +84,37 @@ remove_broken_refspec() {
   fi
 }
 
-register_optout() {
+remove_broken_credential_helper() {
   local config="$1"
+  # git expands a non-empty credential.helper value V into `git credential-V`.
+  # The managed tool writes `helper = " "` (a single space), so git runs
+  # `git-credential- ` and prints `'credential-' is not a git command` on every
+  # HTTPS op. An EMPTY value is special ("reset the list"); a whitespace value
+  # is not — so we must delete the offending entry, not blank it.
+  #
+  # `--unset-all <key> <value-regex>` removes only entries whose value matches.
+  # `^[[:space:]]*$` matches the whitespace-only (and empty) entries while
+  # leaving real helpers (osxkeychain, oauth) untouched. Returns nonzero when
+  # nothing matches — suppressed so `set -e` doesn't abort.
+  if git config --file "$config" --get-all credential.helper 2>/dev/null \
+       | grep -Eq '^[[:space:]]*$'; then
+    git config --file "$config" --unset-all credential.helper '^[[:space:]]*$' 2>/dev/null || true
+    info "removed whitespace-only credential.helper from $config"
+  fi
+}
+
+register_optout() {
+  local config="$1" key="$2"
   # `managedconfig.optout` is a multi-valued key convention used by some
   # enterprise provisioning tools: entries list config paths to leave alone
-  # on subsequent runs. Adding `remote.origin.fetch` signals intent even
-  # when the tool doesn't honour it.
+  # on subsequent runs. Adding the key signals intent even when the tool
+  # doesn't honour it.
   if git config --file "$config" --get-all managedconfig.optout 2>/dev/null \
-       | grep -Fxq 'remote.origin.fetch'; then
+       | grep -Fxq "$key"; then
     return 0
   fi
-  git config --file "$config" --add managedconfig.optout remote.origin.fetch
-  info "registered managedconfig.optout for remote.origin.fetch in $config"
+  git config --file "$config" --add managedconfig.optout "$key"
+  info "registered managedconfig.optout for $key in $config"
 }
 
 main() {
@@ -105,7 +134,9 @@ main() {
   fi
 
   remove_broken_refspec "$config"
-  register_optout "$config"
+  remove_broken_credential_helper "$config"
+  register_optout "$config" remote.origin.fetch
+  register_optout "$config" credential.helper
 }
 
 main "$@"
