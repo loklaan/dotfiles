@@ -10,6 +10,7 @@
 import {
   Array as Arr,
   Console,
+  Data,
   Effect,
   Schema,
 } from "npm:effect@4.0.0-beta.83";
@@ -54,15 +55,16 @@ const decodeManifest = Schema.decodeUnknownSync(Manifest);
 
 const MANIFEST_PATH = "home/.chezmoidata/runtime-tiers.yaml";
 
-type Violation =
-  | { readonly _tag: "Unaccounted"; readonly path: string }
-  | {
-    readonly _tag: "Mismatch";
+type Violation = Data.TaggedEnum<{
+  Unaccounted: { readonly path: string };
+  Mismatch: {
     readonly path: string;
     readonly declared: Lang;
     readonly actual: Lang;
-  }
-  | { readonly _tag: "BootstrapViolation"; readonly path: string };
+  };
+  BootstrapViolation: { readonly path: string };
+}>;
+const Violation = Data.taggedEnum<Violation>();
 
 interface CheckedEntry {
   readonly entry: Runnable;
@@ -84,15 +86,14 @@ const checkEntry = (
 ): ReadonlyArray<Violation> => {
   const violations: Violation[] = [];
   if (entry.lang !== actualLang) {
-    violations.push({
-      _tag: "Mismatch",
+    violations.push(Violation.Mismatch({
       path: entry.path,
       declared: entry.lang,
       actual: actualLang,
-    });
+    }));
   }
   if (entry.tier === "bootstrap" && actualLang === "deno") {
-    violations.push({ _tag: "BootstrapViolation", path: entry.path });
+    violations.push(Violation.BootstrapViolation({ path: entry.path }));
   }
   return violations;
 };
@@ -102,7 +103,7 @@ const checkCoverage = (
   manifestPaths: ReadonlySet<string>,
 ): ReadonlyArray<Violation> =>
   actualPaths.flatMap((path) =>
-    manifestPaths.has(path) ? [] : [{ _tag: "Unaccounted", path }]
+    manifestPaths.has(path) ? [] : [Violation.Unaccounted({ path })]
   );
 
 const countLangs = (langs: ReadonlyArray<Lang>) => ({
@@ -111,16 +112,14 @@ const countLangs = (langs: ReadonlyArray<Lang>) => ({
   stub: langs.filter((lang) => lang === "stub").length,
 });
 
-const formatViolation = (violation: Violation): string => {
-  switch (violation._tag) {
-    case "Unaccounted":
-      return `FAIL  ${violation.path}  [unaccounted]`;
-    case "Mismatch":
-      return `FAIL  ${violation.path}  [mismatch: declared=${violation.declared} actual=${violation.actual}]`;
-    case "BootstrapViolation":
-      return `FAIL  ${violation.path}  [bootstrap-violation: deno shebang on bootstrap script]`;
-  }
-};
+const formatViolation = (violation: Violation): string =>
+  Violation.$match(violation, {
+    Unaccounted: ({ path }) => `FAIL  ${path}  [unaccounted]`,
+    Mismatch: ({ path, declared, actual }) =>
+      `FAIL  ${path}  [mismatch: declared=${declared} actual=${actual}]`,
+    BootstrapViolation: ({ path }) =>
+      `FAIL  ${path}  [bootstrap-violation: deno shebang on bootstrap script]`,
+  });
 
 // ============================================================================
 // Filesystem helpers
