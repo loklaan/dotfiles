@@ -480,21 +480,37 @@ Rules:
 
 ## 7. Mise Lint Convention
 
+The lint task derives its file list from the runtime-tier manifest
+(`home/.chezmoidata/runtime-tiers.yaml`) — NOT a hand-maintained list in
+`.mise.toml`. A `python3 -c yaml.safe_load` one-liner selects every runnable
+whose `lang` is `deno` and feeds those paths to `deno fmt`/`deno lint`:
+
 ```toml
 # .mise.toml
+[tasks."lint:runtimes"]
+description = "Check every runnable is in the runtime-tier manifest with matching lang"
+run = "deno run --allow-read --allow-env home/private_dot_local/bin/executable_df-lint-runtimes"
+
 [tasks.lint]
-description = "Format-check and lint all Deno+Effect tools"
+description = "Format-check, lint, and tier-check all Deno+Effect tools"
+depends = ["lint:runtimes"]
 run = [
-  "deno fmt --ext=ts --check home/private_dot_local/bin/executable_my-tool ...",
-  "deno lint --ext=ts home/private_dot_local/bin/executable_my-tool ...",
+  """deno fmt --ext=ts --check $(python3 -c "import yaml; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",
+  """deno lint --rules-exclude=no-import-prefix --ext=ts $(python3 -c "import yaml; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
 ]
 ```
 
-- **Explicit file list** — NOT a glob (`executable_*` would catch bash scripts)
-- Add new tools to the list in `.mise.toml` when creating them
-- Run with `mise run lint`
-- `deno fmt`/`deno lint` skip files that don't exist yet — safe to add future
-  names
+- **Register, don't list** — add new tools to `runtime-tiers.yaml` (path +
+  `tier` + `lang: deno`), not to `.mise.toml`. The `lint:runtimes` dependency
+  FAILS the lint run if a runnable on disk is missing from the manifest, so an
+  unregistered tool is caught immediately.
+- **`no-import-prefix` is excluded repo-wide** — the inline `npm:` specifier
+  convention (no `deno.json` import map) trips this rule; the lint task disables
+  it via `--rules-exclude=no-import-prefix`.
+- Run with `mise run lint`.
+- `deno fmt`/`deno lint` skip files that don't exist yet — safe to register a
+  future name in the manifest before the file lands.
 
 ---
 

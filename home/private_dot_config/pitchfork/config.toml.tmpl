@@ -3,7 +3,12 @@
        boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
        at chezmoi-render time so Pitchfork gets a baked-in pairing address — no
        runtime shell parsing, no risk of leaking sibling secrets from agent.conf
-       (e.g. CODER_AGENT_TOKEN) into the orca process. */ -}}
+       (e.g. CODER_AGENT_TOKEN) into the orca process.
+
+       LOAD-BEARING: the pairing address MUST be <workspace>.coder. Do NOT
+       "simplify" this to $(hostname).coder — on a Coder box $(hostname) is the
+       container/pod id, not the workspace name, so Coder Connect's <ws>.coder
+       DNS would not resolve it and every paired client would fail to connect. */ -}}
 {{- $agentConf := "" -}}
 {{- if stat "/run/coder/agent.conf" -}}
 {{-   $agentConf = include "/run/coder/agent.conf" -}}
