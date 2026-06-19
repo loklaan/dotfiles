@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run --allow-env --allow-ffi --allow-read
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-lock --allow-run --allow-env --allow-ffi --allow-read
 
 // df-task-chezmoi-update (Deno + Effect v4 beta). Fast-forwards the chezmoi
 // SOURCE repo to origin and applies it, invoked from the

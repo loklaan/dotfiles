@@ -90,12 +90,12 @@ then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
 already _is_ the newest beta the caret has nowhere to float, so the warning
 hides — until the next beta ships and it silently returns.)
 
-**The fix — one canonical config at the repo root, projected to runtime.** The
-repo root holds the canonical `deno.json` (flat `compilerOptions` + `lock`
-pointer, no workspace key), `tsconfig.json` (editor shim for TS servers that do
-not read Deno config), and `deno.lock` (pins the _transitive_
-`platform-node-shared` so it can't float). These are the single control plane —
-the files you edit, and what drives the IDE when the repo is opened at root.
+**The fix — one canonical config at the repo root, projected to runtime, and NO
+lockfile.** The repo root holds the canonical `deno.json` (flat
+`compilerOptions`, no `workspace` key, no `lock` key) and `tsconfig.json`
+(editor shim for TS servers that do not read Deno config). These are the single
+control plane — the files you edit, and what drives the IDE when the repo is
+opened at root.
 
 The runtime copies in `home/private_dot_local/bin/` are chezmoi `.tmpl`
 re-projections of those root files, deploying to `~/.local/bin/`:
@@ -104,7 +104,7 @@ re-projections of those root files, deploying to `~/.local/bin/`:
   (`include "../deno.json" | fromJson | dig "compilerOptions"`). It must NOT
   carry a `workspace` key — a workspace member key at a leaf dir makes Deno
   hard-error trying to resolve the member path.
-- `tsconfig.json.tmpl` and `deno.lock.tmpl` `include "../<file>"` verbatim.
+- `tsconfig.json.tmpl` `include "../tsconfig.json"` verbatim.
 
 `include` reaches the repo root via `../` because the chezmoi source root is
 `home/` (set by `.chezmoiroot`), one level below the repo root where the
@@ -112,18 +112,33 @@ canonical files live. Do **not** add `nodeModulesDir` (we keep the
 no-`node_modules` convention). Do **not** edit the member `.tmpl` outputs or the
 deployed `~/.local/bin/*` files directly — change the root canonical files only.
 
+**No lockfile — by design.** Every tool shebang passes `--no-lock`, and the
+tools pin **exact** specifiers (`npm:effect@4.0.0-beta.83`, never a range). A
+`deno.lock` adds nothing for exact-pinned single-file tools, and it actively
+_harms_: deno auto-rewrites a discovered `deno.lock` on every run (a union of
+every version it has ever resolved in that cwd, pulled from its global registry
+metadata cache `~/.cache/deno/npm/.../registry.json` + `dep_analysis_cache_v2`),
+which races chezmoi's "did this file change since I wrote it?" tracking and
+aborts `chezmoi apply` on a non-interactive TTY prompt. `--no-lock` removes
+deno's write trigger entirely; dropping the managed `deno.lock` removes
+chezmoi's track trigger. With neither side claiming the file, there is no race.
+
 **Ritual when bumping Effect.** Bump _every_ occurrence to the same new beta in
-lock-step (`grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/` — miss one
-and the lock is inconsistent), then regenerate the canonical root lock so it
-doesn't go stale:
+lock-step — miss one and you get a mixed tree:
 
 ```bash
-# Re-cache each deno tool into the canonical root lock (non-deno/.tmpl files
-# fail parse, harmless). Run from the repo root where deno.json + deno.lock live:
-rm -f deno.lock
-for f in home/private_dot_local/bin/executable_*; do deno cache --lock=deno.lock "$f" 2>/dev/null || true; done
-grep platform-node-shared deno.lock   # confirm it now pins the new beta
-chezmoi apply ~/.local/bin/deno.lock  # re-project to runtime
+grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/   # find stragglers
+# edit each to the new beta, keeping effect + @effect/platform-node identical
+```
+
+No lock to regenerate. To purge a stale resolution from a box's deno cache (e.g.
+after a bump leaves old registry metadata behind), clear the registry metadata
+AND the analysis DB — the tarball dir alone is not enough:
+
+```bash
+rm -rf ~/.cache/deno/npm/registry.npmjs.org/effect \
+       ~/.cache/deno/npm/registry.npmjs.org/@effect \
+       ~/.cache/deno/dep_analysis_cache_v2*
 ```
 
 **Dynamic import rule**: `@effect/platform-node` transitively loads `msgpackr`,
