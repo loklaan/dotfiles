@@ -7,6 +7,7 @@
 import {
   Config,
   Console,
+  Data,
   Effect,
   Layer,
   Schema,
@@ -756,10 +757,12 @@ interface FleetOptions {
   readonly taskAndArgs: ReadonlyArray<string>;
 }
 
-type FleetParseResult =
-  | { readonly _tag: "Ok"; readonly options: FleetOptions }
-  | { readonly _tag: "Help" }
-  | { readonly _tag: "Error"; readonly message: string };
+type FleetParseResult = Data.TaggedEnum<{
+  Ok: { readonly options: FleetOptions };
+  Help: Record<never, never>;
+  Error: { readonly message: string };
+}>;
+const FleetParseResult = Data.taggedEnum<FleetParseResult>();
 
 const fleetIncludeLocalFlag = Flag.boolean("include-local");
 const fleetLocalOnlyFlag = Flag.boolean("local-only");
@@ -790,7 +793,7 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
     const arg = args[i];
     switch (arg) {
       case "--help":
-        return { _tag: "Help" };
+        return FleetParseResult.Help();
       case "--include-local":
         includeLocal = true;
         i++;
@@ -801,21 +804,24 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
         break;
       case "--filter":
         if (args[i + 1] === undefined) {
-          return { _tag: "Error", message: "--filter requires an expression" };
+          return FleetParseResult.Error({
+            message: "--filter requires an expression",
+          });
         }
         filter = args[i + 1];
         i += 2;
         break;
       case "--parallel": {
         if (args[i + 1] === undefined) {
-          return { _tag: "Error", message: "--parallel requires a number" };
+          return FleetParseResult.Error({
+            message: "--parallel requires a number",
+          });
         }
         const parsed = Number.parseInt(args[i + 1], 10);
         if (!Number.isFinite(parsed) || parsed < 1) {
-          return {
-            _tag: "Error",
+          return FleetParseResult.Error({
             message: "--parallel must be a positive integer",
-          };
+          });
         }
         parallel = parsed;
         i += 2;
@@ -826,8 +832,7 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
         i++;
         break;
       case "--":
-        return {
-          _tag: "Ok",
+        return FleetParseResult.Ok({
           options: {
             includeLocal,
             localOnly,
@@ -836,13 +841,12 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
             dryRun,
             taskAndArgs: args.slice(i + 1),
           },
-        };
+        });
       default:
         if (arg.startsWith("-")) {
-          return { _tag: "Error", message: `Unknown option: ${arg}` };
+          return FleetParseResult.Error({ message: `Unknown option: ${arg}` });
         }
-        return {
-          _tag: "Ok",
+        return FleetParseResult.Ok({
           options: {
             includeLocal,
             localOnly,
@@ -851,11 +855,10 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
             dryRun,
             taskAndArgs: args.slice(i),
           },
-        };
+        });
     }
   }
-  return {
-    _tag: "Ok",
+  return FleetParseResult.Ok({
     options: {
       includeLocal,
       localOnly,
@@ -864,7 +867,7 @@ const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
       dryRun,
       taskAndArgs: [],
     },
-  };
+  });
 };
 
 interface FleetEnv {
@@ -883,9 +886,11 @@ interface FleetTargetFail {
   readonly logFile?: string;
 }
 
-type HostEither =
-  | { readonly _tag: "Right"; readonly right: FleetTargetOk }
-  | { readonly _tag: "Left"; readonly left: FleetTargetFail };
+type HostEither = Data.TaggedEnum<{
+  Right: { readonly right: FleetTargetOk };
+  Left: { readonly left: FleetTargetFail };
+}>;
+const HostEither = Data.taggedEnum<HostEither>();
 
 const chooseDefaultFleetWorkspaces = (
   workspaces: ReadonlyArray<CoderWorkspace>,
@@ -936,7 +941,7 @@ const runFleetLocal = (
       `[local] mise run ${task} ${args.join(" ")}`.trimEnd(),
     );
     if (options.dryRun) {
-      return { _tag: "Right", right: { host: "local", code: 0 } } as HostEither;
+      return HostEither.Right({ right: { host: "local", code: 0 } });
     }
     const res = yield* runChild("mise", ["run", task, ...args], {
       stdin: "inherit",
@@ -945,13 +950,12 @@ const runFleetLocal = (
     });
     if (res.code === 0) {
       yield* writeStderr("[local] ok\n");
-      return { _tag: "Right", right: { host: "local", code: 0 } } as HostEither;
+      return HostEither.Right({ right: { host: "local", code: 0 } });
     }
     yield* writeStderr(`[local] FAIL (${res.code})\n`);
-    return {
-      _tag: "Left",
+    return HostEither.Left({
       left: { host: "local", code: res.code },
-    } as HostEither;
+    });
   });
 
 const runFleetRemote = (
@@ -967,10 +971,9 @@ const runFleetRemote = (
     const cmd = fleetCommandString(task, args);
     yield* logInfo(`[${ws}] ${cmd}`);
     if (options.dryRun) {
-      return {
-        _tag: "Right",
+      return HostEither.Right({
         right: { host: ws, code: 0, logFile },
-      } as HostEither;
+      });
     }
     const res = yield* runChild("ssh", [
       "-o",
@@ -981,16 +984,14 @@ const runFleetRemote = (
     yield* writeTextFile(logFile, res.stdout + res.stderr);
     if (res.code === 0) {
       yield* writeStderr(`[${ws}] ok\n`);
-      return {
-        _tag: "Right",
+      return HostEither.Right({
         right: { host: ws, code: 0, logFile },
-      } as HostEither;
+      });
     }
     yield* writeStderr(`[${ws}] FAIL (${res.code}) — see ${logFile}\n`);
-    return {
-      _tag: "Left",
+    return HostEither.Left({
       left: { host: ws, code: res.code, logFile },
-    } as HostEither;
+    });
   });
 
 const fleetResultCode = (results: ReadonlyArray<HostEither>): number =>
@@ -1117,10 +1118,12 @@ const defaultManifestPath = home.pipe(
   Effect.map((homeDir) => `${homeDir}/.config/cw-migrate/manifest`),
 );
 
-type MigrateParseResult =
-  | { readonly _tag: "Ok"; readonly manifestPath: string }
-  | { readonly _tag: "Help" }
-  | { readonly _tag: "Error"; readonly message: string };
+type MigrateParseResult = Data.TaggedEnum<{
+  Ok: { readonly manifestPath: string };
+  Help: Record<never, never>;
+  Error: { readonly message: string };
+}>;
+const MigrateParseResult = Data.taggedEnum<MigrateParseResult>();
 
 const migrateManifestFlag = Flag.string("manifest").pipe(
   Flag.withDescription("Custom manifest file"),
@@ -1137,21 +1140,22 @@ const parseMigrateArgs = (
       switch (args[i]) {
         case "--manifest":
           if (args[i + 1] === undefined) {
-            return {
-              _tag: "Error",
+            return MigrateParseResult.Error({
               message: "--manifest requires a path argument",
-            };
+            });
           }
           manifest = args[i + 1];
           i++;
           break;
         case "--help":
-          return { _tag: "Help" };
+          return MigrateParseResult.Help();
         default:
-          return { _tag: "Error", message: `Unknown argument: ${args[i]}` };
+          return MigrateParseResult.Error({
+            message: `Unknown argument: ${args[i]}`,
+          });
       }
     }
-    return { _tag: "Ok", manifestPath: manifest };
+    return MigrateParseResult.Ok({ manifestPath: manifest });
   });
 
 const parseManifest = (content: string): MigrateManifest => {
@@ -1198,9 +1202,11 @@ const promptRequired = (label: string): string => {
   return value.trim();
 };
 
-type MigrateSourceConnection =
-  | { readonly _tag: "Connected"; readonly sourceHost: string }
-  | { readonly _tag: "Failed" };
+type MigrateSourceConnection = Data.TaggedEnum<{
+  Connected: { readonly sourceHost: string };
+  Failed: Record<never, never>;
+}>;
+const MigrateSourceConnection = Data.taggedEnum<MigrateSourceConnection>();
 
 const connectMigrateSource = () =>
   Effect.gen(function* () {
@@ -1223,10 +1229,10 @@ const connectMigrateSource = () =>
     if (res.code !== 0) {
       yield* logError(`Cannot connect to ${sourceHost}`);
       yield* writeStderr("Try: coder config-ssh\n");
-      return { _tag: "Failed" } as MigrateSourceConnection;
+      return MigrateSourceConnection.Failed();
     }
     yield* logInfo("╍ Connection OK");
-    return { _tag: "Connected", sourceHost } as MigrateSourceConnection;
+    return MigrateSourceConnection.Connected({ sourceHost });
   });
 
 const remoteHereDoc = (values: ReadonlyArray<string>): string =>
@@ -1881,9 +1887,9 @@ if (!import.meta.main) {
 
   Deno.test("fleet aggregation returns max partial-failure exit", () => {
     const code = fleetResultCode([
-      { _tag: "Right", right: { host: "a", code: 0 } },
-      { _tag: "Left", left: { host: "b", code: 7, logFile: "/tmp/b.log" } },
-      { _tag: "Left", left: { host: "c", code: 2, logFile: "/tmp/c.log" } },
+      HostEither.Right({ right: { host: "a", code: 0 } }),
+      HostEither.Left({ left: { host: "b", code: 7, logFile: "/tmp/b.log" } }),
+      HostEither.Left({ left: { host: "c", code: 2, logFile: "/tmp/c.log" } }),
     ]);
     assertEq(code, 7);
   });

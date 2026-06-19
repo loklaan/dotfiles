@@ -33,6 +33,7 @@
 import {
   Config,
   Console,
+  Data,
   Duration,
   Effect,
   Logger,
@@ -56,14 +57,12 @@ type CompletionJob = {
   readonly command: readonly string[];
 };
 
-type CompletionResult =
-  | { readonly _tag: "success"; readonly toolName: string }
-  | {
-    readonly _tag: "failed";
-    readonly toolName: string;
-    readonly message: string;
-  }
-  | { readonly _tag: "timeout"; readonly toolName: string };
+type CompletionResult = Data.TaggedEnum<{
+  success: { readonly toolName: string };
+  failed: { readonly toolName: string; readonly message: string };
+  timeout: { readonly toolName: string };
+}>;
+const CompletionResult = Data.taggedEnum<CompletionResult>();
 
 const completionJobs: ReadonlyArray<CompletionJob> = [
   {
@@ -195,10 +194,12 @@ const ensureCompletionDir = (dir: string) =>
     }
   });
 
-type CommandResult =
-  | { readonly _tag: "ok"; readonly output: string }
-  | { readonly _tag: "failed"; readonly message: string }
-  | { readonly _tag: "timeout" };
+type CommandResult = Data.TaggedEnum<{
+  ok: { readonly output: string };
+  failed: { readonly message: string };
+  timeout: Record<never, never>;
+}>;
+const CommandResult = Data.taggedEnum<CommandResult>();
 
 // Run a command, capturing stdout+stderr, under a 15s deadline. Timeout ->
 // timeout, spawn/non-zero failure -> failed, otherwise -> ok with the output
@@ -223,16 +224,17 @@ const runCommand = (
     );
     return yield* collect.pipe(
       Effect.timeout(Duration.seconds(JOB_TIMEOUT_SECONDS)),
-      Effect.map((output): CommandResult => ({ _tag: "ok", output })),
+      Effect.map((output): CommandResult => CommandResult.ok({ output })),
       Effect.catchTag(
         "TimeoutError",
-        () => Effect.succeed<CommandResult>({ _tag: "timeout" }),
+        () => Effect.succeed<CommandResult>(CommandResult.timeout()),
       ),
       Effect.catch(() =>
-        Effect.succeed<CommandResult>({
-          _tag: "failed",
-          message: `failed to run ${command} ${args.join(" ")}`,
-        })
+        Effect.succeed<CommandResult>(
+          CommandResult.failed({
+            message: `failed to run ${command} ${args.join(" ")}`,
+          }),
+        )
       ),
     );
   });
@@ -279,11 +281,10 @@ const writeCompletion = (
 ): Effect.Effect<CompletionResult, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     if (output.length === 0) {
-      return {
-        _tag: "failed" as const,
+      return CompletionResult.failed({
         toolName: job.toolName,
         message: `Generated empty completion output for ${job.toolName}`,
-      };
+      });
     }
     const fs = yield* FileSystem.FileSystem;
     const tempFile = yield* fs.makeTempFile({
@@ -293,30 +294,31 @@ const writeCompletion = (
     });
     return yield* fs.writeFileString(tempFile, output).pipe(
       Effect.andThen(fs.rename(tempFile, completionFile(dir, job.toolName))),
-      Effect.as<CompletionResult>({
-        _tag: "success",
-        toolName: job.toolName,
-      }),
+      Effect.as<CompletionResult>(
+        CompletionResult.success({ toolName: job.toolName }),
+      ),
       Effect.catch((cause) =>
         fs.remove(tempFile, { force: true }).pipe(
           Effect.ignore,
-          Effect.as<CompletionResult>({
-            _tag: "failed",
-            toolName: job.toolName,
-            message: `Failed to install completion for ${job.toolName}: ${
-              String(cause)
-            }`,
-          }),
+          Effect.as<CompletionResult>(
+            CompletionResult.failed({
+              toolName: job.toolName,
+              message: `Failed to install completion for ${job.toolName}: ${
+                String(cause)
+              }`,
+            }),
+          ),
         )
       ),
     );
   }).pipe(
     Effect.catch(() =>
-      Effect.succeed<CompletionResult>({
-        _tag: "failed",
-        toolName: job.toolName,
-        message: `Failed to install completion for ${job.toolName}`,
-      })
+      Effect.succeed<CompletionResult>(
+        CompletionResult.failed({
+          toolName: job.toolName,
+          message: `Failed to install completion for ${job.toolName}`,
+        }),
+      )
     ),
   );
 
@@ -332,43 +334,39 @@ const generateCompletion = (
   Effect.gen(function* () {
     if (job.kind === "mise") {
       if (!(yield* commandExists(augmentedPath, "mise"))) {
-        return {
-          _tag: "failed" as const,
+        return CompletionResult.failed({
           toolName: job.toolName,
           message: "mise not found in PATH",
-        };
+        });
       }
       const miseError = yield* checkMiseTool(
         augmentedPath,
         job.miseToolName ?? job.toolName,
       );
       if (miseError !== null) {
-        return {
-          _tag: "failed" as const,
+        return CompletionResult.failed({
           toolName: job.toolName,
           message: miseError,
-        };
+        });
       }
     } else if (!(yield* commandExists(augmentedPath, job.toolName))) {
-      return {
-        _tag: "failed" as const,
+      return CompletionResult.failed({
         toolName: job.toolName,
         message: `Tool '${job.toolName}' not found in PATH`,
-      };
+      });
     }
 
     const [command, args] = generateCommand(job);
     const result = yield* runCommand(augmentedPath, command, args);
     if (result._tag === "timeout") {
-      return { _tag: "timeout" as const, toolName: job.toolName };
+      return CompletionResult.timeout({ toolName: job.toolName });
     }
     if (result._tag === "failed") {
-      return {
-        _tag: "failed" as const,
+      return CompletionResult.failed({
         toolName: job.toolName,
         message:
           `Failed to generate completion for ${job.toolName}: ${result.message}`,
-      };
+      });
     }
     return yield* writeCompletion(dir, job, result.output);
   });
@@ -410,11 +408,9 @@ const installCompletions = Effect.gen(function* () {
     { concurrency: CONCURRENCY },
   );
 
-  const successCount = results.filter((result) =>
-    result._tag === "success"
-  ).length;
-  const failed = results.filter((result) => result._tag === "failed");
-  const timedOut = results.filter((result) => result._tag === "timeout");
+  const successCount = results.filter(CompletionResult.$is("success")).length;
+  const failed = results.filter(CompletionResult.$is("failed"));
+  const timedOut = results.filter(CompletionResult.$is("timeout"));
 
   yield* Effect.logInfo("▶ Completion installation summary:");
   yield* Effect.logInfo(`  ✓ Installed: ${successCount}`);
