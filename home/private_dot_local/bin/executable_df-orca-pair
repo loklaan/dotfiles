@@ -1,0 +1,793 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=coder,ssh,orca,scutil --allow-read --allow-env --allow-ffi
+
+// df-orca-pair — discover running Coder dev boxes that host our headless Orca
+// server (the `df-orca-server` Pitchfork daemon) and register each as a "Remote
+// Orca Server" in the local macOS Orca.app.
+//
+// Why a tool and not a chezmoi template: an Orca remote-server entry
+// (orca-environments.json) carries a per-pairing deviceToken + Curve25519
+// publicKeyB64 that only exist AFTER a live `orca://pair` handshake against the
+// running server. Those secrets are minted per `orca serve` start and cannot be
+// produced by chezmoi rendering. So chezmoi manages THIS TOOL; the tool performs
+// the live discovery + handshake and hands the offer to `orca environment add`.
+//
+// FAN-OUT shape (see deno-effect-tools.md §9): N independent SSH probes with
+// bounded concurrency and typed partial-failure aggregation, mirroring `cw
+// fleet`. Each box is probed read-only over SSH; pairing is applied locally via
+// the vendored `orca` CLI.
+//
+// Hard runtime dependency (macOS): Coder Connect must be running. Every
+// `<workspace>.coder` endpoint baked into a pairing offer is resolved by Coder
+// Connect's DNS/VPN. Without it the saved environments point at unresolvable
+// hosts. We preflight-probe it and warn loudly (non-blocking) before pairing.
+
+import {
+  Config,
+  Console,
+  Data,
+  Effect,
+  Schema,
+  Stream,
+} from "npm:effect@4.0.0-beta.83";
+import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-beta.83/unstable/process";
+
+const fatal = (msg: string): never => {
+  console.error(`fatal ${msg}`);
+  Deno.exit(1);
+};
+
+// ============================================================================
+// Usage
+// ============================================================================
+
+const USAGE = `Usage:
+  df-orca-pair [OPTIONS]
+
+Description:
+  Discover running Coder dev boxes that host our headless Orca server
+  (the df-orca-server Pitchfork daemon) and register each as a Remote
+  Orca Server in the local macOS Orca.app.
+
+  Discovery is dynamic via \`coder list -o json\` (filtered to running
+  workspaces). Each candidate is probed over SSH: a box qualifies only
+  when its df-orca-server daemon is CURRENTLY running and has emitted a
+  pairing offer. The freshest offer is fed to \`orca environment add\`.
+
+  Coder Connect must be running on this Mac — every <ws>.coder endpoint
+  inside a pairing offer is resolved by it. The tool warns if it can't
+  detect Coder Connect, but does not block (you may be on a setup it
+  cannot probe).
+
+Options:
+  --filter <jq-expr>   jq filter against \`coder list -o json\` emitting
+                       workspace names (default: running workspaces)
+  --parallel <N>       Max concurrent SSH probes (default: 4)
+  --replace            Re-pair boxes that already have an environment of
+                       the same name (removes the stale entry first)
+  --dry-run            Probe + report what WOULD be paired; change nothing
+  --json               Emit a machine-readable summary to stdout
+  --help               Display this message
+
+Examples:
+  df-orca-pair                 # pair every newly-discovered running orca box
+  df-orca-pair --dry-run       # show what would be paired
+  df-orca-pair --replace       # refresh existing entries with fresh offers
+`;
+
+// ============================================================================
+// Shared helpers (mirrors executable_cw idioms)
+// ============================================================================
+
+type StdioOption = "inherit" | "pipe" | "null";
+
+interface RunOptions {
+  readonly stdin?: "inherit" | "piped";
+  readonly stdout?: StdioOption;
+  readonly stderr?: StdioOption;
+  readonly input?: string;
+}
+
+interface CommandResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+const text = new TextEncoder();
+
+const pipeInput = (value: string): Stream.Stream<Uint8Array> =>
+  Stream.make(text.encode(value));
+
+const stdinOption = (
+  options: RunOptions,
+): ChildProcess.CommandOptions["stdin"] =>
+  options.input !== undefined
+    ? pipeInput(options.input)
+    : options.stdin === "inherit"
+    ? "inherit"
+    : options.stdin === "piped"
+    ? "pipe"
+    : "ignore";
+
+const outputOption = (
+  option: StdioOption | undefined,
+): ChildProcess.CommandOptions["stdout"] =>
+  option === "inherit" ? "inherit" : option === "null" ? "ignore" : "pipe";
+
+const streamText = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  stream.pipe(
+    Stream.decodeText(),
+    Stream.runFold(() => "", (acc, chunk) => acc + chunk),
+    Effect.orElseSucceed(() => ""),
+  );
+
+const runCommand = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  cmd: string,
+  args: ReadonlyArray<string>,
+  options: RunOptions = {},
+): Effect.Effect<CommandResult> =>
+  Effect.gen(function* () {
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(cmd, args, {
+        stdin: stdinOption(options),
+        stdout: outputOption(options.stdout),
+        stderr: outputOption(options.stderr),
+      }),
+    );
+    const collected = yield* Effect.all({
+      stdout: streamText(handle.stdout),
+      stderr: streamText(handle.stderr),
+      code: handle.exitCode,
+    }, { concurrency: "unbounded" });
+    return {
+      code: Number(collected.code),
+      stdout: collected.stdout,
+      stderr: collected.stderr,
+    };
+  }).pipe(
+    Effect.scoped,
+    Effect.orElseSucceed(() => ({ code: 127, stdout: "", stderr: "" })),
+  );
+
+const runChild = (
+  cmd: string,
+  args: ReadonlyArray<string>,
+  options?: RunOptions,
+): Effect.Effect<
+  CommandResult,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* runCommand(spawner, cmd, args, options);
+  });
+
+const consoleValue = (value: string): string =>
+  value.endsWith("\n") ? value.slice(0, -1) : value;
+const writeStdout = (value: string): Effect.Effect<void> =>
+  Console.log(consoleValue(value));
+const writeStderr = (value: string): Effect.Effect<void> =>
+  Console.error(consoleValue(value));
+const logInfo = (value: string): Effect.Effect<void> =>
+  writeStderr(`[INFO] ${value}\n`);
+const logWarning = (value: string): Effect.Effect<void> =>
+  writeStderr(`[WARN] ${value}\n`);
+
+const fileExists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    yield* fs.stat(path);
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const hasCommand = (cmd: string) =>
+  Effect.gen(function* () {
+    if (cmd.includes("/")) return yield* fileExists(cmd);
+    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""));
+    const path = yield* Path;
+    for (const dir of pathEnv.split(":")) {
+      if (dir !== "" && (yield* fileExists(path.join(dir, cmd)))) return true;
+    }
+    return false;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const requireCommand = (cmd: string, message: string) =>
+  Effect.gen(function* () {
+    if (!(yield* hasCommand(cmd))) fatal(message);
+  });
+
+const shellQuote = (value: string): string =>
+  value === "" ? "''" : `'${value.replaceAll("'", `'\\''`)}'`;
+
+// ============================================================================
+// Coder discovery (mirrors cw's schema + filter)
+// ============================================================================
+
+const CoderWorkspace = Schema.Struct({
+  name: Schema.String,
+  latest_build: Schema.Struct({
+    status: Schema.String,
+  }),
+});
+const CoderWorkspaces = Schema.Array(CoderWorkspace);
+const decodeWorkspaces = Schema.decodeUnknownSync(CoderWorkspaces);
+
+export const DEFAULT_FILTER =
+  '.[] | select(.latest_build.status == "running") | .name';
+
+export const runningWorkspaceNames = (
+  workspaces: ReadonlyArray<typeof CoderWorkspace.Type>,
+): ReadonlyArray<string> =>
+  workspaces
+    .filter((ws) => ws.latest_build.status === "running")
+    .map((ws) => ws.name);
+
+const listWorkspaces = (filter: string) =>
+  Effect.gen(function* () {
+    const res = yield* runChild("coder", ["list", "-o", "json"]);
+    if (res.code !== 0) {
+      return yield* Effect.fail(new Error(`coder list failed (${res.code})`));
+    }
+    if (filter === DEFAULT_FILTER) {
+      return runningWorkspaceNames(decodeWorkspaces(JSON.parse(res.stdout)));
+    }
+    // Custom jq filter: schema-decode first (rejects malformed coder output),
+    // then run jq for the user's expression.
+    decodeWorkspaces(JSON.parse(res.stdout));
+    const jq = yield* runChild("jq", ["-r", filter], { input: res.stdout });
+    if (jq.code !== 0) {
+      return yield* Effect.fail(new Error(`jq filter failed (${jq.code})`));
+    }
+    return jq.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  });
+
+// ============================================================================
+// Pure: remote probe command + offer extraction
+// ============================================================================
+
+// Remote one-liner run over SSH. Outputs two marker-prefixed lines we can parse
+// without ambiguity:
+//   ORCA_DAEMON:<state>          e.g. ORCA_DAEMON:running / ORCA_DAEMON:stopped / ORCA_DAEMON:absent
+//   ORCA_READY:<json>            the most recent orca_server_ready JSON line (only when running)
+// Reading recent raw logs is bounded with -n. We only trust ORCA_READY when the
+// daemon is currently running, because a stopped daemon's last offer points at a
+// now-dead port (ports are assigned per `orca serve` start).
+export const buildProbeScript = (): string =>
+  [
+    'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"',
+    // Daemon state from pitchfork list (the row looks like: <ns>/df-orca-server  running)
+    'state=$(pitchfork list 2>/dev/null | grep -E "(^|/)df-orca-server[[:space:]]" | awk "{print \\$NF}" | head -1)',
+    '[ -z "$state" ] && state=absent',
+    'echo "ORCA_DAEMON:$state"',
+    'if [ "$state" = "running" ]; then',
+    '  line=$(pitchfork logs df-orca-server --raw -n 400 2>/dev/null | grep -a "orca_server_ready" | tail -1)',
+    '  [ -n "$line" ] && echo "ORCA_READY:${line#*orca_server_ready}"',
+    "fi",
+  ].join("; ");
+
+export type ProbeOutcome = Data.TaggedEnum<{
+  Paired: { readonly url: string; readonly endpoint: string };
+  NotRunning: { readonly state: string };
+  NoOffer: Record<never, never>;
+  Unreachable: { readonly code: number };
+}>;
+export const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
+
+// Parse the marker lines emitted by buildProbeScript into a typed outcome.
+export const parseProbeOutput = (
+  code: number,
+  stdout: string,
+): ProbeOutcome => {
+  if (code !== 0 && stdout.trim() === "") {
+    return ProbeOutcome.Unreachable({ code });
+  }
+  const lines = stdout.split(/\r?\n/);
+  const daemonLine = lines.find((l) => l.startsWith("ORCA_DAEMON:"));
+  const state = daemonLine
+    ? daemonLine.slice("ORCA_DAEMON:".length).trim()
+    : "absent";
+  if (state !== "running") return ProbeOutcome.NotRunning({ state });
+
+  const readyLine = lines.find((l) => l.startsWith("ORCA_READY:"));
+  if (!readyLine) return ProbeOutcome.NoOffer();
+
+  // ORCA_READY:<remainder-of-json-after-the-word-orca_server_ready>. The probe
+  // strips everything up to and including "orca_server_ready"; the JSON object
+  // it belonged to started with {"type":" — reconstruct the object by finding
+  // the original full line instead. Simpler + robust: re-find the JSON via the
+  // url field, which is self-contained.
+  const raw = readyLine.slice("ORCA_READY:".length);
+  // The remainder is `","runtimeId":...}` of the original object. Recover the
+  // pairing url with a tolerant extraction of the orca://pair token, which is
+  // the only datum we actually need to pair.
+  const urlMatch = raw.match(/orca:\/\/pair[#?][^"\\\s]+/);
+  if (!urlMatch) return ProbeOutcome.NoOffer();
+  const url = urlMatch[0];
+
+  // Best-effort endpoint for reporting only; not required for pairing.
+  const epMatch = raw.match(/"endpoint":"(ws:\/\/[^"]*\.coder:\d+)"/);
+  const endpoint = epMatch?.[1] ?? "";
+  return ProbeOutcome.Paired({ url, endpoint });
+};
+
+// Validate that an extracted url decodes to a v2 pairing offer pointing at a
+// <ws>.coder endpoint. Pure; used to reject malformed/legacy offers early.
+export const decodePairingEndpoint = (url: string): string | null => {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "orca:" || u.hostname !== "pair") return null;
+    const code = u.searchParams.get("code") ??
+      (u.hash ? u.hash.slice(1) : null);
+    if (!code) return null;
+    const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(b64);
+    const offer = JSON.parse(json) as { endpoint?: string };
+    return typeof offer.endpoint === "string" ? offer.endpoint : null;
+  } catch {
+    return null;
+  }
+};
+
+export type AddResult = Data.TaggedEnum<{
+  Ok: Record<never, never>;
+  Failed: { readonly detail: string };
+}>;
+export const AddResult = Data.taggedEnum<AddResult>();
+
+// TRAP: every `orca ... --json` subcommand (not just `add`) exits 0 even on
+// logical failure, signalling success only via the JSON `ok` field. Any future
+// caller of the orca CLI must parse `ok`, never trust the process exit code.
+export const parseAddResult = (code: number, stdout: string): AddResult => {
+  const trimmed = stdout.trim();
+  if (trimmed === "") {
+    return AddResult.Failed({
+      detail: `orca environment add exited ${code}`,
+    });
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      ok?: boolean;
+      error?: { message?: string };
+    };
+    if (parsed.ok === true) return AddResult.Ok();
+    return AddResult.Failed({
+      detail: parsed.error?.message ?? "orca environment add reported ok=false",
+    });
+  } catch {
+    return AddResult.Failed({
+      detail: `unparseable orca environment add output (exit ${code})`,
+    });
+  }
+};
+
+// ============================================================================
+// Coder Connect preflight (macOS hard dependency)
+// ============================================================================
+
+// True when scutil advertises the `coder` DNS search domain — the signal Coder
+// Connect installs when active. Pure parser over `scutil --dns` text.
+export const coderConnectActiveFromScutil = (scutilOut: string): boolean =>
+  /(^|\n)\s*(search domain\[\d+\]|domain)\s*:\s*coder\s*(\n|$)/i.test(
+    scutilOut,
+  );
+
+const checkCoderConnect = () =>
+  Effect.gen(function* () {
+    if (Deno.build.os !== "darwin") return; // dependency is macOS-client-specific
+    if (!(yield* hasCommand("scutil"))) {
+      yield* logWarning(
+        "could not find `scutil` to verify Coder Connect; ensure it is running",
+      );
+      return;
+    }
+    const res = yield* runChild("scutil", ["--dns"]);
+    if (!coderConnectActiveFromScutil(res.stdout)) {
+      yield* logWarning(
+        "Coder Connect does not appear to be running (no `coder` DNS search domain).",
+      );
+      yield* logWarning(
+        "  Every <ws>.coder endpoint in a paired environment is resolved by Coder Connect.",
+      );
+      yield* logWarning(
+        "  Start Coder Desktop / Coder Connect, or paired servers will be unreachable.",
+      );
+    }
+  });
+
+// ============================================================================
+// Local Orca environment state (idempotency)
+// ============================================================================
+
+const EnvList = Schema.Struct({
+  result: Schema.Struct({
+    environments: Schema.Array(Schema.Struct({ name: Schema.String })),
+  }),
+});
+
+const existingEnvNames = () =>
+  Effect.gen(function* () {
+    const res = yield* runChild("orca", ["environment", "list", "--json"]);
+    if (res.code !== 0) return new Set<string>();
+    return yield* Effect.try({
+      try: () => {
+        const parsed = Schema.decodeUnknownSync(EnvList)(
+          JSON.parse(res.stdout),
+        );
+        return new Set(parsed.result.environments.map((e) => e.name));
+      },
+      catch: () => new Set<string>(),
+    }).pipe(Effect.orElseSucceed(() => new Set<string>()));
+  });
+
+// ============================================================================
+// Per-box probe + pair
+// ============================================================================
+
+interface Options {
+  readonly filter: string;
+  readonly parallel: number;
+  readonly replace: boolean;
+  readonly dryRun: boolean;
+  readonly json: boolean;
+}
+
+export type Result = Data.TaggedEnum<{
+  Paired: { readonly ws: string; readonly endpoint: string };
+  WouldPair: { readonly ws: string; readonly endpoint: string };
+  SkippedExisting: { readonly ws: string };
+  NotRunning: { readonly ws: string; readonly detail: string };
+  NoOffer: { readonly ws: string };
+  Unreachable: { readonly ws: string };
+  PairFailed: { readonly ws: string; readonly detail: string };
+}>;
+export const Result = Data.taggedEnum<Result>();
+
+const probeBox = (ws: string) =>
+  Effect.gen(function* () {
+    const res = yield* runChild("ssh", [
+      "-o",
+      "ConnectTimeout=15",
+      "-o",
+      "BatchMode=yes",
+      `coder.${ws}`,
+      `/usr/bin/zsh -lc ${shellQuote(buildProbeScript())}`,
+    ]);
+    return parseProbeOutput(res.code, res.stdout);
+  });
+
+const pairBox = (
+  ws: string,
+  outcome: ProbeOutcome,
+  options: Options,
+  existing: ReadonlySet<string>,
+): Effect.Effect<Result, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    if (ProbeOutcome.$is("Unreachable")(outcome)) {
+      return Result.Unreachable({ ws });
+    }
+    if (ProbeOutcome.$is("NotRunning")(outcome)) {
+      return Result.NotRunning({ ws, detail: outcome.state });
+    }
+    if (ProbeOutcome.$is("NoOffer")(outcome)) {
+      return Result.NoOffer({ ws });
+    }
+    if (decodePairingEndpoint(outcome.url) === null) {
+      return Result.NoOffer({ ws });
+    }
+
+    const alreadyHave = existing.has(ws);
+    if (alreadyHave && !options.replace) {
+      return Result.SkippedExisting({ ws });
+    }
+
+    if (options.dryRun) {
+      return Result.WouldPair({ ws, endpoint: outcome.endpoint });
+    }
+
+    if (alreadyHave && options.replace) {
+      yield* runChild("orca", ["environment", "rm", "--environment", ws]);
+    }
+
+    const add = yield* runChild("orca", [
+      "environment",
+      "add",
+      "--name",
+      ws,
+      "--pairing-code",
+      outcome.url,
+      "--json",
+    ]);
+    const addOutcome = parseAddResult(add.code, add.stdout);
+    if (AddResult.$is("Failed")(addOutcome)) {
+      return Result.PairFailed({ ws, detail: addOutcome.detail });
+    }
+    return Result.Paired({ ws, endpoint: outcome.endpoint });
+  });
+
+const reportLine = (r: Result): string =>
+  Result.$match(r, {
+    Paired: ({ ws, endpoint }) => `[${ws}] paired -> ${endpoint}`,
+    WouldPair: ({ ws, endpoint }) => `[${ws}] would pair -> ${endpoint}`,
+    SkippedExisting: ({ ws }) =>
+      `[${ws}] already paired (use --replace to refresh)`,
+    NotRunning: ({ ws, detail }) =>
+      `[${ws}] df-orca-server not running (${detail})`,
+    NoOffer: ({ ws }) => `[${ws}] running but no usable pairing offer in logs`,
+    Unreachable: ({ ws }) => `[${ws}] unreachable over SSH`,
+    PairFailed: ({ ws, detail }) => `[${ws}] FAIL: ${detail}`,
+  });
+
+// ============================================================================
+// Command
+// ============================================================================
+
+const filterFlag = Flag.string("filter").pipe(Flag.withDefault(DEFAULT_FILTER));
+const parallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
+const replaceFlag = Flag.boolean("replace");
+const dryRunFlag = Flag.boolean("dry-run");
+const jsonFlag = Flag.boolean("json");
+const helpArg = Argument.string("ignored").pipe(Argument.optional);
+
+const run = (options: Options) =>
+  Effect.gen(function* () {
+    yield* requireCommand(
+      "coder",
+      "coder CLI not found (needed to discover dev boxes)",
+    );
+    yield* requireCommand(
+      "orca",
+      "orca CLI not found (install Orca.app; expected on PATH as `orca`)",
+    );
+
+    yield* checkCoderConnect();
+
+    const workspaces = yield* listWorkspaces(options.filter);
+    if (workspaces.length === 0) {
+      yield* logWarning("no running workspaces matched filter");
+      if (options.json) yield* writeStdout(JSON.stringify({ results: [] }));
+      return 0;
+    }
+    yield* logInfo(
+      `probing ${workspaces.length} running workspace(s) for df-orca-server`,
+    );
+
+    const existing = yield* existingEnvNames();
+
+    // Probe in parallel (read-only SSH, the slow part), but pair SEQUENTIALLY:
+    // each `orca environment add/rm` mutates the single shared
+    // orca-environments.json, and concurrent mutations race (a sibling's
+    // write-back clobbers our rm, so the add then sees a duplicate name).
+    const probed = yield* Effect.forEach(
+      workspaces,
+      (ws) =>
+        probeBox(ws).pipe(Effect.map((outcome) => ({ ws, outcome } as const))),
+      { concurrency: options.parallel },
+    );
+
+    const results = yield* Effect.forEach(
+      probed,
+      ({ ws, outcome }) => pairBox(ws, outcome, options, existing),
+      { concurrency: 1 },
+    );
+
+    for (const r of results) yield* writeStderr(reportLine(r) + "\n");
+
+    if (options.json) {
+      yield* writeStdout(JSON.stringify({ results }, null, 2));
+    } else {
+      const paired = results.filter(Result.$is("Paired")).length;
+      const would = results.filter(Result.$is("WouldPair")).length;
+      if (options.dryRun) {
+        yield* writeStderr(`\n${would} box(es) would be paired.\n`);
+      } else {
+        yield* writeStderr(`\n${paired} box(es) paired.\n`);
+      }
+    }
+
+    const failed = results.some(Result.$is("PairFailed"));
+    return failed ? 1 : 0;
+  });
+
+const command = Command.make(
+  "df-orca-pair",
+  {
+    filter: filterFlag,
+    parallel: parallelFlag,
+    replace: replaceFlag,
+    dryRun: dryRunFlag,
+    json: jsonFlag,
+    ignored: helpArg,
+  },
+  ({ filter, parallel, replace, dryRun, json }) =>
+    Effect.flatMap(
+      run({ filter, parallel, replace, dryRun, json }),
+      (code) => Effect.sync(() => Deno.exit(code)),
+    ),
+);
+
+// ============================================================================
+// Entry point
+// ============================================================================
+
+if (import.meta.main) {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
+    console.log(USAGE);
+    Deno.exit(0);
+  }
+
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  Command.run(command, { version: "0.1.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// ============================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-orca-pair
+// ============================================================================
+
+if (!import.meta.main) {
+  const encode = (offer: unknown): string => {
+    const json = JSON.stringify(offer);
+    const b64 = btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(
+      /=+$/,
+      "",
+    );
+    return `orca://pair#${b64}`;
+  };
+
+  Deno.test("runningWorkspaceNames keeps only running boxes", () => {
+    assertEquals(
+      runningWorkspaceNames([
+        { name: "a", latest_build: { status: "running" } },
+        { name: "b", latest_build: { status: "stopped" } },
+        { name: "c", latest_build: { status: "running" } },
+      ]),
+      ["a", "c"],
+    );
+  });
+
+  Deno.test("parseProbeOutput: stopped daemon -> NotRunning (never paired)", () => {
+    const out = parseProbeOutput(0, "ORCA_DAEMON:stopped\n");
+    assertEquals(out._tag, "NotRunning");
+  });
+
+  Deno.test("parseProbeOutput: absent daemon -> NotRunning", () => {
+    assertEquals(
+      parseProbeOutput(0, "ORCA_DAEMON:absent\n")._tag,
+      "NotRunning",
+    );
+  });
+
+  Deno.test("parseProbeOutput: SSH failure with no output -> Unreachable", () => {
+    assertEquals(parseProbeOutput(255, "")._tag, "Unreachable");
+  });
+
+  Deno.test("parseProbeOutput: running but no offer -> NoOffer", () => {
+    assertEquals(parseProbeOutput(0, "ORCA_DAEMON:running\n")._tag, "NoOffer");
+  });
+
+  Deno.test("parseProbeOutput: running + offer -> Paired with url+endpoint", () => {
+    const url = encode({
+      v: 2,
+      endpoint: "ws://for-tasks-1.coder:41823",
+      deviceToken: "tok",
+      publicKeyB64: "key",
+    });
+    const ready =
+      `","runtimeId":"x","endpoint":"ws://0.0.0.0:41823","pairing":{"url":"${url}","endpoint":"ws://for-tasks-1.coder:41823"}}`;
+    const out = parseProbeOutput(
+      0,
+      `ORCA_DAEMON:running\nORCA_READY:${ready}`,
+    );
+    assertEquals(out._tag, "Paired");
+    if (out._tag === "Paired") {
+      assertEquals(out.url, url);
+      assertEquals(out.endpoint, "ws://for-tasks-1.coder:41823");
+    }
+  });
+
+  Deno.test("decodePairingEndpoint: hash form decodes endpoint", () => {
+    const url = encode({
+      v: 2,
+      endpoint: "ws://for-tasks-2.coder:5000",
+      deviceToken: "t",
+      publicKeyB64: "k",
+    });
+    assertEquals(decodePairingEndpoint(url), "ws://for-tasks-2.coder:5000");
+  });
+
+  Deno.test("decodePairingEndpoint: ?code= form also decodes", () => {
+    const inner = btoa(
+      JSON.stringify({
+        v: 2,
+        endpoint: "ws://x.coder:9",
+        deviceToken: "t",
+        publicKeyB64: "k",
+      }),
+    ).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    assertEquals(
+      decodePairingEndpoint(`orca://pair?code=${inner}`),
+      "ws://x.coder:9",
+    );
+  });
+
+  Deno.test("decodePairingEndpoint: rejects non-pair urls", () => {
+    assertEquals(decodePairingEndpoint("https://example.com"), null);
+    assertEquals(decodePairingEndpoint("orca://pairing#abc"), null);
+  });
+
+  Deno.test("parseAddResult: ok=true -> Ok", () => {
+    assertEquals(parseAddResult(0, '{"id":"local","ok":true}')._tag, "Ok");
+  });
+
+  Deno.test("parseAddResult: ok=false surfaces error.message (exit 0 trap)", () => {
+    const out = parseAddResult(
+      0,
+      '{"ok":false,"error":{"code":"invalid_argument","message":"A server named \\"x\\" already exists."}}',
+    );
+    assertEquals(out._tag, "Failed");
+    if (out._tag === "Failed") {
+      assertEquals(out.detail, 'A server named "x" already exists.');
+    }
+  });
+
+  Deno.test("parseAddResult: empty stdout -> Failed with exit code", () => {
+    assertEquals(parseAddResult(1, "")._tag, "Failed");
+  });
+
+  Deno.test("parseAddResult: unparseable stdout -> Failed", () => {
+    assertEquals(parseAddResult(0, "not json")._tag, "Failed");
+  });
+
+  Deno.test("coderConnectActiveFromScutil: detects coder search domain", () => {
+    assertEquals(
+      coderConnectActiveFromScutil("  search domain[0] : coder\n"),
+      true,
+    );
+    assertEquals(coderConnectActiveFromScutil("  domain   : coder\n"), true);
+    assertEquals(
+      coderConnectActiveFromScutil("  search domain[0] : example.com\n"),
+      false,
+    );
+  });
+
+  Deno.test("buildProbeScript gates offer read on running state", () => {
+    const script = buildProbeScript();
+    assertEquals(script.includes('if [ "$state" = "running" ]'), true);
+    assertEquals(script.includes("pitchfork logs df-orca-server --raw"), true);
+    assertEquals(script.includes("ORCA_DAEMON:"), true);
+  });
+}
+
+function assertEquals<T>(actual: T, expected: T): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `assertion failed: ${JSON.stringify(actual)} !== ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+}

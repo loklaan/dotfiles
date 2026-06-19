@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (19) ---
+    # --- home/private_dot_local/bin (20) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -49,6 +49,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-omo-profile
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-orca-pair
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-orca-serve
