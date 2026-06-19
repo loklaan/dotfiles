@@ -21,7 +21,9 @@ Two orchestration tools span machines, plus one single-machine deep-UI tool.
 
 orca runs on the macbook. The default mode is SSH-attached: it connects to Coder workspaces using the standard `coder.<ws>` SSH host that Coder writes into `~/.ssh/config`. On first connection orca deploys a small relay binary into `~/.orca-remote/` on the workspace; from then on it streams agent I/O over that relay.
 
-The "Remote Orca Servers" beta adds a second mode: a headless `orca serve` process running on the Coder box (systemd-user service, opt-in via chezmoi `orcaServer` flag), paired with the macbook app via an `orca://pair#...` URL printed at startup. Pairing is one-to-many (one server, many paired clients), Curve25519 ECDH for E2EE. Reach the WebSocket endpoint inside the offer URL via `<ws>.coder:<auto-port>` over Coder Connect. The server's `--pairing-address` is set to `$(hostname).coder` so the URL works for any macbook with Coder Connect running.
+The "Remote Orca Servers" beta adds a second mode: a headless `orca serve` process running on the Coder box (supervised by the `df-orca-server` Pitchfork daemon, opt-in via chezmoi `orcaServer` flag), paired with the macbook app via an `orca://pair#...` URL printed at startup. Pairing is one-to-many (one server, many paired clients), Curve25519 ECDH for E2EE. Reach the WebSocket endpoint inside the offer URL via `<ws>.coder:<auto-port>` over Coder Connect. The server's `--pairing-address` is set to `<workspace>.coder` so the URL works for any macbook with Coder Connect running.
+
+On the macbook, the local Orca.app stores paired servers in `~/Library/Application Support/Orca/orca-environments.json`. Each entry carries the server endpoint plus the per-pairing `deviceToken` and Curve25519 `publicKeyB64` minted during the handshake — secrets that only exist after a live pairing, so this file cannot be chezmoi-templated. The `df-orca-pair` CLI automates registration instead: it discovers running Coder boxes, confirms each is currently running `df-orca-server`, pulls the freshest `orca://pair` offer over SSH, and feeds it to `orca environment add`. See the runbook below.
 
 The two modes coexist: SSH-attached for quick "open this workspace" sessions, paired-server for the new beta features. macbook-only on the client side; the server runs on Coder boxes only.
 
@@ -215,6 +217,10 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_df-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
+| `home/private_dot_local/bin/executable_df-orca-pair` | macOS: discover running Coder boxes hosting `df-orca-server`, pull each `orca://pair` offer, register them as Remote Orca Servers via `orca environment add` (`--dry-run`/`--replace`) |
+| `home/private_dot_local/bin/executable_df-orca-serve` | Linux: headless `orca serve` wrapper the `df-orca-server` Pitchfork daemon launches (resolves AppImage, injects headless Electron flags, emits the `orca://pair` offer) |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines the `df-orca-server` Pitchfork daemon (Linux + `orcaServer`); bakes `--pairing-address <ws>.coder` from `/run/coder/agent.conf` |
+| `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` | Lifecycle: start `df-orca-server` on opt-in, stop on opt-out (Linux) |
 
 ## Operating Runbook
 
@@ -238,18 +244,26 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 **Add a new Coder box as an orca server host (BETA):**
 1. SSH into the box (`cw <ws>`).
 2. `chezmoi edit-config` → set `orcaServer = true` → save.
-3. `chezmoi apply` → mise installs orca (the `orca-linux.AppImage`) into `~/.local/share/mise/installs/http-orca/<version>/orca`. The `run_after_install-059-orca-server` lifecycle script then enables and starts the systemd-user unit.
-4. Capture the pairing URL from the unit's stdout:
+3. `chezmoi apply` → mise installs orca (the `orca-linux.AppImage`) into `~/.local/share/mise/installs/http-orca/<version>/orca` plus Pitchfork. The `run_after_install-059-orca-server` lifecycle script then starts the `df-orca-server` Pitchfork daemon, which runs `df-orca-serve --pairing-address <ws>.coder --json`.
+4. On the macbook, ensure Coder Desktop / Coder Connect is running (it provides the `<ws>.coder` DNS — without it, paired endpoints are unresolvable).
+5. Register the box on the macbook with one command:
    ```bash
-   journalctl --user -u orca-server.service | grep -o 'orca://pair#[^ "]*' | tail -1
+   df-orca-pair               # discovers running orca boxes, pairs new ones
+   df-orca-pair --dry-run     # preview without changing anything
+   df-orca-pair --replace     # refresh an existing entry with a fresh offer
    ```
-5. On macbook: ensure Coder Desktop / Coder Connect is running.
-6. In Orca.app: Settings → Remote Orca Servers → Add Server → paste the pairing URL.
+   `df-orca-pair` lists running Coder workspaces, SSHes each to confirm `df-orca-server` is *currently running* (a stopped daemon's last offer points at a dead port, so it is skipped), pulls the freshest `orca://pair` offer from `pitchfork logs df-orca-server --raw`, and runs `orca environment add --name <ws> --pairing-code <url>`. It warns (non-blocking) if Coder Connect is not detected.
+
+   Manual fallback — capture the pairing URL on the box and paste it into Orca.app (Settings → Remote Orca Servers → Add Server):
+   ```bash
+   pitchfork logs df-orca-server --raw -n 400 | grep -o 'orca://pair#[^ "]*' | tail -1
+   ```
 
 **Decommission a Coder box's orca server:**
 1. SSH into the box.
 2. `chezmoi edit-config` → set `orcaServer = false`.
 3. `chezmoi apply` → server stops + disables. (mise's installed AppImage stays in `~/.local/share/mise/installs/`; remove with `mise uninstall orca` if reclaiming disk.)
+4. On the macbook, drop the stale entry: `orca environment rm --environment <ws>`.
 
 **Status anywhere:**
 - `df-setup` shows the daemon line on opt-in Linux machines.
