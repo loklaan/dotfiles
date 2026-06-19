@@ -297,7 +297,7 @@ Surfaces: df-setup drift block · zsh login one-liner · macOS notification
 Both opt-in tools that run as systemd-user services on Coder boxes are installed by mise as a normal `[tools]` entry:
 
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.83`
-- **orca**: `http:orca` — pinned to `1.4.30`, downloads `orca-linux.AppImage` from GitHub releases
+- **orca**: `http:orca` — pinned to `1.4.74`, downloads `orca-linux.AppImage` from GitHub releases
 
 To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cw fleet --include-local update` to converge the fleet.
 
