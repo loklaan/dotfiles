@@ -129,9 +129,13 @@ should_attempt_resume_tmux_prompt() {
   # No tmux sessions exist
   ! tmux has-session 2> /dev/null && return 1
   ! is_interactive_shell && return 1
-  # Exclude IDE terminals, they should not auto-attach to tmux, ever
+  # Exclude IDE / embedded-app terminals — they should not auto-attach to tmux, ever.
   [[ "${TERMINAL_EMULATOR:-}" == *"JetBrains"* ]] && return 1
   [[ "${TERM_PROGRAM:-}" == *"vscode"* ]] && return 1
+  # Orca's embedded terminal (TERM_PROGRAM=Orca, TERM=xterm-256color) drives panes
+  # programmatically and manages its own sessions; the interactive attach prompt
+  # would hang or be answered by automation. Never auto-prompt inside Orca.
+  [[ "${TERM_PROGRAM:-}" == "Orca" ]] && return 1
   return 0
 }
 
