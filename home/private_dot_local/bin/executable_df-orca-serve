@@ -10,6 +10,7 @@
 
 import {
   Config,
+  Data,
   Duration,
   Effect,
   Exit,
@@ -67,13 +68,14 @@ type ChildProcessHandle = ChildProcessSpawner.ChildProcessHandle;
 // Logging and stderr filtering
 // ============================================================================
 
-type FilteredLine =
-  | { readonly _tag: "Drop" }
-  | {
-    readonly _tag: "Emit";
+type FilteredLine = Data.TaggedEnum<{
+  Drop: Record<never, never>;
+  Emit: {
     readonly level: "ok" | "info" | "warning" | "error";
     readonly line: string;
   };
+}>;
+const FilteredLine = Data.taggedEnum<FilteredLine>();
 
 // Color-capable line formatting, inlined from the former deno-logging.ts
 // dependency with identical behavior: ANSI color is applied only when the
@@ -130,29 +132,28 @@ const NOISY_SUBSTRINGS = [
 ] as const;
 
 export const filterStderrLine = (line: string): FilteredLine => {
-  if (line === "") return { _tag: "Drop" };
+  if (line === "") return FilteredLine.Drop();
   if (NOISY_SUBSTRINGS.some((fragment) => line.includes(fragment))) {
-    return { _tag: "Drop" };
+    return FilteredLine.Drop();
   }
-  if (line.includes("Mesa") || line.includes("MESA")) return { _tag: "Drop" };
-  if (line.includes("DRI") || line.includes("gbm")) return { _tag: "Drop" };
+  if (line.includes("Mesa") || line.includes("MESA")) {
+    return FilteredLine.Drop();
+  }
+  if (line.includes("DRI") || line.includes("gbm")) return FilteredLine.Drop();
 
   if (line.includes("server ready") || line.includes("Server ready")) {
-    return { _tag: "Emit", level: "ok", line };
+    return FilteredLine.Emit({ level: "ok", line });
   }
   if (line.includes("FATAL") || line.includes("fatal")) {
-    return { _tag: "Emit", level: "error", line };
+    return FilteredLine.Emit({ level: "error", line });
   }
   if (line.includes("WARNING") || line.includes("warning")) {
-    return { _tag: "Emit", level: "warning", line };
+    return FilteredLine.Emit({ level: "warning", line });
   }
-  return { _tag: "Emit", level: "info", line };
+  return FilteredLine.Emit({ level: "info", line });
 };
 
-const isEmittedLine = (
-  line: FilteredLine,
-): line is Extract<FilteredLine, { readonly _tag: "Emit" }> =>
-  line._tag === "Emit";
+const isEmittedLine = FilteredLine.$is("Emit");
 
 const filterStderrStream = (
   handle: ChildProcessHandle,
@@ -499,25 +500,90 @@ const waitForStatus = (
     }),
   );
 
+// Electron does not merely fork into the wrapper's process group — it calls
+// setsid(), creating its OWN session and process group detached from ours
+// (diagnostic: the serving process has ppid==pgid, the setsid signature). So
+// killing the spawned child's group leaves the real server alive in a sibling
+// group, squatting the port. Confirmed via Oracle consult + live /proc diagnosis.
+//
+// Robust teardown: walk the descendant tree from our spawned child pid (by
+// ppid in /proc/<pid>/stat), collect the DISTINCT set of process groups across
+// all descendants, and signal each group (kill -SIG -- -pgid). This survives
+// arbitrary internal setsid/setpgid because it keys off ppid-descent, not group
+// membership.
+//
+// Implemented as a bash script (bash is allowlisted; /proc is covered by
+// --allow-read) so no broad --allow-run / Deno.kill grant is needed.
+//
+// CRITICAL: /proc/<pid>/stat field 2 (comm) is paren-wrapped and may contain
+// spaces and parens, so ppid/pgrp are parsed from AFTER the last ')'. A naive
+// whitespace split silently misses processes named like "(foo) bar".
+export const buildKillTreeScript = (): string =>
+  [
+    'root="$1"; sig="$2"',
+    '[ -z "$root" ] && exit 0',
+    // BFS the descendant set (inclusive of root) by ppid.
+    'pids=" $root "; frontier="$root"',
+    'while [ -n "$frontier" ]; do',
+    '  next=""',
+    "  for sp in /proc/[0-9]*/stat; do",
+    '    line=$(cat "$sp" 2>/dev/null) || continue',
+    // rest = everything after the last ')'; field 1 of rest is state, 2 is ppid.
+    "    rest=${line##*) }",
+    "    set -- $rest; ppid=$2",
+    "    pid=${sp#/proc/}; pid=${pid%/stat}",
+    '    case " $frontier " in *" $ppid "*) : ;; *) continue ;; esac',
+    '    case "$pids" in *" $pid "*) : ;; *) pids="$pids$pid "; next="$next $pid" ;; esac',
+    "  done",
+    '  frontier="$next"',
+    "done",
+    // Collect distinct pgids (field 3 of rest = pgrp).
+    'pgids=" "',
+    "for pid in $pids; do",
+    "  line=$(cat /proc/$pid/stat 2>/dev/null) || continue",
+    "  rest=${line##*) }; set -- $rest; pgid=$3",
+    '  [ -z "$pgid" ] && continue; [ "$pgid" = "0" ] && continue',
+    '  case "$pgids" in *" $pgid "*) : ;; *) pgids="$pgids$pgid " ;; esac',
+    "done",
+    'for g in $pgids; do kill -"$sig" -- "-$g" 2>/dev/null || true; done',
+  ].join("\n");
+
+const killProcessTree = (
+  spawner: ChildProcessSpawnerService,
+  pid: number | undefined,
+  signal: "TERM" | "KILL",
+): Effect.Effect<void> =>
+  pid === undefined ? Effect.void : spawner.exitCode(
+    ChildProcess.make(
+      "bash",
+      ["-c", buildKillTreeScript(), "bash", String(pid), signal],
+      {
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    ),
+  ).pipe(Effect.ignore);
+
 const terminateChild = (
+  spawner: ChildProcessSpawnerService,
   child: ChildProcessHandle,
 ): Effect.Effect<ProcessStatus, OrcaServeError> =>
   Effect.gen(function* () {
     emitOrca("info", "shutting down...");
-    const graceful = yield* child.kill({ killSignal: "SIGTERM" }).pipe(
-      Effect.ignore,
+    const graceful = yield* killProcessTree(spawner, child.pid, "TERM").pipe(
       Effect.andThen(waitForStatus(child)),
       Effect.timeoutOption(Duration.millis(FORCE_KILL_AFTER_MS)),
       Effect.catch(() => Effect.succeed(Option.none<ProcessStatus>())),
     );
     if (Option.isSome(graceful)) {
+      // Reap any stragglers in the tree that outlived the leader's exit.
+      yield* killProcessTree(spawner, child.pid, "KILL");
       emitOrca("ok", "stopped");
       return graceful.value;
     }
 
     emitOrca("warning", "force-killing after timeout");
-    const forced = yield* child.kill({ killSignal: "SIGKILL" }).pipe(
-      Effect.ignore,
+    const forced = yield* killProcessTree(spawner, child.pid, "KILL").pipe(
       Effect.andThen(waitForStatus(child)),
       Effect.orElseSucceed((): ProcessStatus => ({
         code: 137,
@@ -570,7 +636,7 @@ const superviseServe = (
     (acquired) =>
       Effect.gen(function* () {
         if (!settled) {
-          const status = yield* terminateChild(acquired);
+          const status = yield* terminateChild(spawner, acquired);
           onInterruptedStatus(status);
         }
       }).pipe(Effect.ignore),
@@ -688,6 +754,20 @@ if (import.meta.main) {
 // ============================================================================
 
 if (!import.meta.main) {
+  Deno.test("buildKillTreeScript parses ppid/pgrp from after the last ')'", () => {
+    const script = buildKillTreeScript();
+    // The load-bearing correctness property: comm (paren-wrapped, may contain
+    // spaces/parens) is stripped via ${line##*) } before reading ppid/pgrp.
+    assertEquals(script.includes("rest=${line##*) }"), true);
+    // BFS keys off ppid-descent (field 2 of rest), collects distinct pgids
+    // (field 3), and kills each negative group.
+    assertEquals(script.includes("ppid=$2"), true);
+    assertEquals(script.includes("pgid=$3"), true);
+    assertEquals(script.includes('kill -"$sig" -- "-$g"'), true);
+    // Never signal pgid 0 (would hit the caller's own session).
+    assertEquals(script.includes('[ "$pgid" = "0" ] && continue'), true);
+  });
+
   Deno.test("arg passthrough preserves pairing/json options after serve", () => {
     assertEquals(
       buildServeArgs(["--pairing-address", "devbox.coder", "--json"]),
@@ -721,21 +801,18 @@ if (!import.meta.main) {
       filterStderrLine("DevTools listening on ws://127.0.0.1")._tag,
       "Drop",
     );
-    assertEquals(filterStderrLine("server ready on 127.0.0.1"), {
-      _tag: "Emit",
-      level: "ok",
-      line: "server ready on 127.0.0.1",
-    });
-    assertEquals(filterStderrLine("FATAL bad state"), {
-      _tag: "Emit",
-      level: "error",
-      line: "FATAL bad state",
-    });
-    assertEquals(filterStderrLine("WARNING degraded"), {
-      _tag: "Emit",
-      level: "warning",
-      line: "WARNING degraded",
-    });
+    assertEquals(
+      filterStderrLine("server ready on 127.0.0.1"),
+      FilteredLine.Emit({ level: "ok", line: "server ready on 127.0.0.1" }),
+    );
+    assertEquals(
+      filterStderrLine("FATAL bad state"),
+      FilteredLine.Emit({ level: "error", line: "FATAL bad state" }),
+    );
+    assertEquals(
+      filterStderrLine("WARNING degraded"),
+      FilteredLine.Emit({ level: "warning", line: "WARNING degraded" }),
+    );
   });
 
   Deno.test("AppImage path resolution uses mise http-orca version cache", () => {
