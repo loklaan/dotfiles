@@ -111,7 +111,17 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
     miseToolName: "npm",
     command: ["completion"],
   },
-  { toolName: "opencode", kind: "path", command: ["completion"] },
+  {
+    // opencode is a mise-managed tool (its PATH entry is a mise shim → mise),
+    // so it must run via `mise exec` like the other mise tools. Spawning the
+    // bare shim through Effect's ChildProcessSpawner fails with PlatformError:
+    // Unknown on ChildProcess.spawn under the reconstructed PATH; mise exec is
+    // the reliable invocation. pnpm is also a shim but resolves; opencode does not.
+    toolName: "opencode",
+    kind: "mise",
+    miseToolName: "opencode",
+    command: ["completion"],
+  },
   { toolName: "otter", kind: "path", command: ["completion", "zsh"] },
   { toolName: "pnpm", kind: "path", command: ["completion", "zsh"] },
   {
@@ -496,7 +506,7 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     ["fzf", "mise", "fzf"],
     ["mise", "path", ""],
     ["npm", "mise", "npm"],
-    ["opencode", "path", ""],
+    ["opencode", "mise", "opencode"],
     ["otter", "path", ""],
     ["pnpm", "path", ""],
     ["rustup", "mise", "rustup"],
@@ -542,7 +552,7 @@ Deno.test("completion commands match bash command lines", () => {
   ]]);
   assertCommand("coder", ["coder", ["completion", "zsh"]]);
   assertCommand("mise", ["mise", ["completion", "zsh"]]);
-  assertCommand("opencode", ["opencode", ["completion"]]);
+  assertCommand("opencode", ["mise", ["exec", "--", "opencode", "completion"]]);
   assertCommand("pnpm", ["pnpm", ["completion", "zsh"]]);
 });
 
