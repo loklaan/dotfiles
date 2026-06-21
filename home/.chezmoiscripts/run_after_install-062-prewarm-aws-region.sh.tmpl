@@ -1,0 +1,60 @@
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-062-prewarm-aws-region.sh
+#/
+#/ Description:
+#/   Resolves the EC2 region from IMDS once at apply-time and caches it in
+#/   ~/.cache/dotfiles/prewarm.json, so interactive shells read a file instead
+#/   of forking two 1s-timeout curls to 169.254.169.254 on EVERY startup.
+#/
+#/   The region is STATIC per Coder workspace, so apply-time (once per box, or
+#/   per re-provision) is the natural cadence — no scheduler needed. env.zsh
+#/   reads .aws_region from the cache and keeps its ap-southeast-2 fallback for
+#/   the brief window before this runs.
+#/
+#/   Gated to Coder boxes ($CODER set): df-prewarm aws-region soft-fails to a
+#/   no-op off-IMDS, but skipping entirely avoids a pointless curl + timeout on
+#/   non-Coder Linux machines. macOS renders this script empty.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --help) usage; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+main() {
+  if [ -z "${CODER:-}" ]; then
+    info "▶ not a Coder box (\$CODER unset) — skipping aws-region prewarm"
+    return 0
+  fi
+
+  if ! command -v df-prewarm >/dev/null 2>&1; then
+    warning "╍ df-prewarm not on PATH — skipping aws-region prewarm"
+    return 0
+  fi
+
+  info "▶ prewarming AWS region from IMDS"
+  # df-prewarm soft-fails: on IMDS failure it leaves aws_region unset and
+  # env.zsh keeps its fallback. Never fail the apply over a region probe.
+  if df-prewarm aws-region; then
+    info "╍ aws-region prewarm complete"
+  else
+    warning "╍ aws-region prewarm returned non-zero (continuing)"
+  fi
+}
+
+main "$@"
+{{- end }}

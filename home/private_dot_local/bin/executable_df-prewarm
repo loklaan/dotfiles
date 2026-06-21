@@ -1,0 +1,365 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-lock --allow-run=gh,curl --allow-read --allow-write --allow-env --allow-sys=uid
+
+// df-prewarm — resolve slow-but-static shell-init values once, cache them, so
+// interactive shells read a file instead of forking a probe on every startup.
+//
+// This is the "scan + get" sibling of df-drift: same soft-failing Deno+Effect
+// engine (shared primitives live in ~/.local/lib/df-cache.ts), but a DIFFERENT
+// payload. df-drift answers "is X behind?" (version drift). df-prewarm answers
+// "what is X / is X alive?" (resolved values + liveness), which is not drift
+// and must NOT land in drift.json's tools[] (that would inflate the "N behind"
+// count df-setup and login.zsh derive from .tools.length).
+//
+// Two subcommands, split by PLATFORM and CADENCE — they never both apply to one
+// machine, so each owns its field of the merged cache:
+//
+//   df-prewarm aws-region   Coder/Linux only. Resolve the EC2 region from IMDS
+//                           once (it is static per workspace). Intended to run
+//                           at chezmoi apply-time, not on a schedule.
+//   df-prewarm gh-auth      macOS work machines only. Probe `gh auth status`
+//                           liveness (expires, so re-run periodically via the
+//                           existing daily launchd agent).
+//
+// CACHE (read-merge-write so a writer only touches its own field):
+//   ~/.cache/dotfiles/prewarm.json
+//   { "checked_at": RFC3339, "aws_region": "ap-southeast-2", "gh_auth_ok": true }
+//
+// CONSUMERS (cheap stat+read, no fork on the hot path):
+//   - env.zsh   reads .aws_region (Coder block), keeps the ap-southeast-2 fallback.
+//   - login.zsh reads .gh_auth_ok to decide the setup-incomplete reminder.
+//
+// Effect v4 beta import path verified against effect@4.0.0-beta.83.
+
+import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-beta.83";
+import type * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
+import type * as Process from "npm:effect@4.0.0-beta.83/unstable/process";
+
+import {
+  ensureDir,
+  fileExists,
+  hasCommand,
+  parseJson,
+  readTextFile,
+  rfc3339Now,
+  run,
+  writeTextFile,
+} from "../lib/df-cache.ts";
+
+// Requirement carried by the prewarm effects now that the shared primitives
+// run on the canonical Effect platform services. Satisfied once at the top by
+// NodeServices.layer (bundles FileSystem + ChildProcessSpawner + …), which is
+// imported DYNAMICALLY in import.meta.main so `deno test` stays permission-free
+// (@effect/platform-node transitively loads msgpackr, which reads process.env
+// at module load). Same pattern as df-drift.
+type PrewarmEnv =
+  | FileSystem.FileSystem
+  | Process.ChildProcessSpawner.ChildProcessSpawner;
+
+// ===========================================================================
+// Schema — the on-disk contract consumed by env.zsh / login.zsh.
+//
+// Every value field is optional: a machine only ever populates the field for
+// its platform (aws-region on Coder/Linux, gh-auth on work macOS), and the
+// read-merge-write below preserves any field this run did not touch.
+// ===========================================================================
+
+const PrewarmReport = Schema.Struct({
+  checked_at: Schema.String,
+  aws_region: Schema.optional(Schema.String),
+  gh_auth_ok: Schema.optional(Schema.Boolean),
+});
+type PrewarmReport = typeof PrewarmReport.Type;
+
+const decodeReport = Schema.decodeUnknownSync(PrewarmReport);
+const encodeReport = Schema.encodeSync(PrewarmReport);
+
+// ===========================================================================
+// Paths. Lazy (computed on first use) so importing under `deno test` never
+// touches Deno.env — keeps the offline suite runnable with zero permissions.
+// ===========================================================================
+
+const home = () => Deno.env.get("HOME") ?? "";
+const cacheDir = () => `${home()}/.cache/dotfiles`;
+const cacheFile = () => `${cacheDir()}/prewarm.json`;
+
+const IMDS_TOKEN_URL = "http://169.254.169.254/latest/api/token";
+const IMDS_REGION_URL =
+  "http://169.254.169.254/latest/meta-data/placement/region";
+
+// ===========================================================================
+// Cache read-merge-write
+// ===========================================================================
+// Load whatever is on disk (tolerant of a missing/garbage file), apply a
+// patch of just the fields this run owns, stamp checked_at, write back. This
+// keeps aws-region and gh-auth from clobbering each other even though in
+// practice they run on disjoint machines.
+
+const loadReport = (): Effect.Effect<
+  Partial<PrewarmReport>,
+  never,
+  PrewarmEnv
+> =>
+  Effect.gen(function* () {
+    const raw = parseJson(yield* readTextFile(cacheFile()));
+    if (raw === null || typeof raw !== "object") return {};
+    const r = raw as Record<string, unknown>;
+    const out: { aws_region?: string; gh_auth_ok?: boolean } = {};
+    if (typeof r.aws_region === "string") out.aws_region = r.aws_region;
+    if (typeof r.gh_auth_ok === "boolean") out.gh_auth_ok = r.gh_auth_ok;
+    return out;
+  }).pipe(Effect.orElseSucceed(() => ({})));
+
+const writeReport = (
+  patch: Partial<Omit<PrewarmReport, "checked_at">>,
+): Effect.Effect<void, never, PrewarmEnv> =>
+  Effect.gen(function* () {
+    const prev = yield* loadReport();
+    const merged: PrewarmReport = decodeReport({
+      ...prev,
+      ...patch,
+      checked_at: rfc3339Now(),
+    });
+    yield* ensureDir(cacheDir());
+    yield* writeTextFile(
+      cacheFile(),
+      JSON.stringify(encodeReport(merged), null, 2) + "\n",
+    );
+    yield* Effect.logInfo(`prewarm cache written to ${cacheFile()}`);
+  });
+
+// ===========================================================================
+// `df-prewarm aws-region` — resolve EC2 region from IMDSv2.
+// ===========================================================================
+// Mirrors env.zsh's two-step IMDSv2 dance (PUT a token, GET the region with
+// it) but runs ONCE at apply-time instead of every shell. On any failure we
+// leave the field unset; env.zsh keeps its ap-southeast-2 fallback for the
+// brief window before the cache is populated.
+
+const runAwsRegion = Effect.gen(function* () {
+  if (!(yield* hasCommand("curl"))) {
+    yield* Effect.logInfo("curl not found; skipping aws-region");
+    return;
+  }
+
+  const tokenRes = yield* run("curl", [
+    "-sf",
+    "-m",
+    "2",
+    "-X",
+    "PUT",
+    IMDS_TOKEN_URL,
+    "-H",
+    "X-aws-ec2-metadata-token-ttl-seconds: 60",
+  ]);
+  const token = tokenRes.ok ? tokenRes.stdout.trim() : "";
+
+  const regionArgs = ["-sf", "-m", "2"];
+  if (token !== "") {
+    regionArgs.push("-H", `X-aws-ec2-metadata-token: ${token}`);
+  }
+  regionArgs.push(IMDS_REGION_URL);
+  const regionRes = yield* run("curl", regionArgs);
+
+  const region = regionRes.ok ? regionRes.stdout.trim() : "";
+  if (region === "" || !isPlausibleRegion(region)) {
+    yield* Effect.logInfo(
+      "IMDS region unresolved; leaving aws_region unset (env.zsh falls back)",
+    );
+    return;
+  }
+
+  yield* writeReport({ aws_region: region });
+  yield* Effect.logInfo(`resolved aws_region=${region}`);
+});
+
+// Guard against IMDS returning an error body / HTML instead of a region. A
+// region is lowercase letters, digits and hyphens (e.g. ap-southeast-2).
+const isPlausibleRegion = (s: string): boolean => /^[a-z0-9-]{1,32}$/.test(s);
+
+// ===========================================================================
+// `df-prewarm gh-auth` — cache gh CLI auth liveness.
+// ===========================================================================
+// login.zsh's original predicate was:
+//   gh auth status 2>&1 | grep -q "Logged in.*keyring"
+// We preserve that EXACT semantics: logged in AND using the keyring credential
+// store (the short-lived-token credential agent). gh writes status to stderr,
+// hence checking combined output.
+
+const runGhAuth = Effect.gen(function* () {
+  if (!(yield* hasCommand("gh"))) {
+    // gh absent → not authed; record false so login.zsh shows the reminder.
+    yield* writeReport({ gh_auth_ok: false });
+    yield* Effect.logInfo("gh not found; gh_auth_ok=false");
+    return;
+  }
+
+  const res = yield* run("gh", ["auth", "status"]);
+  const combined = `${res.stdout}\n${res.stderr}`;
+  const ok = isLoggedInViaKeyring(combined);
+  yield* writeReport({ gh_auth_ok: ok });
+  yield* Effect.logInfo(`gh_auth_ok=${ok}`);
+});
+
+// Reproduces `grep -q "Logged in.*keyring"`: a line with "Logged in" followed
+// (same line) by "keyring".
+export const isLoggedInViaKeyring = (statusOutput: string): boolean => {
+  for (const line of statusOutput.split("\n")) {
+    if (/Logged in.*keyring/.test(line)) return true;
+  }
+  return false;
+};
+
+// ===========================================================================
+// CLI dispatch
+// ===========================================================================
+
+const USAGE = `Usage:
+  df-prewarm aws-region   Resolve EC2 region from IMDS into prewarm.json (Coder/Linux)
+  df-prewarm gh-auth      Cache gh auth liveness into prewarm.json (macOS work)
+  df-prewarm --help       Display this help message`;
+
+const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
+
+const main = (
+  argv: readonly string[],
+  servicesLayer: Layer.Layer<PrewarmEnv>,
+): Effect.Effect<number> => {
+  const [command] = argv;
+  if (command === "--help" || command === "-h" || command === undefined) {
+    console.error(USAGE);
+    return Effect.succeed(command === undefined ? 1 : 0);
+  }
+  if (command === "aws-region") {
+    return runAwsRegion.pipe(
+      Effect.provide(loggerLayer),
+      Effect.provide(servicesLayer),
+      Effect.as(0),
+      Effect.orElseSucceed(() => 1),
+    );
+  }
+  if (command === "gh-auth") {
+    return runGhAuth.pipe(
+      Effect.provide(loggerLayer),
+      Effect.provide(servicesLayer),
+      Effect.as(0),
+      Effect.orElseSucceed(() => 1),
+    );
+  }
+  console.error(`df-prewarm: unknown command: ${command}\n\n${USAGE}`);
+  return Effect.succeed(1);
+};
+
+if (import.meta.main) {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  // Dynamic import keeps `deno test` permission-free: @effect/platform-node
+  // transitively loads msgpackr, which reads process.env at module load. Only
+  // the live CLI path pays that cost; the offline suite never imports it.
+  (async () => {
+    const { NodeServices } = await import(
+      "npm:@effect/platform-node@4.0.0-beta.83"
+    );
+    const exit = await Effect.runPromiseExit(
+      main(Deno.args, NodeServices.layer),
+    );
+    if (exit._tag === "Success") {
+      Deno.exit(exit.value);
+    } else {
+      console.error(exit.cause);
+      Deno.exit(1);
+    }
+  })().catch((err) => {
+    console.error(err);
+    Deno.exit(1);
+  });
+}
+
+// ===========================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-prewarm
+// import.meta.main is false under `deno test`, so the CLI never fires.
+//
+// The risky surfaces are the two parsers that replace shell predicates: the
+// gh keyring-login matcher (was `grep "Logged in.*keyring"`) and the IMDS
+// region plausibility guard. Process/FS paths are integration concerns.
+// ===========================================================================
+
+if (!import.meta.main) {
+  Deno.test("isLoggedInViaKeyring matches the original grep predicate", () => {
+    const yes = [
+      "  ✓ Logged in to github.com account lochy (keyring)",
+      "Logged in to github.com using the keyring",
+    ];
+    for (const s of yes) {
+      if (!isLoggedInViaKeyring(s)) throw new Error(`expected match: ${s}`);
+    }
+  });
+
+  Deno.test("isLoggedInViaKeyring rejects non-keyring / logged-out", () => {
+    const no = [
+      "  ✗ Not logged in to github.com",
+      "  ✓ Logged in to github.com account lochy (oauth_token)",
+      "Logged in", // no keyring on the line
+      "keyring", // no "Logged in" on the line
+      "",
+    ];
+    for (const s of no) {
+      if (isLoggedInViaKeyring(s)) throw new Error(`expected no match: ${s}`);
+    }
+  });
+
+  Deno.test("isLoggedInViaKeyring needs both tokens on the SAME line", () => {
+    // "Logged in" on one line, "keyring" on another → no match (mirrors grep).
+    const split = "Logged in to github.com\nusing the keyring store";
+    if (isLoggedInViaKeyring(split)) {
+      throw new Error("must not match across lines");
+    }
+  });
+
+  Deno.test("isPlausibleRegion accepts regions, rejects junk", () => {
+    for (const r of ["ap-southeast-2", "us-east-1", "eu-west-3"]) {
+      if (!isPlausibleRegion(r)) throw new Error(`expected region: ${r}`);
+    }
+    for (
+      const j of [
+        "",
+        "<!DOCTYPE html>",
+        "error: unauthorized",
+        "AP-SOUTHEAST-2",
+        "a".repeat(33),
+      ]
+    ) {
+      if (isPlausibleRegion(j)) throw new Error(`expected junk reject: ${j}`);
+    }
+  });
+
+  Deno.test("PrewarmReport round-trips with optional fields", () => {
+    const full = decodeReport({
+      checked_at: "2026-06-21T11:00:00Z",
+      aws_region: "ap-southeast-2",
+      gh_auth_ok: true,
+    });
+    if (full.aws_region !== "ap-southeast-2") throw new Error("aws_region");
+    if (full.gh_auth_ok !== true) throw new Error("gh_auth_ok");
+
+    // Only one field present is valid (the disjoint-platform case).
+    const partial = decodeReport({
+      checked_at: "2026-06-21T11:00:00Z",
+      aws_region: "us-east-1",
+    });
+    if (partial.gh_auth_ok !== undefined) {
+      throw new Error("gh_auth_ok should be absent");
+    }
+    const enc = encodeReport(partial);
+    if ("gh_auth_ok" in enc) throw new Error("absent field must not encode");
+  });
+}

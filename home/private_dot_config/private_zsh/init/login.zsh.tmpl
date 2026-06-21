@@ -65,10 +65,19 @@ _incomplete_setup=true
 {{- end }}
 
 {{ if ne "" .emailWork -}}
-# Check for GitHub CLI auth (credential agent for short-lived tokens)
-if ! gh auth status 2>&1 | grep -q "Logged in.*keyring"; then
-  _incomplete_setup=true
+# Check GitHub CLI auth (credential agent for short-lived tokens).
+# df-prewarm caches the liveness boolean in prewarm.json daily; reading it here
+# avoids forking `gh auth status` (network/keyring) on every login shell. Only
+# an EXPLICIT false flags incomplete setup — a missing cache/field (e.g. first
+# login before the daily prewarm runs) is treated as "not yet known", never a
+# false reminder.
+_gh_prewarm="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/prewarm.json"
+if [[ -r "$_gh_prewarm" ]] && command -v jq >/dev/null 2>&1; then
+  if [[ "$(jq -r '.gh_auth_ok // "unknown"' "$_gh_prewarm" 2>/dev/null)" == "false" ]]; then
+    _incomplete_setup=true
+  fi
 fi
+unset _gh_prewarm
 {{- end }}
 
 if [[ "$_incomplete_setup" == "true" ]]; then
