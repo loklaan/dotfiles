@@ -103,7 +103,6 @@ _zplugins=(
   oh-my-zsh/plugins/deno/deno.plugin.zsh
   oh-my-zsh/plugins/yarn/yarn.plugin.zsh
   oh-my-zsh/plugins/docker/docker.plugin.zsh
-  oh-my-zsh/plugins/fzf/fzf.plugin.zsh
   clipboard.zsh
 )
 {{ if eq .chezmoi.os "darwin" -}}
@@ -111,6 +110,51 @@ _zplugins+=(oh-my-zsh/plugins/macos/macos.plugin.zsh)
 {{ end -}}
 for _p in $_zplugins; do _zsrc "$ZSH_CONFIG_DIR/plugins/$_p"; done
 unset _p _zplugins
+
+#|------------------------------------------------------------|#
+#| fzf shell integration (version-keyed eval cache)
+#|
+#|  Modern fzf (>= 0.48) emits ~677 lines of key-bindings + completion via
+#|  `fzf --zsh`. The omz fzf plugin runs `fzf --version` then `eval "$(fzf
+#|  --zsh)"` on every init — ~12ms of fork+generate+parse that never changes
+#|  between fzf upgrades. We cache the generated script in $ZSH_CACHE_DIR,
+#|  keyed on the fzf version (the only thing that invalidates the bindings),
+#|  and byte-compile it via _zsrc. The one unavoidable per-init cost is the
+#|  `fzf --version` exec used to derive the cache key.
+#|
+#|  Fallback: if fzf is absent, too old for `--zsh`, or version probing fails,
+#|  defer to the full omz fzf plugin, which handles older fzf and distro
+#|  packages (debian/fedora/macports/...) via its own setup-strategy chain.
+#|
+if (( ${+commands[fzf]} )); then
+  _fzf_ver=${${(s: :)${"$(fzf --version 2>/dev/null)"#fzf }}[1]}
+  autoload -Uz is-at-least
+  if [[ -n "$_fzf_ver" ]] && is-at-least 0.48.0 "$_fzf_ver"; then
+    # Drop stale caches from previous fzf versions, then (re)generate.
+    _fzf_cache="$ZSH_CACHE_DIR/fzf-init-${_fzf_ver}.zsh"
+    if [[ ! -r "$_fzf_cache" ]]; then
+      rm -f -- "$ZSH_CACHE_DIR"/fzf-init-*.zsh(N) "$ZSH_CACHE_DIR"/fzf-init-*.zsh.zwc(N)
+      fzf --zsh >| "$_fzf_cache" 2>/dev/null
+    fi
+    _zsrc "$_fzf_cache"
+    unset _fzf_cache
+  else
+    # Old/unknown fzf: let the omz plugin's strategy chain handle it.
+    _zsrc "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/fzf/fzf.plugin.zsh"
+  fi
+  unset _fzf_ver
+fi
+
+#| fzf default command: prefer fd > rg > ag (cheap $+commands checks).
+if [[ -z "$FZF_DEFAULT_COMMAND" ]]; then
+  if (( $+commands[fd] )); then
+    export FZF_DEFAULT_COMMAND='fd --type f --hidden --exclude .git'
+  elif (( $+commands[rg] )); then
+    export FZF_DEFAULT_COMMAND='rg --files --hidden --glob "!.git/*"'
+  elif (( $+commands[ag] )); then
+    export FZF_DEFAULT_COMMAND='ag -l --hidden -g "" --ignore .git'
+  fi
+fi
 
 #|------------------------------------------------------------|#
 #| Prompt Theme
