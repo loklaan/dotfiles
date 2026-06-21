@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-lock --allow-run=mise,git,brew,chezmoi,oh-my-openagent,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-lock --allow-run=mise,git,brew,chezmoi,oh-my-openagent,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
 // drift — version-drift detection for the dotfiles fleet (Deno + Effect v4 beta).
 //
@@ -37,6 +37,36 @@ import {
   HttpClient,
 } from "npm:effect@4.0.0-beta.83/unstable/http";
 import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.83";
+// NOTE: @effect/platform-node (NodeServices) is imported DYNAMICALLY in the
+// import.meta.main block below, never statically. It transitively loads
+// msgpackr, which reads process.env at module load and throws NotCapable under
+// `deno test` (zero-flag). Dynamic import keeps the offline suite hermetic —
+// same pattern as df-task-chezmoi-update and opencode-tokenizer-check.
+
+// Soft-failing scan→cache primitives, shared with df-prewarm. See
+// ~/.local/lib/df-cache.ts (chezmoi: home/private_dot_local/lib/df-cache.ts).
+import {
+  ensureDir,
+  fileAgeSeconds,
+  fileExists,
+  hasCommand,
+  parseJson,
+  readTextFile,
+  rfc3339Now,
+  run,
+  type RunResult as _RunResult,
+  touchFile,
+  writeTextFile,
+} from "../lib/df-cache.ts";
+import type * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
+import type * as Process from "npm:effect@4.0.0-beta.83/unstable/process";
+
+// Requirement carried by every checker now that the shared primitives run on
+// the canonical Effect platform services. Satisfied once at the top by
+// NodeServices.layer (bundles FileSystem + ChildProcessSpawner + …).
+type CheckerEnv =
+  | FileSystem.FileSystem
+  | Process.ChildProcessSpawner.ChildProcessSpawner;
 
 // ===========================================================================
 // Schema — the on-disk contract consumed by dotfiles-setup.
@@ -82,117 +112,11 @@ const DEBOUNCE_SECONDS = 86400; // 24h
 const isMacOS = () => Deno.build.os === "darwin";
 
 // ===========================================================================
-// Small process/fs helpers. All soft — they swallow their own failures so the
-// callers can stay total (every checker returns [] rather than throwing).
+// Small process/fs helpers now live in ~/.local/lib/df-cache.ts (imported
+// above) and are shared with df-prewarm. They are all SOFT — they swallow
+// their own failures so callers stay total (every checker returns [] rather
+// than throwing).
 // ===========================================================================
-
-interface RunResult {
-  readonly ok: boolean;
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-// Run a command, capturing stdout/stderr. Never rejects: a spawn failure
-// (binary missing, permission denied) is reported as ok:false, code:127.
-const run = (
-  cmd: string,
-  args: readonly string[],
-): Effect.Effect<RunResult> =>
-  Effect.tryPromise({
-    try: async () => {
-      const command = new Deno.Command(cmd, {
-        args: [...args],
-        stdout: "piped",
-        stderr: "piped",
-      });
-      const { code, stdout, stderr } = await command.output();
-      const dec = new TextDecoder();
-      return {
-        ok: code === 0,
-        code,
-        stdout: dec.decode(stdout),
-        stderr: dec.decode(stderr),
-      };
-    },
-    catch: () => undefined,
-  }).pipe(
-    Effect.orElseSucceed((): RunResult => ({
-      ok: false,
-      code: 127,
-      stdout: "",
-      stderr: "",
-    })),
-  );
-
-// Resolve a command on $PATH by stat-ing candidate paths. This needs only
-// --allow-read/--allow-env (no --allow-run on the probed binary) and never
-// executes anything, so it works for tools that lack a `--version` flag
-// (notify, oh-my-openagent) and for binaries outside the --allow-run allowlist.
-// Absolute/relative paths are stat-ed directly.
-const hasCommand = (cmd: string): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
-    if (cmd.includes("/")) return yield* fileExists(cmd);
-    const pathEnv = Deno.env.get("PATH") ?? "";
-    for (const dir of pathEnv.split(":")) {
-      if (dir === "") continue;
-      if (yield* fileExists(`${dir}/${cmd}`)) return true;
-    }
-    return false;
-  }).pipe(Effect.orElseSucceed(() => false));
-
-const fileExists = (path: string): Effect.Effect<boolean> =>
-  Effect.tryPromise({
-    try: async () => {
-      await Deno.stat(path);
-      return true;
-    },
-    catch: () => false,
-  }).pipe(Effect.orElseSucceed(() => false));
-
-const readTextFile = (path: string): Effect.Effect<string | null> =>
-  Effect.tryPromise({
-    try: () => Deno.readTextFile(path),
-    catch: () => null,
-  }).pipe(Effect.orElseSucceed(() => null));
-
-// Age in seconds of a file, via mtime. null when the file is missing/unstattable.
-const fileAgeSeconds = (path: string): Effect.Effect<number | null> =>
-  Effect.tryPromise({
-    try: async () => {
-      const info = await Deno.stat(path);
-      if (info.mtime === null) return null;
-      return Math.floor((Date.now() - info.mtime.getTime()) / 1000);
-    },
-    catch: () => null,
-  }).pipe(Effect.orElseSucceed(() => null));
-
-const ensureDir = (path: string): Effect.Effect<void> =>
-  Effect.tryPromise({
-    try: () => Deno.mkdir(path, { recursive: true }),
-    catch: () => undefined,
-  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
-
-const writeTextFile = (path: string, content: string): Effect.Effect<void> =>
-  Effect.tryPromise({
-    try: () => Deno.writeTextFile(path, content),
-    catch: () => undefined,
-  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
-
-const touchFile = (path: string): Effect.Effect<void> =>
-  writeTextFile(path, "");
-
-const parseJson = (text: string | null): unknown => {
-  if (text === null) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-};
-
-const rfc3339Now = (): string =>
-  new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
 // ===========================================================================
 // Checker: mise outdated
@@ -202,7 +126,7 @@ const rfc3339Now = (): string =>
 // expose a numeric distance). source = "mise:<name>".
 
 class MiseChecker extends Context.Service<MiseChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
 }>()("drift/MiseChecker") {
   static readonly layer = Layer.succeed(MiseChecker)(MiseChecker.of({
     tools: () =>
@@ -234,7 +158,7 @@ class MiseChecker extends Context.Service<MiseChecker, {
 // Counts commits behind origin/main. Single-element array when behind, else [].
 
 class DotfilesChecker extends Context.Service<DotfilesChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
 }>()("drift/DotfilesChecker") {
   static readonly layer = Layer.succeed(DotfilesChecker)(
     DotfilesChecker.of({
@@ -307,7 +231,9 @@ const CASKS: ReadonlyArray<readonly [token: string, appPath: string]> = [
   ["paseo", "/Applications/Paseo.app"],
 ];
 
-const bundleVersion = (app: string): Effect.Effect<string> =>
+const bundleVersion = (
+  app: string,
+): Effect.Effect<string, never, CheckerEnv> =>
   Effect.gen(function* () {
     if (!(yield* fileExists(app))) return "";
     const res = yield* run("/usr/libexec/PlistBuddy", [
@@ -319,7 +245,7 @@ const bundleVersion = (app: string): Effect.Effect<string> =>
   }).pipe(Effect.orElseSucceed(() => ""));
 
 class CaskChecker extends Context.Service<CaskChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
 }>()("drift/CaskChecker") {
   static readonly layer = Layer.succeed(CaskChecker)(CaskChecker.of({
     tools: () =>
@@ -478,7 +404,7 @@ const parseRoster = (
 };
 
 class OmoChecker extends Context.Service<OmoChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
 }>()("drift/OmoChecker") {
   static readonly layer = Layer.effect(
     OmoChecker,
@@ -618,7 +544,7 @@ class OmoChecker extends Context.Service<OmoChecker, {
 
 class OpencodeTokenizerChecker
   extends Context.Service<OpencodeTokenizerChecker, {
-    readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>>;
+    readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
   }>()("drift/OpencodeTokenizerChecker") {
   static readonly layer = Layer.succeed(OpencodeTokenizerChecker)(
     OpencodeTokenizerChecker.of({
@@ -782,7 +708,10 @@ const USAGE = `Usage:
 
 const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
 
-const main = (argv: readonly string[]): Effect.Effect<number> => {
+const main = (
+  argv: readonly string[],
+  servicesLayer: Layer.Layer<CheckerEnv>,
+): Effect.Effect<number> => {
   const [command, ...rest] = argv;
   if (command === "--help" || command === "-h" || command === undefined) {
     console.error(USAGE);
@@ -791,6 +720,7 @@ const main = (argv: readonly string[]): Effect.Effect<number> => {
   if (command === "check") {
     return runCheck.pipe(
       Effect.provide(loggerLayer),
+      Effect.provide(servicesLayer),
       Effect.as(0),
       Effect.orElseSucceed(() => 1),
     );
@@ -799,6 +729,7 @@ const main = (argv: readonly string[]): Effect.Effect<number> => {
     const force = rest.includes("--force");
     return runNotify(force).pipe(
       Effect.provide(loggerLayer),
+      Effect.provide(servicesLayer),
       Effect.as(0),
       Effect.orElseSucceed(() => 1),
     );
@@ -823,14 +754,23 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  Effect.runPromiseExit(main(Deno.args)).then((exit) => {
+  // Dynamic import keeps `deno test` permission-free: @effect/platform-node
+  // transitively loads msgpackr, which reads process.env at module load. Only
+  // the live CLI path pays that cost; the offline suite never imports it.
+  (async () => {
+    const { NodeServices } = await import(
+      "npm:@effect/platform-node@4.0.0-beta.83"
+    );
+    const exit = await Effect.runPromiseExit(
+      main(Deno.args, NodeServices.layer),
+    );
     if (exit._tag === "Success") {
       Deno.exit(exit.value);
     } else {
       console.error(exit.cause);
       Deno.exit(1);
     }
-  }).catch((err) => {
+  })().catch((err) => {
     console.error(err);
     Deno.exit(1);
   });
