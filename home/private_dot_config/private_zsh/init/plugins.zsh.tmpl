@@ -3,59 +3,140 @@
 #|-----------------------------------------------------------------------------|
 #|                                                                             |
 #| Purpose:                                                                    |
-#|   Manages zsh plugin loading and configuration through zplug, including     |
-#|   syntax highlighting, autosuggestions, completions, prompt themes, and     |
-#|   various tool-specific plugins.                                            |
+#|   Loads zsh plugins (syntax highlighting, autosuggestions, completions,     |
+#|   prompt theme, tool-specific plugins) by sourcing them directly.           |
+#|                                                                             |
+#| Why no plugin manager:                                                      |
+#|   Plugins are vendored + SHA-pinned as chezmoi externals (see               |
+#|   .chezmoiexternals/zsh.toml.tmpl), so chezmoi already does the             |
+#|   clone+pin work a manager exists to do. zplug's runtime layer added        |
+#|   ~12s of pure framework overhead (308 flock calls, per-plugin git          |
+#|   shellouts) to source files already on disk. The zsh_unplugged pattern     |
+#|   (https://github.com/mattmc3/zsh_unplugged) reduces this to a plain        |
+#|   source loop. Each file is byte-compiled to .zwc on first use (and         |
+#|   whenever an external update bumps the source mtime), so subsequent        |
+#|   inits source compiled bytecode rather than re-parsing text.               |
 #|                                                                             |
 #| Responsibilities:                                                           |
-#|   - Initialize zplug plugin manager                                         |
-#|   - Load syntax highlighting and autosuggestions                            |
-#|   - Configure prompt themes (pure/starship)                                 |
+#|   - Source vendored plugins in the correct order                            |
+#|   - Configure the prompt theme (starship)                                   |
 #|   - Load tool-specific completions (AWS, GCloud, etc.)                      |
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
 
 #|------------------------------------------------------------|#
-#| Plugin Management: zplug
+#| oh-my-zsh runtime expectations
 #|
-#|  Files for plugins are managed as chezmoi externals.
+#|  Several omz plugins (npm, docker, deno) write completion caches to
+#|  $ZSH_CACHE_DIR and fall back to $ZSH/cache. zplug's omz integration set
+#|  these implicitly; sourcing the files directly means we must set them
+#|  ourselves, or those plugins write to a bogus path (e.g. /completions/_docker)
+#|  and silently never cache. ZSH points at the vendored omz tree.
 #|
-CONFIG_PURE=${CONFIG_PURE:-"og"} # Default to sindressorhus's original prompt
-export ZPLUG_HOME="$ZSH_CONFIG_DIR/zplug" # Added via .chezmoiexternals/zsh.toml
-source $ZPLUG_HOME/init.zsh
-# Per-session log files avoid flock contention when multiple shells start at once
-_zplug_load_log[success]="${TMPDIR:-/tmp}/zplug-load-success-$$.log"
-_zplug_load_log[failure]="${TMPDIR:-/tmp}/zplug-load-failure-$$.log"
-zplug "$ZSH_CONFIG_DIR/plugins/ghostty", from:local, use:"*.plugin.zsh"
-# TODO: Migrate off of zplug (it's abandoned) - see https://github.com/mattmc3/zsh_unplugged
-zplug "$ZSH_CONFIG_DIR/plugins/zsh-autosuggestions", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/zsh-completions", from:local, use:"*.plugin.zsh"
-# TODO: Migrate history to https://atuin.sh/
-zplug "$ZSH_CONFIG_DIR/plugins/zsh-syntax-highlighting", from:local, use:"*.plugin.zsh", defer:2 # Should be loaded 2nd last
-zplug "$ZSH_CONFIG_DIR/plugins/zsh-history-substring-search", from:local, use:"*.plugin.zsh", defer:3 # Should be loaded last
-bindkey '^[[A' history-substring-search-up
-bindkey '^[[B' history-substring-search-down
-zplug "$ZSH_CONFIG_DIR/plugins/zsh-async", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/pure", from:local, use:"pure.zsh", as:theme, if:"[[ $CONFIG_PURE == og ]]"
-zplug "$ZSH_CONFIG_DIR/plugins/starship", from:local, use:"*.plugin.zsh", as:theme, if:"[[ $CONFIG_PURE == starship ]]"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/z", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/gpg-agent", from:local, use:"*.plugin.zsh", lazy:true
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/git", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/emoji", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/npm", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/deno", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/yarn", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/docker", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/fzf", from:local, use:"*.plugin.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/plugins/macos", from:local, use:"*.plugin.zsh", if:"[[ $OSTYPE == *darwin* ]]"
-zplug "$ZSH_CONFIG_DIR/plugins", from:local, use:"clipboard.zsh"
-zplug "$ZSH_CONFIG_DIR/plugins/oh-my-zsh/lib", from:local, use:"completion.zsh"
-zplug load
+CONFIG_PURE=${CONFIG_PURE:-"starship"} # Prompt theme: starship (pure removed)
+export ZSH="$ZSH_CONFIG_DIR/plugins/oh-my-zsh"
+export ZSH_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-zsh"
+mkdir -p "$ZSH_CACHE_DIR/completions"
 
 #|------------------------------------------------------------|#
-#| Completions Loader
+#| Plugin loader (zsh_unplugged pattern + lazy zcompile)
 #|
-autoload -Uz compinit; compinit # The completion.zh plugin handles bashcompinit.
+#|  _zsrc sources a plugin file, byte-compiling it to .zwc first whenever the
+#|  compiled form is missing or older than the source. Compilation is
+#|  self-healing: a chezmoi external update bumps the source mtime, so the
+#|  next shell recompiles automatically — no separate apply hook needed.
+#|
+_zsrc() {
+  local f=$1
+  [[ -r $f ]] || return
+  if [[ ! $f.zwc -nt $f ]]; then
+    zcompile -R -- $f.zwc $f 2>/dev/null
+  fi
+  source $f
+}
+
+#|------------------------------------------------------------|#
+#| Completions: compinit FIRST
+#|
+#|  omz plugins call `compdef` at source time and assume compinit has already
+#|  run (oh-my-zsh.sh runs compinit before its plugin loop for exactly this
+#|  reason). So compinit must precede the plugin loop, not follow it, or every
+#|  omz plugin spews `compdef: command not found`. omz lib/completion.zsh runs
+#|  bashcompinit, which also needs compinit first.
+#|
+#|  Rebuilding + security-auditing the dump on every init is wasteful: rebuild
+#|  at most once per day, otherwise reuse the cached dump via -C (skips
+#|  compaudit). The dump is byte-compiled for faster subsequent loads.
+#|
+autoload -Uz compinit bashcompinit
+_zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+if [[ -n "$_zcompdump"(#qN.mh+24) ]]; then
+  # Dump is older than 24h (or missing): full rebuild with security audit.
+  compinit -d "$_zcompdump"
+else
+  # Dump is fresh: skip compaudit for a faster init.
+  compinit -C -d "$_zcompdump"
+fi
+bashcompinit
+# Byte-compile the dump when the compiled form is stale.
+if [[ ! "$_zcompdump.zwc" -nt "$_zcompdump" ]]; then
+  zcompile -R -- "$_zcompdump.zwc" "$_zcompdump" 2>/dev/null
+fi
+unset _zcompdump
+
+#|------------------------------------------------------------|#
+#| Core plugins
+#|
+#|  Sourced after compinit so `compdef` is available. omz lib/completion.zsh
+#|  is loaded first (it sets completion zstyles the omz plugins rely on).
+#|
+_zplugins=(
+  ghostty/ghostty-shell-integration.plugin.zsh
+  zsh-autosuggestions/zsh-autosuggestions.plugin.zsh
+  zsh-completions/zsh-completions.plugin.zsh
+  oh-my-zsh/lib/completion.zsh
+  oh-my-zsh/plugins/z/z.plugin.zsh
+  oh-my-zsh/plugins/gpg-agent/gpg-agent.plugin.zsh
+  oh-my-zsh/plugins/git/git.plugin.zsh
+  oh-my-zsh/plugins/emoji/emoji.plugin.zsh
+  oh-my-zsh/plugins/npm/npm.plugin.zsh
+  oh-my-zsh/plugins/deno/deno.plugin.zsh
+  oh-my-zsh/plugins/yarn/yarn.plugin.zsh
+  oh-my-zsh/plugins/docker/docker.plugin.zsh
+  oh-my-zsh/plugins/fzf/fzf.plugin.zsh
+  clipboard.zsh
+)
+{{ if eq .chezmoi.os "darwin" -}}
+_zplugins+=(oh-my-zsh/plugins/macos/macos.plugin.zsh)
+{{ end -}}
+for _p in $_zplugins; do _zsrc "$ZSH_CONFIG_DIR/plugins/$_p"; done
+unset _p _zplugins
+
+#|------------------------------------------------------------|#
+#| Prompt Theme
+#|
+#|  Only starship is vendored. CONFIG_PURE=og previously selected the pure
+#|  theme; pure + zsh-async were dropped (see .chezmoiexternals/zsh.toml.tmpl).
+#|
+if [[ $CONFIG_PURE == starship ]]; then
+  _zsrc "$ZSH_CONFIG_DIR/plugins/starship/starship.plugin.zsh"
+fi
+
+#|------------------------------------------------------------|#
+#| Deferred-last plugins
+#|
+#|  syntax-highlighting must load 2nd-last and history-substring-search last
+#|  (they hook the ZLE line editor and expect a fully-populated environment).
+#|  This preserves zplug's defer:2 / defer:3 ordering.
+#|
+_zsrc "$ZSH_CONFIG_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.plugin.zsh"
+_zsrc "$ZSH_CONFIG_DIR/plugins/zsh-history-substring-search/zsh-history-substring-search.plugin.zsh"
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+
+#|------------------------------------------------------------|#
+#| Tool-specific completions
+#|
 # AWS
 if [ -f '{{ .brewprefix }}/bin/aws_completer' ] && which aws >/dev/null; then
   complete -C '{{ .brewprefix }}/bin/aws_completer' aws;
