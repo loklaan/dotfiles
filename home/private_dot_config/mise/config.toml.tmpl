@@ -88,9 +88,17 @@ run = "df-task-chezmoi-update"
 description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
 run = "df-drift check"
 
+[tasks."prewarm:gh-auth"]
+description = "Cache gh auth liveness into ~/.cache/dotfiles/prewarm.json"
+run = "df-prewarm gh-auth"
+
 [tasks."drift:notify"]
 description = "Surface drift via macOS notification (debounced 24h)"
-depends = ["drift:check"]
+# Rides the daily launchd fire: refreshing gh-auth liveness here means the
+# login.zsh setup reminder reads a fresh boolean from prewarm.json instead of
+# forking `gh auth status` per login. Distinct cache + concern from drift, so
+# it is a task-dependency edge, not a code merge.
+depends = ["drift:check", "prewarm:gh-auth"]
 run = "df-drift notify"
 
 {{ end -}}
