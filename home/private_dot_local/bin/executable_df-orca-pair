@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-lock --allow-run=coder,ssh,orca,scutil --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-lock --allow-run=coder,ssh,orca,scutil --allow-read --allow-env --allow-ffi
 
 // df-orca-pair — discover running Coder dev boxes that host our headless Orca
 // server (the `df-orca-server` Pitchfork daemon) and register each as a "Remote
