@@ -1,4 +1,5 @@
 .local/share/fonts/**/.uuid
+*.zwc
 {{ if eq "" .emailWork }}
 .local/share/opencode/auth.json
 {{ end }}
