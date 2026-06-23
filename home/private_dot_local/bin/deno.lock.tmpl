@@ -1,0 +1,5 @@
+{{/* Runtime projection of the repo-root deno.lock (deploys to
+     ~/.local/bin/deno.lock). Pins the transitive dependency tree so the runtime
+     tools resolve the same versions the workspace locked. Single control plane:
+     verbatim copy of the canonical repo-root deno.lock. */ -}}
+{{ include "../deno.lock" -}}

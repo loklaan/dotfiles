@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-lock --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com --allow-ffi
 
 // notify (Deno + Effect v4 beta). Two faces of one tool:
 //

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-lock --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-ffi
 
 // df-lint-runtimes — enforce the runtime-tier manifest contract.
 //
