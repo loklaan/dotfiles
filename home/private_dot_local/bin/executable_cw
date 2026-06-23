@@ -1693,6 +1693,13 @@ if (import.meta.main) {
             ref(): void;
           };
           if (typeof stdin !== "string" && child.stdin !== null) {
+            // A broken stdin pipe (remote shell closes its end before we
+            // finish writing) surfaces as an async 'error' event on the
+            // stream, separately from the write() callback. An unhandled
+            // 'error' on a Node stream throws as an uncaught exception
+            // ("write EPIPE"), so attach a swallowing listener — the write
+            // callback below already resolves EPIPE/closed-stream cleanly.
+            child.stdin.on("error", () => {});
             yield* (stdin as Stream.Stream<Uint8Array>).pipe(
               Stream.runForEach((chunk) =>
                 Effect.promise(() =>
