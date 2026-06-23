@@ -1,4 +1,5 @@
 {
+  "lock": "./deno.lock",
   "compilerOptions": {
     "lib": ["deno.window", "deno.ns", "deno.unstable", "dom", "ESNext"],
     "noFallthroughCasesInSwitch": true,

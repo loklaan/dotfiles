@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-lock --allow-run=chezmoi --allow-read --allow-write --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi --allow-read --allow-write --allow-env --allow-ffi
 
 // omo-profile (Deno + Effect v4 beta). Switches the oh-my-openagent (omo) cost
 // profile without a full `chezmoi apply`. Profiles trade model quality for token
