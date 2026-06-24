@@ -489,6 +489,76 @@ const coderIsRunning = (name: string) =>
   );
 
 // ============================================================================
+// Coder Connect dead-datapath diagnostic
+// ============================================================================
+
+// When the system-wide Coder Connect VPN is running, `coder ssh --stdio` dials
+// the workspace's tailnet address (fd60::/8 ULA) directly through the VPN
+// datapath instead of opening a per-session agent tunnel. If that VPN datapath
+// is wedged (e.g. CoderVPN toggled on but not actually active, path-MTU
+// breakage), the dial hangs and times out with an opaque
+// "dial tcp [fd60:...]:22: operation timed out" — even though the workspace
+// agent itself is perfectly reachable over the classic P2P path.
+//
+// We detect Coder Connect being active by the presence of an fd60::/8 address
+// on a tunnel interface — no subprocess needed (Deno.networkInterfaces). The
+// classic path's health is probed separately with `coder ping`. The pure
+// decision below combines the two signals so it can be unit-tested offline.
+
+const coderConnectActive = Effect.sync(() => {
+  try {
+    return Deno.networkInterfaces().some((iface) =>
+      iface.family === "IPv6" &&
+      iface.name.startsWith("utun") &&
+      iface.address.toLowerCase().startsWith("fd60:")
+    );
+  } catch {
+    return false;
+  }
+});
+
+// Classic agent reachability — a single short ping over the P2P datapath. This
+// path is independent of the Coder Connect VPN datapath, so a success here
+// while ssh failed is the smoking gun for a dead Connect tunnel.
+const coderAgentReachable = (ws: string) =>
+  runChild("coder", ["ping", "-n", "1", "-t", "5s", ws], {
+    stdout: "null",
+    stderr: "null",
+  }).pipe(Effect.map((res) => res.code === 0));
+
+// Pure decision: print the dead-datapath hint only when we can CONFIRM the
+// split — Connect is active, ssh failed, and the classic agent path is healthy.
+const shouldHintDeadDatapath = (
+  sshExitCode: number,
+  connectActive: boolean,
+  agentReachable: boolean,
+): boolean => sshExitCode !== 0 && connectActive && agentReachable;
+
+const deadDatapathHint = (ws: string): string =>
+  `\nCoder Connect is on, but its VPN datapath to '${ws}' is not carrying traffic\n` +
+  `(the agent is reachable over the classic path, but ssh-over-Connect timed out).\n` +
+  `Fix: toggle Coder Connect off and back on in Coder Desktop (or quit and reopen\n` +
+  `the app). If it persists, restart Coder Desktop entirely, then retry 'cw ${ws}'.`;
+
+// Runs after an ssh-mode connection exits non-zero. Cheap on the happy path
+// (never called). On failure, probes both datapaths and surfaces the actionable
+// hint only when the dead-Connect signature is confirmed.
+const diagnoseConnectFailure = (
+  ws: string,
+  sshExitCode: number,
+  enabled: boolean,
+) =>
+  Effect.gen(function* () {
+    if (!enabled || sshExitCode === 0) return;
+    const connectActive = yield* coderConnectActive;
+    if (!connectActive) return;
+    const agentReachable = yield* coderAgentReachable(ws);
+    if (shouldHintDeadDatapath(sshExitCode, connectActive, agentReachable)) {
+      yield* logWarning(deadDatapathHint(ws));
+    }
+  });
+
+// ============================================================================
 // connect — HAND-OVER terminal attach
 // ============================================================================
 
@@ -496,12 +566,14 @@ interface ConnectEnv {
   readonly log: boolean;
   readonly preflight: boolean;
   readonly checkCommands: boolean;
+  readonly diagnostics: boolean;
 }
 
 const defaultConnectEnv: ConnectEnv = {
   log: true,
   preflight: true,
   checkCommands: true,
+  diagnostics: true,
 };
 
 const gpgSshOptionsFromPreflightOutput = (
@@ -692,6 +764,7 @@ const connectCommand = (
           stdout: "inherit",
           stderr: "inherit",
         });
+        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
         return res.code;
       }
       case "vscode": {
@@ -727,6 +800,7 @@ const connectCommand = (
           stdout: "inherit",
           stderr: "inherit",
         });
+        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
         return res.code;
       }
       default: {
@@ -1932,6 +2006,7 @@ if (!import.meta.main) {
         log: false,
         preflight: false,
         checkCommands: false,
+        diagnostics: false,
       }).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
     );
     assertEq(code, 23);
@@ -1940,6 +2015,25 @@ if (!import.meta.main) {
     assertEq(ssh.options?.stdin, "inherit");
     assertEq(ssh.options?.stdout, "inherit");
     assertEq(ssh.options?.stderr, "inherit");
+  });
+
+  Deno.test("dead-datapath hint fires only when split confirmed", () => {
+    // ssh failed + Connect active + agent reachable over classic path
+    // = the confirmed dead-Connect-datapath signature.
+    assertEq(shouldHintDeadDatapath(255, true, true), true);
+    // ssh succeeded — nothing to diagnose.
+    assertEq(shouldHintDeadDatapath(0, true, true), false);
+    // Connect not active — the failure is some other ssh problem.
+    assertEq(shouldHintDeadDatapath(255, false, true), false);
+    // Agent unreachable — workspace genuinely down, not a Connect split.
+    assertEq(shouldHintDeadDatapath(255, true, false), false);
+  });
+
+  Deno.test("dead-datapath hint names the workspace and the fix", () => {
+    const hint = deadDatapathHint("for-tasks-1");
+    assertEq(hint.includes("for-tasks-1"), true);
+    assertEq(hint.includes("Coder Connect"), true);
+    assertEq(hint.includes("toggle"), true);
   });
 
   Deno.test("coder list schema rejects missing build status", () => {
