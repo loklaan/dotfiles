@@ -63,7 +63,7 @@ tcs_get_opencode_cache() {
 # package.json is a record of what's installed, and if our bridge updates
 # node_modules/ but not package.json, opencode's embedded bun re-resolves on
 # next launch using the stale manifest pin and may downgrade or fail. Saving
-# the new version into the manifest keeps everything coherent.
+# the resolved version into the manifest keeps everything coherent.
 #
 # Self-heals registry-pruned pins: if package.json contains a pin that no
 # longer resolves on the registry, npm aborts before doing anything. This

@@ -1,8 +1,8 @@
 {{- if eq .chezmoi.os "linux" -}}
 #!/usr/bin/env bash
 # Runs every chezmoi apply on Linux. Manages the df-orca-server Pitchfork daemon
-# lifecycle. Install is handled by mise (http: backend → AppImage); this
-# script no longer touches apt or downloads anything.
+# lifecycle. Install is handled by mise (http: backend → AppImage); this script
+# only manages the daemon, it does not touch apt or download anything.
 set -euo pipefail
 
 IFS=$'\n\t'
