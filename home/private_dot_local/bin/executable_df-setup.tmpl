@@ -3,9 +3,8 @@
 // deno-fmt-ignore-file
 // df-setup — dotfiles health-check doctor (Deno + Effect v4 beta).
 //
-// This is a strict behavioral port of the previous bash implementation. Keep
-// output/prose/exit-code semantics in lockstep: `chezmoi-preflight.sh` depends
-// on `--probe-bws` returning 0=ok, 1=missing, 2=invalid.
+// `--probe-bws` returns 0=ok, 1=missing, 2=invalid; `chezmoi-preflight.sh`
+// depends on these exit codes, so keep them and the output/prose stable.
 
 import { Config, Effect, Schema } from "npm:effect@4.0.0-beta.83";
 

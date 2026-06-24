@@ -125,13 +125,12 @@ _chezmoi_preflight_tools() {
 #   1 = token missing (not configured on this machine — benign)
 #   2 = token present but rejected by BWS server (expired / revoked)
 #
-# Templates now read secrets via bws-get-or-empty, which soft-fails to
-# empty on any error — so an invalid token no longer crashes apply, it
-# just silently produces empty secrets. That silent degradation is worse
-# than a visible warning, so surface state 2 here with a pointer to
-# df-setup. We do NOT abort: apply with empty secrets is a valid
-# state (e.g. fresh machine, or user intentionally operating without
-# the secret store).
+# Templates read secrets via bws-get-or-empty, which soft-fails to empty on
+# any error — so an invalid token produces empty secrets rather than crashing
+# apply. That silent degradation is worse than a visible warning, so surface
+# state 2 here with a pointer to df-setup. We do NOT abort: apply with empty
+# secrets is a valid state (e.g. fresh machine, or user intentionally
+# operating without the secret store).
 _chezmoi_preflight_bws_token() {
   local setup_bin="${HOME}/.local/bin/df-setup"
 
