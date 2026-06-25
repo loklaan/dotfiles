@@ -49,6 +49,8 @@
 {{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
 {{-   $bedrockOpus := "global.anthropic.claude-opus-4-8" -}}
 {{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}
+{{- /* Sonnet 4-6 degrades badly past 300k tokens — cap context there. */ -}}
+{{-   $sonnetLimit := dict "limit" (dict "context" 300000 "output" 64000) -}}
 {{-   $config = $config | setValueAtPath "share" "disabled" -}}
 {{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
 {{-   $config = mergeOverwrite $config (dict
@@ -56,7 +58,8 @@
           "amazon-bedrock" (dict
             "models" (dict
               $bedrockOpus                                       $opusLimit
-              "global.anthropic.claude-opus-4-7"                 $opusLimit)
+              "global.anthropic.claude-opus-4-7"                 $opusLimit
+              "global.anthropic.claude-sonnet-4-6"               $sonnetLimit)
             "whitelist" (list
               $bedrockOpus
               "global.anthropic.claude-opus-4-7"
