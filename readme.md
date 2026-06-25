@@ -100,8 +100,8 @@ home/
 ├── dev/                        # Code projects
 ├── private_dot_config/
 │   ├── private_zsh/            # Modular zsh configuration
-│   │   ├── init/               # Startup modules (env, login, options, etc.)
-│   │   └── lib/                # Utility libraries (ai, ssh, tracing, etc.)
+│   │   ├── init/               # Startup modules (env, login, options, plugins, prompt)
+│   │   └── plugins/            # Vendored plugin configs (starship, ghostty, clipboard)
 │   └── ...                     # Other tool configs
 └── private_dot_local/bin/      # Custom utilities
 ```
