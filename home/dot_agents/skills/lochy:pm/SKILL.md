@@ -51,4 +51,4 @@ Detect and persist overlaps, tensions, and dependency risks that emerge during t
 
 ### Workflow
 
-See [references/self-interview-workflow.md](references/self-interview-workflow.md) for the five-phase process, principles, tool usage patterns, and an example interaction flow.
+See [references/self-interview-workflow.md](references/self-interview-workflow.md) for the five-stage process, principles, tool usage patterns, and an example interaction flow.
