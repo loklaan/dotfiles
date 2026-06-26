@@ -129,13 +129,18 @@ const parseArgs = (argv: readonly string[]): ParseResult => {
   return { kind: "run", probeOnly };
 };
 
-const run = (cmd: string, args: readonly string[]): Effect.Effect<RunResult> =>
+const run = (
+  cmd: string,
+  args: readonly string[],
+  options: Partial<{ env: Record<string, string> }> = {},
+): Effect.Effect<RunResult> =>
   Effect.tryPromise({
     try: async () => {
       const command = new Deno.Command(cmd, {
         args: [...args],
         stdout: "piped",
         stderr: "piped",
+        ...(options.env ? { env: options.env } : {}),
       });
       const { code, stdout, stderr } = await command.output();
       const dec = new TextDecoder();
@@ -221,13 +226,11 @@ const checkBwsToken: Effect.Effect<ProbeResult> = Effect.gen(function* () {
     return { state: "missing", exitCode: 1 } as const;
   }
 
-  const probe = yield* run("bws", [
-    "secret",
-    "get",
-    BWS_PROBE_SECRET_ID,
-    "--access-token",
-    token,
-  ]);
+  // Pass the token via BWS_ACCESS_TOKEN env (never argv) so it cannot leak
+  // through `ps`/procfs to other local users (CWE-214).
+  const probe = yield* run("bws", ["secret", "get", BWS_PROBE_SECRET_ID], {
+    env: { ...Deno.env.toObject(), BWS_ACCESS_TOKEN: token },
+  });
 
   if (probe.ok) return { state: "ok", exitCode: 0 } as const;
 
@@ -520,8 +523,8 @@ const printInstructions = (
         print("white", ["dim"], "       • bws binary missing / broken install");
         printPlain();
         print("white", ["dim"], "     Reproduce manually to see the raw error:");
-        printPlain(`       bws secret get ${BWS_PROBE_SECRET_ID} \\`);
-        printPlain(`         --access-token "\$(cat ${tokenPath})"`);
+        printPlain(`       BWS_ACCESS_TOKEN="\$(cat ${tokenPath})" \\`);
+        printPlain(`         bws secret get ${BWS_PROBE_SECRET_ID}`);
         printPlain();
         step += 1;
         break;

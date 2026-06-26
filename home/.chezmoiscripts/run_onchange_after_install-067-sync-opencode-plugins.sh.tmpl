@@ -4,6 +4,17 @@
 {{- if eq "" $llmproxyLocal -}}
 {{-   $llmproxyVersion = output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
 {{- end -}}
+{{- /* Semver validation (finding #4): reject non-empty versions that don't match strict semver.
+     regexMatch is an unanchored search — the ^...$ anchors are the security boundary.
+     A malformed non-empty version (e.g. "1.0.0$(id)") aborts the render loudly.
+     An empty version soft-degrades: the sync line is skipped rather than emitting "pkg@". */ -}}
+{{- $semverRe := `^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$` -}}
+{{- if and (ne "" $omoVersion) (not (regexMatch $semverRe $omoVersion)) -}}
+{{-   fail (printf "omo version %q is not valid semver — aborting render to prevent shell injection" $omoVersion) -}}
+{{- end -}}
+{{- if and (ne "" $llmproxyVersion) (not (regexMatch $semverRe $llmproxyVersion)) -}}
+{{-   fail (printf "llmproxy version %q is not valid semver — aborting render to prevent shell injection" $llmproxyVersion) -}}
+{{- end -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -40,9 +51,13 @@ tcs_require_command opencode || exit 0
 
 cache_dir=$(tcs_get_opencode_cache) || exit 0
 
+{{- if ne "" $omoVersion }}
 tcs_npm_sync "$cache_dir" "oh-my-openagent@{{ $omoVersion }}"
+{{- end }}
 {{- if eq "" $llmproxyLocal }}
+{{- if ne "" $llmproxyVersion }}
 tcs_npm_sync "$cache_dir" "@canva/opencode-plugin-llmproxy@{{ $llmproxyVersion }}"
+{{- end }}
 {{- else }}
 # llmproxy plugin is loaded from local dist path, no npm sync needed: {{ $llmproxyLocal }}
 {{- end }}

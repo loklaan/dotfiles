@@ -125,9 +125,11 @@ _chezmoi_preflight_tools() {
 #   1 = token missing (not configured on this machine — benign)
 #   2 = token present but rejected by BWS server (expired / revoked)
 #
-# Templates read secrets via bws-get-or-empty, which soft-fails to empty on
-# any error — so an invalid token produces empty secrets rather than crashing
-# apply. That silent degradation is worse than a visible warning, so surface
+# Templates read secrets via bws-get-or-empty (handed the token-file PATH, not
+# the token value, so the secret never reaches any process argv), which
+# soft-fails to empty on any error — so an invalid token produces empty secrets
+# rather than crashing apply. That silent degradation is worse than a visible
+# warning, so surface
 # state 2 here with a pointer to df-setup. We do NOT abort: apply with empty
 # secrets is a valid state (e.g. fresh machine, or user intentionally
 # operating without the secret store).

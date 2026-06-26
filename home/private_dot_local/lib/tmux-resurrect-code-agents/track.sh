@@ -19,8 +19,12 @@ set -euo pipefail
 agent="${1:-}"
 [[ -n "$agent" ]] || exit 0
 
-STATE_DIR="${TMPDIR:-/tmp}/tmux-code-agent-sessions"
-mkdir -p -m 0700 "$STATE_DIR"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=state-dir.sh
+source "$DIR/state-dir.sh"
+# exit 0 (not a failure code) on guard refusal: a SessionStart hook must never
+# abort the agent it tracks, and must never fall back to an unsafe state dir.
+STATE_DIR="$(tcsa_state_dir)" || exit 0
 
 input=$(cat)
 session_id=$(jq -r '.session_id // empty' <<< "$input")

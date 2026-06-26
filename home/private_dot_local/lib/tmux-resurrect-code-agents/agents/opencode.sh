@@ -12,10 +12,10 @@
 #   Prints JSON entry on success, returns 1 if no session found.
 detect_opencode() {
     local pane_id="$1" cwd="$2"
-    local state_file="$STATE_DIR/$pane_id"
+    local state_file="${STATE_DIR:-}/$pane_id"
 
     # Primary: hook-tracked state from OpenCode plugin
-    if [[ -f "$state_file" ]]; then
+    if [[ -n "${STATE_DIR:-}" && -f "$state_file" ]]; then
         local agent
         agent=$(jq -r '.agent // empty' "$state_file" 2>/dev/null) || true
         if [[ "$agent" == "opencode" ]]; then

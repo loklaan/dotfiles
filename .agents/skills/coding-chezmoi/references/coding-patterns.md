@@ -120,15 +120,25 @@ For files/modules of significance and complexity. Space before and after the hea
 
 ## Bitwarden Secrets Guard
 
-All templates that consume secrets use this guard pattern. When the token file is missing, templates silently skip secret resolution so `chezmoi apply` succeeds without BWS configured.
+All templates that consume secrets use this guard pattern: the token's *value*
+is read only to gate the call, then the token-file PATH (never the value) is
+handed to the `bws-get-or-empty` wrapper, which fetches via `BWS_ACCESS_TOKEN`
+so the secret never lands on any process argv. When the token file is missing,
+templates silently skip secret resolution so `chezmoi apply` succeeds without
+BWS configured.
 
 ```go
 {{- $bwsToken := "" -}}
-{{- if stat .bwsTokenPath -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
 {{-   $bwsToken = include .bwsTokenPath | trim -}}
 {{- end -}}
-{{- if ne "" $bwsToken }}
-{{-   $value := (bitwardenSecrets .bwsIdSomeSecret $bwsToken).value -}}
+{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{- $value := "" -}}
+{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-   $value = output $bwsGet .bwsIdSomeSecret .bwsTokenPath | trim -}}
+{{- end -}}
+{{- if ne "" $value }}
+...use $value...
 {{- end }}
 ```
 

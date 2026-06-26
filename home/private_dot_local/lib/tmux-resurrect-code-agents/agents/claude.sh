@@ -12,8 +12,9 @@
 #   Prints JSON entry on success, returns 1 if no session found.
 detect_claude() {
     local pane_id="$1" cwd="$2"
-    local state_file="$STATE_DIR/$pane_id"
+    local state_file="${STATE_DIR:-}/$pane_id"
 
+    [[ -n "${STATE_DIR:-}" ]] || return 1
     [[ -f "$state_file" ]] || return 1
 
     # Read state file (JSON with agent field from track.sh)
@@ -50,7 +51,43 @@ restore_cmd_claude() {
 
     local cmd="command claude"
     [[ -n "$model" ]] && cmd="$cmd --model $(posix_quote "$model")"
-    [[ -n "$flags" ]] && cmd="$cmd $flags"
+
+    # SECURITY: `flags` is attacker-influencable — it originates from a ps-scan
+    # written to a per-pane state file, and the command this builds is later
+    # sourced from a drop file. Concatenating it raw is shell-command
+    # injection. Tokenize it, allow-list the flag NAME, and posix_quote any
+    # value. Unknown names are warned-and-skipped (never silently dropped, and
+    # the --permission-mode value is never enumerated) so a future permission
+    # mode keeps restoring while metacharacters can never reach the shell.
+    if [[ -n "$flags" ]]; then
+        local -a _toks=()
+        read -ra _toks <<< "$flags" || true
+        local _i=0 _n=${#_toks[@]} _t
+        while (( _i < _n )); do
+            _t="${_toks[_i]}"
+            case "$_t" in
+                --dangerously-skip-permissions)
+                    cmd="$cmd --dangerously-skip-permissions"
+                    ;;
+                --permission-mode=*)
+                    cmd="$cmd --permission-mode=$(posix_quote "${_t#*=}")"
+                    ;;
+                --permission-mode)
+                    if (( _i + 1 < _n )); then
+                        _i=$(( _i + 1 ))
+                        cmd="$cmd --permission-mode $(posix_quote "${_toks[_i]}")"
+                    else
+                        printf 'restore_cmd_claude: --permission-mode given without a value; skipping\n' >&2
+                    fi
+                    ;;
+                *)
+                    printf 'restore_cmd_claude: ignoring unrecognised restore flag %s\n' "$_t" >&2
+                    ;;
+            esac
+            _i=$(( _i + 1 ))
+        done
+    fi
+
     cmd="$cmd --resume $(posix_quote "$session_id")"
 
     printf '%s' "$cmd"
