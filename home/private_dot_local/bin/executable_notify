@@ -648,7 +648,7 @@ if (import.meta.main) {
 // tests exercise the Pushbullet HTTP client and are gated on a token, so the
 // default run needs no secret and no network:
 //
-//   PUSHBULLET_ACCESS_TOKEN="$(bws-get-or-empty <uuid> "$(cat ~/.config/chezmoi/secrets/bws-access-token.txt)")" \
+//   PUSHBULLET_ACCESS_TOKEN="$(bws-get-or-empty <uuid> ~/.config/chezmoi/secrets/bws-access-token.txt)" \
 //     deno test --allow-net=api.pushbullet.com --allow-env home/private_dot_local/bin/executable_notify
 //
 // Two paths can only be checked manually:

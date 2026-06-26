@@ -8,5 +8,8 @@
 
 [[ -z "${TMUX_PANE:-}" ]] && exit 0
 
-STATE_DIR="${TMPDIR:-/tmp}/tmux-code-agent-sessions"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=state-dir.sh
+source "$DIR/state-dir.sh"
+STATE_DIR="$(tcsa_state_dir)" || exit 0
 rm -f "$STATE_DIR/$TMUX_PANE"

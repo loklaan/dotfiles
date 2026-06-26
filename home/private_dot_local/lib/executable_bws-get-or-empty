@@ -2,13 +2,24 @@
 #
 # bws-get-or-empty — fetch a Bitwarden Secrets value, or empty on any error.
 #
-# Usage: bws-get-or-empty <secret-id> <access-token>
+# Usage: bws-get-or-empty <secret-id> <token-file-path>
 #
 # Contract:
+#   - Arg 1: the Bitwarden secret UUID to fetch.
+#   - Arg 2: the PATH to the file holding the BWS access token (NOT the token
+#     value). The wrapper reads the token from this file and hands it to `bws`
+#     via the BWS_ACCESS_TOKEN env var, so the secret never lands on any
+#     process argv.
 #   - On success: prints the .value field of the secret to stdout, exit 0.
-#   - On ANY failure (missing args, missing bws/jq, revoked token, no project
-#     access to the secret, network error, malformed JSON): prints nothing,
-#     exit 0.
+#   - On ANY failure (missing args, unreadable/empty token file, missing
+#     bws/jq, revoked token, no project access to the secret, network error,
+#     malformed JSON): prints nothing, exit 0.
+#
+# Why a file path, not the token value: passing the token as a positional
+# argument exposed it on the argv of both this wrapper and the `bws` child,
+# where any local process can read it via `ps -ax` or /proc/<pid>/cmdline
+# (CWE-214, exposure of sensitive information through process arguments).
+# Taking a path and using BWS_ACCESS_TOKEN keeps the secret off argv entirely.
 #
 # The always-exit-0 contract is load-bearing: this is called from chezmoi
 # templates via `output`, which aborts template execution on non-zero exit.
@@ -29,9 +40,20 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
 fi
 
 SECRET_ID="$1"
-ACCESS_TOKEN="${2:-}"
+TOKEN_FILE="${2:-}"
 
-if [ -z "$SECRET_ID" ] || [ -z "$ACCESS_TOKEN" ]; then
+if [ -z "$SECRET_ID" ] || [ -z "$TOKEN_FILE" ]; then
+  exit 0
+fi
+
+# Read the token from the file (never from argv). Command substitution strips
+# the trailing newline; the explicit strip also drops any stray spaces/CR so a
+# token file with odd whitespace still authenticates — a BWS access token never
+# legitimately contains whitespace. Matches df-setup's trimAllWhitespace.
+ACCESS_TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null)"
+ACCESS_TOKEN="${ACCESS_TOKEN//[$' \t\r\n']/}"
+
+if [ -z "$ACCESS_TOKEN" ]; then
   exit 0
 fi
 
@@ -39,7 +61,7 @@ if ! command -v bws >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-OUTPUT=$(bws secret get "$SECRET_ID" --access-token "$ACCESS_TOKEN" 2>/dev/null) || exit 0
+OUTPUT=$(BWS_ACCESS_TOKEN="$ACCESS_TOKEN" bws secret get "$SECRET_ID" 2>/dev/null) || exit 0
 
 printf '%s' "$OUTPUT" | jq -r '.value // ""' 2>/dev/null || true
 

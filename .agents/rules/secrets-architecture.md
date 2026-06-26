@@ -41,7 +41,7 @@ All templates that consume secrets use this pattern:
 {{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
 {{- $someKey := "" -}}
 {{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
-{{-   $someKey = output $bwsGet .bwsIdSomeSecret $bwsToken | trim -}}
+{{-   $someKey = output $bwsGet .bwsIdSomeSecret .bwsTokenPath | trim -}}
 {{- end -}}
 {{- if ne "" $someKey }}
 ...use $someKey...
@@ -52,11 +52,16 @@ Key properties:
 
 - `lookPath "bws"` — skip on machines without `bws` installed.
 - `stat .bwsTokenPath` — skip when the token file is missing.
+- `ne "" $bwsToken` — the token's *value* is read only to gate whether we
+  bother calling the wrapper; it is NEVER passed as an argument.
 - `stat $bwsGet` — skip on fresh machines before first apply installs the
   wrapper.
-- `output $bwsGet ...` — hands off to the wrapper, which ALWAYS exits 0.
-  Chezmoi's `output` function aborts the template on a non-zero exit, so
-  the wrapper's "always exit 0" contract is load-bearing.
+- `output $bwsGet .bwsIdSomeSecret .bwsTokenPath` — hands the secret ID and the
+  token-file PATH (never the token value) to the wrapper, which reads the token
+  from that file and passes it to `bws` via `BWS_ACCESS_TOKEN`, keeping the
+  secret off every process argv. The wrapper ALWAYS exits 0; chezmoi's `output`
+  function aborts the template on a non-zero exit, so that "always exit 0"
+  contract is load-bearing.
 - `trim` — BWS values occasionally ship with trailing whitespace; strip it.
 - `if ne "" $someKey` — downstream conditional renders whatever needs the
   secret only when the secret is actually available.
@@ -67,13 +72,17 @@ Key properties:
 
 Contract:
 - Stdin: ignored.
-- Args: `<secret-id> <access-token>`.
+- Args: `<secret-id> <token-file-path>` — arg 2 is the PATH to the token
+  file, NOT the token value. The wrapper reads the token from the file and
+  passes it to `bws` via the `BWS_ACCESS_TOKEN` env var, so the secret never
+  appears on any process argv (avoids disclosure via `ps` / procfs — CWE-214).
 - Stdout: the `.value` field on success; empty on any failure.
 - Exit: always 0.
 
-Failure modes that produce empty output: missing args, missing `bws` or
-`jq` binaries, any `bws secret get` error (revoked token, unknown secret,
-no project access, network failure, server 5xx), malformed JSON response.
+Failure modes that produce empty output: missing args, unreadable or empty
+token file, missing `bws` or `jq` binaries, any `bws secret get` error
+(revoked token, unknown secret, no project access, network failure, server
+5xx), malformed JSON response.
 
 ## Preflight Hook
 

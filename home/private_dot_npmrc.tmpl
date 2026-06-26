@@ -14,7 +14,7 @@ init-license=MIT
 {{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
 {{- $npmAuthToken := "" -}}
 {{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
-{{-   $npmAuthToken = output $bwsGet .bwsIdNpmAuthToken $bwsToken | trim -}}
+{{-   $npmAuthToken = output $bwsGet .bwsIdNpmAuthToken .bwsTokenPath | trim -}}
 {{- end -}}
 {{- if ne "" $npmAuthToken }}
 //registry.npmjs.org/:_authToken={{ $npmAuthToken }}

@@ -16,10 +16,10 @@
        re-inited) degrade gracefully instead of aborting apply on a missing key. */ -}}
 {{- $pushbulletSecretId := dig "bwsIdPushbulletAccessToken" "" . -}}
 {{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
-{{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey $bwsToken | trim -}}
-{{-   $exaKey = output $bwsGet .bwsIdExaApiKey $bwsToken | trim -}}
+{{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey .bwsTokenPath | trim -}}
+{{-   $exaKey = output $bwsGet .bwsIdExaApiKey .bwsTokenPath | trim -}}
 {{-   if ne "" $pushbulletSecretId -}}
-{{-     $pushbulletToken = output $bwsGet $pushbulletSecretId $bwsToken | trim -}}
+{{-     $pushbulletToken = output $bwsGet $pushbulletSecretId .bwsTokenPath | trim -}}
 {{-   end -}}
 {{- end -}}
 

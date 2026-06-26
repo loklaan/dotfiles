@@ -113,6 +113,10 @@ image_dotfiles_id=-1
 image_withpackages_id=-1
 container_withbase_id=-1
 container_withdotfiles_id=-1
+# Scoped env-files keep secret values off the docker argv. base scope (both
+# secrets) must stay limited to the first container; gh carries GITHUB_TOKEN only.
+envfile_base=""
+envfile_gh=""
 
 cleanup() {
 #  if [ "$image_base_id" != -1 ]; then
@@ -143,6 +147,8 @@ cleanup() {
     rm -f Dockerfile
     _print "Clean: Deleted \"Dockerfile\"" >&2
   fi
+
+  rm -f "$envfile_base" "$envfile_gh"
 
   _print "Log: $LOG_FILE" >&2
 }
@@ -177,6 +183,13 @@ main() {
   info "Testing end-to-end installation!"
   parse_args "$@"
 
+  envfile_base=$(mktemp)
+  envfile_gh=$(mktemp)
+  chmod 600 "$envfile_base" "$envfile_gh"
+  printf '%s=%s\n' "GITHUB_TOKEN" "$GITHUB_TOKEN" > "$envfile_base"
+  printf '%s=%s\n' "CONFIG_BWS_ACCESS_TOKEN" "$CONFIG_BWS_ACCESS_TOKEN" >> "$envfile_base"
+  printf '%s=%s\n' "GITHUB_TOKEN" "$GITHUB_TOKEN" > "$envfile_gh"
+
   info "Building Docker image..."
   cat <<EOF > Dockerfile
 FROM codercom/enterprise-base:ubuntu-20251006
@@ -204,9 +217,8 @@ EOF
   container_withbase_id=$(timestamp=$(date +%s); echo "dotfiles-container-base-$timestamp")
   docker run \
     -it --name "$container_withbase_id" \
-    -e "GITHUB_TOKEN=$GITHUB_TOKEN" \
+    --env-file "$envfile_base" \
     -e "TERM=xterm-256color" \
-    -e "CONFIG_BWS_ACCESS_TOKEN=$CONFIG_BWS_ACCESS_TOKEN" \
     dotfiles-test
   info "  ✔ Dotfiles install.sh run successfully."
 
@@ -218,7 +230,7 @@ EOF
   container_withdotfiles_id=$(timestamp=$(date +%s); echo "dotfiles-container-withdotfiles-$timestamp")
   docker run \
     -it --name "$container_withdotfiles_id" \
-    -e "GITHUB_TOKEN=$GITHUB_TOKEN" \
+    --env-file "$envfile_gh" \
     "$image_dotfiles_id" \
     zsh -c ".local/bin/install-my-packages"
 
@@ -244,7 +256,7 @@ EOF
     "shellcheck"
   )
   for tool in "${tools_to_check[@]}"; do
-    if docker run -e "GITHUB_TOKEN=$GITHUB_TOKEN" -it --rm "$image_withpackages_id" bash -c "command -v $tool &> /dev/null"; then
+    if docker run --env-file "$envfile_gh" -it --rm "$image_withpackages_id" bash -c "command -v $tool &> /dev/null"; then
       info "  ✔ $tool is installed."
     else
       error "  ❌ $tool is NOT installed."
@@ -253,7 +265,7 @@ EOF
   done
 
   info "Running chezmoi verify..."
-  docker run -e "GITHUB_TOKEN=$GITHUB_TOKEN" -it --rm "$image_withpackages_id" bash -c "chezmoi verify"
+  docker run --env-file "$envfile_gh" -it --rm "$image_withpackages_id" bash -c "chezmoi verify"
   info "  ✔ Verified all dotfiles."
 
   info "End-to-end installation test completed successfully!"

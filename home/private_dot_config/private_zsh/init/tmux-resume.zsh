@@ -15,9 +15,46 @@
 # original check-then-source TOCTOU against restore.sh's `find -delete` sweep.
 _tmux_resume_claim() {
     [[ -n "$TMUX_PANE" ]] || return 0
-    local resume_file="${TMPDIR:-/tmp}/tmux-resume-${TMUX_PANE#%}.zsh"
+    # Mirror state-dir.sh's tcsa_state_dir_path() inline — we must NOT source
+    # that file into interactive zsh startup. ${XDG_STATE_HOME:-$HOME/.local/state}
+    # with one trailing slash stripped, then /tmux-code-agents: byte-for-byte
+    # parity with the bash and TypeScript resolvers. NOT the old shared /tmp path
+    # (finding #1: a world-shared dir let any local user pre-plant the drop file).
+    local base="${XDG_STATE_HOME:-$HOME/.local/state}"
+    base="${base%/}"
+    local resume_file="${base}/tmux-code-agents/resume-${TMUX_PANE#%}.zsh"
     local resume_src="${resume_file}.claim.$$"
+    # Atomic claim (single source of truth for the boot/poke double-trigger):
+    # whoever renames the shared path first wins; the loser's mv no-ops.
     mv -f "$resume_file" "$resume_src" 2>/dev/null || return 0
+    # Pre-source guards on the CLAIMED file (finding #1), in a load-bearing
+    # order: refuse a symlink FIRST so the later regular-file and ownership
+    # checks operate on a path already proven not to be a symlink (stat's
+    # symlink-following differs across platforms; testing -L first makes it
+    # moot). Warn and bail before sourcing on any failure — never source a
+    # file that fails a check.
+    if [[ -L "$resume_src" ]]; then
+        printf 'tmux-resume: refusing %s: it is a symlink, not sourcing\n' "$resume_src" >&2
+        rm -f "$resume_src"
+        return 0
+    fi
+    if [[ ! -f "$resume_src" ]]; then
+        printf 'tmux-resume: refusing %s: not a regular file, not sourcing\n' "$resume_src" >&2
+        rm -f "$resume_src"
+        return 0
+    fi
+    # Ownership: stat the claimed file's owner uid (BSD `-f` / GNU `-c`, with a
+    # fallback so it works on both) and require it to equal the current uid. An
+    # empty result (stat failed or the file vanished) fails the test and is
+    # refused — safe by default.
+    local owner_uid
+    owner_uid="$(stat -f '%u' "$resume_src" 2>/dev/null || stat -c '%u' "$resume_src" 2>/dev/null)"
+    if [[ "$owner_uid" != "$(id -u)" ]]; then
+        printf 'tmux-resume: refusing %s: not owned by current uid, not sourcing\n' "$resume_src" >&2
+        rm -f "$resume_src"
+        return 0
+    fi
+    # shellcheck disable=SC1090  # drop file path is runtime-computed by design
     source "$resume_src"
     rm -f "$resume_src"
 }

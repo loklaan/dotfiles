@@ -9,7 +9,7 @@
 #|                                                                            |
 #| Rather than racing zsh startup with tmux send-keys (which collides with    |
 #| the Zsh Line Editor, completion widgets, and partial .zshrc loading),     |
-#| this writes a per-pane drop file to $TMPDIR/tmux-resume-<pane>.zsh and    |
+#| this writes a per-pane drop file in the per-uid agent-state dir and       |
 #| lets the shell source it from .zshrc once initialisation is complete.    |
 #| The shell decides when it's ready; we don't guess.                       |
 #|----------------------------------------------------------------------------|
@@ -20,18 +20,23 @@ RESURRECT_DIR="${HOME}/.tmux/resurrect"
 INPUT="$RESURRECT_DIR/code-agent-sessions.json"
 LEGACY_INPUT="$RESURRECT_DIR/claude-sessions.json"
 
-DROP_DIR="${TMPDIR:-/tmp}"
-DROP_PREFIX="tmux-resume-"
+DROP_PREFIX="resume-"
 STALE_MINUTES=60
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=state-dir.sh
+source "$DIR/state-dir.sh"
 # shellcheck source=agents/claude.sh
 source "$DIR/agents/claude.sh"
 # shellcheck source=agents/codex.sh
 source "$DIR/agents/codex.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
+
+# Drop files now live in the per-uid guarded dir, not world-shared ${TMPDIR:-/tmp}
+# (finding #1). exit 0 on guard refusal: never fall back to an unsafe location.
+DROP_DIR="$(tcsa_state_dir)" || exit 0
 
 posix_quote() {
     printf "'"

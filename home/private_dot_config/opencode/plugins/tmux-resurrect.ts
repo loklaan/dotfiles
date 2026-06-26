@@ -1,4 +1,10 @@
-import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 
@@ -34,20 +40,85 @@ import type { Plugin } from "@opencode-ai/plugin";
 //|                                                                           |
 //| Runs on the interactive hot path before the user's message is dispatched, |
 //| so input lag must be near zero:                                           |
-//|   - First message of a session: single writeFileSync (~0.5ms on APFS).   |
+//|   - First message of a session: lstat symlink-guard + writeFileSync.     |
 //|   - Subsequent messages: string compare, early return (~1µs).             |
 //|                                                                           |
 //| No runtime npm dependencies. Only node:fs and node:path (native).        |
 //|---------------------------------------------------------------------------|
 
-const STATE_DIR = join(process.env.TMPDIR || "/tmp", "tmux-code-agent-sessions");
+// Mirrors the shared bash/zsh resolver (state-dir.sh: tcsa_state_dir_path):
+// ${XDG_STATE_HOME:-$HOME/.local/state} with one trailing slash stripped, then
+// "/tmux-code-agents" — string-concatenated (not path.join) so all three
+// runtimes produce byte-identical output. Kept in lock-step by the task-2
+// cross-runtime parity test. NOT the old world-shared /tmp path (finding #3).
+function resolveStateDir(env: Record<string, string | undefined>): string {
+  const xdg = env.XDG_STATE_HOME;
+  const raw = xdg && xdg.length > 0 ? xdg : `${env.HOME ?? ""}/.local/state`;
+  const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  return `${base}/tmux-code-agents`;
+}
+
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+// Mirrors state-dir.sh's tcsa_state_dir guard. The symlink test MUST precede
+// the ownership test: an ownership check follows symlinks, so an attacker-owned
+// symlink pointing at a directory the current user owns would pass it. Returns
+// false (the caller then skips all writes) instead of throwing on the init path.
+function ensureGuardedStateDir(dir: string): boolean {
+  if (isSymlink(dir)) {
+    console.error(`tmux-resurrect: refusing state dir ${dir}: it is a symlink`);
+    return false;
+  }
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    console.error(`tmux-resurrect: cannot create state dir ${dir}: ${String(err)}`);
+    return false;
+  }
+  let info: ReturnType<typeof lstatSync>;
+  try {
+    info = lstatSync(dir);
+  } catch (err) {
+    console.error(`tmux-resurrect: cannot stat state dir ${dir}: ${String(err)}`);
+    return false;
+  }
+  if (info.isSymbolicLink()) {
+    console.error(`tmux-resurrect: refusing state dir ${dir}: it is a symlink`);
+    return false;
+  }
+  if (!info.isDirectory()) {
+    console.error(`tmux-resurrect: refusing state dir ${dir}: not a directory`);
+    return false;
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (uid !== undefined && info.uid !== uid) {
+    console.error(
+      `tmux-resurrect: refusing state dir ${dir}: not owned by uid ${uid}`,
+    );
+    return false;
+  }
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    // best-effort mode repair; ownership is already verified above
+  }
+  return true;
+}
+
+const STATE_DIR = resolveStateDir(process.env);
 const TMUX_PANE = process.env.TMUX_PANE;
 
 export const TmuxResurrect: Plugin = async () => {
   if (!TMUX_PANE) return {};
 
   // One-time setup at plugin init (outside the hot path).
-  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  const stateDirOk = ensureGuardedStateDir(STATE_DIR);
   const stateFile = join(STATE_DIR, TMUX_PANE);
 
   // Cache last-written sessionID to short-circuit redundant writes.
@@ -57,9 +128,17 @@ export const TmuxResurrect: Plugin = async () => {
 
   return {
     "chat.message": async (input) => {
+      if (!stateDirOk) return;
       const sessionID = input.sessionID;
       if (!sessionID || sessionID === lastSessionID) return;
       lastSessionID = sessionID;
+      // lstat (not stat) so a symlinked state file is refused, never followed.
+      if (isSymlink(stateFile)) {
+        console.error(
+          `tmux-resurrect: refusing to write ${stateFile}: it is a symlink`,
+        );
+        return;
+      }
       const state = JSON.stringify({ agent: "opencode", session_id: sessionID });
       writeFileSync(stateFile, state + "\n", { mode: 0o600 });
     },
