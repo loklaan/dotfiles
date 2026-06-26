@@ -42,6 +42,43 @@ parse_args() {
   done
 }
 
+run_apt_quiet() {
+  local output rc started elapsed lock_wait_seconds delay
+  lock_wait_seconds=${APT_LOCK_WAIT_SECONDS:-180}
+  delay=${APT_LOCK_RETRY_SECONDS:-10}
+  started=$(date +%s)
+
+  while true; do
+    output=$(mktemp)
+    "$@" > "$output" 2>&1 && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+        cat "$output" >> "$BASH_LOGGING_FILE"
+      fi
+      rm -f "$output"
+      return 0
+    fi
+
+    if ! grep -Eq 'Could not get lock|Unable to lock|held by process' "$output"; then
+      cat "$output" >&2
+      rm -f "$output"
+      return "$rc"
+    fi
+
+    elapsed=$(($(date +%s) - started))
+    if [ "$elapsed" -ge "$lock_wait_seconds" ]; then
+      error "╍ apt stayed locked for ${elapsed}s; another package manager process is still running"
+      cat "$output" >&2
+      rm -f "$output"
+      return "$rc"
+    fi
+
+    warning "╍ apt is locked by another process; waiting up to ${lock_wait_seconds}s total, retrying in ${delay}s"
+    rm -f "$output"
+    sleep "$delay"
+  done
+}
+
 main() {
   parse_args "$@"
   info "▶ Installing non-critical packages"
@@ -274,8 +311,8 @@ EOF
         warning "╍ neither libfuse2 nor libfuse2t64 found in apt cache; AppImage execution may fail"
       fi
       info "╍ Running 'apt-get install \$packages \$apt_extra'"
-      run_quiet $Sudo apt-get update
-      run_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"
+      run_apt_quiet $Sudo apt-get update
+      run_apt_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"
     ;;
     *)
       fatal "The \"$linux_distro\" is not supported yet. Full release details from /etc/os-release:\n$(cat /etc/os-release)\n\nAdd '$linux_distro' and it's package manager to this script."
