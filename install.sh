@@ -153,8 +153,12 @@ main() {
     warning "╍ No BWS token found - secrets will not be available"
   fi
 
+  # --data must stay true (default): with --data=false, promptStringOnce can't
+  # read the persisted [data] cache, so every prompt falls through and the first
+  # unseeded one aborts init on the no-TTY boot path. --no-tty fails fast in the
+  # boot log instead of hanging on /dev/tty.
   chezmoi init "$config_github_user" \
-    --data=false \
+    --no-tty \
     --promptString="Email for you=${config_email}" \
     --promptString="Email for Canva=${config_email_work}" \
     --promptString="Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
@@ -167,9 +171,14 @@ main() {
     --exclude=scripts \
     --branch main
 
-  # Pull latest changes and run lifecycle scripts (packages, completions, fonts, etc.)
-  info "▶ Pulling latest dotfiles and running lifecycle scripts"
-  chezmoi git pull
+  # Sync the source dir to origin/main authoritatively, then run lifecycle
+  # scripts (packages, completions, fonts, etc.). A plain pull is fast-forward
+  # only and silently aborts if the clone diverges, leaving a stale source the
+  # next apply re-runs forever; fetch + reset --hard self-heals on every boot.
+  info "▶ Syncing dotfiles source to origin/main and running lifecycle scripts"
+  chezmoi_src="$(chezmoi source-path 2>/dev/null || echo "${HOME}/.local/share/chezmoi")"
+  run_quiet git -C "$chezmoi_src" fetch origin main
+  run_quiet git -C "$chezmoi_src" reset --hard origin/main
   chezmoi apply --force
 
   info "▶ Installation complete."
