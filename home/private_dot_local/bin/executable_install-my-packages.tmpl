@@ -43,9 +43,9 @@ parse_args() {
 }
 
 run_apt_quiet() {
-  local output rc started elapsed lock_wait_seconds delay
-  lock_wait_seconds=${APT_LOCK_WAIT_SECONDS:-180}
-  delay=${APT_LOCK_RETRY_SECONDS:-10}
+  local output rc started elapsed transient_wait_seconds delay
+  transient_wait_seconds=${APT_TRANSIENT_WAIT_SECONDS:-${APT_LOCK_WAIT_SECONDS:-180}}
+  delay=${APT_TRANSIENT_RETRY_SECONDS:-${APT_LOCK_RETRY_SECONDS:-10}}
   started=$(date +%s)
 
   while true; do
@@ -59,21 +59,21 @@ run_apt_quiet() {
       return 0
     fi
 
-    if ! grep -Eq 'Could not get lock|Unable to lock|held by process' "$output"; then
+    if ! grep -Eq 'Could not get lock|Unable to lock|held by process|File has unexpected size|Hash Sum mismatch|Mirror sync in progress' "$output"; then
       cat "$output" >&2
       rm -f "$output"
       return "$rc"
     fi
 
     elapsed=$(($(date +%s) - started))
-    if [ "$elapsed" -ge "$lock_wait_seconds" ]; then
-      error "╍ apt stayed locked for ${elapsed}s; another package manager process is still running"
+    if [ "$elapsed" -ge "$transient_wait_seconds" ]; then
+      error "╍ apt failed with a transient lock or mirror-sync error for ${elapsed}s"
       cat "$output" >&2
       rm -f "$output"
       return "$rc"
     fi
 
-    warning "╍ apt is locked by another process; waiting up to ${lock_wait_seconds}s total, retrying in ${delay}s"
+    warning "╍ apt hit a transient lock or mirror-sync error; waiting up to ${transient_wait_seconds}s total, retrying in ${delay}s"
     rm -f "$output"
     sleep "$delay"
   done
