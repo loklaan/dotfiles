@@ -121,6 +121,16 @@
       "enabled" true
     ) -}}
 
+{{- /* Notion: hosted, actively-maintained remote MCP. Streamable HTTP with
+       user-based OAuth (no API key / bearer token), so first use prompts an
+       OAuth flow whose grant the proxy persists in its own runtime state. */ -}}
+{{- $servers = append $servers (dict
+      "name" "notion"
+      "url" "https://mcp.notion.com/mcp"
+      "protocol" "http"
+      "enabled" true
+    ) -}}
+
 {{- /* Merge existing server entries to preserve runtime state (quarantined,
        created, updated, oauth) while ensuring our definitions are present.
        For each managed server, find the existing entry and overlay our fields. */ -}}
