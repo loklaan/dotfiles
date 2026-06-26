@@ -1,8 +1,8 @@
 # Self-Interview Workflow
 
-A five-phase facilitation process for turning ambiguous inputs into structured artefacts. Each phase builds on the previous — do not skip phases or collapse them together.
+A five-stage facilitation process for turning ambiguous inputs into structured artefacts. Each stage builds on the previous — do not skip stages or collapse them together.
 
-## Phase 1: Context Gathering
+## Stage 1: Context Gathering
 
 Read all relevant context before acting. The goal is to build a complete mental model of the existing landscape so that questions and options are grounded, not speculative.
 
@@ -25,7 +25,7 @@ Read all relevant context before acting. The goal is to build a complete mental 
 
 A mental model — not a document. You should be able to explain: what exists, what's missing, what depends on what, and where the boundaries are. If you cannot, you have not read enough.
 
-## Phase 2: Gap and Ambiguity Surfacing
+## Stage 2: Gap and Ambiguity Surfacing
 
 Before generating options, surface everything that is missing, unclear, or ambiguous. This prevents building on shaky foundations. When source material is thin, always prefer "I don't have enough context — can you provide X?" over filling gaps with plausible-sounding invention.
 
@@ -53,7 +53,7 @@ Before generating options, surface everything that is missing, unclear, or ambig
 - Surfacing uncertainty without specifics — "This might need some thought" is not useful. "I'm uncertain whether X belongs in milestone A or milestone B because the program doc doesn't specify" is.
 - Proceeding past known gaps without flagging them
 
-## Phase 3: Structured Option Generation
+## Stage 3: Structured Option Generation
 
 Generate options at each decision point and present them for human judgment. Never decide silently.
 
@@ -109,7 +109,7 @@ Good option description: "Option A: Group by enabler — one milestone per enabl
 
 If multiple independent decisions need to be made, present them together rather than one at a time. The human can answer them in a single pass. Only serialise questions when later decisions depend on earlier answers.
 
-## Phase 4: Refinement and Cross-Cutting Concerns
+## Stage 4: Refinement and Cross-Cutting Concerns
 
 After initial choices, identify follow-up decisions and cross-cutting issues.
 
@@ -128,7 +128,7 @@ After initial choices, identify follow-up decisions and cross-cutting issues.
 - Naming inconsistencies between related artefacts
 - Misalignment between the new artefacts and existing ones
 
-## Phase 5: Artefact Production
+## Stage 5: Artefact Production
 
 Draft all artefacts, validate them, and update tracking documents.
 
@@ -153,17 +153,17 @@ Draft all artefacts, validate them, and update tracking documents.
 
 ## Example Interaction Flow
 
-The following illustrates the progression through all five phases for a scenario: scoping milestones for a program enabler called "Structured parcel classification and routing" within the Galactic Postal Service program.
+The following illustrates the progression through all five stages for a scenario: scoping milestones for a program enabler called "Structured parcel classification and routing" within the Galactic Postal Service program.
 
 ---
 
-### Phase 1 output (internal)
+### Stage 1 output (internal)
 
 After reading the program doc, existing manifests, and ticket workflow:
 
 > I have context on the Galactic Postal Service program. The "Structured parcel classification and routing" enabler sits under Pillar 1 ("Classify and route parcels across known space"). The existing manifest has three milestones drafted for other enablers but none for this one. The program doc describes this enabler's scope as: defining parcel types, establishing a shared parcel registry, and enabling cross-system delivery across species jurisdictions. Workshop notes for this enabler are marked as "not captured in text form" (the workshop was conducted via telepathic link with the Centauri delegation).
 
-### Phase 2 interaction
+### Stage 2 interaction
 
 > Lochy, before I scope milestones for this enabler, a few things:
 >
@@ -176,7 +176,7 @@ After reading the program doc, existing manifests, and ticket workflow:
 > **Informational question**:
 > 3. The proposed teams listed are Routing Division and Customs & Xenobiology. I'll assume Routing Division is the primary owner unless you say otherwise.
 
-### Phase 3 interaction (after answers received)
+### Stage 3 interaction (after answers received)
 
 > Based on your answers, I see three natural clusters of work:
 >
@@ -203,7 +203,7 @@ After reading the program doc, existing manifests, and ticket workflow:
 >
 > Which names work? Happy to adjust scope boundaries or combine clusters if the split doesn't feel right.
 
-### Phase 4 interaction
+### Stage 4 interaction
 
 > Now that we've settled on three milestones, a few follow-up items:
 >
@@ -211,7 +211,7 @@ After reading the program doc, existing manifests, and ticket workflow:
 >
 > **Cross-cutting tension**: The "Cross-species customs compliance" enabler also references parcel types — specifically, customs declaration formats per parcel type. I'll note this overlap in the plan's tensions section so it's tracked when we scope that enabler.
 
-### Phase 5 output
+### Stage 5 output
 
 > I've drafted three milestone detail files and updated the manifest. Here's what was produced:
 >

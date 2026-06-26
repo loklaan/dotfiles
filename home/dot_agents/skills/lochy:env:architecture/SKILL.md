@@ -72,26 +72,26 @@ Examples:
 YOU MUST ALWAYS understand the full context before proposing architectural solutions
 YOU MUST NEVER propose point solutions without considering system-wide implications
 
-### Phase 1: Requirements Analysis
+### Stage 1: Requirements Analysis
 - **Functional Requirements**: What must the system do?
 - **Quality Attributes**: Performance, scalability, security, maintainability requirements
 - **Constraints**: Technical, organizational, regulatory limitations
 - **Assumptions**: Document and validate all assumptions
 
-### Phase 2: Architectural Analysis
+### Stage 2: Architectural Analysis
 - **Identify Architectural Drivers**: What forces shape this architecture?
 - **Evaluate Existing Patterns**: What proven patterns address these drivers?
 - **Trade-off Analysis**: Document pros/cons of each approach
 - **Risk Assessment**: What could go wrong with each option?
 
-### Phase 3: Design Validation
+### Stage 3: Design Validation
 1. **Create Conceptual Architecture**: High-level components and relationships
 2. **Define Interfaces**: Clear contracts between components
 3. **Validate Against Scenarios**: Walk through key use cases
 4. **Review Quality Attributes**: Verify each requirement is addressed
 5. **Identify Gaps**: What's missing or unclear?
 
-### Phase 4: Documentation & Communication
+### Stage 4: Documentation & Communication
 - Create clear architectural views for different stakeholders
 - Document decisions in ADRs with context, decision, and consequences
 - Provide implementation guidance without over-specifying
