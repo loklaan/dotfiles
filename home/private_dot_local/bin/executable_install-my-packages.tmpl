@@ -79,6 +79,34 @@ run_apt_quiet() {
   done
 }
 
+# `apt-get update` exits non-zero if ANY configured source fails to refresh,
+# even a third-party repo the enterprise base image provisions and we neither
+# own nor install from (e.g. a dead packages.fluentbit.io returning HTTP 500).
+# Index refresh is advisory: apt-get install resolves from on-disk lists and is
+# the authoritative gate, so a failed update for an irrelevant repo must not
+# abort our converge run. We still abort if EVERY source failed (a real network
+# or mirror outage) and always surface which sources failed.
+apt_update_advisory() {
+  local log failed attempted
+  log=$(mktemp)
+  if "$@" > "$log" 2>&1; then
+    [ -n "${BASH_LOGGING_FILE:-}" ] && cat "$log" >> "$BASH_LOGGING_FILE"
+    rm -f "$log"
+    return 0
+  fi
+
+  failed=$(grep -cE '^(Err|W): .*(Failed to fetch|no longer signed)' "$log" || true)
+  attempted=$(grep -cE '^(Get|Hit|Ign|Err):' "$log" || true)
+  cat "$log" >&2
+  [ -n "${BASH_LOGGING_FILE:-}" ] && cat "$log" >> "$BASH_LOGGING_FILE"
+  rm -f "$log"
+
+  if [ "${attempted:-0}" -gt 0 ] && [ "${failed:-0}" -ge "$attempted" ]; then
+    fatal "╍ apt-get update failed for ALL sources — likely a network or mirror outage, not a single dead third-party repo"
+  fi
+  warning "╍ apt-get update reported errors on ${failed} source(s); continuing — apt-get install is the authoritative gate"
+}
+
 main() {
   parse_args "$@"
   info "▶ Installing non-critical packages"
@@ -311,7 +339,7 @@ EOF
         warning "╍ neither libfuse2 nor libfuse2t64 found in apt cache; AppImage execution may fail"
       fi
       info "╍ Running 'apt-get install \$packages \$apt_extra'"
-      run_apt_quiet $Sudo apt-get update
+      apt_update_advisory $Sudo apt-get update
       run_apt_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"
     ;;
     *)
