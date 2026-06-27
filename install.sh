@@ -127,7 +127,11 @@ main() {
   config_private_skills_repo="$(chezmoi execute-template "{{ .privateSkillsRepo }}" 2>/dev/null || echo "")"
   config_npm_work_registry="$(chezmoi execute-template "{{ .npmWorkRegistry }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin="$(chezmoi execute-template "{{ .openCodeWorkPlugin }}" 2>/dev/null || echo "")"
+  config_opencode_work_plugin_local_path="$(chezmoi execute-template "{{ .openCodeWorkPluginLocalPath }}" 2>/dev/null || echo "")"
   config_jetbrains_license_server="$(chezmoi execute-template "{{ .jetbrainsLicenseServer }}" 2>/dev/null || echo "")"
+  config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
+  config_paseo_daemon="$(chezmoi execute-template "{{ .paseoDaemon }}" 2>/dev/null || echo "false")"
+  config_orca_server="$(chezmoi execute-template "{{ .orcaServer }}" 2>/dev/null || echo "false")"
 
   # BWS token setup - save to file if provided
   bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
@@ -156,7 +160,9 @@ main() {
   # --data must stay true (default): with --data=false, promptStringOnce can't
   # read the persisted [data] cache, so every prompt falls through and the first
   # unseeded one aborts init on the no-TTY boot path. --no-tty fails fast in the
-  # boot log instead of hanging on /dev/tty.
+  # boot log instead of hanging on /dev/tty. Every prompt in .chezmoi.toml.tmpl
+  # must have a matching seed here (text must match exactly) so a fresh clone or
+  # a cache predating a newer key still converges without prompting.
   chezmoi init "$config_github_user" \
     --no-tty \
     --promptString="Email for you=${config_email}" \
@@ -165,7 +171,11 @@ main() {
     --promptString="Private skills repo (or empty)=${config_private_skills_repo}" \
     --promptString="Work npm registry (or empty)=${config_npm_work_registry}" \
     --promptString="OpenCode work plugin (or empty)=${config_opencode_work_plugin}" \
+    --promptString="OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)=${config_opencode_work_plugin_local_path}" \
     --promptString="JetBrains license server (or empty)=${config_jetbrains_license_server}" \
+    --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
+    --promptBool="Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)=${config_paseo_daemon}" \
+    --promptBool="Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)=${config_orca_server}" \
     --apply \
     --force \
     --exclude=scripts \
