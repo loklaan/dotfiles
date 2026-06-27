@@ -292,6 +292,25 @@ LaunchAgent (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/dr
 Surfaces: df-setup drift block · zsh login one-liner · macOS notification
 ```
 
+### Coder box convergence: active vs inactive
+
+A pushed commit reaches Coder dev boxes through two complementary paths, split by workspace state. There is no static inventory — `coder list -o json` is queried at run time and the workspace's `latest_build.status` decides the path.
+
+| Box state | How it converges | Mechanism |
+|---|---|---|
+| **Running (active)** | Manual `cw fleet [--include-local] update` | SSHes `mise run update` into every `status == "running"` workspace. `update` fetches+resets the source to `origin/main`, then applies. |
+| **Stopped (inactive)** | Skipped by `cw fleet` | The default filter (`select(.latest_build.status == "running")`) excludes non-running boxes — a stopped box is unreachable over SSH and must not be a fleet target. |
+| **Stopped → next boot** | Auto-updates itself | Coder's startup script runs `coder dotfiles <work-fork-url>` on every boot. That re-clones/pulls the repo and runs `install.sh`, which non-interactively re-inits chezmoi and **fetch + reset --hard** the source to `origin/main` before applying. |
+
+So a stopped box is never left stale: it does not receive the manual fan-out, but the next time it boots it converges on its own. Running boxes converge immediately via the manual fleet update.
+
+**On-boot non-interactivity is load-bearing.** `coder dotfiles` runs `install.sh` with no controlling TTY. Two invariants keep that path from wedging:
+
+1. `chezmoi init` must NOT pass `--data=false` (it hides the cached `[data]`, forcing every `promptStringOnce`/`promptBoolOnce` to fall through to an interactive prompt) and MUST pass `--no-tty` (so a genuinely-missing prompt fails fast in the boot log instead of hanging on `/dev/tty`). Every prompt declared in `home/.chezmoi.toml.tmpl` MUST have an exact-text-matching `--promptString`/`--promptBool` seed in `install.sh` — that list silently drifts and re-breaks fresh-box boots if a new prompt is added without a seed.
+2. The source sync uses `git fetch origin main` + `git reset --hard origin/main`, NOT a plain pull. A fast-forward-only pull silently aborts on a diverged clone (`Not possible to fast-forward, aborting`), which would leave the box pinned to a stale source forever. The hard reset self-heals on every boot.
+
+> Verified on `for-tasks-3`: stopped while behind `origin/main`, it was correctly absent from the `cw fleet` matrix; on next boot it pulled three pending commits, installed the newly-pinned ripgrep tool, and applied the new global-gitignore entry — converging fully with no prompt.
+
 ### Orca / paseo on Linux are installed via mise
 
 Both opt-in tools that run as systemd-user services on Coder boxes are installed by mise as a normal `[tools]` entry:
