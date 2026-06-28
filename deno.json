@@ -1,5 +1,5 @@
 {
-  "lock": "./deno.lock",
+  "lock": { "path": "./deno.lock", "frozen": true },
   "compilerOptions": {
     "lib": ["deno.window", "deno.ns", "deno.unstable", "dom", "ESNext"],
     "noFallthroughCasesInSwitch": true,

@@ -90,20 +90,20 @@ then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
 already _is_ the newest beta the caret has nowhere to float, so the warning
 hides — until the next beta ships and it silently returns.)
 
-**The fix — one canonical config at the repo root, projected to runtime, and NO
-lockfile.** The repo root holds the canonical `deno.json` (flat
-`compilerOptions`, no `workspace` key, no `lock` key) and `tsconfig.json`
-(editor shim for TS servers that do not read Deno config). These are the single
-control plane — the files you edit, and what drives the IDE when the repo is
-opened at root.
+**The fix — one canonical config at the repo root, projected to runtime, with a
+frozen lockfile.** The repo root holds the canonical `deno.json` (flat
+`compilerOptions`, no `workspace` key, a `lock` object — see "Frozen lockfile"
+below) and `tsconfig.json` (editor shim for TS servers that do not read Deno
+config). These are the single control plane — the files you edit, and what drives
+the IDE when the repo is opened at root.
 
 The runtime copies in `home/private_dot_local/bin/` are chezmoi `.tmpl`
 re-projections of those root files, deploying to `~/.local/bin/`:
 
-- `deno.json.tmpl` plucks just `compilerOptions` from the root `deno.json`
-  (`include "../deno.json" | fromJson | dig "compilerOptions"`). It must NOT
-  carry a `workspace` key — a workspace member key at a leaf dir makes Deno
-  hard-error trying to resolve the member path.
+- `deno.json.tmpl` projects the root `deno.json`'s `compilerOptions` **and** its
+  `lock` object (`include "../deno.json" | fromJson | dig ...`). It must NOT carry
+  a `workspace` key — a workspace member key at a leaf dir makes Deno hard-error
+  trying to resolve the member path.
 - `tsconfig.json.tmpl` `include "../tsconfig.json"` verbatim.
 
 `include` reaches the repo root via `../` because the chezmoi source root is
@@ -112,28 +112,67 @@ canonical files live. Do **not** add `nodeModulesDir` (we keep the
 no-`node_modules` convention). Do **not** edit the member `.tmpl` outputs or the
 deployed `~/.local/bin/*` files directly — change the root canonical files only.
 
-**No lockfile — by design.** Every tool shebang passes `--no-lock`, and the
-tools pin **exact** specifiers (`npm:effect@4.0.0-beta.83`, never a range). A
-`deno.lock` adds nothing for exact-pinned single-file tools, and it actively
-_harms_: deno auto-rewrites a discovered `deno.lock` on every run (a union of
-every version it has ever resolved in that cwd, pulled from its global registry
-metadata cache `~/.cache/deno/npm/.../registry.json` + `dep_analysis_cache_v2`),
-which races chezmoi's "did this file change since I wrote it?" tracking and
-aborts `chezmoi apply` on a non-interactive TTY prompt. `--no-lock` removes
-deno's write trigger entirely; dropping the managed `deno.lock` removes
-chezmoi's track trigger. With neither side claiming the file, there is no race.
+**Frozen lockfile — by design.** We **keep** a committed `deno.lock` and run it
+**frozen** so Deno reads it but never rewrites it. The freeze lives in one place:
+the root `deno.json` carries `"lock": { "path": "./deno.lock", "frozen": true }`,
+and `deno.json.tmpl` projects that whole `lock` object into `~/.local/bin/deno.json`
+(the `"./deno.lock"` path is relative to the config file, so at runtime it resolves
+to `~/.local/bin/deno.lock`). Tools pin **exact** specifiers
+(`npm:effect@4.0.0-beta.83`, never a range), so the lock is small and stable.
 
-**Ritual when bumping Effect.** Bump _every_ occurrence to the same new beta in
-lock-step — miss one and you get a mixed tree:
+Why frozen and not "no lock": an *unfrozen* `deno.lock` is auto-rewritten on every
+run (a union of every version Deno has ever resolved in that cwd, pulled from its
+registry metadata cache + `dep_analysis_cache_v2`), which races chezmoi's "did this
+file change since I wrote it?" tracking and shows up as a persistent `MM` on
+`~/.local/bin/deno.lock` that can stall `mise run update`. `frozen: true` removes
+Deno's write trigger entirely while still verifying integrity, so chezmoi's managed
+copy stays byte-stable — no race.
 
-```bash
-grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/   # find stragglers
-# edit each to the new beta, keeping effect + @effect/platform-node identical
-```
+> **Freeze only honours the nested object form.** In Deno 2.8.x, `deno run` reads
+> the freeze from `"lock": { "frozen": true }` ONLY. The flat `"frozen": true`
+> top-level key and the `DENO_FROZEN` env var are silently ignored for `deno run`
+> (verified empirically — both let the lock get rewritten). Do not "simplify" the
+> config to the flat form.
 
-No lock to regenerate. To purge a stale resolution from a box's deno cache (e.g.
-after a bump leaves old registry metadata behind), clear the registry metadata
-AND the analysis DB — the tarball dir alone is not enough:
+**Exemption — `transcribe`.** Its shebang passes `--no-lock`. It lazily imports
+`npm:@huggingface/transformers@^4` via a **runtime-assembled** specifier that is
+deliberately opaque to Deno's graph analyzer (see its source comment), so the dep
+is never in the lock. Under a frozen lock, that unlocked dynamic import would crash
+at runtime (Deno refuses to add to a frozen lock and throws). `--no-lock` makes
+`transcribe` ignore the lock entirely — it neither reads nor writes it — so it
+resolves transformers at runtime without erroring and without touching the managed
+`deno.lock`. (`--frozen=false` would NOT work here: it lets the tool *rewrite* the
+lock, reintroducing the exact `MM` race.) `transcribe` is macbook-only and carries
+a heavy ML tree; keeping it out of the shared lock avoids bloating the lock every
+lightweight `df-*` tool reads.
+
+**Ritual when bumping Effect (or any pinned dep).** The freeze is intentional
+friction: a normal run will NOT update the lock, so bumping is a deliberate,
+two-part act.
+
+1. Bump _every_ occurrence to the same new beta in lock-step — miss one and you get
+   a mixed tree:
+   ```bash
+   grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/   # find stragglers
+   # edit each to the new beta, keeping effect + @effect/platform-node identical
+   ```
+2. Regenerate the lock with the freeze lifted for that one command, then re-freeze
+   happens automatically (the config stays frozen; you only override per-invocation):
+   ```bash
+   deno cache --frozen=false --config deno.json home/private_dot_local/bin/executable_cw
+   # repeat for any tool that introduces a NEW specifier; exact-pin bumps to an
+   # existing dep are covered by caching any one tool. Then commit deno.lock.
+   ```
+   To regenerate from scratch (purge lingering removed-dep entries):
+   `rm deno.lock && deno cache --frozen=false --config deno.json <tool>`.
+
+`deno outdated --update` does NOT apply here — it rewrites semver *ranges* in a
+`deno.json` import map, and these tools use exact specifiers with no import map.
+The `grep` lock-step edit above is the update path.
+
+To purge a stale resolution from a box's deno cache (e.g. after a bump leaves old
+registry metadata behind), clear the registry metadata AND the analysis DB — the
+tarball dir alone is not enough:
 
 ```bash
 rm -rf ~/.cache/deno/npm/registry.npmjs.org/effect \
