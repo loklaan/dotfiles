@@ -1,0 +1,437 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com,0.0.0.0:8899 --allow-read=${HOME}/.pki/canva --allow-env --allow-ffi
+
+// df-llm-shim — local OpenAI-compatible HTTP shim for Canva's mTLS LLM proxy.
+//
+// Tools talk to http://localhost:8899/v1 with any dummy API key. This process
+// terminates Canva client-certificate auth and forwards only to the internal LLM
+// proxy, so callers never read or configure certificate material themselves.
+
+import {
+  Config,
+  Context,
+  Effect,
+  Layer,
+  Schema,
+  Stream,
+} from "npm:effect@4.0.0-beta.83";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+} from "npm:effect@4.0.0-beta.83/unstable/http";
+
+const UPSTREAM_ORIGIN =
+  "https://ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com";
+const LISTEN_HOSTNAME = "0.0.0.0";
+const LISTEN_PORT = 8899;
+const CERT_RELATIVE_PATH = ".pki/canva/devbox.crt";
+const KEY_RELATIVE_PATH = ".pki/canva/devbox.key";
+
+interface ForwardSpec {
+  readonly method: "GET" | "POST";
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Uint8Array | null;
+}
+
+class ShimError extends Schema.TaggedErrorClass<ShimError>()("ShimError", {
+  message: Schema.String,
+  cause: Schema.Unknown,
+}) {}
+
+const isHopByHopHeader = (name: string): boolean =>
+  [
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
+  ].includes(name.toLowerCase());
+
+const headerRecord = (headers: Headers): Readonly<Record<string, string>> => {
+  const out: Record<string, string> = {};
+  for (const [name, value] of headers) {
+    if (!isHopByHopHeader(name)) out[name] = value;
+  }
+  return out;
+};
+
+export const rewriteOpenAiUrl = (
+  method: string,
+  incomingUrl: string,
+): string | null => {
+  const url = new URL(incomingUrl);
+  if (method === "GET" && url.pathname === "/v1/models") {
+    return `${UPSTREAM_ORIGIN}/openai/v1/models${url.search}`;
+  }
+  if (method === "POST" && url.pathname.startsWith("/v1/")) {
+    const path = url.pathname.slice("/v1/".length);
+    if (path.length > 0) {
+      return `${UPSTREAM_ORIGIN}/openai/v1/${path}${url.search}`;
+    }
+  }
+  return null;
+};
+
+export const buildForwardSpec = async (
+  request: Request,
+): Promise<ForwardSpec | null> => {
+  const url = rewriteOpenAiUrl(request.method, request.url);
+  if (url === null) return null;
+  if (request.method !== "GET" && request.method !== "POST") return null;
+  const body = request.method === "POST"
+    ? new Uint8Array(await request.arrayBuffer())
+    : null;
+  return {
+    method: request.method,
+    url,
+    headers: headerRecord(request.headers),
+    body,
+  };
+};
+
+const responseHeaders = (
+  headers: Readonly<Record<string, string>>,
+): Headers => {
+  const out = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (!isHopByHopHeader(name)) out.set(name, value);
+  }
+  return out;
+};
+
+const closeClientWithBody = (
+  response: Response,
+  client: Deno.HttpClient,
+): Response => {
+  if (response.body === null) {
+    client.close();
+    return response;
+  }
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        client.close();
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunk.value);
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        client.close();
+      }
+    },
+  });
+  return new Response(body, response);
+};
+
+const createMtlsFetch = (home: string): typeof fetch => {
+  const certPath = `${home}/${CERT_RELATIVE_PATH}`;
+  const keyPath = `${home}/${KEY_RELATIVE_PATH}`;
+  return async (input, init) => {
+    const [cert, key] = await Promise.all([
+      Deno.readTextFile(certPath),
+      Deno.readTextFile(keyPath),
+    ]);
+    const client = Deno.createHttpClient({ cert, key });
+    const mtlsInit: RequestInit & { readonly client: Deno.HttpClient } = {
+      ...init,
+      client,
+    };
+    try {
+      return closeClientWithBody(await fetch(input, mtlsInit), client);
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+  };
+};
+
+const MtlsFetchLayer = Layer.effect(
+  FetchHttpClient.Fetch,
+  Config.string("HOME").pipe(
+    Config.withDefault("/home/coder"),
+    Effect.map((home) => createMtlsFetch(home)),
+  ),
+);
+
+const MtlsHttpClientLayer = FetchHttpClient.layer.pipe(
+  Layer.provide(MtlsFetchLayer),
+);
+
+class LlmProxy extends Context.Service<LlmProxy, {
+  forward(spec: ForwardSpec): Effect.Effect<Response, ShimError>;
+}>()("df-llm-shim/LlmProxy") {
+  static readonly layer = Layer.effect(
+    LlmProxy,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const forward = Effect.fn("LlmProxy.forward")(
+        function* (spec: ForwardSpec) {
+          const contentType = spec.headers["content-type"];
+          const baseRequest = HttpClientRequest.make(spec.method)(spec.url, {
+            headers: spec.headers,
+          });
+          const upstreamRequest = spec.body === null
+            ? baseRequest
+            : baseRequest.pipe(
+              HttpClientRequest.bodyUint8Array(spec.body, contentType),
+            );
+          const upstreamResponse = yield* httpClient.execute(upstreamRequest)
+            .pipe(
+              Effect.mapError((cause) =>
+                new ShimError({
+                  message: "failed to forward request to Canva LLM proxy",
+                  cause,
+                })
+              ),
+            );
+          return new Response(
+            Stream.toReadableStream(upstreamResponse.stream),
+            {
+              status: upstreamResponse.status,
+              headers: responseHeaders(upstreamResponse.headers),
+            },
+          );
+        },
+      );
+      return LlmProxy.of({ forward });
+    }),
+  ).pipe(Layer.provide(MtlsHttpClientLayer));
+}
+
+const handleRequest = (request: Request): Effect.Effect<Response, never> =>
+  Effect.gen(function* () {
+    const spec = yield* Effect.tryPromise({
+      try: () => buildForwardSpec(request),
+      catch: (cause) =>
+        new ShimError({ message: "failed to read request", cause }),
+    });
+    if (spec === null) return new Response("not found\n", { status: 404 });
+    const proxy = yield* LlmProxy;
+    return yield* proxy.forward(spec);
+  }).pipe(
+    Effect.provide(LlmProxy.layer),
+    Effect.catch((error) => {
+      const message = error instanceof ShimError
+        ? error.message
+        : "shim configuration failed";
+      return Effect.succeed(
+        Response.json({ error: { message } }, { status: 502 }),
+      );
+    }),
+  );
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === "AbortError";
+
+const serve = Effect.scoped(
+  Effect.gen(function* () {
+    // Effect v4 beta exports HttpServer/HttpRouter, but no Deno runtime server
+    // layer fits this repo's current convention. The listener uses Deno.serve;
+    // the outbound hop remains Effect HttpClient + FetchHttpClient + mTLS fetch.
+    const running = yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const controller = new AbortController();
+        const server = Deno.serve({
+          hostname: LISTEN_HOSTNAME,
+          port: LISTEN_PORT,
+          signal: controller.signal,
+        }, (request) => Effect.runPromise(handleRequest(request)));
+        return { controller, server };
+      }),
+      ({ controller }) => Effect.sync(() => controller.abort()),
+    );
+    yield* Effect.tryPromise({
+      try: () => running.server.finished,
+      catch: (cause) =>
+        new ShimError({ message: "HTTP listener stopped", cause }),
+    }).pipe(
+      Effect.catch((error: ShimError) =>
+        isAbortError(error.cause) ? Effect.void : Effect.fail(error)
+      ),
+    );
+  }),
+);
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const { NodeRuntime } = await import(
+    "npm:@effect/platform-node@4.0.0-beta.83"
+  );
+  serve.pipe(NodeRuntime.runMain);
+}
+
+// === Tests =================================================================
+// Offline unit tests must pass with ZERO permission flags:
+//   deno test executable_df-llm-shim
+
+const hasEnv = (key: string): boolean =>
+  Deno.permissions.querySync({ name: "env", variable: key }).state ===
+    "granted" && Boolean(Deno.env.get(key));
+
+const envValue = (key: string): string | null =>
+  Deno.permissions.querySync({ name: "env", variable: key }).state === "granted"
+    ? Deno.env.get(key) ?? null
+    : null;
+
+const hasReadableFile = (path: string | null): boolean => {
+  if (path === null) return false;
+  if (Deno.permissions.querySync({ name: "read", path }).state !== "granted") {
+    return false;
+  }
+  try {
+    return Deno.statSync(path).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+};
+
+const defaultCertPath = (): string | null => {
+  const home = envValue("HOME");
+  return home === null ? null : `${home}/${CERT_RELATIVE_PATH}`;
+};
+
+const defaultKeyPath = (): string | null => {
+  const home = envValue("HOME");
+  return home === null ? null : `${home}/${KEY_RELATIVE_PATH}`;
+};
+
+const itEffect = <E>(
+  name: string,
+  effect: Effect.Effect<unknown, E>,
+  options?: { readonly ignore?: boolean },
+) =>
+  Deno.test({
+    name,
+    ignore: options?.ignore ?? false,
+    fn: async () => {
+      const exit = await Effect.runPromiseExit(effect);
+      if (exit._tag === "Failure") {
+        throw new Error(`Effect failed: ${JSON.stringify(exit.cause)}`);
+      }
+    },
+  });
+
+Deno.test("unit: rewrites and preserves POST forwarding inputs", async () => {
+  const request = new Request(
+    "http://localhost:8899/v1/chat/completions?trace=1",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer x",
+      },
+      body: '{"model":"gpt-4o-mini"}',
+    },
+  );
+  const spec = await buildForwardSpec(request);
+  if (spec === null) throw new Error("expected forward spec");
+  if (
+    spec.url !==
+      `${UPSTREAM_ORIGIN}/openai/v1/chat/completions?trace=1`
+  ) {
+    throw new Error(`unexpected url: ${spec.url}`);
+  }
+  if (spec.method !== "POST") {
+    throw new Error(`unexpected method: ${spec.method}`);
+  }
+  if (spec.headers["content-type"] !== "application/json") {
+    throw new Error(`unexpected content-type: ${spec.headers["content-type"]}`);
+  }
+  if (
+    new TextDecoder().decode(spec.body ?? new Uint8Array()) !==
+      '{"model":"gpt-4o-mini"}'
+  ) {
+    throw new Error("unexpected body");
+  }
+});
+
+Deno.test("unit: rewrites GET /v1/models only", () => {
+  const modelsUrl = rewriteOpenAiUrl("GET", "http://localhost:8899/v1/models");
+  if (modelsUrl !== `${UPSTREAM_ORIGIN}/openai/v1/models`) {
+    throw new Error(`unexpected models url: ${modelsUrl}`);
+  }
+  const completionsUrl = rewriteOpenAiUrl(
+    "GET",
+    "http://localhost:8899/v1/chat/completions",
+  );
+  if (completionsUrl !== null) throw new Error("unexpected GET rewrite");
+});
+
+const ChatCompletionShape = Schema.Struct({
+  id: Schema.String,
+  choices: Schema.Array(Schema.Struct({ index: Schema.Number })),
+});
+
+itEffect(
+  "integration: forwards one chat completion through Canva mTLS [needs CODER + cert]",
+  Effect.gen(function* () {
+    const request = new Request("http://localhost:8899/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer dummy",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "say ok" }],
+        max_tokens: 5,
+      }),
+    });
+    const spec = yield* Effect.tryPromise({
+      try: () => buildForwardSpec(request),
+      catch: (cause) =>
+        new ShimError({ message: "failed to build test request", cause }),
+    });
+    if (spec === null) {
+      return yield* Effect.fail(new Error("missing forward spec"));
+    }
+    const proxy = yield* LlmProxy;
+    const response = yield* proxy.forward(spec);
+    if (response.status !== 200) {
+      return yield* Effect.fail(
+        new Error(`unexpected status: ${response.status}`),
+      );
+    }
+    const json = yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: (cause) =>
+        new ShimError({ message: "failed to parse response", cause }),
+    });
+    yield* Effect.try({
+      try: () => Schema.decodeUnknownSync(ChatCompletionShape)(json),
+      catch: (cause) =>
+        new ShimError({ message: "unexpected response shape", cause }),
+    });
+  }).pipe(Effect.provide(LlmProxy.layer)),
+  {
+    ignore: !(hasEnv("CODER") && hasReadableFile(defaultCertPath()) &&
+      hasReadableFile(defaultKeyPath())),
+  },
+);
