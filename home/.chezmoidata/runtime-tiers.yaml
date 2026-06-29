@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (21) ---
+    # --- home/private_dot_local/bin (22) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -46,6 +46,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-lint-runtimes
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-llm-shim
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-omo-profile
