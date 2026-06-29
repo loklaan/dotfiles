@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com,0.0.0.0:8899 --allow-read=${HOME}/.pki/canva --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com,127.0.0.1:8899 --allow-read=/home/coder/.pki/canva --allow-env --allow-ffi
 
 // df-llm-shim — local OpenAI-compatible HTTP shim for Canva's mTLS LLM proxy.
 //
@@ -22,7 +22,7 @@ import {
 
 const UPSTREAM_ORIGIN =
   "https://ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com";
-const LISTEN_HOSTNAME = "0.0.0.0";
+const LISTEN_HOSTNAME = "127.0.0.1";
 const LISTEN_PORT = 8899;
 const CERT_RELATIVE_PATH = ".pki/canva/devbox.crt";
 const KEY_RELATIVE_PATH = ".pki/canva/devbox.key";
@@ -39,7 +39,7 @@ class ShimError extends Schema.TaggedErrorClass<ShimError>()("ShimError", {
   cause: Schema.Unknown,
 }) {}
 
-const isHopByHopHeader = (name: string): boolean =>
+const isBlockedForwardHeader = (name: string): boolean =>
   [
     "connection",
     "keep-alive",
@@ -51,12 +51,13 @@ const isHopByHopHeader = (name: string): boolean =>
     "upgrade",
     "host",
     "content-length",
+    "user-agent",
   ].includes(name.toLowerCase());
 
 const headerRecord = (headers: Headers): Readonly<Record<string, string>> => {
   const out: Record<string, string> = {};
   for (const [name, value] of headers) {
-    if (!isHopByHopHeader(name)) out[name] = value;
+    if (!isBlockedForwardHeader(name)) out[name] = value;
   }
   return out;
 };
@@ -100,7 +101,7 @@ const responseHeaders = (
 ): Headers => {
   const out = new Headers();
   for (const [name, value] of Object.entries(headers)) {
-    if (!isHopByHopHeader(name)) out.set(name, value);
+    if (!isBlockedForwardHeader(name)) out.set(name, value);
   }
   return out;
 };
@@ -369,6 +370,22 @@ Deno.test("unit: rewrites and preserves POST forwarding inputs", async () => {
       '{"model":"gpt-4o-mini"}'
   ) {
     throw new Error("unexpected body");
+  }
+});
+
+Deno.test("unit: drops client user-agent before forwarding", async () => {
+  const request = new Request("http://localhost:8899/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": "Python-urllib/3.13",
+    },
+    body: '{"model":"gpt-4o-mini"}',
+  });
+  const spec = await buildForwardSpec(request);
+  if (spec === null) throw new Error("expected forward spec");
+  if ("user-agent" in spec.headers) {
+    throw new Error(`unexpected user-agent: ${spec.headers["user-agent"]}`);
   }
 });
 
