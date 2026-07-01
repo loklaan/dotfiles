@@ -81,7 +81,7 @@
        omo both expect the full roster). */ -}}
 {{- if ne "" .emailWork -}}
 {{-   $bedrockOpus := "amazon-bedrock/global.anthropic.claude-opus-4-8" -}}
-{{-   $bedrockSonnet := "amazon-bedrock/global.anthropic.claude-sonnet-4-6" -}}
+{{-   $bedrockSonnet := "amazon-bedrock/global.anthropic.claude-sonnet-5" -}}
 {{-   $bedrockHaiku := "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0" -}}
 {{-   $bedrockKimi := "amazon-bedrock/moonshotai.kimi-k2.5" -}}
 {{-   $openaiBig := "openai/gpt-5.5" -}}

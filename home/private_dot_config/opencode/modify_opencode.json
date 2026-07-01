@@ -49,8 +49,6 @@
 {{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
 {{-   $bedrockOpus := "global.anthropic.claude-opus-4-8" -}}
 {{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}
-{{- /* Sonnet 4-6 degrades badly past 300k tokens — cap context there. */ -}}
-{{-   $sonnetLimit := dict "limit" (dict "context" 300000 "output" 64000) -}}
 {{-   $config = $config | setValueAtPath "share" "disabled" -}}
 {{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
 {{-   $config = mergeOverwrite $config (dict
@@ -58,14 +56,13 @@
           "amazon-bedrock" (dict
             "models" (dict
               $bedrockOpus                                       $opusLimit
-              "global.anthropic.claude-opus-4-7"                 $opusLimit
-              "global.anthropic.claude-sonnet-4-6"               $sonnetLimit)
+              "global.anthropic.claude-opus-4-7"                 $opusLimit)
             "whitelist" (list
               $bedrockOpus
               "global.anthropic.claude-opus-4-7"
               "global.anthropic.claude-opus-4-6-v1"
               "global.anthropic.claude-opus-4-5-20251101-v1:0"
-              "global.anthropic.claude-sonnet-4-6"
+              "global.anthropic.claude-sonnet-5"
               "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
               "global.anthropic.claude-haiku-4-5-20251001-v1:0"
               "global.amazon.nova-2-lite-v1:0"
@@ -81,6 +78,12 @@
               "nvidia.nemotron-super-3-120b"
               "meta.llama4-scout-17b-instruct-v1:0"
               "mistral.magistral-small-2509"))))  -}}
+{{- /* Supersede the retired sonnet-4-6 pin: drop its stale per-model limit
+       entry that a prior apply merged into the target, so re-applies self-heal
+       to sonnet-5 at default limits rather than leaving an orphaned cap. */ -}}
+{{-   $bedrockModels := dig "provider" "amazon-bedrock" "models" (dict) $config -}}
+{{-   $bedrockModels = unset $bedrockModels "global.anthropic.claude-sonnet-4-6" -}}
+{{-   $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
 {{-   if not (hasKey $base "model") -}}
 {{-     $config = $config | setValueAtPath "model" (printf "amazon-bedrock/%s" $bedrockOpus) -}}
 {{-   end -}}
