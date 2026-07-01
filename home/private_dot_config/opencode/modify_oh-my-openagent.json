@@ -94,10 +94,10 @@
 
        OMO strongly recommends Gemini 3.1 Pro for visual work ($googlePro drives
        the visual-engineering + artistry categories). With Gemini off the table
-       we pick the strongest REACHABLE vision-capable model instead. Sonnet 5 is
-       not yet in the Bedrock catalog (checked: newest are sonnet-4-6 and the
-       opus-4-x line up to opus-4-8), so the best available visual model is
-       Bedrock Opus 4.8 — it out-reasons Sonnet 4-6 on careful visual/pixel work.
+       we pick the strongest REACHABLE vision-capable model instead: Bedrock
+       Opus 4.8 — it out-reasons Sonnet on careful visual/pixel work. (Sonnet 5
+       is now in the Bedrock catalog and drives the non-visual Sonnet roles, but
+       Opus stays the visual pick for its stronger multi-step reasoning.)
 
        $googleFlash (quick/writing) stays on Bedrock Sonnet: those roles want
        speed/throughput, not peak visual reasoning, so Opus would be wasteful.
