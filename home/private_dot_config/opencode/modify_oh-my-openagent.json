@@ -107,6 +107,12 @@
          $googlePro   := "google/gemini-3.1-pro-preview" */ -}}
 {{-   $googleFlash := $bedrockSonnet -}}
 {{-   $googlePro := $bedrockOpus -}}
+{{- /* Extended-thinking block for the visual categories. arena.ai's vision
+       leaderboard puts Opus top among models we can reach, and visual parity is
+       careful multi-step reasoning (decompose a screenshot delta -> design-system
+       cause), so we enable Anthropic extended thinking on the visual roles.
+       32000 is OMO's own default thinking budget. */ -}}
+{{-   $visualThinking := dict "type" "enabled" "budgetTokens" 32000 -}}
 {{- /* Profile table. Each profile carries the full agents + categories
        roster. `default` is the original best-in-class set; `cheap` is the
        budget set with personality preserved. */ -}}
@@ -118,8 +124,8 @@
             "ultrabrain"         (dict "model" $openaiBig    "variant" "xhigh")
             "deep"               (dict "model" $openaiBig    "variant" "medium")
             "quick"              (dict "model" $googleFlash)
-            "visual-engineering" (dict "model" $googlePro    "variant" "high")
-            "artistry"           (dict "model" $googlePro    "variant" "high")
+            "visual-engineering" (dict "model" $googlePro    "variant" "high" "thinking" $visualThinking)
+            "artistry"           (dict "model" $googlePro    "variant" "high" "thinking" $visualThinking)
             "writing"            (dict "model" $googleFlash))
           "agents" (dict
             "sisyphus"        (dict "model" $bedrockOpus)
