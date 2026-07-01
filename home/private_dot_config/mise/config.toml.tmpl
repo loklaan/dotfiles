@@ -3,36 +3,36 @@
 "github:bitwarden/sdk" = { version = "bws-v2.1.0", exe = "bws", tag_regex = "^bws" }
 "github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt" }
 {{ if eq .chezmoi.os "linux" -}}
-"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.45.0", exe = "mcpproxy" }
+"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.46.0", exe = "mcpproxy" }
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) -}}
-"npm:@getpaseo/cli" = "0.1.100"
+"npm:@getpaseo/cli" = "0.1.101"
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
 # `df-orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
 # (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
-"http:orca" = { version = "1.4.95", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
+"http:orca" = { version = "1.4.114", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
 "github:jdx/pitchfork" = { version = "2.14.0", exe = "pitchfork" }
 {{ end -}}
 age = "latest"
 ast-grep = "latest"
-bitwarden = "2026.5.0"
+bitwarden = "2026.6.0"
 bun = "1.3.14"
 chezmoi = "2.70.5"
 claude = "latest"
 codex = "latest"
 d2 = "0.7.1"
 delta = "0.19.2"
-deno = "2.8.3"
+deno = "2.9.0"
 difftastic = "0.69.0"
 fzf = "0.73.1"
 gemini = "latest"
 go = "1.26.4"
 jq = "latest"
 yq = "latest"
-node = "22.23.1"
+node = "24.11.1"
 "npm:@openchamber/web" = "latest"
 "npm:oh-my-openagent" = "latest"
 opencode = "latest"
@@ -40,9 +40,9 @@ python = "3.13"
 ripgrep = "latest"
 rust = "1.96.0"
 shellcheck = "0.11.0"
-starship = "1.25.1"
-tmux = "3.6b"
-uv = "0.11.24"
+starship = "1.26.0"
+tmux = "3.7a"
+uv = "0.11.25"
 
 [env]
 OMO_SEND_ANONYMOUS_TELEMETRY = "0"
