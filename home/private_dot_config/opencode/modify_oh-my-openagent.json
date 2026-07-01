@@ -86,19 +86,27 @@
 {{-   $bedrockKimi := "amazon-bedrock/moonshotai.kimi-k2.5" -}}
 {{-   $openaiBig := "openai/gpt-5.5" -}}
 {{-   $openaiMini := "openai/gpt-5.4-mini" -}}
-{{- /* URGENT BUGFIX (QUICK FIX — REVERT ME): the Google generativelanguage
-       API (StreamGenerateContent on generativelanguage.googleapis.com) is
-       blocked, so every Gemini-backed agent/category was failing hard. Both
-       $googleFlash and $googlePro are temporarily repointed at Bedrock Sonnet
-       to keep agents working. This is NOT the intended model assignment — it
-       collapses the flash/pro distinction and the visual/quick personality
-       split. PROPER FIX TODO: restore the Gemini literals once the API is
-       unblocked, or pick deliberate non-Google replacements per role.
-       Original values:
+{{- /* GEMINI UNAVAILABLE on Canva Coder devboxes: the Google generativelanguage
+       API (generativelanguage.googleapis.com) is blocked here — it returns HTTP
+       403 and there is no valid Google key (opencode's google provider has only
+       a placeholder), no Vertex ADC, and Bedrock carries no Gemini model. So
+       every Gemini-backed role must fall back to a reachable provider.
+
+       OMO strongly recommends Gemini 3.1 Pro for visual work ($googlePro drives
+       the visual-engineering + artistry categories). With Gemini off the table
+       we pick the strongest REACHABLE vision-capable model instead. Sonnet 5 is
+       not yet in the Bedrock catalog (checked: newest are sonnet-4-6 and the
+       opus-4-x line up to opus-4-8), so the best available visual model is
+       Bedrock Opus 4.8 — it out-reasons Sonnet 4-6 on careful visual/pixel work.
+
+       $googleFlash (quick/writing) stays on Bedrock Sonnet: those roles want
+       speed/throughput, not peak visual reasoning, so Opus would be wasteful.
+       Restore the Gemini literals below if the Google API ever becomes reachable
+       on these boxes with a real key:
          $googleFlash := "google/gemini-3.5-flash"
          $googlePro   := "google/gemini-3.1-pro-preview" */ -}}
 {{-   $googleFlash := $bedrockSonnet -}}
-{{-   $googlePro := $bedrockSonnet -}}
+{{-   $googlePro := $bedrockOpus -}}
 {{- /* Profile table. Each profile carries the full agents + categories
        roster. `default` is the original best-in-class set; `cheap` is the
        budget set with personality preserved. */ -}}
