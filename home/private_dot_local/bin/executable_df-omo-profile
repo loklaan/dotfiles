@@ -26,7 +26,7 @@
 // NodeRuntime from @effect/platform-node run under Deno via its node:
 // compatibility layer; NodeServices provides FileSystem, Path, and the
 // ChildProcessSpawner used for the targeted apply. Effect v4 beta import paths
-// verified against effect@4.0.0-beta.83.
+// verified against effect@4.0.0-beta.93.
 //
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
 // `import.meta.main` block, never at module top level. Its static import graph
@@ -50,11 +50,11 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
@@ -504,7 +504,7 @@ if (import.meta.main) {
   // load time (via ioredis -> msgpackr), which would force --allow-env onto
   // `deno test`. Loading it only here keeps the test surface permission-free.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }

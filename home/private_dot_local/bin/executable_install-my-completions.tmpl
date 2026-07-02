@@ -7,7 +7,7 @@
 //   chezmoi execute-template < home/private_dot_local/bin/executable_install-my-completions.tmpl > /tmp/imc.ts
 //   deno check /tmp/imc.ts && deno fmt --check /tmp/imc.ts && deno lint /tmp/imc.ts && deno test /tmp/imc.ts
 //
-// Effect v4 beta design (modules verified against effect@4.0.0-beta.83):
+// Effect v4 beta design (modules verified against effect@4.0.0-beta.93):
 //   - effect/unstable/cli      Command + a custom Flag.boolean("help"); the flag
 //                              shadows the built-in so `--help` prints the exact
 //                              usage below rather than the auto-generated help.
@@ -37,14 +37,14 @@ import {
   Duration,
   Effect,
   Logger,
-} from "npm:effect@4.0.0-beta.83";
-import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
-import * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
-import * as Path from "npm:effect@4.0.0-beta.83/Path";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
+import * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
+import * as Path from "npm:effect@4.0.0-beta.93/Path";
 
 const REL_COMPLETION_DIR = ".local/share/zsh-completions";
 const JOB_TIMEOUT_SECONDS = 15;
@@ -477,7 +477,7 @@ if (import.meta.main) {
   // NodeRuntime.runMain installs the signal handlers the parallel child-process
   // fan-out relies on for graceful teardown.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   command.pipe(
     Command.run({ version: "1.0.0" }),

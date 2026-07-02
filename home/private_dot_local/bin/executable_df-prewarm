@@ -28,11 +28,11 @@
 //   - env.zsh   reads .aws_region (Coder block), keeps the ap-southeast-2 fallback.
 //   - login.zsh reads .gh_auth_ok to decide the setup-incomplete reminder.
 //
-// Effect v4 beta import path verified against effect@4.0.0-beta.83.
+// Effect v4 beta import path verified against effect@4.0.0-beta.93.
 
-import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-beta.83";
-import type * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
-import type * as Process from "npm:effect@4.0.0-beta.83/unstable/process";
+import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-beta.93";
+import type * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
+import type * as Process from "npm:effect@4.0.0-beta.93/unstable/process";
 
 import {
   ensureDir,
@@ -266,7 +266,7 @@ if (import.meta.main) {
   // the live CLI path pays that cost; the offline suite never imports it.
   (async () => {
     const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.83"
+      "npm:@effect/platform-node@4.0.0-beta.93"
     );
     const exit = await Effect.runPromiseExit(
       main(Deno.args, NodeServices.layer),

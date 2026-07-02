@@ -24,13 +24,13 @@
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1); progress is reported via Effect.logInfo from inside the gen block.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
-import { Data, Effect, Layer, Stream } from "npm:effect@4.0.0-beta.83";
+import { Data, Effect, Layer, Stream } from "npm:effect@4.0.0-beta.93";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
 const fatal = (msg: string): never => {
@@ -172,7 +172,7 @@ if (import.meta.main) {
   // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
   // handlers SUPERVISE relies on for graceful child teardown.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   program.pipe(
     // mise absent -> "fatal mise not on PATH" + exit 1.

@@ -6,7 +6,7 @@
 // `--probe-bws` returns 0=ok, 1=missing, 2=invalid; `chezmoi-preflight.sh`
 // depends on these exit codes, so keep them and the output/prose stable.
 
-import { Config, Effect, Schema } from "npm:effect@4.0.0-beta.83";
+import { Config, Effect, Schema } from "npm:effect@4.0.0-beta.93";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
