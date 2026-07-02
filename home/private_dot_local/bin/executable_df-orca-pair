@@ -28,14 +28,14 @@ import {
   Effect,
   Schema,
   Stream,
-} from "npm:effect@4.0.0-beta.83";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
@@ -635,7 +635,7 @@ if (import.meta.main) {
   }
 
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   Command.run(command, { version: "0.1.0" }).pipe(
     Effect.provide(NodeServices.layer),

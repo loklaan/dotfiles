@@ -4,10 +4,10 @@
 // context-usage tokenizer resolver. This intentionally does NOT couple to the
 // live upstream plugin at test time: offline checks lock the local source files;
 // `drift-json --refresh-upstream` is the only network path.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
-import { Console, Effect, Schema } from "npm:effect@4.0.0-beta.83";
-import { Command } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import { Console, Effect, Schema } from "npm:effect@4.0.0-beta.93";
+import { Command } from "npm:effect@4.0.0-beta.93/unstable/cli";
 // @effect/platform-node is imported dynamically in import.meta.main only.
 // It transitively loads msgpackr, which reads process.env at module load and
 // throws NotCapable without --allow-env. Dynamic import keeps deno test
@@ -667,7 +667,7 @@ if (import.meta.main) {
   });
 
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   Command.run(tokenizerCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeFileSystem.layer),

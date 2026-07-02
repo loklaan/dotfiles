@@ -2,8 +2,8 @@
   "version": "5",
   "specifiers": {
     "jsr:@std/yaml@1": "1.1.1",
-    "npm:@effect/platform-node@4.0.0-beta.83": "4.0.0-beta.83_effect@4.0.0-beta.83_ioredis@5.11.1",
-    "npm:effect@4.0.0-beta.83": "4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93": "4.0.0-beta.93_effect@4.0.0-beta.93_ioredis@5.11.1",
+    "npm:effect@4.0.0-beta.93": "4.0.0-beta.93"
   },
   "jsr": {
     "@std/yaml@1.1.1": {
@@ -11,16 +11,16 @@
     }
   },
   "npm": {
-    "@effect/platform-node-shared@4.0.0-beta.86_effect@4.0.0-beta.83": {
-      "integrity": "sha512-QNixdacCFZ001duRVZTIRUa6BS1YkU9cbC8yN7NnAMc0upUiIuLI6YO9jKMG3HetW1MjZ3PeSOzMM6nneUYPow==",
+    "@effect/platform-node-shared@4.0.0-beta.93_effect@4.0.0-beta.93": {
+      "integrity": "sha512-XUqZ2u5GglBqY8q2jj4Q7GjN5K/enedk8auZM9rY/l5a/myaQTrQp3QnvpIK4/Yg0WFjLGuctGPMKWRk3OLIrA==",
       "dependencies": [
         "@types/ws",
         "effect",
         "ws"
       ]
     },
-    "@effect/platform-node@4.0.0-beta.83_effect@4.0.0-beta.83_ioredis@5.11.1": {
-      "integrity": "sha512-RmpVGu/+X/Bif3/g1Rzj8oFzTOknoVB3yHCa0b179vytPpKe+Kj9ZwKNcAnKWqHUDkbSPBq1Ca60mvOHr2/+LQ==",
+    "@effect/platform-node@4.0.0-beta.93_effect@4.0.0-beta.93_ioredis@5.11.1": {
+      "integrity": "sha512-QagsCGR0ZOXaCQqS5qGR2mcDng4LiP2bYhiiX1D6UC8cT9vsusVVOHiJWn8CupeDx+yVnPcu81QmA/SDt6GM1w==",
       "dependencies": [
         "@effect/platform-node-shared",
         "effect",
@@ -65,8 +65,8 @@
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
     },
-    "@types/node@26.0.0": {
-      "integrity": "sha512-vf2YFi1iY9lHGwNJMs01biZFbKJkrZR1T6/MlzjhJLPdntOHLhTrDSnSVcdtvjihi4VQNlrFRIxLsDBlQpAipA==",
+    "@types/node@26.1.0": {
+      "integrity": "sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==",
       "dependencies": [
         "undici-types"
       ]
@@ -92,8 +92,8 @@
     "detect-libc@2.1.2": {
       "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="
     },
-    "effect@4.0.0-beta.83": {
-      "integrity": "sha512-0wsak8RtgGAr9UWSbVDgJHZcUqMSvicHcvaZv1MbMM7MCGgW4Rn/137J1MHQbwYPcwYGxT/IqehFd+UbYuj78w==",
+    "effect@4.0.0-beta.93": {
+      "integrity": "sha512-wNS5MKFa3C42uBfIDik2oJ78lhpoYz2hN4oBR0229BeeDCIrkg/FiOvoiPGdCVlWa7MEKxEL5I0f8AILVHSD9A==",
       "dependencies": [
         "@standard-schema/spec",
         "fast-check",
@@ -173,8 +173,8 @@
       ],
       "bin": true
     },
-    "pure-rand@8.4.0": {
-      "integrity": "sha512-IoM8YF/jY0hiugFo/wOWqfmarlE6J0wc6fDK1PhftMk7MGhVZl88sZimmqBBFomLOCSmcCCpsfj7wXASCpvK9A=="
+    "pure-rand@8.4.1": {
+      "integrity": "sha512-c58R2+SPFcSIPXoU834QN/KPDDOSd8sXcSrqf6e83Me6Rrp1EYkxukkjXMVrKvKaADs1SOyNkWdfvLf6zY8qLQ=="
     },
     "redis-errors@1.2.0": {
       "integrity": "sha512-1qny3OExCf0UvUV/5wpYKf2YwPcOqXzkwKKSmKHiE6ZMQs5heeE/c8eXK+PNllPvmjgAbfnsbpkGZWy8cBpn9w=="
@@ -188,8 +188,8 @@
     "standard-as-callback@2.1.0": {
       "integrity": "sha512-qoRRSyROncaz1z0mvYqIE4lCd9p2R90i6GxW3uZv5ucSu8tU7B5HXUP1gG8pVZsYNVaXjk8ClXHPttLyxAL48A=="
     },
-    "toml@4.1.1": {
-      "integrity": "sha512-EBJnVBr3dTXdA89WVFoAIPUqkBjxPMwRqsfuo1r240tKFHXv3zgca4+NJib/h6TyvGF7vOawz0jGuryJCdNHrw=="
+    "toml@4.1.2": {
+      "integrity": "sha512-m0vXfHODcw3gk+KONAOlVQ5yNHc3yS3B1ybM3HS1vqDoS0RWTDDVBVVTYi8hH0k+2OM1vmo9fb1WX9EVqjqfHA=="
     },
     "undici-types@8.3.0": {
       "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="

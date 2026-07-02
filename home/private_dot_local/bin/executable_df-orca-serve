@@ -18,13 +18,13 @@ import {
   Option,
   Scope,
   Stream,
-} from "npm:effect@4.0.0-beta.83";
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
+} from "npm:effect@4.0.0-beta.93";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // ============================================================================
 // Constants and domain types
@@ -720,7 +720,7 @@ if (import.meta.main) {
   });
 
   const [{ NodeRuntime, NodeServices }] = await Promise.all([
-    import("npm:@effect/platform-node@4.0.0-beta.83"),
+    import("npm:@effect/platform-node@4.0.0-beta.93"),
   ]);
   let interruptedStatus: ProcessStatus | null = null;
   const main = Effect.gen(function* () {

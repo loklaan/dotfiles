@@ -2,7 +2,7 @@
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
 import {
   Config,
@@ -10,10 +10,10 @@ import {
   Effect,
   Layer,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
-import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 // @effect/platform-node is imported dynamically in import.meta.main only.
 // It transitively loads msgpackr, which reads process.env at module load and
 // throws NotCapable without --allow-env. Dynamic import keeps deno test
@@ -73,7 +73,7 @@ if (import.meta.main) {
   // Dynamic import keeps @effect/platform-node out of the module graph during
   // `deno test`. NodeFileSystem + NodePath provide FileSystem and Path services.
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
 
   Command.run(myCommand, {

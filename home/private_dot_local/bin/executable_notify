@@ -22,7 +22,7 @@
 // @effect/platform-node (NodeRuntime/NodeStdio) is imported lazily inside the
 // `mcp` branch: it transitively loads msgpackr, which reads process.env at module
 // load and throws NotCapable without --allow-env, breaking flag-free `deno test`.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
 import {
   Config,
@@ -33,7 +33,7 @@ import {
   Redacted,
   Runtime,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93";
 // NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
 // `mcp` branch and the env-gated annotation test — it transitively loads
 // msgpackr, which reads process.env at module load and throws NotCapable
@@ -43,7 +43,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.83/unstable/http";
+} from "npm:effect@4.0.0-beta.93/unstable/http";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -435,7 +435,7 @@ class Pushbullet extends Context.Service<Pushbullet, {
 // only called from the `mcp` branch (and the env-gated annotation test).
 const buildMcp = async () => {
   const { McpServer, Tool, Toolkit } = await import(
-    "npm:effect@4.0.0-beta.83/unstable/ai"
+    "npm:effect@4.0.0-beta.93/unstable/ai"
   );
 
   const SendNotification = Tool.make("send_notification", {
@@ -594,7 +594,7 @@ if (import.meta.main) {
     // means flag-free `deno test` never triggers it. buildMcp() lazily imports
     // `unstable/ai` (also msgpackr-tainted) for the same reason.
     const { NodeRuntime, NodeStdio } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.83"
+      "npm:@effect/platform-node@4.0.0-beta.93"
     );
     const { ServerLayer } = await buildMcp();
 

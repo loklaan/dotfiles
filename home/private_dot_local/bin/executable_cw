@@ -13,17 +13,17 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93";
 import {
   FileSystem,
   layerNoop as fileSystemLayerNoop,
-} from "npm:effect@4.0.0-beta.83/FileSystem";
-import { layer as pathLayer, Path } from "npm:effect@4.0.0-beta.83/Path";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0-beta.93/Path";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);

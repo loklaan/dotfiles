@@ -5,7 +5,7 @@
 // Reads home/.chezmoidata/runtime-tiers.yaml from the chezmoi source repo and
 // compares it with runnable source files on disk. The manifest is the source of
 // truth for bootstrap/runtime tiering and shebang-derived language labels.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
 import {
   Array as Arr,
@@ -13,10 +13,10 @@ import {
   Data,
   Effect,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
-import { Command } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
+import { Command } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import { parse as parseYaml } from "jsr:@std/yaml@^1";
 
 // ============================================================================
@@ -320,7 +320,7 @@ if (import.meta.main) {
   // @effect/platform-node must be dynamically imported to avoid --allow-env
   // requirement during `deno test` (msgpackr reads process.env at load time).
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
 
   Command.run(lintCommand, {

@@ -22,7 +22,7 @@
 //
 // IMPORTANT — why this tool does NOT use @effect/platform-node:
 // The shebang grants only `--allow-read`. Importing anything from
-// @effect/platform-node@4.0.0-beta.83 transitively loads `msgpackr`, which reads
+// @effect/platform-node@4.0.0-beta.93 transitively loads `msgpackr`, which reads
 // the env var MSGPACKR_NATIVE_ACCELERATION_DISABLED at module-evaluation time.
 // Under Deno that throws `NotCapable: Requires env access ...` unless --allow-env
 // is granted — which would both break this tool's shebang AND force the in-file
@@ -33,9 +33,9 @@
 // NodeRuntime.runMain. Do NOT "helpfully" re-add @effect/platform-node: it is
 // empirically incompatible with the --allow-read-only shebang.
 //
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
-import { Cause, Console, Effect, Option } from "npm:effect@4.0.0-beta.83";
+import { Cause, Console, Effect, Option } from "npm:effect@4.0.0-beta.93";
 
 const USAGE = `Usage:
   json-escape [OPTIONS] [FILE]

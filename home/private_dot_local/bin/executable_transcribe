@@ -18,7 +18,7 @@
 //   -l/--language      source language code, or "auto" (default en)
 //   --no-timestamps    print plain text only
 //
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83. The CLI,
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93. The CLI,
 // process, and platform-node submodules live under the `unstable/` path prefix
 // (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
 // transcript on stdout stays clean and copy-pasteable.
@@ -30,12 +30,12 @@ import {
   Effect,
   Layer,
   Stream,
-} from "npm:effect@4.0.0-beta.83";
-import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+} from "npm:effect@4.0.0-beta.93";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // `@effect/platform-node` is imported LAZILY (runtime dynamic import in the
 // CLI entrypoint) rather than at the top level. Its dependency chain pulls in
@@ -46,12 +46,12 @@ import {
 // `import.meta.main` path only.
 type NodePlatform = {
   readonly NodeRuntime:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.83").NodeRuntime;
+    typeof import("npm:@effect/platform-node@4.0.0-beta.93").NodeRuntime;
   readonly NodeServices:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.83").NodeServices;
+    typeof import("npm:@effect/platform-node@4.0.0-beta.93").NodeServices;
 };
 
-const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.83"]
+const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.93"]
   .join("/");
 
 const loadNodePlatform = (): Promise<NodePlatform> =>

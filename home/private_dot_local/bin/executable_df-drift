@@ -23,7 +23,7 @@
 //
 // The four checkers are Effect services so they compose and are individually
 // testable; each yields ReadonlyArray<DriftTool> and never fails the pipeline.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.83.
+// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
 
 import {
   Context,
@@ -31,12 +31,12 @@ import {
   Layer,
   Logger,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93";
 import {
   FetchHttpClient,
   HttpClient,
-} from "npm:effect@4.0.0-beta.83/unstable/http";
-import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93/unstable/http";
+import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.93";
 // NOTE: @effect/platform-node (NodeServices) is imported DYNAMICALLY in the
 // import.meta.main block below, never statically. It transitively loads
 // msgpackr, which reads process.env at module load and throws NotCapable under
@@ -58,8 +58,8 @@ import {
   touchFile,
   writeTextFile,
 } from "../lib/df-cache.ts";
-import type * as FileSystem from "npm:effect@4.0.0-beta.83/FileSystem";
-import type * as Process from "npm:effect@4.0.0-beta.83/unstable/process";
+import type * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
+import type * as Process from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // Requirement carried by every checker now that the shared primitives run on
 // the canonical Effect platform services. Satisfied once at the top by
@@ -759,7 +759,7 @@ if (import.meta.main) {
   // the live CLI path pays that cost; the offline suite never imports it.
   (async () => {
     const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.83"
+      "npm:@effect/platform-node@4.0.0-beta.93"
     );
     const exit = await Effect.runPromiseExit(
       main(Deno.args, NodeServices.layer),

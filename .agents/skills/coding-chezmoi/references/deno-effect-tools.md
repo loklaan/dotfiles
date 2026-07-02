@@ -55,29 +55,29 @@ import {
   Redacted,
   Schedule,
   Schema,
-} from "npm:effect@4.0.0-beta.83";
+} from "npm:effect@4.0.0-beta.93";
 
 // Filesystem + path (top-level-safe):
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
 
 // CLI (top-level-safe):
-import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 
 // Unstable sub-paths (MCP, HTTP):
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.83/unstable/ai";
+import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.93/unstable/ai";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.83/unstable/http";
+} from "npm:effect@4.0.0-beta.93/unstable/http";
 
 // Node runtime — DYNAMIC IMPORT ONLY (see below):
-// import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-beta.83";
+// import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-beta.93";
 ```
 
-**Pin**: `npm:effect@4.0.0-beta.83` + `npm:@effect/platform-node@4.0.0-beta.83`
+**Pin**: `npm:effect@4.0.0-beta.93` + `npm:@effect/platform-node@4.0.0-beta.93`
 — every tool in this repo pins the **same** beta. The Effect packages publish in
 lock-step, so a mixed tree (some `.80`, some `.83`) is unsupported and produces
 an inconsistent lock.
@@ -118,7 +118,7 @@ the root `deno.json` carries `"lock": { "path": "./deno.lock", "frozen": true }`
 and `deno.json.tmpl` projects that whole `lock` object into `~/.local/bin/deno.json`
 (the `"./deno.lock"` path is relative to the config file, so at runtime it resolves
 to `~/.local/bin/deno.lock`). Tools pin **exact** specifiers
-(`npm:effect@4.0.0-beta.83`, never a range), so the lock is small and stable.
+(`npm:effect@4.0.0-beta.93`, never a range), so the lock is small and stable.
 
 Why frozen and not "no lock": an *unfrozen* `deno.lock` is auto-rewritten on every
 run (a union of every version Deno has ever resolved in that cwd, pulled from its
@@ -188,7 +188,7 @@ which reads `process.env` at module load and throws `NotCapable` without
 ```typescript
 if (import.meta.main) {
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeFileSystem.layer),
@@ -202,8 +202,8 @@ if (import.meta.main) {
 **Do NOT** statically import `NodeRuntime`, `NodeFileSystem`, `NodePath`, or
 `NodeServices` at file top level — this breaks the zero-flag offline test rule.
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is
-unresolvable at this pin. Use `npm:effect@4.0.0-beta.83/FileSystem` and
+**Do NOT** use `npm:@effect/platform@4.0.0-beta.93` — that package is
+unresolvable at this pin. Use `npm:effect@4.0.0-beta.93/FileSystem` and
 `.../Path` instead.
 
 ---
@@ -255,7 +255,7 @@ Key points:
 ## 4. CLI Structure
 
 Use `effect/unstable/cli` (`Command` / `Flag` / `Argument`) for ALL tools —
-complex and simple alike. Import path: `npm:effect@4.0.0-beta.83/unstable/cli`.
+complex and simple alike. Import path: `npm:effect@4.0.0-beta.93/unstable/cli`.
 
 Static import is top-level-safe: defining commands and flags does not pull
 `@effect/platform-node` at load time, so `deno test` stays zero-flag. Command
@@ -263,7 +263,7 @@ execution requires `NodeServices.layer` — keep the `Command.run(...)` tail
 behind the dynamic `import.meta.main` import.
 
 ```typescript
-import { Command, Flag } from "npm:effect@4.0.0-beta.83/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 
 // --- Command definition (top-level safe) ------------------------------------
 const verbose = Flag.boolean("verbose").pipe(Flag.withAlias("v"));
@@ -281,7 +281,7 @@ const myCommand = Command.make(
 // --- Entry point (dynamic import, runtime only) -----------------------------
 if (import.meta.main) {
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.83"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeFileSystem.layer),
@@ -302,7 +302,7 @@ if (import.meta.main) {
 
 ## 4a. FileSystem + Path
 
-Use `npm:effect@4.0.0-beta.83/FileSystem` and `npm:effect@4.0.0-beta.83/Path`
+Use `npm:effect@4.0.0-beta.93/FileSystem` and `npm:effect@4.0.0-beta.93/Path`
 for all filesystem and path operations. Both are top-level-safe for static
 imports.
 
@@ -310,8 +310,8 @@ Runtime: provided by `NodeFileSystem.layer` + `NodePath.layer` from the dynamic
 `@effect/platform-node` import in `import.meta.main`.
 
 ```typescript
-import { FileSystem } from "npm:effect@4.0.0-beta.83/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.83/Path";
+import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
+import { Path } from "npm:effect@4.0.0-beta.93/Path";
 
 const readConfig = (
   dir: string,
@@ -333,7 +333,7 @@ Permission notes:
 - `fs.exists(path)`: `--allow-read --allow-sys=uid` — avoid if possible; use
   `fs.stat` instead
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.83` — that package is
+**Do NOT** use `npm:@effect/platform@4.0.0-beta.93` — that package is
 unresolvable at this pin. The `effect` package itself exports `FileSystem` and
 `Path` directly.
 
@@ -345,7 +345,7 @@ Use `Config` for all environment variable reads. Config reads are deferred to
 Effect execution time (not module load), so `deno test` stays permission-free.
 
 ```typescript
-import { Config, Redacted } from "npm:effect@4.0.0-beta.83";
+import { Config, Redacted } from "npm:effect@4.0.0-beta.93";
 
 // Optional env var with a default:
 const prefix = yield* Config.string("MY_PREFIX").pipe(Config.withDefault(""));
@@ -367,7 +367,7 @@ Use `Duration` for all time values. Use `Effect.timeout` and `Effect.retry` with
 `Schedule` for bounded retries — never raw `setTimeout` or `AbortController`.
 
 ```typescript
-import { Duration, Effect, Schedule } from "npm:effect@4.0.0-beta.83";
+import { Duration, Effect, Schedule } from "npm:effect@4.0.0-beta.93";
 
 // Timeout:
 const result = yield* myEffect.pipe(Effect.timeout(Duration.seconds(30)));
@@ -431,8 +431,8 @@ This applies to all SUPERVISE / FAN-OUT / HAND-OVER tools (anything that calls
 For tools that expose an MCP server over stdio:
 
 ```typescript
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.83/unstable/ai";
-import { NodeStdio } from "npm:@effect/platform-node@4.0.0-beta.83";
+import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.93/unstable/ai";
+import { NodeStdio } from "npm:@effect/platform-node@4.0.0-beta.93";
 
 // Define a tool
 const MyTool = Tool.make("my_tool", {
@@ -625,7 +625,7 @@ chosen by one question: **does the parent do anything after the child exits?**
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.83/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
