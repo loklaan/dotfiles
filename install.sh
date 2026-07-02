@@ -130,6 +130,7 @@ main() {
   config_opencode_work_plugin_local_path="$(chezmoi execute-template "{{ .openCodeWorkPluginLocalPath }}" 2>/dev/null || echo "")"
   config_jetbrains_license_server="$(chezmoi execute-template "{{ .jetbrainsLicenseServer }}" 2>/dev/null || echo "")"
   config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
+  config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
   config_paseo_daemon="$(chezmoi execute-template "{{ .paseoDaemon }}" 2>/dev/null || echo "false")"
   config_orca_server="$(chezmoi execute-template "{{ .orcaServer }}" 2>/dev/null || echo "false")"
 
@@ -174,6 +175,7 @@ main() {
     --promptString="OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)=${config_opencode_work_plugin_local_path}" \
     --promptString="JetBrains license server (or empty)=${config_jetbrains_license_server}" \
     --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
+    --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
     --promptBool="Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)=${config_paseo_daemon}" \
     --promptBool="Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)=${config_orca_server}" \
     --apply \

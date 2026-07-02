@@ -7,6 +7,7 @@
 {{- $openCodeWorkPluginLocalPath := promptStringOnce . "openCodeWorkPluginLocalPath" "OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)" -}}
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
 {{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
+{{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
 {{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 {{- $orcaServer := promptBoolOnce . "orcaServer" "Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 
@@ -27,6 +28,7 @@
   openCodeWorkPluginLocalPath = {{ $openCodeWorkPluginLocalPath | quote }}
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
   workForkRemote = {{ $workForkRemote | quote }}
+  openCodeCostHosts = {{ $openCodeCostHosts | quote }}
   paseoDaemon = {{ $paseoDaemon }}
   orcaServer = {{ $orcaServer }}
 
