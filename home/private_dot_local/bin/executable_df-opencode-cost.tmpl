@@ -1,0 +1,367 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=zsh,ssh --allow-env --allow-read --allow-ffi
+
+// df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
+// Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0-beta.93
+// (repo-wide canonical version; the frozen deno.lock projected into ~/.local/bin
+// resolves it — no --minimum-dependency-age needed, unlike a standalone script).
+//
+// Each host runs a node:sqlite snippet over `zsh -lc` (login shell surfaces the
+// mise-activated deno on Coder boxes) that sums opencode's own recorded
+// per-session cost + tokens. The coordinator normalizes paths, folds worktrees
+// into their parent repo, folds devbox ~/work/<repo> into ~/dev/canva/<repo>,
+// and renders a heatmap table with per-host + per-worktree granularity.
+
+import { Console, Effect, Result, Schema } from "npm:effect@4.0.0-beta.93";
+import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+// @effect/platform-node imported dynamically in import.meta.main only (msgpackr
+// reads process.env at load, needing --allow-env; keeps `deno test` hermetic).
+
+// Hosts baked in from chezmoi data at apply time. Empty on machines that did not
+// answer the prompt — the tool prints guidance instead of silently doing nothing.
+const CONFIGURED_HOSTS = "{{ .openCodeCostHosts }}"
+  .split(",").map((h) => h.trim()).filter((h) => h.length > 0);
+
+// --- Domain --------------------------------------------------------------
+class BoxFailure extends Schema.TaggedErrorClass<BoxFailure>()("BoxFailure", {
+  host: Schema.String,
+  detail: Schema.String,
+}) {}
+
+const SessionRow = Schema.Struct({
+  dir: Schema.String,
+  cost: Schema.Number,
+  input: Schema.Number,
+  output: Schema.Number,
+});
+const HostPayload = Schema.Array(SessionRow);
+const decodePayload = Schema.decodeUnknownEffect(HostPayload);
+type SessionRow = typeof SessionRow.Type;
+
+// --- Window parsing ------------------------------------------------------
+// Absolute date (YYYY-MM-DD / ISO) or relative span N[dwm] back from now.
+const parseWhen = (raw: string, now: number): number | null => {
+  const rel = raw.match(/^(\d+)\s*([dwm])$/i);
+  if (rel) {
+    const n = Number(rel[1]);
+    const unit = rel[2].toLowerCase();
+    const ms = unit === "d" ? 86400000 : unit === "w" ? 7 * 86400000 : 30 * 86400000;
+    return now - n * ms;
+  }
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : t;
+};
+
+// --- Path normalization --------------------------------------------------
+const homeRel = (dir: string): string => {
+  const m = dir.match(/^\/(?:Users|home)\/[^/]+\/(.+)$/);
+  return m ? m[1] : dir;
+};
+// Coder devboxes use ~/work/<repo>; the same repo on macbook lives at
+// ~/dev/canva/<repo>. Rewrite the leading work/ segment so both fold into one.
+const canonProject = (rel: string): string =>
+  rel.startsWith("work/") ? "dev/canva/" + rel.slice("work/".length) : rel;
+const splitWorktree = (rel: string): { project: string; worktree: string | null } => {
+  const m = rel.match(/^(.*?)\/\.agents\/worktrees\/([^/]+)(?:\/.*)?$/);
+  return m ? { project: m[1], worktree: m[2] } : { project: rel, worktree: null };
+};
+
+// --- Remote query --------------------------------------------------------
+const remoteCommand = (sinceMs: number, untilMs: number, basis: string): string => {
+  const col = basis === "updated" ? "time_updated" : "time_created";
+  const snippet =
+    `import { DatabaseSync } from "node:sqlite"; ` +
+    `const path = Deno.env.get("HOME") + "/.local/share/opencode/opencode.db"; ` +
+    `const db = new DatabaseSync(path, { readOnly: true }); ` +
+    `const q = db.prepare("SELECT directory dir, cost, tokens_input input, tokens_output output FROM session WHERE directory IS NOT NULL AND ${col} >= ? AND ${col} <= ?"); ` +
+    `const rows = q.all(${sinceMs}, ${untilMs}).map((r) => ({ dir: r.dir, cost: r.cost ?? 0, input: r.input ?? 0, output: r.output ?? 0 })); ` +
+    `console.log(JSON.stringify(rows));`;
+  return `deno eval ${JSON.stringify(snippet)}`;
+};
+
+const spawn = (host: string, script: string): Promise<Deno.CommandOutput> => {
+  const [cmd, args] = host === "local"
+    ? ["zsh", ["-lc", script]]
+    : ["ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, `zsh -lc ${JSON.stringify(script)}`]];
+  return new Deno.Command(cmd as string, {
+    args: args as string[],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+};
+
+type HostRows = { host: string; rows: readonly SessionRow[] };
+
+const collectHost = Effect.fn("collectHost")(function* (host: string, script: string) {
+  const out = yield* Effect.tryPromise({
+    try: () => spawn(host, script),
+    catch: (e) => new BoxFailure({ host, detail: `spawn failed: ${String(e)}` }),
+  });
+  const stderr = new TextDecoder().decode(out.stderr).trim();
+  if (!out.success) {
+    return yield* new BoxFailure({ host, detail: stderr || `exited ${out.code}` });
+  }
+  const rawOut = new TextDecoder().decode(out.stdout);
+  const start = rawOut.lastIndexOf("[");
+  const raw = start >= 0 ? rawOut.slice(start).trim() : rawOut.trim();
+  const parsed = yield* Effect.try({
+    try: () => JSON.parse(raw) as unknown,
+    catch: () => new BoxFailure({ host, detail: `non-JSON output: ${raw.slice(0, 120)}` }),
+  });
+  const rows = yield* decodePayload(parsed).pipe(
+    Effect.mapError((e) => new BoxFailure({ host, detail: `schema mismatch: ${e}` })),
+  );
+  return { host, rows } satisfies HostRows;
+});
+
+// --- Aggregation ---------------------------------------------------------
+type Bucket = { cost: number; input: number; output: number };
+const emptyBucket = (): Bucket => ({ cost: 0, input: 0, output: 0 });
+const addTo = (b: Bucket, r: SessionRow): void => {
+  b.cost += r.cost;
+  b.input += r.input;
+  b.output += r.output;
+};
+type ProjectAgg = {
+  project: string;
+  total: Bucket;
+  byHost: Map<string, Bucket>;
+  byWorktree: Map<string, Bucket>;
+};
+
+const aggregate = (hostRows: readonly HostRows[]): { projects: ProjectAgg[]; grand: Bucket } => {
+  const projects = new Map<string, ProjectAgg>();
+  const grand = emptyBucket();
+  for (const { host, rows } of hostRows) {
+    for (const row of rows) {
+      const { project, worktree } = splitWorktree(canonProject(homeRel(row.dir)));
+      let agg = projects.get(project);
+      if (!agg) {
+        agg = { project, total: emptyBucket(), byHost: new Map(), byWorktree: new Map() };
+        projects.set(project, agg);
+      }
+      addTo(agg.total, row);
+      addTo(grand, row);
+      if (!agg.byHost.has(host)) agg.byHost.set(host, emptyBucket());
+      addTo(agg.byHost.get(host)!, row);
+      if (worktree) {
+        if (!agg.byWorktree.has(worktree)) agg.byWorktree.set(worktree, emptyBucket());
+        addTo(agg.byWorktree.get(worktree)!, row);
+      }
+    }
+  }
+  return { projects: [...projects.values()].sort((a, b) => b.total.cost - a.total.cost), grand };
+};
+
+// --- Rendering (composite heatmap: grid + rails + spark + footnote) ------
+const ESC = "\x1b";
+const tfg = (r: number, g: number, b: number) => `${ESC}[38;2;${r};${g};${b}m`;
+const tbg = (r: number, g: number, b: number) => `${ESC}[48;2;${r};${g};${b}m`;
+const RESET = `${ESC}[0m`;
+const BOLD = `${ESC}[1m`;
+const IT = `${ESC}[3m`;
+const DIM = `${ESC}[2m`;
+
+// display-width pad (multibyte glyphs count 1 col; String length is codepoints)
+const padL = (s: string, w: number) => " ".repeat(Math.max(0, w - [...s].length)) + s;
+const padR = (s: string, w: number) => s + " ".repeat(Math.max(0, w - [...s].length));
+
+const PBG = tbg(247, 243, 233);
+const RULEC = tfg(200, 186, 158);
+const BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+
+const heatBg = (v: number): string =>
+  v >= 500 ? tbg(198, 40, 42) : v >= 100 ? tbg(214, 118, 38)
+  : v >= 10 ? tbg(176, 168, 54) : v > 0 ? tbg(58, 108, 84) : tbg(34, 36, 44);
+const heatFg = (v: number): string => (v >= 100 ? tfg(255, 255, 255) : tfg(20, 20, 24));
+
+const usd = (n: number) => `$${n.toFixed(2)}`;
+const num = (n: number) => n.toLocaleString("en-US");
+const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+const render = (
+  projects: readonly ProjectAgg[],
+  grand: Bucket,
+  hosts: readonly string[],
+  sinceMs: number,
+  untilMs: number,
+  basis: string,
+): string[] => {
+  const PW = Math.max(24, ...projects.map((p) => [...p.project].length)) + 2;
+  // Cell width adapts to the widest hostname header (e.g. for-tasks-1.coder) so
+  // column heads never overflow into the rail; floor of 12 keeps money readable.
+  const CW = Math.max(12, ...hosts.map((h) => [...h].length + 1));
+  const rule = `${PBG}${RULEC}│${RESET}`;
+  const maxCost = Math.max(1, ...projects.map((p) => p.total.cost));
+  const spark = (v: number) => BLOCKS[Math.min(7, Math.max(0, Math.round((v / maxCost) * 7)))];
+  const lines: string[] = [];
+
+  lines.push(
+    `\n${PBG}${tfg(40, 30, 20)}${BOLD}  ◈ opencode spend  ${RESET}` +
+    `${PBG}${tfg(120, 100, 80)}${IT}${day(sinceMs)} → ${day(untilMs)}${RESET}` +
+    `${PBG}${tfg(170, 150, 120)}${IT}  · by ${basis} · ${hosts.length} host(s) ${RESET}`,
+  );
+
+  let head = `${PBG}${tfg(150, 130, 105)}${IT}  ${padR("project", PW)}${RESET}${rule}`;
+  for (const h of hosts) head += `${PBG}${tfg(150, 130, 105)}${IT}${padL(h, CW)} ${RESET}${rule}`;
+  head += `${PBG}${tfg(90, 70, 50)}${BOLD}${padL("Σ row", 10)} ${RESET}${rule}` +
+    `${PBG}${tfg(90, 70, 50)}${IT} trend${RESET}`;
+  lines.push(head);
+
+  const cell = (v: number) => {
+    const s = v === 0 ? "·" : v.toFixed(2);
+    return `${heatBg(v)}${heatFg(v)}${padL(s, CW)} ${RESET}${rule}`;
+  };
+  for (const p of projects) {
+    let ln = `${PBG}${tfg(40, 30, 20)}  ${padR(p.project, PW)}${RESET}${rule}`;
+    for (const h of hosts) ln += cell(p.byHost.get(h)?.cost ?? 0);
+    ln += `${PBG}${tfg(150, 40, 30)}${BOLD}${padL(usd(p.total.cost), 10)} ${RESET}${rule}` +
+      `${PBG}${tfg(150, 40, 30)} ${spark(p.total.cost)} ${RESET}`;
+    lines.push(ln);
+    for (const [wt, b] of [...p.byWorktree.entries()].sort((a, b) => b[1].cost - a[1].cost)) {
+      lines.push(`${PBG}${tfg(150, 135, 112)}${IT}${DIM}  ⌥ ${padR(wt, PW - 2)}${RESET}` +
+        `${PBG}${tfg(150, 135, 112)}${IT}${padL(usd(b.cost), CW * hosts.length + 2)}${RESET}`);
+    }
+  }
+
+  let foot = `${PBG}${tfg(90, 70, 50)}${BOLD}  ${padR("Σ host", PW)}${RESET}${rule}`;
+  for (const h of hosts) {
+    const c = projects.reduce((s, p) => s + (p.byHost.get(h)?.cost ?? 0), 0);
+    foot += `${PBG}${tfg(90, 70, 50)}${BOLD}${padL(usd(c), CW)} ${RESET}${rule}`;
+  }
+  foot += `${PBG}${tfg(150, 40, 30)}${BOLD}${padL(usd(grand.cost), 10)} ${RESET}${rule}` +
+    `${PBG}${tfg(150, 40, 30)} ${spark(maxCost)} ${RESET}`;
+  lines.push(foot);
+
+  lines.push(
+    `${DIM}${tfg(150, 135, 112)}${IT}  · unused   ${tfg(120, 105, 85)}░ <10  ▒ <100  ▓ <500  █ 500+ (heat)  ` +
+    `${tfg(150, 135, 112)}│ trend = row total vs top spend · in ${num(grand.input)} / out ${num(grand.output)} tok${RESET}`,
+  );
+  lines.push(`${DIM}${tfg(150, 135, 112)}${IT}  ↪ devbox ~/work/<repo> folded into ~/dev/canva/<repo>${RESET}`);
+  return lines;
+};
+
+// --- CLI -----------------------------------------------------------------
+const hostsFlag = Flag.string("host").pipe(
+  Flag.withAlias("H"),
+  Flag.withDescription(
+    `Comma-delimited hosts. 'local' runs here; others are ssh targets. [default: configured / ${CONFIGURED_HOSTS.join(",") || "none"}]`,
+  ),
+  Flag.withDefault(""),
+);
+const sinceFlag = Flag.string("since").pipe(
+  Flag.withAlias("s"),
+  Flag.withDescription("Window start: date (2026-01-01) or span (30d/2w/3m). [default: 30d]"),
+  Flag.withDefault("30d"),
+);
+const untilFlag = Flag.string("until").pipe(
+  Flag.withAlias("u"),
+  Flag.withDescription("Window end: date or span. [default: now]"),
+  Flag.withDefault(""),
+);
+const concurrencyFlag = Flag.integer("concurrency").pipe(
+  Flag.withAlias("c"),
+  Flag.withDescription("Max hosts queried in parallel. [default: 4]"),
+  Flag.withDefault(4),
+);
+const basisFlag = Flag.choice("time-basis", ["created", "updated"]).pipe(
+  Flag.withDescription("Filter by session start (created) or last activity (updated). [default: created]"),
+  Flag.withDefault("created" as "created" | "updated"),
+);
+
+const costCommand = Command.make(
+  "df-opencode-cost",
+  { host: hostsFlag, since: sinceFlag, until: untilFlag, concurrency: concurrencyFlag, "time-basis": basisFlag },
+  (opts) =>
+    Effect.gen(function* () {
+      const now = Date.now();
+      const cliHosts = opts.host.split(",").map((h) => h.trim()).filter((h) => h.length > 0);
+      const hosts = cliHosts.length > 0 ? cliHosts : CONFIGURED_HOSTS;
+      const basis = opts["time-basis"];
+
+      if (hosts.length === 0) {
+        yield* Console.error(
+          "No hosts configured. Set openCodeCostHosts via `chezmoi edit-config` " +
+          "(e.g. local,for-tasks-1.coder), or pass --host local,box.coder.",
+        );
+        return yield* Effect.sync(() => Deno.exit(2));
+      }
+
+      const sinceMs = parseWhen(opts.since, now);
+      if (sinceMs === null) {
+        yield* Console.error(`--since: cannot parse "${opts.since}" (use 2026-01-01 or 30d)`);
+        return yield* Effect.sync(() => Deno.exit(2));
+      }
+      const untilMs = opts.until === "" ? now : parseWhen(opts.until, now);
+      if (untilMs === null) {
+        yield* Console.error(`--until: cannot parse "${opts.until}"`);
+        return yield* Effect.sync(() => Deno.exit(2));
+      }
+
+      const script = remoteCommand(sinceMs, untilMs, basis);
+      const results = yield* Effect.forEach(
+        hosts,
+        (h) => Effect.result(collectHost(h, script)),
+        { concurrency: opts.concurrency },
+      );
+      const ok: HostRows[] = [];
+      const failed: BoxFailure[] = [];
+      for (const r of results) Result.isSuccess(r) ? ok.push(r.success) : failed.push(r.failure);
+
+      const { projects, grand } = aggregate(ok);
+      for (const line of render(projects, grand, hosts.filter((h) => ok.some((o) => o.host === h)), sinceMs, untilMs, basis)) {
+        yield* Console.log(line);
+      }
+      for (const f of failed) yield* Console.error(`  ! ${f.host}: ${f.detail}`);
+    }),
+);
+
+// --- Entry point ---------------------------------------------------------
+if (import.meta.main) {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+
+  const { NodeRuntime, NodeServices } = await import("npm:@effect/platform-node@4.0.0-beta.93");
+  Command.run(costCommand, { version: "1.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// === Tests (offline, zero-flag: deno test executable_df-opencode-cost.tmpl) ==
+if (!import.meta.main) {
+  Deno.test("parseWhen: relative spans", () => {
+    const now = 1_000_000_000_000;
+    if (parseWhen("30d", now) !== now - 30 * 86400000) throw new Error("30d");
+    if (parseWhen("2w", now) !== now - 14 * 86400000) throw new Error("2w");
+    if (parseWhen("1m", now) !== now - 30 * 86400000) throw new Error("1m");
+    if (parseWhen("garbage", now) !== null) throw new Error("garbage should be null");
+  });
+  Deno.test("canonProject: work/ folds into dev/canva/", () => {
+    if (canonProject("work/canva") !== "dev/canva/canva") throw new Error("work/canva");
+    if (canonProject("work/dynamic-config") !== "dev/canva/dynamic-config") throw new Error("dyn");
+    if (canonProject("dev/canva/impact-cycles") !== "dev/canva/impact-cycles") throw new Error("passthrough");
+  });
+  Deno.test("homeRel: strips home prefix", () => {
+    if (homeRel("/Users/lochlan/dev/canva/x") !== "dev/canva/x") throw new Error("mac");
+    if (homeRel("/home/coder/work/canva") !== "work/canva") throw new Error("devbox");
+  });
+  Deno.test("splitWorktree: extracts worktree name", () => {
+    const r = splitWorktree("dev/canva/x/.agents/worktrees/feature-y");
+    if (r.project !== "dev/canva/x" || r.worktree !== "feature-y") throw new Error("worktree");
+  });
+  Deno.test("aggregate: work/canva + dev/canva/canva merge, per-host preserved", () => {
+    const { projects, grand } = aggregate([
+      { host: "local", rows: [{ dir: "/Users/lochlan/dev/canva/canva", cost: 13.41, input: 100, output: 50 }] },
+      { host: "for-tasks-1.coder", rows: [{ dir: "/home/coder/work/canva", cost: 15.36, input: 200, output: 80 }] },
+    ]);
+    if (projects.length !== 1) throw new Error(`expected 1 merged project, got ${projects.length}`);
+    const p = projects[0];
+    if (p.project !== "dev/canva/canva") throw new Error(p.project);
+    if (Math.abs(p.total.cost - 28.77) > 0.001) throw new Error(`total ${p.total.cost}`);
+    if (Math.abs((p.byHost.get("local")?.cost ?? 0) - 13.41) > 0.001) throw new Error("local host");
+    if (Math.abs(grand.cost - 28.77) > 0.001) throw new Error(`grand ${grand.cost}`);
+  });
+}
