@@ -81,6 +81,7 @@
        omo both expect the full roster). */ -}}
 {{- if ne "" .emailWork -}}
 {{-   $bedrockOpus := "amazon-bedrock/global.anthropic.claude-opus-4-8" -}}
+{{-   $bedrockFable := "amazon-bedrock/global.anthropic.claude-fable-5" -}}
 {{-   $bedrockSonnet := "amazon-bedrock/global.anthropic.claude-sonnet-5" -}}
 {{-   $bedrockHaiku := "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0" -}}
 {{-   $bedrockKimi := "amazon-bedrock/moonshotai.kimi-k2.5" -}}
@@ -124,19 +125,21 @@
             "ultrabrain"         (dict "model" $openaiBig    "variant" "xhigh")
             "deep"               (dict "model" $openaiBig    "variant" "medium")
             "quick"              (dict "model" $googleFlash)
-            "visual-engineering" (dict "model" $googlePro    "variant" "high" "thinking" $visualThinking)
-            "artistry"           (dict "model" $googlePro    "variant" "high" "thinking" $visualThinking)
+            "visual-engineering" (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)
+            "artistry"           (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)
             "writing"            (dict "model" $googleFlash))
           "agents" (dict
             "sisyphus"        (dict "model" $bedrockOpus)
-            "oracle"          (dict "model" $bedrockOpus)
-            "prometheus"      (dict "model" $bedrockOpus)
-            "metis"           (dict "model" $bedrockSonnet)
-            "momus"           (dict "model" $bedrockOpus)
+            "hephaestus"      (dict "model" $openaiBig "variant" "xhigh")
+            "oracle"          (dict "model" $bedrockFable)
+            "prometheus"      (dict "model" $bedrockFable)
+            "metis"           (dict "model" $bedrockFable)
+            "momus"           (dict "model" $bedrockFable)
             "atlas"           (dict "model" $bedrockSonnet)
-            "sisyphus-junior" (dict "model" $bedrockSonnet)
+            "sisyphus-junior" (dict "model" $bedrockOpus)
             "librarian"       (dict "model" $bedrockHaiku)
-            "explore"         (dict "model" $bedrockHaiku)))
+            "explore"         (dict "model" $bedrockHaiku)
+            "multimodal-looker" (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)))
         "cheap" (dict
           "categories" (dict
             "unspecified-high"   (dict "model" $bedrockKimi)
@@ -149,6 +152,7 @@
             "writing"            (dict "model" $googleFlash))
           "agents" (dict
             "sisyphus"        (dict "model" $bedrockKimi)
+            "hephaestus"      (dict "model" $openaiMini)
             "oracle"          (dict "model" $openaiMini)
             "prometheus"      (dict "model" $bedrockKimi)
             "metis"           (dict "model" $bedrockHaiku)
@@ -156,7 +160,8 @@
             "atlas"           (dict "model" $bedrockHaiku)
             "sisyphus-junior" (dict "model" $bedrockHaiku)
             "librarian"       (dict "model" $bedrockHaiku)
-            "explore"         (dict "model" $bedrockHaiku))) -}}
+            "explore"         (dict "model" $bedrockHaiku)
+            "multimodal-looker" (dict "model" $googleFlash))) -}}
 {{- /* Read active profile from the non-chezmoi state file; fall back to
        "default" when missing or unrecognised. We avoid `warnf` here: chezmoi's
        modify-template apply path doesn't register it (only `chezmoi cat` /
@@ -185,7 +190,7 @@
 {{-     $config = set $config "_dotfilesProfileRequested" $requested -}}
 {{-   end -}}
 {{-   $config = set $config "_dotfilesUnmanaged" (dict
-        "agents" (list "hephaestus" "multimodal-looker")
+        "agents" (list)
         "categories" (list)) -}}
 {{- end -}}
 
