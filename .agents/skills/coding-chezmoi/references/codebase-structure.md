@@ -47,6 +47,21 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .jetbrainsLicenseServer           // JetBrains license server URL
 ```
 
+### Adding a new data-variable key (fleet-poisoning hazard)
+
+A new `[data]` key only lands in a machine's cached config (`~/.config/chezmoi/chezmoi.toml`) when `chezmoi init` re-runs the `.chezmoi.toml.tmpl` prompts. `chezmoi apply` alone does NOT seed it. So on any box whose cache predates the key — every already-provisioned box in the fleet — a template that reads the key with a bare `{{ .newKey }}` **aborts the entire `chezmoi apply`** with `map has no entry for key "newKey"`.
+
+This is a fleet-poisoning change: because `chezmoi apply` runs upstream of the source-pull (`mise run update` does `mise:upgrade` → apply → then `chezmoi:update` pulls), a box that fails apply on the missing key can never reach a follow-up commit that would fix it. It deadlocks, and manual `git fetch + reset --hard origin/main` on each box is the only recovery.
+
+**Rule: any new template reference to a data key MUST guard against the key being absent, in the SAME commit that introduces the reference:**
+
+```go
+{{ dig "newKey" "" . }}          // renders "" on caches predating the key
+{{ dig "newKey" "default" . }}   // or a real default
+```
+
+Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it later" change. Add the prompt to `.chezmoi.toml.tmpl`, the exact-text `--promptString` seed to `install.sh`, AND the `dig` guard at every read site together.
+
 ## Key Files
 
 - `.chezmoiroot` — declares `home/` as the source root
