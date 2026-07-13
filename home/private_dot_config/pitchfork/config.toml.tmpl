@@ -41,7 +41,7 @@ ready_delay = 2
 
 {{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
 [daemons.df-code-server]
-run = "code-server --bind-addr 0.0.0.0:4444 --auth password"
+run = "code-server --bind-addr 0.0.0.0:4444 --auth none"
 watch = ["{{ .chezmoi.homeDir }}/.config/code-server/config.yaml"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
