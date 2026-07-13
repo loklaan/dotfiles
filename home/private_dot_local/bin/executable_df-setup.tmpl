@@ -308,7 +308,39 @@ const orcaVersionState: Effect.Effect<OrcaVersionState> = Effect.gen(function* (
 });
 {{- end }}
 
-{{- if ne "" .emailWork }}
+{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
+
+const checkOpencodeServe: Effect.Effect<boolean> = Effect.gen(function* () {
+  const pitchfork = (yield* hasCommand("pitchfork"))
+    ? "pitchfork"
+    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
+  if (pitchfork === "") return false;
+  const result = yield* run(pitchfork, ["status", "df-opencode-serve"]);
+  return result.ok && /Status:\s*running/.test(result.stdout);
+});
+{{- end }}
+
+{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
+
+const checkCodeServer: Effect.Effect<boolean> = Effect.gen(function* () {
+  const pitchfork = (yield* hasCommand("pitchfork"))
+    ? "pitchfork"
+    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
+  if (pitchfork === "") return false;
+  const result = yield* run(pitchfork, ["status", "df-code-server"]);
+  return result.ok && /Status:\s*running/.test(result.stdout);
+});
+{{- end }}
+
+{{- if eq .chezmoi.os "linux" }}
+
+const checkMcpproxy: Effect.Effect<boolean> = run("pitchfork", [
+  "status",
+  "df-mcpproxy",
+]).pipe(Effect.map((result) => result.ok));
+{{- end }}
+
+{{- if eq .machineProfile "work" }}
 
 const checkGhAuth: Effect.Effect<boolean> = run("gh", ["auth", "status"]).pipe(
   Effect.map((result) => result.ok && `${result.stdout}${result.stderr}`.includes("Logged in")),
@@ -335,7 +367,7 @@ const formatMissingList = (missing: ReadonlyArray<string>): string => missing.jo
 
 const printStatus = (
   bwsState: BwsState,
-{{- if ne "" .emailWork }}
+{{- if eq .machineProfile "work" }}
   hasGhAuth: boolean,
   workMissing: ReadonlyArray<string>,
 {{- end }}
@@ -363,7 +395,7 @@ const printStatus = (
         print("white", ["dim"], "    Secrets not available (npm auth, GitHub tokens)");
         break;
     }
-{{- if ne "" .emailWork }}
+{{- if eq .machineProfile "work" }}
 
     printPlain();
 
@@ -423,6 +455,95 @@ const printStatus = (
       print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
     }
 {{- end }}
+{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
+
+    printPlain();
+
+    const opencodeServeActive = yield* checkOpencodeServe;
+    const opencodeServeReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:4096"]).pipe(
+      Effect.map((result) => result.ok),
+    );
+
+    if (opencodeServeActive) {
+      print("green", [], "  ✓ opencode serve");
+      print("white", ["dim"], "    pitchfork daemon running");
+      if (opencodeServeReachable) {
+        print("green", ["dim"], "    localhost:4096 reachable");
+      } else {
+        print("yellow", ["dim"], "    localhost:4096 not reachable");
+      }
+    } else {
+      print("yellow", [], "  ✗ opencode serve");
+      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-opencode-serve");
+    }
+{{- end }}
+{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
+
+    printPlain();
+
+    const codeServerActive = yield* checkCodeServer;
+    const codeServerReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:4444"]).pipe(
+      Effect.map((result) => result.ok),
+    );
+
+    if (codeServerActive) {
+      print("green", [], "  ✓ code-server");
+      print("white", ["dim"], "    pitchfork daemon running");
+      if (codeServerReachable) {
+        print("green", ["dim"], "    localhost:4444 reachable");
+      } else {
+        print("yellow", ["dim"], "    localhost:4444 not reachable");
+      }
+    } else {
+      print("yellow", [], "  ✗ code-server");
+      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-code-server");
+    }
+{{- end }}
+{{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
+
+    printPlain();
+
+    const mcpproxyActive = yield* checkMcpproxy;
+    const mcpproxyReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:18321"]).pipe(
+      Effect.map((result) => result.ok),
+    );
+
+    if (mcpproxyActive) {
+      print("green", [], "  ✓ mcpproxy");
+      print("white", ["dim"], "    pitchfork daemon running");
+      if (mcpproxyReachable) {
+        print("green", ["dim"], "    localhost:18321 reachable");
+      } else {
+        print("yellow", ["dim"], "    localhost:18321 not reachable");
+      }
+    } else {
+      print("yellow", [], "  ✗ mcpproxy");
+      print("white", ["dim"], "    Not running. Try: pitchfork status df-mcpproxy");
+    }
+{{- end }}
+{{- if and (eq .chezmoi.os "darwin") (dig "mcpproxyGate" true .) }}
+
+    printPlain();
+
+    // mcpproxy on macOS is the MCPProxy.app GUI app
+    const mcpproxyAppExists = yield* pathExists("/Applications/MCPProxy.app");
+    const mcpproxyRunning = yield* run("pgrep", ["-f", "MCPProxy"]).pipe(
+      Effect.map((result) => result.ok),
+    );
+
+    if (mcpproxyAppExists) {
+      if (mcpproxyRunning) {
+        print("green", [], "  ✓ mcpproxy");
+        print("white", ["dim"], "    MCPProxy.app running");
+      } else {
+        print("yellow", [], "  ✗ mcpproxy");
+        print("white", ["dim"], "    MCPProxy.app installed but not running");
+      }
+    } else {
+      print("yellow", [], "  ✗ mcpproxy");
+      print("white", ["dim"], "    MCPProxy.app not found in /Applications");
+    }
+{{- end }}
 
     // ── Drift report (read-only view of last drift:check) ─────────
     printPlain();
@@ -473,13 +594,13 @@ const hostname: Effect.Effect<string> = run("hostname", []).pipe(
 const printInstructions = (
   bwsState: BwsState,
   tokenPath: string,
-{{- if ne "" .emailWork }}
+{{- if eq .machineProfile "work" }}
   hasGhAuth: boolean,
   workMissing: ReadonlyArray<string>,
 {{- end }}
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-{{- if ne "" .emailWork }}
+{{- if eq .machineProfile "work" }}
     if (bwsState === "ok" && hasGhAuth && workMissing.length === 0) {
 {{- else }}
     if (bwsState === "ok") {
@@ -544,7 +665,7 @@ const printInstructions = (
       case "ok":
         break;
     }
-{{- if ne "" .emailWork }}
+    {{- if eq .machineProfile "work" }}
 
     if (!hasGhAuth) {
       print("white", ["bold"], `  ${step}. Authenticate GitHub CLI`);
@@ -590,7 +711,7 @@ const main: Effect.Effect<number> = Effect.gen(function* () {
   if (args.probeOnly) {
     return bws.exitCode;
   }
-{{- if ne "" .emailWork }}
+{{- if eq .machineProfile "work" }}
 
   const hasGhAuth = yield* checkGhAuth;
   const workMissing = yield* checkWorkConfig;

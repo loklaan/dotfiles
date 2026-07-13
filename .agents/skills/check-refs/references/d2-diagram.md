@@ -1,7 +1,7 @@
 # D2 Diagram Freshness Check
 
 Verify that the rendered SVG diagrams in `support/` are up-to-date with their
-D2 source files and that the README references them correctly.
+D2 source files and that repository documentation references them correctly.
 
 Render configuration (themes, layout, source discovery) is defined in
 `support/render-diagrams.sh`. That script is the single source of truth for
@@ -36,13 +36,15 @@ The rule IDs include the diagram base name (e.g. `d2-files-exist/diagram`,
 
 **Rule ID:** `d2-svgs-fresh`
 
-### 3. README references SVGs
+### 3. Documentation references SVGs
 
 **Procedure:**
-1. Read `README.md`.
-2. For each diagram, verify it contains a `<picture>` element referencing both
-   the dark SVG (via `<source>` with `prefers-color-scheme: dark`) and the
-   light SVG (via `<img>`).
-3. Report if any references are missing or malformed.
+1. Search repository Markdown files for `<picture>` elements.
+2. For each diagram, verify one Markdown file references both the dark SVG (via
+   `<source>` with `prefers-color-scheme: dark`) and the light SVG (via `<img>`)
+   in the same `<picture>` element.
+3. Resolve both paths relative to the Markdown file containing the references.
+4. Report if any references are missing, malformed, split across documents, or
+   resolve to missing files.
 
-**Rule ID:** `d2-readme-refs`
+**Rule ID:** `d2-markdown-refs`

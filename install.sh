@@ -3,10 +3,21 @@ set -euo pipefail
 
 IFS=$'\n\t'
 
-# Source shared logging library (from chezmoi source dir)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/home/private_dot_local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+# Detect piped execution (curl | bash sets BASH_SOURCE[0] to empty or "-")
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "-" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "${SCRIPT_DIR}/home/private_dot_local/lib/bash-logging.sh"
+  setup_session_logging "$(basename "$0")"
+else
+  # Piped mode: SCRIPT_DIR unavailable, use simple echo-based logging
+  SCRIPT_DIR=""
+  info()  { echo "info $*" >&2 ; }
+  warning() { echo "warning $*" >&2 ; }
+  fatal()  { echo "fatal $*" >&2 ; exit 1 ; }
+  error()  { echo "error $*" >&2 ; }
+  run_quiet() { "$@" > /dev/null 2>&1 ; }
+  print_log_path() { : ; }
+fi
 
 #/ Usage:
 #/   install.sh [OPTIONS]
@@ -77,18 +88,18 @@ main() {
         linux_distro=$(get_linux_distro)
         case $linux_distro in
           alpine)
-            info "╍ Running 'apk add git zsh'"
+            info "╍ Running 'apk add git zsh gnupg'"
             run_quiet $Sudo apk add --update --no-cache git zsh
           ;;
           amzn|rhel|fedora|rocky)
-            info "╍ Running 'yum install git zsh'"
+            info "╍ Running 'yum install git zsh gnupg2'"
             run_quiet $Sudo yum update -y
-            run_quiet $Sudo yum install -y git zsh
+            run_quiet $Sudo yum install -y git zsh gnupg2
           ;;
           ubuntu|debian)
-            info "╍ Running 'apt-get install git zsh locales'"
+            info "╍ Running 'apt-get install git zsh locales gnupg'"
             run_quiet $Sudo apt-get update
-            run_quiet $Sudo apt-get --no-install-recommends -y install git zsh locales
+            run_quiet $Sudo apt-get --no-install-recommends -y install git zsh locales gnupg
 
             info "╍ Running 'locale-gen en_US.UTF-8'"
             run_quiet $Sudo locale-gen en_US.UTF-8
@@ -104,8 +115,8 @@ main() {
   # Install mise & critical packages
   if ! command -v mise >/dev/null 2>&1; then
     info "▶ Installing critical packages (mise , chezmoi, bitwarden)"
-    info "╍ Running 'gpg --recv-keys' for install script verification"
-    run_quiet gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 0x7413A06D
+    info "╍ Fetching mise signing key over https for install script verification"
+    run_quiet bash -c 'curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x7413A06D" | gpg --import'
     tmp_mise_install_sh=$(mktemp)
     info "╍ Running 'curl mise.jdx.dev' for install script"
     run_quiet bash -c 'curl -fsSL https://mise.jdx.dev/install.sh.sig | gpg --decrypt > "$1"' _ "$tmp_mise_install_sh"
@@ -131,8 +142,12 @@ main() {
   config_jetbrains_license_server="$(chezmoi execute-template "{{ .jetbrainsLicenseServer }}" 2>/dev/null || echo "")"
   config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
   config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
+  config_machine_profile="$(chezmoi execute-template "{{ .machineProfile }}" 2>/dev/null || echo "personal")"
   config_paseo_daemon="$(chezmoi execute-template "{{ .paseoDaemon }}" 2>/dev/null || echo "false")"
   config_orca_server="$(chezmoi execute-template "{{ .orcaServer }}" 2>/dev/null || echo "false")"
+  config_opencode_server="$(chezmoi execute-template "{{ .openCodeServer }}" 2>/dev/null || echo "false")"
+  config_code_server="$(chezmoi execute-template "{{ .codeServer }}" 2>/dev/null || echo "false")"
+  config_mcpproxy_gate="$(chezmoi execute-template "{{ .mcpproxyGate }}" 2>/dev/null || echo "true")"
 
   # BWS token setup - save to file if provided
   bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
@@ -176,8 +191,12 @@ main() {
     --promptString="JetBrains license server (or empty)=${config_jetbrains_license_server}" \
     --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
     --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
+    --promptString="Machine profile (work|personal)=${config_machine_profile}" \
     --promptBool="Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)=${config_paseo_daemon}" \
     --promptBool="Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)=${config_orca_server}" \
+    --promptBool="Run opencode serve as a pitchfork daemon?=${config_opencode_server}" \
+    --promptBool="Run code-server on this machine?=${config_code_server}" \
+    --promptBool="Run mcpproxy on this machine?=${config_mcpproxy_gate}" \
     --apply \
     --force \
     --exclude=scripts \

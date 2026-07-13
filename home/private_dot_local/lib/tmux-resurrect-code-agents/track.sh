@@ -5,11 +5,11 @@
 #|                                                                            |
 #| Records the session ID and invocation flags for the current tmux pane so   |
 #| tmux-resurrect can restore it after a tmux server restart. Receives        |
-#| session JSON on stdin. Called by Claude Code (SessionStart) and Codex      |
+#| session JSON on stdin. Called by Claude Code (SessionStart) and OpenCode   |
 #| (SessionStart) hooks.                                                      |
 #|                                                                            |
 #| Usage: bash track.sh <agent>                                               |
-#|   agent: "claude" or "codex"                                               |
+#|   agent: "claude" or "opencode"                                            |
 #|----------------------------------------------------------------------------|
 
 set -euo pipefail

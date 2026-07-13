@@ -1,7 +1,7 @@
 {{- $omoVersion := output "mise" "current" "npm:oh-my-openagent" | trim -}}
 {{- $llmproxyLocal := dig "openCodeWorkPluginLocalPath" "" . -}}
 {{- $llmproxyVersion := "" -}}
-{{- if eq "" $llmproxyLocal -}}
+{{- if and (eq "" $llmproxyLocal) (eq .machineProfile "work") -}}
 {{-   $llmproxyVersion = output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
 {{- end -}}
 {{- /* Semver validation (finding #4): reject non-empty versions that don't match strict semver.
@@ -54,7 +54,7 @@ cache_dir=$(tcs_get_opencode_cache) || exit 0
 {{- if ne "" $omoVersion }}
 tcs_npm_sync "$cache_dir" "oh-my-openagent@{{ $omoVersion }}"
 {{- end }}
-{{- if eq "" $llmproxyLocal }}
+{{- if and (eq "" $llmproxyLocal) (eq .machineProfile "work") }}
 {{- if ne "" $llmproxyVersion }}
 tcs_npm_sync "$cache_dir" "@canva/opencode-plugin-llmproxy@{{ $llmproxyVersion }}"
 {{- end }}

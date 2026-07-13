@@ -17,14 +17,58 @@ setup_session_logging "$(basename "$0")"
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 
+get_login_shell() {
+  local user="$1"
+  if command -v getent >/dev/null 2>&1; then
+    getent passwd "$user" 2>/dev/null | cut -d: -f7 || true
+  elif command -v dscl >/dev/null 2>&1; then
+    dscl . -read /Users/"$user" UserShell 2>/dev/null | sed 's/UserShell: //' || true
+  else
+    # Fallback: try to parse from /etc/passwd directly
+    grep "^${user}:" /etc/passwd 2>/dev/null | cut -d: -f7 || true
+  fi
+}
+
+set_login_shell() {
+  local shell="$1" user="$2"
+  local sudo_prefix="${3:-}"
+
+  if [ -n "$sudo_prefix" ] || [ "$(id -u)" = "0" ]; then
+    if command -v usermod >/dev/null 2>&1; then
+      info "╍ Running 'usermod' to change login shell to: ${shell}"
+      $sudo_prefix usermod -s "$shell" "$user"
+    elif command -v dscl >/dev/null 2>&1; then
+      info "╍ Running 'dscl' to change login shell to: ${shell}"
+      $sudo_prefix dscl . -create /Users/"$user" UserShell "$shell"
+    else
+      info "╍ Running 'chsh' to change login shell to: ${shell}"
+      $sudo_prefix chsh -s "$shell" "$user"
+    fi
+  else
+    info "╍ Running 'chsh' to change login shell to: ${shell}"
+    chsh -s "$shell"
+  fi
+}
+
 main() {
   info "▶ Setting the user shell to zsh"
 
-  zsh_shell="$(which zsh)"
-  info "╍  \$SHELL    = ${SHELL}"
-  info "╍  which zsh = ${zsh_shell}"
-  if [ "$SHELL" = "$zsh_shell" ]; then
-    info "╍ User shell already set"
+  zsh_shell="$(command -v zsh)"
+
+  # Determine target user reliably.
+  # SUDO_USER: set by sudo to the original invoker.
+  # LOGNAME: login name, usually preserved across sudo.
+  # USER: current user.
+  # whoami: fails under sudo (returns root).
+  target_user="${SUDO_USER:-${LOGNAME:-${USER:-$(whoami)}}}"
+
+  current_login_shell="$(get_login_shell "$target_user")"
+  info "╍  Target user      = ${target_user}"
+  info "╍  Current login    = ${current_login_shell:-unknown}"
+  info "╍  Desired shell    = ${zsh_shell}"
+
+  if [ "$current_login_shell" = "$zsh_shell" ]; then
+    info "╍ Login shell already set to zsh"
     return
   fi
 
@@ -60,11 +104,15 @@ main() {
     info "╍ ${zsh_shell} exists in /etc/shells"
   fi
 
-  # Change the default shell to zsh, if it isn't already the default
-  info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
-  chsh -s "$zsh_shell" "$(whoami)"
+  # Change the default shell to zsh.
+  # Use usermod (Linux) or dscl (macOS) when we have root/sudo: they're
+  # designed for administrative changes and don't risk interactive password
+  # prompts that some chsh implementations require when changing another
+  # user's shell. Use chsh only when changing our own shell without elevated
+  # privileges.
+  set_login_shell "$zsh_shell" "$target_user" "$Sudo"
 
-  info "╍ Now, run 'zsh' to start a new term session"
+  info "╍ Shell change complete. Log out and log back in for changes to take effect."
 }
 
 main "$@"

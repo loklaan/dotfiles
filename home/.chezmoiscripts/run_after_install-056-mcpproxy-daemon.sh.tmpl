@@ -12,13 +12,14 @@ source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
-#/   run_after_install-056-mcpproxy-launchd.sh
+#/   run_after_install-056-mcpproxy-daemon.sh
 #/
 #/ Description:
 #/   Manages the mcpproxy-go daemon. On macOS, cleans up legacy launchd
 #/   agents and opens the native MCPProxy.app (Homebrew cask). On Linux,
-#/   enables and (re)starts the systemd user unit. Verifies the service
-#/   is responding on port 18321.
+#/   tears down the legacy systemd --user unit and starts the df-mcpproxy
+#/   Pitchfork daemon. Verifies the service is responding on port 18321.
+#/   Opt-out via the mcpproxyGate chezmoi flag.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -40,9 +41,16 @@ parse_args() {
 }
 
 start_darwin() {
+  local enabled={{ dig "mcpproxyGate" true . }}
+  if [ "$enabled" != "true" ]; then
+    info "▶ mcpproxy (macOS, opt-out)"
+    info "╍ skipping MCPProxy.app launch"
+    return 0
+  fi
+
   local domain="gui/$(id -u)"
 
-  info "▶ mcpproxy (macOS)"
+  info "▶ mcpproxy (macOS, opt-in)"
 
   # Unload legacy launchd agents (replaced by native MCPProxy.app)
   local label
@@ -55,7 +63,7 @@ start_darwin() {
   done
 
   # Open MCPProxy.app if installed (idempotent — noop if already running)
-  local app="/Applications/mcpproxy.app"
+  local app="/Applications/MCPProxy.app"
   if [ -d "$app" ]; then
     open -a "$app"
     info "╍ opened MCPProxy.app"
@@ -66,7 +74,21 @@ start_darwin() {
 }
 
 start_linux() {
-  info "▶ mcpproxy (Linux)"
+  local enabled={{ dig "mcpproxyGate" true . }}
+
+  if [ "$enabled" != "true" ]; then
+    info "▶ mcpproxy (Linux, opt-out)"
+
+    if command -v pitchfork >/dev/null 2>&1; then
+      pitchfork stop df-mcpproxy 2>/dev/null || true
+      info "╍ stopped df-mcpproxy daemon"
+    else
+      info "╍ Pitchfork not installed; no daemon to stop"
+    fi
+    return 0
+  fi
+
+  info "▶ mcpproxy (Linux, opt-in)"
 
   # Activate mise so the mcpproxy shim is on PATH
   eval "$(mise activate bash --quiet)"
@@ -76,19 +98,28 @@ start_linux() {
     return 0
   fi
 
-  systemctl --user daemon-reload
-  systemctl --user enable mcpproxy.service
-
-  if systemctl --user is-active --quiet mcpproxy.service; then
-    systemctl --user restart mcpproxy.service
-    info "╍ restarted mcpproxy.service"
-  else
-    systemctl --user start mcpproxy.service
-    info "╍ started mcpproxy.service"
+  # Tear down the legacy systemd --user unit if present. Older setups managed
+  # mcpproxy via ~/.config/systemd/user/mcpproxy.service; pitchfork now owns the
+  # lifecycle. The unit holds an exclusive lock on the bolt db
+  # (~/.mcpproxy/config.db), so if it stays enabled pitchfork's df-mcpproxy
+  # crash-loops with "database is locked by another process".
+  if command -v systemctl >/dev/null 2>&1; then
+    local _unit="mcpproxy.service"
+    if systemctl --user cat "$_unit" >/dev/null 2>&1; then
+      systemctl --user disable --now "$_unit" >/dev/null 2>&1 || true
+      info "╍ disabled legacy systemd --user $_unit"
+      # Remove the orphan unit file; no longer managed by chezmoi.
+      rm -f "${HOME}/.config/systemd/user/${_unit}"
+      systemctl --user daemon-reload >/dev/null 2>&1 || true
+    fi
   fi
 
+  pitchfork stop df-mcpproxy 2>/dev/null || true
+  pitchfork start df-mcpproxy
+  info "╍ started df-mcpproxy via pitchfork"
+
   sleep 2
-  if curl -sf http://127.0.0.1:18321/ -o /dev/null 2>/dev/null; then
+  if curl -sf http://127.0.0.1:18321/ -o /dev/null 2>&1; then
     info "╍ mcpproxy responding on port 18321"
   else
     warning "╍ mcpproxy may not be ready yet (port 18321 not responding)"

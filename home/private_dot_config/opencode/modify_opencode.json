@@ -1,10 +1,10 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* Load MCP servers from template */ -}}
+{{- /* Load MCP servers from template (unchanged) */ -}}
 {{- $mcpServers := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
 
-{{- /* Configure instructions to reference shared agent rules and project rules directories */ -}}
+{{- /* Configure instructions to reference shared agent rules and project rules directories (unchanged) */ -}}
 {{- $instructions := list
       (printf "%s/.agents/rules/coding-system-prompts.md" .chezmoi.homeDir)
       "AGENTS.md"
@@ -13,14 +13,16 @@
       ".agents/rules/*.md"
 -}}
 
-{{- /* Build OpenCode config */ -}}
+{{- /* Load profile — machineProfile gates which profile dict we use */ -}}
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
+
+{{- /* Build config from base, then overlay profile values */ -}}
 {{- $config := $base -}}
 {{- $config = $config | setValueAtPath "mcp" $mcpServers -}}
 {{- $config = $config | setValueAtPath "instructions" $instructions -}}
 
-{{- /* Register plugins */ -}}
+{{- /* Register plugins: oh-my-openagent@latest + work plugin with local-path override (unchanged) */ -}}
 {{- $plugins := list "oh-my-openagent@latest" -}}
-{{- /* Local path overrides the npm package name when set — for in-place dev iteration */ -}}
 {{- $workPlugin := .openCodeWorkPlugin -}}
 {{- $localPath := dig "openCodeWorkPluginLocalPath" "" . -}}
 {{- if ne "" $localPath -}}
@@ -31,68 +33,94 @@
 {{- end -}}
 {{- $config = $config | setValueAtPath "plugin" $plugins -}}
 
-{{- /* Set schema for editor validation */ -}}
+{{- /* Set schema for editor validation (unchanged) */ -}}
 {{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
 
-{{- /* Set OpenCode-specific defaults (only if not already set by OpenCode) */ -}}
+{{- /* Set autoupdate default only if not already set (unchanged) */ -}}
 {{- if not (hasKey $base "autoupdate") -}}
 {{-   $config = $config | setValueAtPath "autoupdate" false -}}
 {{- end -}}
 
-{{- /* Canva Coder boxes: disable filesystem snapshots globally for the user.
-       A ~/work/canva project config would not reliably apply inside nested Git
-       repos because opencode walks only to the nearest Git root. */ -}}
-{{- if and (ne "" (env "CODER")) (ne "" .emailWork) -}}
+{{- /* Snapshot: disable on Coder boxes when profile snapshot is falsy */ -}}
+{{- if and (ne "" (env "CODER")) (not (dig "snapshot" true $p)) -}}
 {{-   $config = $config | setValueAtPath "snapshot" false -}}
 {{- end -}}
 
-{{- if and (ne "" .emailWork) (ne "" .openCodeWorkPlugin) -}}
-{{-   $bedrockOpus := "global.anthropic.claude-opus-4-8" -}}
-{{-   $opusLimit := dict "limit" (dict "context" 1000000 "output" 128000) -}}
-{{-   $config = $config | setValueAtPath "share" "disabled" -}}
-{{-   $config = $config | setValueAtPath "enabled_providers" (list "amazon-bedrock" "google" "openai") -}}
-{{-   $config = mergeOverwrite $config (dict
-        "provider" (dict
-          "amazon-bedrock" (dict
-            "models" (dict
-              $bedrockOpus                                       $opusLimit
-              "global.anthropic.claude-opus-4-7"                 $opusLimit)
-            "whitelist" (list
-              $bedrockOpus
-              "global.anthropic.claude-opus-4-7"
-              "global.anthropic.claude-opus-4-6-v1"
-              "global.anthropic.claude-opus-4-5-20251101-v1:0"
-              "global.anthropic.claude-fable-5"
-              "global.anthropic.claude-sonnet-5"
-              "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
-              "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-              "global.amazon.nova-2-lite-v1:0"
-              "moonshotai.kimi-k2.5"
-              "deepseek.v3.2"
-              "qwen.qwen3-coder-next"
-              "qwen.qwen3-next-80b-a3b"
-              "minimax.minimax-m2.5"
-              "minimax.minimax-m2.1"
-              "mistral.mistral-large-3-675b-instruct"
-              "mistral.devstral-2-123b"
-              "zai.glm-5"
-              "nvidia.nemotron-super-3-120b"
-              "meta.llama4-scout-17b-instruct-v1:0"
-              "mistral.magistral-small-2509"))))  -}}
-{{- /* Supersede the retired sonnet-4-6 pin: drop its stale per-model limit
-       entry that a prior apply merged into the target, so re-applies self-heal
-       to sonnet-5 at default limits rather than leaving an orphaned cap. */ -}}
-{{-   $bedrockModels := dig "provider" "amazon-bedrock" "models" (dict) $config -}}
-{{-   $bedrockModels = unset $bedrockModels "global.anthropic.claude-sonnet-4-6" -}}
-{{-   $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
-{{-   if not (hasKey $base "model") -}}
-{{-     $config = $config | setValueAtPath "model" (printf "amazon-bedrock/%s" $bedrockOpus) -}}
-{{-   end -}}
-{{- else if not (hasKey $base "share") -}}
-{{-   $config = $config | setValueAtPath "share" "manual" -}}
+{{- /* enabled_providers from profile (if non-empty) */ -}}
+{{- $enabledProviders := dig "enabled_providers" nil $p -}}
+{{- if ne nil $enabledProviders -}}
+{{-   $config = $config | setValueAtPath "enabled_providers" $enabledProviders -}}
 {{- end -}}
-{{- if and (ne "" .emailWork) (eq "" .openCodeWorkPlugin) -}}
-{{-   warnf "opencode bedrock config skipped — openCodeWorkPlugin is empty. Run: chezmoi edit-config\n" -}}
+
+{{- /* provider block via mergeOverwrite so it fully replaces any stale config */ -}}
+{{- $providerBlock := dig "provider_block" nil $p -}}
+{{- if ne nil $providerBlock -}}
+{{-   $config = mergeOverwrite $config (dict "provider" $providerBlock) -}}
+{{- end -}}
+
+{{- /* Self-heal: drop retired per-model limit entries so re-applies don't
+     leave orphaned caps (e.g. claude-sonnet-4-6 was superseded by 5). */ -}}
+{{- $bedrockModels := dig "provider" "amazon-bedrock" "models" (dict) $config -}}
+{{- $bedrockModels = unset $bedrockModels "global.anthropic.claude-sonnet-4-6" -}}
+{{- $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
+
+{{- /* Inject the OpenCode API key via the documented options.apiKey
+     config path (https://opencode.ai/docs/providers). `opencode` is a single
+     provider; Go and Zen are just subscription SKUs on the same account/key.
+     The provider's liveness check reads provider["opencode"].options.apiKey
+     (packages/opencode/src/provider/provider.ts); without a key it strips
+     non-free models from autoload. The BWS secret (opencode_zen_api_key) is
+     the singular opencode account key — SKU-agnostic — so this always
+     targets the `opencode` provider.
+
+     We embed the literal key (fetched from BWS at render time) rather than
+     {env:OPENCODE_API_KEY}: that env var is only exported in zsh shells
+     (env.zsh.tmpl), so the pitchfork-managed `opencode serve` daemon and
+     any bash-launched opencode would see an empty value and fall back to the
+     "public" free-tier key. The key is already stored plaintext in
+     auth.json (chezmoi-managed), so embedding it here is equivalent
+     exposure. Only injected for the `opencode` provider when present in the
+     profile's provider_block. */ -}}
+{{- if and (hasKey $config "provider") (hasKey (index $config "provider") "opencode") -}}
+{{-   $bwsToken := "" -}}
+{{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-     $bwsToken = include .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{-   $opencodeApiKey := "" -}}
+{{-   if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-     $opencodeApiKey = output $bwsGet .bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   if ne "" $opencodeApiKey -}}
+{{-     $config = $config | setValueAtPath "provider.opencode.options.apiKey" $opencodeApiKey -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* model: only set if base doesn't already have it */ -}}
+{{- if not (hasKey $base "model") -}}
+{{-   $model := dig "model" nil $p -}}
+{{-   if ne nil $model -}}
+{{-     $config = $config | setValueAtPath "model" $model -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* small_model from profile (if non-null) */ -}}
+{{- $smallModel := dig "small_model" nil $p -}}
+{{- if ne nil $smallModel -}}
+{{-   $config = $config | setValueAtPath "small_model" $smallModel -}}
+{{- end -}}
+
+{{- /* server: only if openCodeServer flag is true AND profile has a non-null server */ -}}
+{{- if and (dig "openCodeServer" false .) (ne nil (dig "server" nil $p)) -}}
+{{-   $config = $config | setValueAtPath "server" (dig "server" nil $p) -}}
+{{- end -}}
+
+{{- /* share from profile (only if base doesn't have it) */ -}}
+{{- if not (hasKey $base "share") -}}
+{{-   $share := dig "share" nil $p -}}
+{{-   if ne nil $share -}}
+{{-     $config = $config | setValueAtPath "share" $share -}}
+{{-   end -}}
 {{- end -}}
 
 {{ $config | toPrettyJson }}

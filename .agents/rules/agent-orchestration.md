@@ -169,22 +169,21 @@ mise (npm:oh-my-openagent = "latest")        npm registry (depot, @canva scope)
   └─ mise upgrade -y                            └─ npm view @canva/opencode-plugin-llmproxy version
        resolves to current latest                    resolves to current latest
                          │                                      │
-chezmoi apply            │                                      │
-  ├─ run_onchange_after_install-067-sync-omo-plugin.sh.tmpl     │
-  │    reads `mise current 'npm:oh-my-openagent'`               │
-  │    content-hash on version → reruns when it changes         │
-  │    runs `npm install --no-save --no-package-lock` in cache  │
-  │                                                             │
-  └─ run_onchange_after_install-068-sync-llmproxy-plugin.sh.tmpl
-       reads `npm view @canva/opencode-plugin-llmproxy version`
-       content-hash on version → reruns when it changes
-       runs `npm install --no-save --no-package-lock` in cache
+                         └────────────┬─────────────────────────┘
+                                      │
+chezmoi apply           ┌──────────────┴──────────────┐
+                        │                             │
+  run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl
+  reads `mise current 'npm:oh-my-openagent'`
+  reads `npm view @canva/opencode-plugin-llmproxy version` (work profile only)
+  content-hash on version → reruns when it changes
+  runs `npm install --no-save --no-package-lock` in cache
 ```
 
 Different version-resolution sources reflect different ownership:
 
 - **omo** is mise-managed (it's a CLI we install with `mise install`), so the version comes from `mise current`.
-- **llmproxy** is purely an opencode plugin (no CLI), so the version comes from `npm view` against the depot registry where `@canva` is configured in `~/.npmrc`.
+- **llmproxy** is purely an opencode plugin (no CLI), so the version comes from `npm view` against the depot registry where `@canva` is configured in `~/.npmrc`. It is only synced on `machineProfile = "work"`.
 
 Both flow through the same `tcs_npm_sync` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
 
@@ -213,7 +212,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |
 | `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
-| `home/.chezmoiscripts/run_onchange_after_install-067-sync-omo-plugin.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache |
+| `home/.chezmoiscripts/run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache, and the work-profile llmproxy plugin from the depot registry |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_df-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
@@ -271,7 +270,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 
 **Upgrade omo plugin (every machine):**
 1. `mise upgrade -y` → mise reports if there's a new version, resolves it.
-2. `chezmoi apply` → run_onchange_067 detects the version change and runs `bun add` against opencode's cache.
+2. `chezmoi apply` → run_onchange_067 detects the version change and runs `npm install --no-save --no-package-lock` in opencode's cache.
 3. Verify: `oh-my-openagent doctor` → expect `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`.
 
 If the doctor reports `Loaded X · latest Y` after step 2, the bridge didn't run — check the chezmoi session log for `tool-cache-sync` warnings (most likely `bun not found` or `opencode not found`).
@@ -313,10 +312,12 @@ So a stopped box is never left stale: it does not receive the manual fan-out, bu
 
 ### Orca / paseo on Linux are installed via mise
 
-Both opt-in tools that run as systemd-user services on Coder boxes are installed by mise as a normal `[tools]` entry:
+Both opt-in tools that run on Coder boxes are installed by mise as a normal `[tools]` entry and supervised by Pitchfork:
 
-- **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.83`
-- **orca**: `http:orca` — pinned to `1.4.74`, downloads `orca-linux.AppImage` from GitHub releases
+- **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.101`
+- **orca**: `http:orca` — pinned to `1.4.114`, downloads `orca-linux.AppImage` from GitHub releases
+
+Additionally, **pitchfork** itself is always installed on Linux (`github:jdx/pitchfork`) because it now manages the mcpproxy, opencode-serve, code-server, and orca-server daemons.
 
 To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cw fleet --include-local update` to converge the fleet.
 

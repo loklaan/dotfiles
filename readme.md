@@ -18,6 +18,24 @@ A single `install.sh` bootstraps a complete development environment from a clean
 
 Chezmoi manages the file lifecycle: Go templates resolve per-machine configuration at apply time, externals pin plugin archives to exact versions, and numbered scripts handle post-install automation in dependency order. Secrets never touch the repo — Bitwarden Secrets Manager provides them at render time through a token-gated guard pattern that degrades gracefully when credentials aren't available.
 
+## System Model
+
+This repository projects a portable desired-state model into a live user
+environment. It resolves machine-specific variation, reconciles file and
+operational state, and observes whether the machine has converged.
+
+<p align="center">
+  <a href=".agents/resources/system-model.md">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="support/diagram-system-model-dark.svg">
+      <img src="support/diagram-system-model-light.svg" alt="dotfiles system model" width="1400">
+    </picture>
+  </a>
+</p>
+
+See the [Dotfiles System Model](.agents/resources/system-model.md) for the
+concepts and invariants that should survive changes to the underlying tools.
+
 ## Features
 
 <p align="center">
@@ -65,6 +83,12 @@ git clone https://github.com/loklaan/dotfiles.git ~/.local/share/chezmoi
 CONFIG_BWS_ACCESS_TOKEN=... CONFIG_SIGNING_KEY=... ~/.local/share/chezmoi/install.sh
 ```
 
+### Quick Install (curl)
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/loklaan/dotfiles/main/install.sh | bash
+```
+
 ### Update to Latest
 
 ```shell
@@ -108,9 +132,7 @@ home/
 
 ## Code Agent Adoption
 
-Claude Code, OpenCode, and Codex share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`, `~/.codex/`) symlinking into it. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
-
-> **Codex pending:** project-level skills in this repo (`.agents/skills/`) are currently surfaced to Claude Code and OpenCode only (via `.claude/skills` symlink). A `.codex/skills` symlink is not yet wired up.
+Claude Code and OpenCode share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`) symlinking into it. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
 
 <p align="center">
   <picture>

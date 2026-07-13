@@ -52,7 +52,7 @@ against calibration data measured from real skill files.
 
 See [references/d2-diagram.md](references/d2-diagram.md) for the full
 procedure. Checks that the rendered SVGs in `support/` are up-to-date with
-the `support/diagram.d2` source and that the README references them correctly.
+their D2 sources and that repository Markdown references them correctly.
 
 ## Execution
 

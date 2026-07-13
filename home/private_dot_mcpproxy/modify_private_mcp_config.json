@@ -26,7 +26,7 @@
 {{- /* Build our managed server list */ -}}
 {{- $servers := list -}}
 
-{{- if ne "" .emailWork -}}
+{{- if eq .machineProfile "work" -}}
 {{-   $servers = append $servers (dict
         "name" "otter"
         "command" "otter"

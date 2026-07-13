@@ -1,0 +1,128 @@
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+# Runs every chezmoi apply on Linux. Syncs the opencode auth key from BWS
+# into ~/.local/share/opencode/auth.json, merging with any existing providers.
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
+BWS_GET="${HOME}/.local/lib/bws-get-or-empty"
+
+#/ Usage:
+#/   run_after_install-065-opencode-auth.sh
+#/
+#/ Description:
+#/   Fetches the opencode API key from Bitwarden Secrets Manager and injects
+#/   it into ~/.local/share/opencode/auth.json under the "opencode" provider.
+#/   All other providers (google, openai, amazon-bedrock, etc.) are preserved.
+#/
+#/   Soft-fail: if the BWS token is missing, expired, or the secret is
+#/   inaccessible, the script logs a warning and exits 0 without modifying
+#/   the auth file.
+#/
+#/   Idempotent: running multiple times produces the same result.
+#/
+#/   macOS: renders empty (opencode auth is handled differently there).
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+fetch_bws_secret() {
+  local secret_id="$1"
+  local token_path="$2"
+  "$BWS_GET" "$secret_id" "$token_path" 2>/dev/null || echo ""
+}
+
+merge_auth_json() {
+  local auth_file="$1"
+  local api_key="$2"
+
+  local tmp_file
+  tmp_file=$(mktemp "${TMPDIR}/opencode-auth-XXXXXX.json")
+
+  # Cleanup function
+  cleanup() { rm -f "$tmp_file" "${tmp_file}.merged"; }
+  trap cleanup EXIT
+
+  # Read existing auth.json or create empty object
+  if [ -f "$auth_file" ]; then
+    cp "$auth_file" "$tmp_file"
+  else
+    printf '{}' > "$tmp_file"
+  fi
+
+  # Merge: update only the opencode credential, preserve everything else.
+  # Shape MUST be { type: "api", key: ... } — this is what opencode's own
+  # Auth.set writes and what `opencode auth list` reads (it filters entries
+  # by .type==="api" && typeof .key==="string"; a bare {key} is ignored and
+  # shows as 0 credentials). NOTE: opencode key *resolution* for actual
+  # API calls does not read this file — it uses options.apiKey in config
+  # (see modify_opencode.json). auth.json is kept well-formed for
+  # `opencode auth list` and other providers regardless.
+  jq --arg key "$api_key" \
+    '."opencode" = { type: "api", key: $key }' \
+    "$tmp_file" > "${tmp_file}.merged" \
+    && mv "${tmp_file}.merged" "$tmp_file"
+
+  # Atomic write
+  mv "$tmp_file" "$auth_file"
+  trap - EXIT
+
+  info "╍ updated ${auth_file} with opencode key"
+}
+
+main() {
+  parse_args "$@"
+
+  # Verify bws-get-or-empty is available
+  if [ ! -x "$BWS_GET" ]; then
+    warning "╍ bws-get-or-empty not found at ${BWS_GET} — skipping auth sync"
+    return 0
+  fi
+
+  # Verify jq is available
+  if ! command -v jq >/dev/null 2>&1; then
+    warning "╍ jq not on PATH — skipping auth sync"
+    return 0
+  fi
+
+  local bws_token_path="{{ .bwsTokenPath }}"
+  local bws_secret_id="{{ .bwsIdOpencodeApiKey }}"
+
+  info "▶ opencode auth sync (Linux)"
+
+  local api_key
+  api_key=$(fetch_bws_secret "$bws_secret_id" "$bws_token_path")
+
+  if [ -z "$api_key" ]; then
+    warning "╍ opencode API key is empty (BWS token missing, expired, or no access)"
+    warning "╍ skipping auth sync — run df-setup for guidance"
+    return 0
+  fi
+
+  # Ensure parent directory exists
+  mkdir -p "$(dirname "$AUTH_FILE")"
+
+  merge_auth_json "$AUTH_FILE" "$api_key"
+  info "╍ opencode auth updated"
+}
+
+main "$@"
+{{- end }}

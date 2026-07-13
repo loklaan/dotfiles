@@ -22,6 +22,18 @@ TMPDIR="${TMPDIR%/}"
 CHECK_MODE=false
 expr "$*" : ".*--check" > /dev/null && CHECK_MODE=true
 
+CHECK_TMPDIR=""
+cleanup() {
+  if [ -n "$CHECK_TMPDIR" ]; then
+    rm -rf -- "$CHECK_TMPDIR"
+  fi
+}
+
+if [ "$CHECK_MODE" = true ]; then
+  CHECK_TMPDIR="$(mktemp -d "$TMPDIR/render-diagrams.XXXXXX")"
+  trap cleanup EXIT
+fi
+
 LAYOUT="elk"
 DARK_THEME="200"
 LIGHT_THEME="0"
@@ -43,8 +55,8 @@ for source in "${sources[@]}"; do
   light_out="$DIR/${base}-light.svg"
 
   if [ "$CHECK_MODE" = true ]; then
-    dark_tmp="$TMPDIR/${base}-dark.svg"
-    light_tmp="$TMPDIR/${base}-light.svg"
+    dark_tmp="$CHECK_TMPDIR/${base}-dark.svg"
+    light_tmp="$CHECK_TMPDIR/${base}-light.svg"
 
     mise exec -- d2 --theme "$DARK_THEME" --layout "$LAYOUT" "$source" "$dark_tmp" 2>/dev/null
     mise exec -- d2 --theme "$LIGHT_THEME" --layout "$LAYOUT" "$source" "$light_tmp" 2>/dev/null
@@ -60,8 +72,6 @@ for source in "${sources[@]}"; do
       echo "STALE: $light_out" >&2
       stale=1
     fi
-
-    rm -f "$dark_tmp" "$light_tmp"
   else
     echo "Rendering $base..."
     mise exec -- d2 --theme "$DARK_THEME" --layout "$LAYOUT" "$source" "$dark_out"

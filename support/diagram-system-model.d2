@@ -1,0 +1,47 @@
+direction: right
+
+source.shape: rectangle
+source.style.multiple: true
+source: "Source model\nPortable intent"
+
+context.shape: rectangle
+context: "Projection context\nMachine facts and choices"
+
+external.shape: rectangle
+external: "External inputs\nArtifacts, tools, secrets"
+
+resolution.shape: rectangle
+resolution: "Resolution\nEvaluate directives and context"
+
+desired.shape: rectangle
+desired.style.multiple: true
+desired: "Resolved desired state\nIntent for one machine"
+
+reconciliation.shape: rectangle
+reconciliation: "Reconciliation\nAlign desired and live state"
+
+live.shape: rectangle
+live.style.multiple: true
+live: "Live state\nFiles · tools · services · caches"
+
+observation.shape: rectangle
+observation: "Observation\nMeasure live state"
+
+observed.shape: rectangle
+observed: "Observed state\nHealth and drift status"
+
+diagnosis.shape: rectangle
+diagnosis: "Diagnosis\nExplain divergence"
+
+source -> resolution
+context -> resolution
+external -> resolution
+resolution -> desired
+desired -> reconciliation
+live -> reconciliation: current state
+reconciliation -> live
+live -> observation
+desired -> observation: expected state
+observation -> observed
+observed -> diagnosis
+diagnosis -> reconciliation: corrective action

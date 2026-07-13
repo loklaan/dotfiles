@@ -26,12 +26,7 @@
        mcpproxy-go, grep_app is not needed */ -}}
 {{- $config = $config | setValueAtPath "disabled_mcps" (list "context7" "websearch" "grep_app") -}}
 
-{{- /* Team Mode (oh-my-openagent v4.0.0+). Lead agent orchestrates a team
-       of category-specialised members in parallel via team_* tools. Off by
-       default upstream; we keep it off on cost grounds — parallel team members
-       each carry their own context, so they forfeit the heavy token-cache
-       overlap that sequential subagent delegation reuses. Subagents are
-       cheaper for our workloads. tmux_visualization left off too. */ -}}
+{{- /* Team Mode — off on cost grounds */ -}}
 {{- $config = mergeOverwrite $config (dict
       "team_mode" (dict
         "enabled" false
@@ -39,159 +34,32 @@
         "max_parallel_members" 4
         "max_members" 8)) -}}
 
-{{- /* Bedrock-proxied model + variant overrides (work machines only).
-       Bedrock isn't in omo's hardcoded fallback chains, so anthropic-intended
-       agents would silently degrade to OpenAI/Google fallbacks unless pinned
-       here. Variants mirror omo's intended reasoning levels.
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
 
-       This template is the SOURCE OF TRUTH for agents/categories: we use `set`
-       (not `mergeOverwrite`), so anything not listed here is REMOVED on apply.
-       That kills install-time leftovers (e.g. stale opencode/gpt-5-nano pins
-       written by `oh-my-openagent install`). New omo agents/categories not
-       listed here will fall through to omo's hardcoded chain — the right
-       default until you decide to pin them.
-
-       The `_dotfilesUnmanaged` sidecar is read by `drift check` (omo checker):
-       names listed there are agents/categories we know exist but intentionally
-       leave on omo's chain. Drift fires only on names that are neither pinned
-       below nor listed there. The underscore prefix signals "not omo's key";
-       omo ignores unknown top-level keys.
-
-       COST PROFILES. The agents/categories pins below come from a named
-       profile, selected at render time. Profiles let you trade quality for
-       token cost without hand-editing this file:
-
-         default — best-in-class per role. Opus/Sonnet for Claude-personality
-                   agents, GPT-5.5 for GPT-personality, Gemini Pro for visual.
-         cheap   — same personality families, cheaper members. Claude-likes
-                   drop to Bedrock Kimi (orchestrators) / Haiku (support);
-                   GPT roles stay native but smaller (gpt-5.4-mini); Gemini
-                   roles drop to flash. Personality is preserved per omo's
-                   agent-model-matching guide — we never cross-swap a GPT
-                   reviewer onto a Claude-like, etc.
-
-       The active profile is read from ~/.config/opencode/.omo-profile (a tiny
-       plaintext file, NOT chezmoi-managed). Absent/unknown → "default". The
-       `omo-profile` bin script flips it and re-renders just this file via a
-       targeted `chezmoi apply`, so switching needs no full apply. omo reads
-       this config once per session, so a new session picks up the switch.
-
-       Adding a profile is one entry in $profiles below — keep every key
-       present in `default` present in every profile (the drift checker and
-       omo both expect the full roster). */ -}}
-{{- if ne "" .emailWork -}}
-{{-   $bedrockOpus := "amazon-bedrock/global.anthropic.claude-opus-4-8" -}}
-{{-   $bedrockFable := "amazon-bedrock/global.anthropic.claude-fable-5" -}}
-{{-   $bedrockSonnet := "amazon-bedrock/global.anthropic.claude-sonnet-5" -}}
-{{-   $bedrockHaiku := "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0" -}}
-{{-   $bedrockKimi := "amazon-bedrock/moonshotai.kimi-k2.5" -}}
-{{-   $openaiBig := "openai/gpt-5.5" -}}
-{{-   $openaiMini := "openai/gpt-5.4-mini" -}}
-{{- /* GEMINI UNAVAILABLE on Canva Coder devboxes: the Google generativelanguage
-       API (generativelanguage.googleapis.com) is blocked here — it returns HTTP
-       403 and there is no valid Google key (opencode's google provider has only
-       a placeholder), no Vertex ADC, and Bedrock carries no Gemini model. So
-       every Gemini-backed role must fall back to a reachable provider.
-
-       OMO strongly recommends Gemini 3.1 Pro for visual work ($googlePro drives
-       the visual-engineering + artistry categories). With Gemini off the table
-       we pick the strongest REACHABLE vision-capable model instead: Bedrock
-       Opus 4.8 — it out-reasons Sonnet on careful visual/pixel work. (Sonnet 5
-       is now in the Bedrock catalog and drives the non-visual Sonnet roles, but
-       Opus stays the visual pick for its stronger multi-step reasoning.)
-
-       $googleFlash (quick/writing) stays on Bedrock Sonnet: those roles want
-       speed/throughput, not peak visual reasoning, so Opus would be wasteful.
-       Restore the Gemini literals below if the Google API ever becomes reachable
-       on these boxes with a real key:
-         $googleFlash := "google/gemini-3.5-flash"
-         $googlePro   := "google/gemini-3.1-pro-preview" */ -}}
-{{-   $googleFlash := $bedrockSonnet -}}
-{{-   $googlePro := $bedrockOpus -}}
-{{- /* Extended-thinking block for the visual categories. arena.ai's vision
-       leaderboard puts Opus top among models we can reach, and visual parity is
-       careful multi-step reasoning (decompose a screenshot delta -> design-system
-       cause), so we enable Anthropic extended thinking on the visual roles.
-       32000 is OMO's own default thinking budget. */ -}}
-{{-   $visualThinking := dict "type" "enabled" "budgetTokens" 32000 -}}
-{{- /* Profile table. Each profile carries the full agents + categories
-       roster. `default` is the original best-in-class set; `cheap` is the
-       budget set with personality preserved. */ -}}
-{{-   $profiles := dict
-        "default" (dict
-          "categories" (dict
-            "unspecified-high"   (dict "model" $bedrockOpus)
-            "unspecified-low"    (dict "model" $bedrockSonnet)
-            "ultrabrain"         (dict "model" $openaiBig    "variant" "xhigh")
-            "deep"               (dict "model" $openaiBig    "variant" "medium")
-            "quick"              (dict "model" $googleFlash)
-            "visual-engineering" (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)
-            "artistry"           (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)
-            "writing"            (dict "model" $googleFlash))
-          "agents" (dict
-            "sisyphus"        (dict "model" $bedrockOpus)
-            "hephaestus"      (dict "model" $openaiBig "variant" "xhigh")
-            "oracle"          (dict "model" $bedrockFable)
-            "prometheus"      (dict "model" $bedrockFable)
-            "metis"           (dict "model" $bedrockFable)
-            "momus"           (dict "model" $bedrockFable)
-            "atlas"           (dict "model" $bedrockSonnet)
-            "sisyphus-junior" (dict "model" $bedrockOpus)
-            "librarian"       (dict "model" $bedrockHaiku)
-            "explore"         (dict "model" $bedrockHaiku)
-            "multimodal-looker" (dict "model" $bedrockFable "variant" "high" "thinking" $visualThinking)))
-        "cheap" (dict
-          "categories" (dict
-            "unspecified-high"   (dict "model" $bedrockKimi)
-            "unspecified-low"    (dict "model" $bedrockHaiku)
-            "ultrabrain"         (dict "model" $openaiMini)
-            "deep"               (dict "model" $openaiMini)
-            "quick"              (dict "model" $googleFlash)
-            "visual-engineering" (dict "model" $googleFlash)
-            "artistry"           (dict "model" $googleFlash)
-            "writing"            (dict "model" $googleFlash))
-          "agents" (dict
-            "sisyphus"        (dict "model" $bedrockKimi)
-            "hephaestus"      (dict "model" $openaiMini)
-            "oracle"          (dict "model" $openaiMini)
-            "prometheus"      (dict "model" $bedrockKimi)
-            "metis"           (dict "model" $bedrockHaiku)
-            "momus"           (dict "model" $openaiMini)
-            "atlas"           (dict "model" $bedrockHaiku)
-            "sisyphus-junior" (dict "model" $bedrockHaiku)
-            "librarian"       (dict "model" $bedrockHaiku)
-            "explore"         (dict "model" $bedrockHaiku)
-            "multimodal-looker" (dict "model" $googleFlash))) -}}
-{{- /* Read active profile from the non-chezmoi state file; fall back to
-       "default" when missing or unrecognised. We avoid `warnf` here: chezmoi's
-       modify-template apply path doesn't register it (only `chezmoi cat` /
-       `execute-template` do), so calling it aborts the render. Instead we
-       record the raw request in `_dotfilesProfileRequested` whenever it
-       differs from the effective profile; the `omo-profile` status command
-       surfaces the mismatch. The `omo-profile` script also validates names
-       before writing the state file, so an unknown value only appears via a
-       hand-edited state file. */ -}}
-{{-   $profileFile := joinPath .chezmoi.homeDir ".config/opencode/.omo-profile" -}}
-{{-   $profileName := "default" -}}
+{{- /* Single-tier fast path: profile has only one tier, no read-back needed */ -}}
+{{- if eq (len $p.agent_tiers) 1 -}}
+{{-   $tier := index $p.agent_tiers 0 -}}
+{{-   $config = set $config "agents" (index $p "agents") -}}
+{{-   $config = set $config "categories" (index $p "categories") -}}
+{{-   $config = set $config "_dotfilesProfile" $tier -}}
+{{-   $config = set $config "_dotfilesAvailableTiers" $p.agent_tiers -}}
+{{- else -}}
 {{-   $requested := "" -}}
-{{-   if stat $profileFile -}}
-{{-     $requested = include $profileFile | trim -}}
-{{-     if hasKey $profiles $requested -}}
-{{-       $profileName = $requested -}}
-{{-     end -}}
+{{-   if hasKey $base "_dotfilesProfile" -}}
+{{-     $requested = index $base "_dotfilesProfile" -}}
 {{-   end -}}
-{{-   $active := get $profiles $profileName -}}
-{{-   $config = set $config "categories" (get $active "categories") -}}
-{{-   $config = set $config "agents" (get $active "agents") -}}
-{{- /* Record the active profile so it's visible in the rendered file and to
-       tooling. Underscore prefix → omo ignores it as an unknown key. */ -}}
-{{-   $config = set $config "_dotfilesProfile" $profileName -}}
-{{-   if and (ne "" $requested) (ne $requested $profileName) -}}
+{{-   $effective := index $p.agent_tiers 0 -}}
+{{-   if and (ne "" $requested) (has $requested $p.agent_tiers) -}}
+{{-     $effective = $requested -}}
+{{-   else if ne "" $requested -}}
 {{-     $config = set $config "_dotfilesProfileRequested" $requested -}}
 {{-   end -}}
-{{-   $config = set $config "_dotfilesUnmanaged" (dict
-        "agents" (list)
-        "categories" (list)) -}}
+{{-   $config = set $config "_dotfilesProfile" $effective -}}
+{{-   $config = set $config "_dotfilesAvailableTiers" $p.agent_tiers -}}
+{{-   $config = set $config "agents" (index (index $p $effective) "agents") -}}
+{{-   $config = set $config "categories" (index (index $p $effective) "categories") -}}
 {{- end -}}
+
+{{- $config = set $config "_dotfilesUnmanaged" (dict "agents" (list) "categories" (list)) -}}
 
 {{ $config | toPrettyJson }}

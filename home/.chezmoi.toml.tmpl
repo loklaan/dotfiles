@@ -8,8 +8,12 @@
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
 {{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
 {{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
+{{- $machineProfile := promptStringOnce . "machineProfile" "Machine profile (work|personal)" "personal" -}}
 {{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 {{- $orcaServer := promptBoolOnce . "orcaServer" "Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
+{{- $openCodeServer := promptBoolOnce . "openCodeServer" "Run opencode serve as a pitchfork daemon?" false -}}
+{{- $codeServer := promptBoolOnce . "codeServer" "Run code-server on this machine?" false -}}
+{{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
 
 [data]
   email = {{ $email | quote }}
@@ -22,6 +26,7 @@
   bwsIdContext7ApiKey = "607b390d-a45d-40a3-af41-b42b004d6a90"
   bwsIdExaApiKey = "5db599ed-4498-4f0a-b18d-b42b004cc9ac"
   bwsIdPushbulletAccessToken = "d6904136-a33f-4259-9355-b467007b53cc"
+  bwsIdOpencodeApiKey = "155eca67-0b36-4907-8bf6-b484007ea888"
   privateSkillsRepo = {{ $privateSkillsRepo | quote }}
   npmWorkRegistry = {{ $npmWorkRegistry | quote }}
   openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
@@ -29,8 +34,12 @@
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
   workForkRemote = {{ $workForkRemote | quote }}
   openCodeCostHosts = {{ $openCodeCostHosts | quote }}
+  machineProfile = {{ $machineProfile | quote }}
   paseoDaemon = {{ $paseoDaemon }}
   orcaServer = {{ $orcaServer }}
+  openCodeServer = {{ $openCodeServer }}
+  codeServer = {{ $codeServer }}
+  mcpproxyGate = {{ $mcpproxyGate }}
 
 # Session logging hooks
 [hooks.apply.pre]
