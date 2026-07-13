@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+#/ Usage:
+#/   pushbullet-mcp
+#/
+#/ Description:
+#/   Stub that forwards to the pushbullet MCP server implemented in the notify
+#/   script's mcp subcommand. The mcpproxy config uses this as the command for
+#/   the pushbullet MCP server, allowing PUSHBULLET_ACCESS_TOKEN to be injected
+#/   via the server's env block.
+
+exec notify mcp "$@"

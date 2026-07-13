@@ -4,7 +4,7 @@
 #| Resurrect Post-Restore Hook                                                 |
 #|                                                                            |
 #| Resumes saved code agent sessions in their original tmux panes after       |
-#| a tmux-resurrect restore. Supports Claude Code, Codex CLI, and OpenCode.  |
+#| a tmux-resurrect restore. Supports Claude Code and OpenCode.               |
 #| Called via @resurrect-hook-post-restore-all.                               |
 #|                                                                            |
 #| Rather than racing zsh startup with tmux send-keys (which collides with    |
@@ -29,8 +29,6 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/state-dir.sh"
 # shellcheck source=agents/claude.sh
 source "$DIR/agents/claude.sh"
-# shellcheck source=agents/codex.sh
-source "$DIR/agents/codex.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
 
@@ -79,7 +77,6 @@ for ((i = 0; i < count; i++)); do
     cmd=""
     case "$agent" in
         claude)   cmd=$(restore_cmd_claude "$entry") ;;
-        codex)    cmd=$(restore_cmd_codex "$entry") ;;
         opencode) cmd=$(restore_cmd_opencode "$entry") ;;
         *) continue ;;
     esac

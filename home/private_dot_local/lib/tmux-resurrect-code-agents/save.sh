@@ -25,8 +25,6 @@ OUTPUT="$RESURRECT_DIR/code-agent-sessions.json"
 # Source agent modules
 # shellcheck source=agents/claude.sh
 source "$DIR/agents/claude.sh"
-# shellcheck source=agents/codex.sh
-source "$DIR/agents/codex.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
 
@@ -35,13 +33,12 @@ entries='[]'
 while IFS='|' read -r pane_id coordinate cwd pane_cmd; do
     entry=""
 
-    # Try hook-tracked state first (works for claude, codex, opencode)
+    # Try hook-tracked state first (works for claude, opencode)
     state_file="$STATE_DIR/$pane_id"
     if [[ -f "$state_file" ]]; then
         agent=$(jq -r '.agent // empty' "$state_file" 2>/dev/null) || agent=""
         case "$agent" in
             claude)   entry=$(detect_claude "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
-            codex)    entry=$(detect_codex "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
             opencode) entry=$(detect_opencode "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
         esac
     fi
@@ -49,7 +46,6 @@ while IFS='|' read -r pane_id coordinate cwd pane_cmd; do
     # Fallback: detect by running process name
     if [[ -z "$entry" ]]; then
         case "$pane_cmd" in
-            codex)    entry=$(detect_codex "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
             opencode) entry=$(detect_opencode "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
         esac
     fi

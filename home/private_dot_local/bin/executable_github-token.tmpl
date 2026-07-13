@@ -18,7 +18,7 @@ setup_session_logging "$(basename "$0")"
 #/   Prints a GitHub API token to stdout for use by tools that need
 #/   authenticated GitHub access (brew, gh, scripts, etc.).
 #/
-{{ if ne "" .emailWork -}}
+{{ if eq .machineProfile "work" -}}
 #/   On work machines, fetches a short-lived token from the git
 #/   credential agent (requires `gh auth login`).
 {{ else -}}
@@ -48,7 +48,7 @@ parse_args() {
 main() {
   parse_args "$@"
 
-{{ if ne "" .emailWork }}
+{{ if eq .machineProfile "work" }}
   local token
   token=$(echo "url=https://github.com" | git credential fill 2>/dev/null | sed -n 's/^password=//p')
 

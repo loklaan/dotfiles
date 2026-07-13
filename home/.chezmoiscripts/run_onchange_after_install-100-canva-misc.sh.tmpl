@@ -1,4 +1,4 @@
-{{- if ne "" .emailWork -}}
+{{- if eq .machineProfile "work" -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -37,7 +37,7 @@ parse_args() {
   done
 
   config_in_canva_devbox="false"
-  if [ "{{ .emailWork }}" != "" ] && [ "${DEVBOX_EMAIL:-}" = "{{ .emailWork }}" ]; then
+  if [ "{{ .machineProfile }}" = "work" ] && [ "${DEVBOX_EMAIL:-}" = "{{ .emailWork }}" ]; then
     config_in_canva_devbox="true"
   fi
 }

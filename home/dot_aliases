@@ -8,7 +8,6 @@ alias gt="git"
 alias cc="claude"
 alias coder-personal="coder --global-config ~/.config/coderv2-personal"
 alias ccyolo="claude --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-7"
-alias cxyolo="codex --dangerously-bypass-approvals-and-sandbox --model gpt-5.4"
 
 ## ls
 alias l="ls -lah"

@@ -1,0 +1,291 @@
+{
+    "profiles": {
+        "work": {
+            "agent_tiers": [
+                "default",
+                "cheap"
+            ],
+            "enabled_providers": [
+                "amazon-bedrock",
+                "google",
+                "openai",
+                "opencode"
+            ],
+            "model": "amazon-bedrock/global.anthropic.claude-opus-4-8",
+            "provider_block": {
+                "amazon-bedrock": {
+                    "models": {
+                        "global.anthropic.claude-opus-4-8": {
+                            "limit": {
+                                "context": 1000000,
+                                "output": 128000
+                            }
+                        },
+                        "global.anthropic.claude-opus-4-7": {
+                            "limit": {
+                                "context": 1000000,
+                                "output": 128000
+                            }
+                        }
+                    },
+                    "whitelist": [
+                        "global.anthropic.claude-opus-4-8",
+                        "global.anthropic.claude-opus-4-7",
+                        "global.anthropic.claude-opus-4-5-20251101-v1:0",
+                        "global.anthropic.claude-fable-5",
+                        "global.anthropic.claude-sonnet-5",
+                        "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                        "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                        "global.amazon.nova-2-lite-v1:0",
+                        "moonshotai.kimi-k2.5",
+                        "deepseek.v3.2",
+                        "qwen.qwen3-coder-next",
+                        "qwen.qwen3-next-80b-a3b",
+                        "minimax.minimax-m2.5",
+                        "minimax.minimax-m2.1",
+                        "mistral.mistral-large-3-675b-instruct",
+                        "mistral.devstral-2-123b",
+                        "zai.glm-5",
+                        "nvidia.nemotron-super-3-120b",
+                        "meta.llama4-scout-17b-instruct-v1:0",
+                        "mistral.magistral-small-2509"
+                    ]
+                },
+                "opencode": {
+                    "name": "OpenCode"
+                }
+            },
+            "server": null,
+            "share": "disabled",
+            "work_plugin": true,
+            "snapshot": false,
+            "default": {
+                "categories": {
+                    "unspecified-high": {
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-4-8"
+                    },
+                    "unspecified-low": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "ultrabrain": {
+                        "model": "openai/gpt-5.5",
+                        "variant": "xhigh"
+                    },
+                    "deep": {
+                        "model": "openai/gpt-5.5",
+                        "variant": "medium"
+                    },
+                    "quick": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "visual-engineering": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5",
+                        "variant": "high",
+                        "thinking": {
+                            "type": "enabled",
+                            "budgetTokens": 32000
+                        }
+                    },
+                    "artistry": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5",
+                        "variant": "high",
+                        "thinking": {
+                            "type": "enabled",
+                            "budgetTokens": 32000
+                        }
+                    },
+                    "writing": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    }
+                },
+                "agents": {
+                    "sisyphus": {
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-4-8"
+                    },
+                    "hephaestus": {
+                        "model": "openai/gpt-5.5",
+                        "variant": "xhigh"
+                    },
+                    "oracle": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5"
+                    },
+                    "prometheus": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5"
+                    },
+                    "metis": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5"
+                    },
+                    "momus": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5"
+                    },
+                    "atlas": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "sisyphus-junior": {
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-4-8"
+                    },
+                    "librarian": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "explore": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "multimodal-looker": {
+                        "model": "amazon-bedrock/global.anthropic.claude-fable-5",
+                        "variant": "high",
+                        "thinking": {
+                            "type": "enabled",
+                            "budgetTokens": 32000
+                        }
+                    }
+                }
+            },
+            "cheap": {
+                "categories": {
+                    "unspecified-high": {
+                        "model": "amazon-bedrock/moonshotai.kimi-k2.5"
+                    },
+                    "unspecified-low": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "ultrabrain": {
+                        "model": "openai/gpt-5.4-mini"
+                    },
+                    "deep": {
+                        "model": "openai/gpt-5.4-mini"
+                    },
+                    "quick": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "visual-engineering": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "artistry": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    },
+                    "writing": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    }
+                },
+                "agents": {
+                    "sisyphus": {
+                        "model": "amazon-bedrock/moonshotai.kimi-k2.5"
+                    },
+                    "hephaestus": {
+                        "model": "openai/gpt-5.4-mini"
+                    },
+                    "oracle": {
+                        "model": "openai/gpt-5.4-mini"
+                    },
+                    "prometheus": {
+                        "model": "amazon-bedrock/moonshotai.kimi-k2.5"
+                    },
+                    "metis": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "momus": {
+                        "model": "openai/gpt-5.4-mini"
+                    },
+                    "atlas": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "sisyphus-junior": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "librarian": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "explore": {
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"
+                    },
+                    "multimodal-looker": {
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                    }
+                }
+            }
+        },
+        "personal": {
+            "agent_tiers": [
+                "opencode"
+            ],
+            "enabled_providers": [
+                "opencode"
+            ],
+            "model": "opencode/kimi-k2.7-code",
+            "small_model": "opencode/qwen3.6-plus",
+            "provider_block": {
+                "opencode": {
+                    "name": "OpenCode"
+                }
+            },
+            "server": {
+                "hostname": "0.0.0.0",
+                "port": 4096
+            },
+            "share": "manual",
+            "work_plugin": false,
+            "agents": {
+                "sisyphus": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "hephaestus": {
+                    "model": "opencode/gpt-5.6-sol",
+                    "variant": "medium"
+                },
+                "oracle": {
+                    "model": "opencode/glm-5.2"
+                },
+                "librarian": {
+                    "model": "opencode/qwen3.6-plus"
+                },
+                "explore": {
+                    "model": "opencode/qwen3.6-plus"
+                },
+                "metis": {
+                    "model": "opencode/glm-5.2"
+                },
+                "momus": {
+                    "model": "opencode/glm-5.2"
+                },
+                "prometheus": {
+                    "model": "opencode/glm-5.2"
+                },
+                "atlas": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "multimodal-looker": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "sisyphus-junior": {
+                    "model": "opencode/kimi-k2.7-code"
+                }
+            },
+            "categories": {
+                "visual-engineering": {
+                    "model": "opencode/glm-5.2"
+                },
+                "ultrabrain": {
+                    "model": "opencode/glm-5.2"
+                },
+                "deep": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "artistry": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "quick": {
+                    "model": "opencode/minimax-m3"
+                },
+                "unspecified-low": {
+                    "model": "opencode/kimi-k2.7-code"
+                },
+                "unspecified-high": {
+                    "model": "opencode/glm-5.2"
+                },
+                "writing": {
+                    "model": "opencode/kimi-k2.7-code"
+                }
+            }
+        }
+    }
+}

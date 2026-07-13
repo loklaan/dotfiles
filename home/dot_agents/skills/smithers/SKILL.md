@@ -29,17 +29,23 @@ const agent = (agentName: string) =>
 
 ### omo agent roster
 
-| Export | agentName | Model | Role |
-|--------|-----------|-------|------|
-| `sisyphusJunior` | `sisyphus-junior` | claude-sonnet-4-6 (Bedrock) | Focused executor — default for most tasks |
-| `sisyphus` | `sisyphus` | claude-opus-4-8 (Bedrock) | Heavy implementation — complex multi-file work |
-| `oracle` | `oracle` | claude-opus-4-8 (Bedrock) | Read-only reasoning — verification, audits |
-| `momus` | `momus` | claude-opus-4-8 (Bedrock) | Plan critic — review gates |
-| `prometheus` | `prometheus` | claude-opus-4-8 (Bedrock) | Planner |
-| `atlas` | `atlas` | claude-sonnet-4-6 (Bedrock) | Orchestrator |
-| `metis` | `metis` | claude-sonnet-4-6 (Bedrock) | Pre-planning consultant |
-| `explore` | `explore` | claude-haiku-4-5 (Bedrock) | Codebase search |
-| `librarian` | `librarian` | claude-haiku-4-5 (Bedrock) | Docs / remote repos |
+| Export | agentName | Role |
+|--------|-----------|------|
+| `sisyphusJunior` | `sisyphus-junior` | Focused executor — default for most tasks |
+| `sisyphus` | `sisyphus` | Heavy implementation — complex multi-file work |
+| `hephaestus` | `hephaestus` | Heaviest implementation — frontier model, costly |
+| `oracle` | `oracle` | Read-only reasoning — verification, audits |
+| `momus` | `momus` | Plan critic — review gates |
+| `prometheus` | `prometheus` | Planner |
+| `atlas` | `atlas` | Orchestrator |
+| `metis` | `metis` | Pre-planning consultant |
+| `explore` | `explore` | Codebase search |
+| `librarian` | `librarian` | Docs / remote repos |
+| `multimodal-looker` | `multimodal-looker` | Image/diagram inspection |
+
+Models resolve at runtime from the rendered `~/.config/opencode/oh-my-openagent.json`
+(`opencode run --agent <name>` reads it). Inspect the current mapping with:
+`jq '.agents' ~/.config/opencode/oh-my-openagent.json`.
 
 ### Semantic pools (`.smithers/agents.ts`)
 

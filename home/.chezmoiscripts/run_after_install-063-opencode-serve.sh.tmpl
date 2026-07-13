@@ -1,0 +1,163 @@
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+# Runs every chezmoi apply on Linux. Manages the df-opencode-serve Pitchfork daemon
+# lifecycle. Install is handled by mise; this script only manages the daemon,
+# it does not touch apt or download anything.
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+PITCHFORK_BIN=""
+
+#/ Usage:
+#/   run_after_install-063-opencode-serve.sh
+#/
+#/ Description:
+#/   Manages the df-opencode-serve Pitchfork daemon lifecycle on Linux Coder
+#/   workspaces. Opt-in via the `openCodeServer` chezmoi flag.
+#/
+#/   When `openCodeServer` is true:
+#/     - Verifies opencode is installed via mise
+#/     - Verifies Pitchfork is installed
+#/     - Starts the Pitchfork daemon
+#/     - Performs a health probe against http://127.0.0.1:4096/
+#/   When `openCodeServer` is false:
+#/     - Stops the Pitchfork daemon (real opt-out, not just config removal)
+#/
+#/   Install of opencode itself is handled by mise (see
+#/   home/private_dot_config/mise/config.toml.tmpl). This script does NOT
+#/   download or apt-install anything.
+#/
+#/   macOS: opencode runs locally on the macbook, not via this script
+#/   or Pitchfork. The script renders empty on macOS.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help) usage; exit 0 ;;
+      *) usage; fatal "Unknown argument: $1" ;;
+    esac
+  done
+}
+
+verify_opencode_installed() {
+  if ! command -v mise >/dev/null 2>&1; then
+    warning "╍ mise not on PATH — cannot resolve opencode install"
+    return 1
+  fi
+  local opencode_path
+  opencode_path=$(mise which opencode 2>/dev/null || echo "")
+  if [ -z "$opencode_path" ] || [ ! -x "$opencode_path" ]; then
+    warning "╍ opencode not yet installed by mise. Try: mise install"
+    return 1
+  fi
+  info "╍ opencode available at ${opencode_path}"
+}
+
+verify_pitchfork_installed() {
+  if command -v pitchfork >/dev/null 2>&1; then
+    PITCHFORK_BIN=$(command -v pitchfork)
+  elif command -v mise >/dev/null 2>&1; then
+    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
+  fi
+
+  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
+    warning "╍ pitchfork not yet installed by mise. Try: mise install"
+    return 1
+  fi
+  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
+}
+
+probe_opencode_health() {
+  if curl -sf http://127.0.0.1:4096/ -o /dev/null 2>/dev/null; then
+    info "╍ health probe OK — opencode server is responding"
+    return 0
+  else
+    warning "╍ health probe failed — opencode server not responding at http://127.0.0.1:4096/"
+    return 1
+  fi
+}
+
+manage_linux() {
+  local enabled={{ dig "openCodeServer" false . }}
+
+  if [ "$enabled" != "true" ]; then
+    info "▶ opencode server (Linux, opt-out)"
+
+    if verify_pitchfork_installed; then
+      "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
+      info "╍ stopped df-opencode-serve daemon"
+    else
+      info "╍ Pitchfork not installed; no daemon to stop"
+    fi
+    return 0
+  fi
+
+  info "▶ opencode server (Linux, opt-in)"
+
+  if ! verify_opencode_installed; then
+    warning "╍ skipping daemon lifecycle — opencode not installed"
+    return 0
+  fi
+
+  if ! verify_pitchfork_installed; then
+    warning "╍ skipping daemon lifecycle — Pitchfork not installed"
+    return 0
+  fi
+
+  # Restart on every apply — picks up potential version bumps.
+  # Pitchfork's start command is idempotent; stop first so a running
+  # daemon is replaced cleanly.
+  "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
+
+  # Reap any orphaned `opencode serve` still bound to 4096. The pitchfork
+  # supervisor can lose track of its child (e.g. across VM resumes / kills)
+  # while the child keeps serving. A fresh `pitchfork start` then fails with
+  # an opaque "Unexpected error" (EADDRINUSE) and crash-loops forever because
+  # retry=true. Kill strays holding the port so the managed daemon can bind.
+  if command -v ss >/dev/null 2>&1; then
+    local _pids _pid
+    # `grep -oE` exits 1 on no-match; under `set -euo pipefail` that would
+    # abort the whole chezmoi apply when nothing holds 4096. Append `|| true`
+    # so an empty result is a normal (non-fatal) outcome.
+    _pids=$(ss -ltnpH 2>/dev/null \
+      | awk -v p=':4096 ' '$0 ~ p {print $0}' \
+      | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+    for _pid in $_pids; do
+      if [ -n "$_pid" ] && [ "$_pid" != "$$" ]; then
+        kill "$_pid" 2>/dev/null || true
+      fi
+    done
+    sleep 1
+  fi
+
+  "$PITCHFORK_BIN" start df-opencode-serve >/dev/null 2>&1
+  info "╍ started df-opencode-serve daemon"
+
+  sleep 2
+  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'df-opencode-serve'; then
+    info "╍ df-opencode-serve daemon is registered with Pitchfork"
+  else
+    warning "╍ df-opencode-serve daemon was not reported by Pitchfork — check: pitchfork logs df-opencode-serve"
+  fi
+
+  probe_opencode_health || true   # warn but don't block
+}
+
+main() {
+  parse_args "$@"
+  manage_linux
+}
+
+main "$@"
+{{- end }}

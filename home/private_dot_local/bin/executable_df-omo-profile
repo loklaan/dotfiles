@@ -1,32 +1,34 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi --allow-read --allow-write --allow-env --allow-ffi
 
-// omo-profile (Deno + Effect v4 beta). Switches the oh-my-openagent (omo) cost
+// df-omo-profile (Deno + Effect v4). Switches the oh-my-openagent (omo) cost
 // profile without a full `chezmoi apply`. Profiles trade model quality for token
 // cost while preserving each agent's personality family (Claude-likes stay
 // Claude-likes, GPT stays GPT, Gemini stays Gemini).
 //
-// Mechanism: the active profile name lives in a tiny plaintext state file
-// (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This tool writes that
-// file, then runs a TARGETED `chezmoi apply` on just the omo config so the new
-// models land immediately. The profile table itself is the source of truth in
-// home/private_dot_config/opencode/modify_oh-my-openagent.json, so a later full
-// `chezmoi apply` re-derives the same result from the persisted state file — the
+// Single source of truth: the rendered omo config JSON
+// (~/.config/opencode/oh-my-openagent.json) contains `_dotfilesProfile` (the
+// active profile) and `_dotfilesAvailableTiers` (the valid profile names).
+// This tool reads those fields from the JSON — no separate state file.
+//
+// Mechanism: this tool edits `_dotfilesProfile` in the JSON file directly, then
+// runs a TARGETED `chezmoi apply` on just the omo config so the new models
+// land immediately. The profile table is the source of truth in the chezmoi
+// template; a later full `chezmoi apply` re-derives the same result — the
 // switch survives. omo reads its config once per session, so START A NEW
 // opencode SESSION for the switch to take effect.
 //
 // CLI surface (preserved from the original bash):
-//   omo-profile               Show the active profile and its resolved models
-//   omo-profile list          List available profiles
-//   omo-profile <name>        Switch to <name> and re-render the omo config
-//   omo-profile --help        Display this help message
+//   df-omo-profile            Show the active profile and its resolved models
+//   df-omo-profile list       List available profiles
+//   df-omo-profile <name>     Switch to <name> and re-render the omo config
+//   df-omo-profile --help     Display this help message
 //
 // Exit codes: 0 success; 1 unknown profile / chezmoi missing / too many args.
 //
 // All concerns (FS, subprocess, errors, flow) run through Effect. NodeServices /
 // NodeRuntime from @effect/platform-node run under Deno via its node:
 // compatibility layer; NodeServices provides FileSystem, Path, and the
-// ChildProcessSpawner used for the targeted apply. Effect v4 beta import paths
-// verified against effect@4.0.0-beta.93.
+// ChildProcessSpawner used for the targeted apply. Effect v4 import paths.
 //
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
 // `import.meta.main` block, never at module top level. Its static import graph
@@ -50,37 +52,23 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-beta.97";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-beta.97/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
 // --------------------------------------------------------------------------
 
-// Must mirror the $profiles keys in modify_oh-my-openagent.json. The template is
-// the real enforcer (unknown name → fall back to "default"); this list gives a
-// fast, friendly error before we bother re-rendering.
-const KNOWN_PROFILES = ["default", "cheap"] as const;
-type ProfileName = (typeof KNOWN_PROFILES)[number];
-
-const DEFAULT_PROFILE: ProfileName = "default";
-
-const isKnownProfile = (name: string): name is ProfileName =>
-  (KNOWN_PROFILES as readonly string[]).includes(name);
-
-// Relative-to-HOME locations of the omo config and the state file. Resolved
-// against HOME at runtime so tests can reason about the join without env access.
 const OMO_CONFIG_REL = ".config/opencode/oh-my-openagent.json";
-const PROFILE_FILE_REL = ".config/opencode/.omo-profile";
 
 const USAGE = `Usage:
-  omo-profile               Show the active profile and its resolved models
-  omo-profile list          List available profiles
-  omo-profile <name>        Switch to <name> and re-render the omo config
-  omo-profile --help        Display this help message
+  df-omo-profile            Show the active profile and its resolved models
+  df-omo-profile list       List available profiles
+  df-omo-profile <name>     Switch to <name> and re-render the omo config
+  df-omo-profile --help     Display this help message
 
 Description:
   Switches the oh-my-openagent (omo) cost profile without a full
@@ -88,22 +76,19 @@ Description:
   preserving each agent's personality family (Claude-likes stay
   Claude-likes, GPT stays GPT, Gemini stays Gemini).
 
-  Mechanism: the active profile name lives in a tiny plaintext state file
-  (~/.config/opencode/.omo-profile, NOT chezmoi-managed). This script
-  writes that file, then runs a TARGETED \`chezmoi apply\` on just the omo
-  config so the new models land immediately. The profile table itself is
-  the source of truth in:
-    home/private_dot_config/opencode/modify_oh-my-openagent.json
-  so a later full \`chezmoi apply\` re-derives the same result from the
-  persisted state file — the switch survives.
+  Single source of truth: the rendered omo config
+  (~/.config/opencode/oh-my-openagent.json) contains \`_dotfilesProfile\`
+  (the active profile) and \`_dotfilesAvailableTiers\` (the valid names).
+  This tool reads and edits those fields directly.
+
+  Mechanism: this tool edits \`_dotfilesProfile\` in the JSON file,
+  then runs a TARGETED \`chezmoi apply\` on just the omo config so the
+  new models land immediately. The profile table is the source of truth
+  in the chezmoi template; a later full \`chezmoi apply\` re-derives
+  the same result — the switch survives.
 
   omo reads its config once per session, so START A NEW opencode SESSION
   for the switch to take effect.
-
-Profiles:
-  default   Best-in-class per role (Opus/Sonnet, GPT-5.5, Gemini Pro).
-  cheap     Budget set, personality preserved (Bedrock Kimi/Haiku,
-            gpt-5.4-mini, Gemini flash).
 
 Options:
   --help    Display this help message`;
@@ -117,10 +102,11 @@ class UnknownProfileError
     "UnknownProfileError",
     {
       name: Schema.String,
+      available: Schema.Array(Schema.String),
     },
   ) {
   get displayMessage(): string {
-    return `Unknown profile: ${this.name} (known: ${KNOWN_PROFILES.join(" ")})`;
+    return `Unknown profile: ${this.name} (known: ${this.available.join(" ")})`;
   }
 }
 
@@ -175,7 +161,7 @@ type ModelEntry = typeof ModelEntry.Type;
 
 const OmoConfig = Schema.Struct({
   _dotfilesProfile: Schema.optional(Schema.String),
-  _dotfilesProfileRequested: Schema.optional(Schema.String),
+  _dotfilesAvailableTiers: Schema.optional(Schema.Array(Schema.String)),
   agents: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
   categories: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
 });
@@ -194,9 +180,12 @@ const decodeOmoConfig = (input: unknown): Option.Option<OmoConfig> => {
   }
 };
 
+// --------------------------------------------------------------------------
+// Pure helpers (unit-testable without FS or env).
+// --------------------------------------------------------------------------
+
 // Pure: format a {model, variant?} record as the sorted "    key: model (variant)"
-// lines the original jq pipeline produced. Kept pure so it is unit-testable
-// without FS or env.
+// lines the original jq pipeline produced.
 const formatModelLines = (
   record: Record<string, ModelEntry> | undefined,
 ): ReadonlyArray<string> =>
@@ -216,25 +205,38 @@ const formatModelLines = (
 // Native Deno.* honours exactly `--allow-read` / `--allow-write`.
 // --------------------------------------------------------------------------
 
-// Read a UTF-8 file, mapping any failure (missing, unreadable) to Option.none.
-// Mirrors the bash tolerance of an absent state file / config.
-const readTextOption = (path: string): Effect.Effect<Option.Option<string>> =>
-  Effect.tryPromise(() => Deno.readTextFile(path)).pipe(
-    Effect.map(Option.some),
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
+// Read + parse the omo config JSON, returning Option.none on any failure.
+// Uses Effect.sync so the async read doesn't pollute the error channel,
+// avoiding the Effect.tryPromise error-type issues seen in some v4 beta builds.
+const readOmoConfig = (
+  path: string,
+): Effect.Effect<Option.Option<OmoConfig>> =>
+  Effect.sync(() => {
+    try {
+      // Deno.readTextFile is async; Effect.sync runs a synchronous thunk that
+      // can yield to the scheduler. The async read is safe here because
+      // Effect.gen fibre-schedules the underlying Promise.
+      const raw = JSON.parse(Deno.readTextFileSync(path)) as unknown;
+      return decodeOmoConfig(raw);
+    } catch {
+      return Option.none();
+    }
+  });
 
-// Recursively create a directory, swallowing "already exists". Mirrors the bash
-// `mkdir -p`.
+// Write the omo config JSON (whole-file rewrite).
+const writeOmoConfig = (
+  path: string,
+  config: OmoConfig,
+): Effect.Effect<void> =>
+  Effect.tryPromise(() =>
+    Deno.writeTextFile(path, JSON.stringify(config, null, 2))
+  ).pipe(Effect.orDie);
+
+// Recursively create a directory, swallowing "already exists".
 const makeDirRecursive = (path: string): Effect.Effect<void> =>
   Effect.tryPromise(() => Deno.mkdir(path, { recursive: true })).pipe(
     Effect.orElseSucceed(() => undefined),
   );
-
-// Write a UTF-8 file, dying on failure (an unwritable state file is fatal — the
-// switch cannot be persisted, matching the bash `set -e` behaviour).
-const writeText = (path: string, content: string): Effect.Effect<void> =>
-  Effect.tryPromise(() => Deno.writeTextFile(path, content)).pipe(Effect.orDie);
 
 // Join HOME with a relative path using a single forward slash. The targets are
 // always under ~/.config, so POSIX joining is sufficient and keeps this free of
@@ -265,19 +267,25 @@ class Profiles extends Context.Service<Profiles, {
 
       const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
       const omoConfigPath = joinHome(home, OMO_CONFIG_REL);
-      const profileFilePath = joinHome(home, PROFILE_FILE_REL);
 
-      // Active profile: trimmed contents of the state file, or "default" when the
-      // file is absent or empty (mirrors the bash `tr -d '[:space:]'` + fallback).
-      const activeProfile: Effect.Effect<string> = readTextOption(
-        profileFilePath,
+      // Active profile: read _dotfilesProfile from the rendered JSON.
+      // Fallback to the first item of _dotfilesAvailableTiers if absent.
+      const activeProfile: Effect.Effect<string> = readOmoConfig(
+        omoConfigPath,
       ).pipe(
         Effect.map((maybe) =>
           Option.match(maybe, {
-            onNone: () => DEFAULT_PROFILE as string,
-            onSome: (raw) => {
-              const trimmed = raw.trim();
-              return trimmed.length > 0 ? trimmed : (DEFAULT_PROFILE as string);
+            onNone: () => "(unknown)" as string,
+            onSome: (config) => {
+              const profile = config._dotfilesProfile;
+              if (profile !== undefined && profile.length > 0) {
+                return profile;
+              }
+              const tiers = config._dotfilesAvailableTiers;
+              if (tiers !== undefined && tiers.length > 0) {
+                return tiers[0];
+              }
+              return "(unset)" as string;
             },
           })
         ),
@@ -300,53 +308,39 @@ class Profiles extends Context.Service<Profiles, {
       const info = (msg: string) => Console.error(`info ${msg}`);
       const warning = (msg: string) => Console.error(`warning ${msg}`);
 
+      // Read _dotfilesAvailableTiers from the rendered JSON for validation.
+      const getAvailableTiers = (): Effect.Effect<ReadonlyArray<string>> =>
+        readOmoConfig(omoConfigPath).pipe(
+          Effect.map((maybe) =>
+            Option.match(maybe, {
+              onNone: () => [] as string[],
+              onSome: (config) =>
+                config._dotfilesAvailableTiers ?? [],
+            })
+          ),
+        );
+
       const showStatus: Effect.Effect<void> = Effect.gen(function* () {
         const active = yield* activeProfile;
 
         yield* info(`\u25B6 Active omo profile: ${active}`);
 
-        const rawConfig = yield* readTextOption(omoConfigPath);
-        if (Option.isNone(rawConfig)) {
+        const maybeConfig = yield* readOmoConfig(omoConfigPath);
+        if (Option.isNone(maybeConfig)) {
           yield* warning(
             `omo config not found at ${omoConfigPath} — run \`chezmoi apply\` first`,
           );
           return;
         }
 
-        const decoded = Option.flatMap(
-          (() => {
-            try {
-              return Option.some(JSON.parse(rawConfig.value) as unknown);
-            } catch {
-              return Option.none<unknown>();
-            }
-          })(),
-          (value) => decodeOmoConfig(value),
-        );
-
-        if (Option.isNone(decoded)) {
-          yield* warning(
-            `cannot parse ${omoConfigPath} — run \`chezmoi apply\` to re-render`,
-          );
-          return;
-        }
-
-        const config: OmoConfig = decoded.value;
+        const config = maybeConfig.value;
         const rendered = config._dotfilesProfile ?? "(unset)";
-        const requested = config._dotfilesProfileRequested ?? "";
+        const tiers = config._dotfilesAvailableTiers ?? [];
 
-        if (requested.length > 0) {
+        if (rendered !== active) {
           yield* warning(
-            `state file requests unknown profile '${requested}' — fell back to '${rendered}'`,
+            `rendered config reports profile '${rendered}', state says '${active}'`,
           );
-          yield* warning(
-            "fix the state file or run: omo-profile <known-profile>",
-          );
-        } else if (rendered !== active) {
-          yield* warning(
-            `rendered config reports profile '${rendered}', state file says '${active}'`,
-          );
-          yield* warning(`re-render with: omo-profile ${active}`);
         }
 
         yield* info("\u254D Agents");
@@ -357,12 +351,17 @@ class Profiles extends Context.Service<Profiles, {
         for (const line of formatModelLines(config.categories)) {
           yield* Console.error(line);
         }
+
+        if (tiers.length > 0) {
+          yield* info(`\u254D Available tiers: ${tiers.join(", ")}`);
+        }
       });
 
       const listProfiles: Effect.Effect<void> = Effect.gen(function* () {
         const active = yield* activeProfile;
+        const tiers = yield* getAvailableTiers();
         yield* info("\u25B6 Available omo profiles");
-        for (const p of KNOWN_PROFILES) {
+        for (const p of tiers) {
           const marker = p === active ? "* " : "  ";
           yield* Console.error(`  ${marker}${p}`);
         }
@@ -372,10 +371,14 @@ class Profiles extends Context.Service<Profiles, {
         name: string,
       ): Effect.Effect<void, FatalCliError> =>
         Effect.gen(function* () {
-          if (!isKnownProfile(name)) {
+          const tiers = yield* getAvailableTiers();
+
+          if (!tiers.includes(name)) {
             yield* Console.error(USAGE);
             yield* Console.error("");
-            return yield* Effect.fail(new UnknownProfileError({ name }));
+            return yield* Effect.fail(
+              new UnknownProfileError({ name, available: tiers }),
+            );
           }
 
           const hasChezmoi = yield* onPath("chezmoi");
@@ -394,11 +397,23 @@ class Profiles extends Context.Service<Profiles, {
             );
           }
 
-          // Persist the state file (newline-terminated, like the bash `printf`),
-          // creating the parent directory first.
-          yield* makeDirRecursive(posixDirname(profileFilePath));
-          yield* writeText(profileFilePath, `${name}\n`);
-          yield* info(`\u254D Wrote ${profileFilePath}`);
+          const maybeConfig = yield* readOmoConfig(omoConfigPath);
+          if (Option.isNone(maybeConfig)) {
+            yield* warning(
+              `omo config not found at ${omoConfigPath} — run \`chezmoi apply\` first`,
+            );
+            return;
+          }
+
+          // Edit _dotfilesProfile in the JSON and write it back.
+          const updatedConfig: OmoConfig = {
+            ...maybeConfig.value,
+            _dotfilesProfile: name,
+          };
+
+          yield* makeDirRecursive(posixDirname(omoConfigPath));
+          yield* writeOmoConfig(omoConfigPath, updatedConfig);
+          yield* info(`\u254D Wrote ${omoConfigPath}`);
 
           yield* info(
             `\u254D Re-rendering ${omoConfigPath} via targeted chezmoi apply`,
@@ -504,7 +519,7 @@ if (import.meta.main) {
   // load time (via ioredis -> msgpackr), which would force --allow-env onto
   // `deno test`. Loading it only here keeps the test surface permission-free.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-beta.97"
   );
   runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }
@@ -512,7 +527,7 @@ if (import.meta.main) {
 // ===========================================================================
 // Tests. Run offline with ZERO permission flags:
 //
-//   deno test home/private_dot_local/bin/executable_omo-profile
+//   deno test home/private_dot_local/bin/executable_df-omo-profile
 //
 // The `import.meta.main` guard above keeps the CLI from firing under test. These
 // tests cover the pure surfaces that carry the contract: profile-name
@@ -525,26 +540,10 @@ const assert = (cond: boolean, msg: string) => {
   if (!cond) throw new Error(msg);
 };
 
-Deno.test("KNOWN_PROFILES matches the template roster", () => {
-  assert(
-    KNOWN_PROFILES.length === 2 &&
-      KNOWN_PROFILES[0] === "default" &&
-      KNOWN_PROFILES[1] === "cheap",
-    `unexpected KNOWN_PROFILES: ${KNOWN_PROFILES.join(",")}`,
-  );
-});
-
-Deno.test("isKnownProfile accepts known names and rejects others", () => {
-  assert(isKnownProfile("default"), "default should be known");
-  assert(isKnownProfile("cheap"), "cheap should be known");
-  assert(!isKnownProfile("expensive"), "expensive should be unknown");
-  assert(!isKnownProfile(""), "empty should be unknown");
-  assert(!isKnownProfile("Default"), "case-sensitive: Default is unknown");
-});
-
-Deno.test("OmoConfig decodes a rendered config with agents + categories", () => {
+Deno.test("OmoConfig decodes a rendered config with all fields", () => {
   const decoded = decodeOmoConfig({
-    _dotfilesProfile: "cheap",
+    _dotfilesProfile: "opencode",
+    _dotfilesAvailableTiers: ["opencode", "default"],
     agents: {
       oracle: { model: "openai/gpt-5.4-mini" },
       explore: { model: "amazon-bedrock/...haiku" },
@@ -559,8 +558,13 @@ Deno.test("OmoConfig decodes a rendered config with agents + categories", () => 
   assert(Option.isSome(decoded), "expected a successful decode");
   if (Option.isSome(decoded)) {
     assert(
-      decoded.value._dotfilesProfile === "cheap",
+      decoded.value._dotfilesProfile === "opencode",
       "profile field did not decode",
+    );
+    assert(
+      decoded.value._dotfilesAvailableTiers !== undefined &&
+        decoded.value._dotfilesAvailableTiers.length === 2,
+      "_dotfilesAvailableTiers did not decode",
     );
     assert(
       decoded.value.agents?.oracle.model === "openai/gpt-5.4-mini",
@@ -576,6 +580,10 @@ Deno.test("OmoConfig decodes a config missing optional fields", () => {
     assert(
       decoded.value._dotfilesProfile === undefined,
       "_dotfilesProfile should be undefined",
+    );
+    assert(
+      decoded.value._dotfilesAvailableTiers === undefined,
+      "_dotfilesAvailableTiers should be undefined",
     );
     assert(decoded.value.agents === undefined, "agents should be undefined");
   }
@@ -604,10 +612,12 @@ Deno.test("formatModelLines handles undefined and empty input", () => {
   assert(formatModelLines({}).length === 0, "empty record → []");
 });
 
-Deno.test("error messages preserve the bash CLI wording", () => {
+Deno.test("error messages preserve the CLI wording", () => {
   assert(
-    new UnknownProfileError({ name: "x" }).displayMessage ===
-      "Unknown profile: x (known: default cheap)",
+    new UnknownProfileError({
+      name: "x",
+      available: ["a", "b"],
+    }).displayMessage === "Unknown profile: x (known: a b)",
     "UnknownProfileError wording drifted",
   );
   assert(

@@ -202,6 +202,7 @@ RUN mkdir -p /home/coder/.config/chezmoi && cat <<EOT >> /home/coder/.config/che
 [data]
   email = "bunn@lochlan.io"
   emailWork = "lochlan@canva.com"
+  machineProfile = "work"
   signingKey = "~/.ssh/id_rsa.pub"
   brewprefix = "/usr/local"
 EOT
