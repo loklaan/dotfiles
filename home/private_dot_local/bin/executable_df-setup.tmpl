@@ -460,7 +460,7 @@ const printStatus = (
     printPlain();
 
     const opencodeServeActive = yield* checkOpencodeServe;
-    const opencodeServeReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:4096"]).pipe(
+    const opencodeServeReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:{{ .ports.opencode.external }}"]).pipe(
       Effect.map((result) => result.ok),
     );
 
@@ -468,9 +468,9 @@ const printStatus = (
       print("green", [], "  ✓ opencode serve");
       print("white", ["dim"], "    pitchfork daemon running");
       if (opencodeServeReachable) {
-        print("green", ["dim"], "    localhost:4096 reachable");
+        print("green", ["dim"], "    localhost:{{ .ports.opencode.external }} reachable");
       } else {
-        print("yellow", ["dim"], "    localhost:4096 not reachable");
+        print("yellow", ["dim"], "    localhost:{{ .ports.opencode.external }} not reachable");
       }
     } else {
       print("yellow", [], "  ✗ opencode serve");
@@ -482,7 +482,7 @@ const printStatus = (
     printPlain();
 
     const codeServerActive = yield* checkCodeServer;
-    const codeServerReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:4444"]).pipe(
+    const codeServerReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:{{ .ports.code_server.external }}"]).pipe(
       Effect.map((result) => result.ok),
     );
 
@@ -490,9 +490,9 @@ const printStatus = (
       print("green", [], "  ✓ code-server");
       print("white", ["dim"], "    pitchfork daemon running");
       if (codeServerReachable) {
-        print("green", ["dim"], "    localhost:4444 reachable");
+        print("green", ["dim"], "    localhost:{{ .ports.code_server.external }} reachable");
       } else {
-        print("yellow", ["dim"], "    localhost:4444 not reachable");
+        print("yellow", ["dim"], "    localhost:{{ .ports.code_server.external }} not reachable");
       }
     } else {
       print("yellow", [], "  ✗ code-server");
@@ -504,7 +504,7 @@ const printStatus = (
     printPlain();
 
     const mcpproxyActive = yield* checkMcpproxy;
-    const mcpproxyReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:18321"]).pipe(
+    const mcpproxyReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:{{ .ports.mcpproxy.internal }}"]).pipe(
       Effect.map((result) => result.ok),
     );
 
@@ -512,9 +512,9 @@ const printStatus = (
       print("green", [], "  ✓ mcpproxy");
       print("white", ["dim"], "    pitchfork daemon running");
       if (mcpproxyReachable) {
-        print("green", ["dim"], "    localhost:18321 reachable");
+        print("green", ["dim"], "    localhost:{{ .ports.mcpproxy.internal }} reachable");
       } else {
-        print("yellow", ["dim"], "    localhost:18321 not reachable");
+        print("yellow", ["dim"], "    localhost:{{ .ports.mcpproxy.internal }} not reachable");
       }
     } else {
       print("yellow", [], "  ✗ mcpproxy");

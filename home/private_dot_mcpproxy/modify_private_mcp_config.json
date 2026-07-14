@@ -153,7 +153,7 @@
 
 {{- /* Overlay our managed keys, preserve everything else */ -}}
 {{- $config := $base -}}
-{{- $config = $config | setValueAtPath "listen" "127.0.0.1:18321" -}}
+{{- $config = $config | setValueAtPath "listen" (printf "127.0.0.1:%v" .ports.mcpproxy.internal) -}}
 {{- $config = $config | setValueAtPath "data_dir" (printf "%s/.mcpproxy" .chezmoi.homeDir) -}}
 {{- $config = $config | setValueAtPath "top_k" 5 -}}
 {{- $config = $config | setValueAtPath "tools_limit" 15 -}}

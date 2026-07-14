@@ -134,9 +134,17 @@
 {{-   $config = $config | setValueAtPath "small_model" $smallModel -}}
 {{- end -}}
 
-{{- /* server: only if openCodeServer flag is true AND profile has a non-null server */ -}}
+{{- /* server: only if openCodeServer flag is true AND profile has a non-null
+      server. The hostname/port match the pitchfork daemon bind: loopback +
+      internal port when nginxProxy is on, 0.0.0.0 + external port when off. */ -}}
 {{- if and (dig "openCodeServer" false .) (ne nil (dig "server" nil $p)) -}}
-{{-   $config = $config | setValueAtPath "server" (dig "server" nil $p) -}}
+{{-   $ocHost := "0.0.0.0" -}}
+{{-   $ocPort := .ports.opencode.external -}}
+{{-   if dig "nginxProxy" false . -}}
+{{-     $ocHost = "127.0.0.1" -}}
+{{-     $ocPort = .ports.opencode.internal -}}
+{{-   end -}}
+{{-   $config = $config | setValueAtPath "server" (dict "hostname" $ocHost "port" $ocPort) -}}
 {{- end -}}
 
 {{- /* share from profile (only if base doesn't have it) */ -}}

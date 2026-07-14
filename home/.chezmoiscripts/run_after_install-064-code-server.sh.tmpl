@@ -26,7 +26,7 @@ PITCHFORK_BIN=""
 #/     - Verifies code-server is installed via mise (npm: backend)
 #/     - Verifies Pitchfork is installed
 #/     - Starts the Pitchfork daemon
-#/     - Performs a health probe against http://127.0.0.1:4444/
+#/     - Performs a health probe against the code-server daemon's internal port
 #/   When `codeServer` is false:
 #/     - Stops the Pitchfork daemon (real opt-out, not just config removal)
 #/
@@ -75,12 +75,17 @@ verify_pitchfork_installed() {
   info "╍ Pitchfork available at ${PITCHFORK_BIN}"
 }
 
+{{- $csPort := .ports.code_server.external -}}
+{{- if dig "nginxProxy" false . -}}
+{{-   $csPort = .ports.code_server.internal -}}
+{{- end }}
+
 probe_code_server_health() {
-  if curl -sf http://127.0.0.1:4444/ -o /dev/null 2>/dev/null; then
+  if curl -sf http://127.0.0.1:{{ $csPort }}/ -o /dev/null 2>/dev/null; then
     info "╍ health probe OK — code-server is responding"
     return 0
   else
-    warning "╍ health probe failed — code-server not responding at http://127.0.0.1:4444/"
+    warning "╍ health probe failed — code-server not responding at http://127.0.0.1:{{ $csPort }}/"
     return 1
   fi
 }

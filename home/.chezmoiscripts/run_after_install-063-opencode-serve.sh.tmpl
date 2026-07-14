@@ -26,7 +26,7 @@ PITCHFORK_BIN=""
 #/     - Verifies opencode is installed via mise
 #/     - Verifies Pitchfork is installed
 #/     - Starts the Pitchfork daemon
-#/     - Performs a health probe against http://127.0.0.1:4096/
+#/     - Performs a health probe against the opencode daemon's internal port
 #/   When `openCodeServer` is false:
 #/     - Stops the Pitchfork daemon (real opt-out, not just config removal)
 #/
@@ -78,12 +78,20 @@ verify_pitchfork_installed() {
   info "╍ Pitchfork available at ${PITCHFORK_BIN}"
 }
 
+{{- /* The daemon's bind port depends on nginxProxy: internal (loopback) when
+      nginx is in front, external (0.0.0.0) when not. Health probes and the
+      orphan reaper must target whichever port the daemon actually binds. */ -}}
+{{- $ocPort := .ports.opencode.external -}}
+{{- if dig "nginxProxy" false . -}}
+{{-   $ocPort = .ports.opencode.internal -}}
+{{- end }}
+
 probe_opencode_health() {
-  if curl -sf http://127.0.0.1:4096/ -o /dev/null 2>/dev/null; then
+  if curl -sf http://127.0.0.1:{{ $ocPort }}/ -o /dev/null 2>/dev/null; then
     info "╍ health probe OK — opencode server is responding"
     return 0
   else
-    warning "╍ health probe failed — opencode server not responding at http://127.0.0.1:4096/"
+    warning "╍ health probe failed — opencode server not responding at http://127.0.0.1:{{ $ocPort }}/"
     return 1
   fi
 }
@@ -120,18 +128,20 @@ manage_linux() {
   # daemon is replaced cleanly.
   "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
 
-  # Reap any orphaned `opencode serve` still bound to 4096. The pitchfork
-  # supervisor can lose track of its child (e.g. across VM resumes / kills)
-  # while the child keeps serving. A fresh `pitchfork start` then fails with
-  # an opaque "Unexpected error" (EADDRINUSE) and crash-loops forever because
-  # retry=true. Kill strays holding the port so the managed daemon can bind.
+  # Reap any orphaned `opencode serve` still bound to the daemon's port. The
+  # pitchfork supervisor can lose track of its child (e.g. across VM resumes /
+  # kills) while the child keeps serving. A fresh `pitchfork start` then fails
+  # with an opaque "Unexpected error" (EADDRINUSE) and crash-loops forever
+  # because retry=true. Kill strays holding the port so the managed daemon
+  # can bind. Targets the daemon's actual bind port (internal or external
+  # depending on nginxProxy).
   if command -v ss >/dev/null 2>&1; then
     local _pids _pid
     # `grep -oE` exits 1 on no-match; under `set -euo pipefail` that would
-    # abort the whole chezmoi apply when nothing holds 4096. Append `|| true`
-    # so an empty result is a normal (non-fatal) outcome.
+    # abort the whole chezmoi apply when nothing holds the port. Append
+    # `|| true` so an empty result is a normal (non-fatal) outcome.
     _pids=$(ss -ltnpH 2>/dev/null \
-      | awk -v p=':4096 ' '$0 ~ p {print $0}' \
+      | awk -v p=':{{ $ocPort }} ' '$0 ~ p {print $0}' \
       | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
     for _pid in $_pids; do
       if [ -n "$_pid" ] && [ "$_pid" != "$$" ]; then

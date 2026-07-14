@@ -214,15 +214,12 @@
                     "name": "OpenCode"
                 }
             },
-            "server": {
-                "hostname": "0.0.0.0",
-                "port": 4096
-            },
+            "server": {},
             "share": "manual",
             "work_plugin": false,
             "agents": {
                 "sisyphus": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode/glm-5.2"
                 },
                 "hephaestus": {
                     "model": "opencode/gpt-5.6-sol",

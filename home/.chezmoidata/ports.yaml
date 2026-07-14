@@ -1,0 +1,22 @@
+# Single source of truth for service ports on the exe.dev VM.
+#
+# nginx OWNS the nice/external ports (the ones clients and the exe.dev HTTPS
+# proxy connect to). Pitchfork daemons bind to the internal ports, which nginx
+# reverse-proxies to. Changing a port here updates both the pitchfork daemon
+# bind and the nginx listen/proxy_pass on the next `chezmoi apply`.
+#
+#   external = nginx listen port (the "nice" port, source of truth)
+#   internal = pitchfork daemon bind port (loopback only, nginx proxies here)
+
+ports:
+  opencode:
+    external: 4096
+    internal: 4097
+  code_server:
+    external: 4444
+    internal: 4445
+  mcpproxy:
+    external: 9183
+    internal: 18321
+  edge:
+    port: 8000
