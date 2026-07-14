@@ -28,10 +28,18 @@ boot_start = true
 ready_delay = 2
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
+{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) -}}
+{{- /* When nginxProxy is enabled, daemons bind to loopback on the internal
+      port and nginx reverse-proxies the external port. When disabled, daemons
+      bind directly to 0.0.0.0 on the external port (no nginx in front). */ -}}
+{{- $ocBind := "0.0.0.0" -}}
+{{- $ocPort := .ports.opencode.external -}}
+{{- if dig "nginxProxy" false . -}}
+{{-   $ocBind = "127.0.0.1" -}}
+{{-   $ocPort = .ports.opencode.internal -}}
+{{- end }}
 [daemons.df-opencode-serve]
-run = "opencode serve --hostname 0.0.0.0 --port 4096"
-watch = ["{{ .chezmoi.homeDir }}/.config/opencode/opencode.json"]
+run = "opencode serve --hostname {{ $ocBind }} --port {{ $ocPort }}"
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
 retry = true
@@ -39,9 +47,15 @@ boot_start = true
 ready_delay = 2
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
+{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) -}}
+{{- $csBind := "0.0.0.0" -}}
+{{- $csPort := .ports.code_server.external -}}
+{{- if dig "nginxProxy" false . -}}
+{{-   $csBind = "127.0.0.1" -}}
+{{-   $csPort = .ports.code_server.internal -}}
+{{- end }}
 [daemons.df-code-server]
-run = "code-server --bind-addr 0.0.0.0:4444 --auth none"
+run = "code-server --bind-addr {{ $csBind }}:{{ $csPort }} --auth none"
 watch = ["{{ .chezmoi.homeDir }}/.config/code-server/config.yaml"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }

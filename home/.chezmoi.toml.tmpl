@@ -14,6 +14,7 @@
 {{- $openCodeServer := promptBoolOnce . "openCodeServer" "Run opencode serve as a pitchfork daemon?" false -}}
 {{- $codeServer := promptBoolOnce . "codeServer" "Run code-server on this machine?" false -}}
 {{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
+{{- $nginxProxy := promptBoolOnce . "nginxProxy" "Put nginx reverse proxy in front of services (gzip, loopback daemons)?" false -}}
 
 [data]
   email = {{ $email | quote }}
@@ -40,6 +41,7 @@
   openCodeServer = {{ $openCodeServer }}
   codeServer = {{ $codeServer }}
   mcpproxyGate = {{ $mcpproxyGate }}
+  nginxProxy = {{ $nginxProxy }}
 
 # Session logging hooks
 [hooks.apply.pre]

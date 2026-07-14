@@ -18,7 +18,7 @@ setup_session_logging "$(basename "$0")"
 #/   Manages the mcpproxy-go daemon. On macOS, cleans up legacy launchd
 #/   agents and opens the native MCPProxy.app (Homebrew cask). On Linux,
 #/   tears down the legacy systemd --user unit and starts the df-mcpproxy
-#/   Pitchfork daemon. Verifies the service is responding on port 18321.
+#/   Pitchfork daemon. Verifies the service is responding on its internal port.
 #/   Opt-out via the mcpproxyGate chezmoi flag.
 #/
 #/ Options:
@@ -119,10 +119,10 @@ start_linux() {
   info "╍ started df-mcpproxy via pitchfork"
 
   sleep 2
-  if curl -sf http://127.0.0.1:18321/ -o /dev/null 2>&1; then
-    info "╍ mcpproxy responding on port 18321"
+  if curl -sf http://127.0.0.1:{{ .ports.mcpproxy.internal }}/ -o /dev/null 2>&1; then
+    info "╍ mcpproxy responding on port {{ .ports.mcpproxy.internal }}"
   else
-    warning "╍ mcpproxy may not be ready yet (port 18321 not responding)"
+    warning "╍ mcpproxy may not be ready yet (port {{ .ports.mcpproxy.internal }} not responding)"
   fi
 }
 

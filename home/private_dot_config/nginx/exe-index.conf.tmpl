@@ -1,0 +1,24 @@
+{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) -}}
+# exe.dev VM index page.
+# The exe.dev HTTPS proxy forwards https://lochlanio.exe.xyz/ to this port.
+# nginx serves a static, mobile-friendly directory of links to the
+# other services on this VM (reached via transparent port forwarding):
+#   https://lochlanio.exe.xyz:{{ .ports.opencode.external }}/  -> opencode web   (nginx -> pitchfork df-opencode-serve)
+#   https://lochlanio.exe.xyz:{{ .ports.code_server.external }}/  -> code-server    (nginx -> pitchfork df-code-server)
+#   https://lochlanio.exe.xyz:{{ .ports.mcpproxy.external }}/  -> mcpproxy web UI (nginx -> pitchfork df-mcpproxy)
+#
+# Ports are defined in .chezmoidata/ports.yaml — nginx owns the external
+# ports, pitchfork daemons bind to the internal ports (when nginxProxy is on).
+server {
+    listen {{ .ports.edge.port }} default_server;
+    listen [::]:{{ .ports.edge.port }} default_server;
+    server_name _;
+
+    root /var/www/exe-index;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+{{- end }}

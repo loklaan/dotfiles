@@ -1,0 +1,113 @@
+{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) -}}
+{{- /* Build a content-hash from all rendered nginx site configs so this
+       script re-runs only when one of them actually changes. */ -}}
+{{- $oc := include "private_dot_config/nginx/opencode.conf.tmpl" -}}
+{{- $cs := include "private_dot_config/nginx/code-server.conf.tmpl" -}}
+{{- $mp := include "private_dot_config/nginx/mcpproxy.conf.tmpl" -}}
+{{- $ei := include "private_dot_config/nginx/exe-index.conf.tmpl" -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+# content-hash: {{ printf "%s|%s|%s|%s" ($oc | sha256sum) ($cs | sha256sum) ($mp | sha256sum) ($ei | sha256sum) | sha256sum }}
+
+#/ Usage:
+#/   run_onchange_after_install-066-nginx-sites.sh
+#/
+#/ Description:
+#/   Installs chezmoi-rendered nginx site configs from ~/.config/nginx/ into
+#/   /etc/nginx/sites-available/, manages sites-enabled symlinks, validates
+#/   with `nginx -t`, and reloads nginx.
+#/
+#/   The nginx site configs are rendered by chezmoi from templates in
+#/   private_dot_config/nginx/*.conf.tmpl, which consume the shared port
+#/   definitions in .chezmoidata/ports.toml. nginx owns the external (nice)
+#/   ports; pitchfork daemons bind to the internal ports.
+#/
+#/   This script OWNS /etc/nginx/sites-available/{opencode,code-server,
+#/   mcpproxy,exe-index}.conf and their sites-enabled symlinks. Hand-edits
+#/   to those files will be overwritten on the next chezmoi apply.
+#/
+#/   Requires passwordless sudo (already available on Coder/exe.dev boxes).
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+SRC_DIR="${HOME}/.config/nginx"
+SITES_AVAILABLE="/etc/nginx/sites-available"
+SITES_ENABLED="/etc/nginx/sites-enabled"
+
+# The set of site configs we manage. Files that rendered empty (gated off by
+# a profile flag) are skipped — their symlinks are removed if present.
+MANAGED_SITES="opencode code-server mcpproxy exe-index"
+
+main() {
+  if [ ! -d "$SRC_DIR" ]; then
+    warning "▶ nginx site installer"
+    warning "╍ ${SRC_DIR} does not exist — nothing to install"
+    return 0
+  fi
+
+  if ! command -v nginx >/dev/null 2>&1; then
+    warning "▶ nginx site installer"
+    warning "╍ nginx not installed — skipping (install via: sudo apt install nginx)"
+    return 0
+  fi
+
+  info "▶ nginx site installer"
+
+  sudo mkdir -p "$SITES_AVAILABLE" "$SITES_ENABLED"
+
+  for site in $MANAGED_SITES; do
+    src="${SRC_DIR}/${site}.conf"
+    dst="${SITES_AVAILABLE}/${site}.conf"
+    link="${SITES_ENABLED}/${site}.conf"
+
+    # If the rendered file is empty or missing (gated off), remove any
+    # stale symlink/site so we don't serve a dead proxy block.
+    if [ ! -s "$src" ]; then
+      if [ -L "$link" ] || [ -e "$link" ]; then
+        sudo rm -f "$link"
+        info "╍ removed stale symlink: ${site} (gated off)"
+      fi
+      if [ -f "$dst" ]; then
+        sudo rm -f "$dst"
+        info "╍ removed stale site: ${site} (gated off)"
+      fi
+      continue
+    fi
+
+    # Install the rendered config (only write if changed to avoid noise).
+    if [ ! -f "$dst" ] || ! sudo cmp -s "$src" "$dst"; then
+      sudo install -m 644 "$src" "$dst"
+      info "╍ installed ${site}.conf"
+    fi
+
+    # Ensure symlink exists.
+    if [ ! -L "$link" ]; then
+      sudo ln -sf "../sites-available/${site}.conf" "$link"
+      info "╍ enabled ${site}"
+    fi
+  done
+
+  # Validate before reloading — abort if config is broken so we don't
+  # take down a working nginx with a bad render.
+  if ! sudo nginx -t 2>&1; then
+    fatal "╍ nginx -t failed — config NOT reloaded. Fix the template and re-apply."
+    return 1
+  fi
+  info "╍ nginx config valid"
+
+  # Reload nginx (graceful, no dropped connections).
+  sudo systemctl reload nginx
+  info "╍ nginx reloaded"
+  info "╍ Done"
+}
+
+main "$@"
+{{- end }}
