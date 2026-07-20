@@ -2,44 +2,35 @@
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 {{- $config := $base -}}
 
-{{- /* DISABLED — opencode 1.15.10's TUI plugin loader treats the
-       "oh-my-openagent/tui" string as a GitHub shorthand and tries to clone
-       https://github.com/oh-my-openagent/tui.git on every startup. That repo
-       does not exist (the TUI plugin source lives inside the oh-my-openagent
-       npm package itself, with no ./tui subpath export yet), so the clone
-       always fails. On Coder devboxes the failure mode is worse: GIT_ASKPASS
-       points at /opt/coder/bin/coder, whose external-auth allowlist regex
-       doesn't match oh-my-openagent, so coder refuses, git falls through to a
-       TTY username prompt, and opencode hangs in "Loading" while the prompt
-       gets dumped on top of the TUI.
+{{- /* Registers the oh-my-openagent TUI plugin so opencode's TUI shows the
+       Roles · Models sidebar section.
 
-       Tracked upstream:
-       - https://github.com/code-yeongyu/oh-my-openagent/issues/4303
-       - https://github.com/code-yeongyu/oh-my-openagent/pull/4305 (adds the
-         missing ./tui subpath export so opencode resolves it via npm)
+       History: opencode's TUI plugin loader used to treat "oh-my-openagent/tui"
+       as a GitHub shorthand and tried to clone a non-existent repo on every
+       startup, which hung opencode on Coder devboxes behind a git credential
+       prompt. Tracked in:
+        - https://github.com/code-yeongyu/oh-my-openagent/issues/4303
+        - https://github.com/code-yeongyu/oh-my-openagent/pull/4305
 
-       Until #4305 lands, we strip the broken entry. `oh-my-openagent doctor`
-       will warn that the TUI plugin entry is missing — accept that warning;
-       it only disables the Roles · Models sidebar section, not the
-       server-side plugin (which loads fine via opencode.json).
-
-       To re-enable after upstream is fixed: replace the strip block below
-       with the original add block, which was:
-
-           $existingPlugins := default (list) (get $config "plugin")
-           $omoTuiPlugin := "oh-my-openagent/tui"
-           if not (has $omoTuiPlugin $existingPlugins)
-             $config = $config | setValueAtPath "plugin" (append $existingPlugins $omoTuiPlugin)
-           end
-       (wrapped in {{- ... -}} delimiters as before). */ -}}
-
-{{- /* Actively strip the broken entry if a previous apply wrote it. */ -}}
+       PR #4305 has since landed (the package now exposes a ./tui subpath
+       export). BUT the correct TUI plugin spec is the PACKAGE spec
+       "oh-my-openagent@latest", NOT the "oh-my-openagent/tui" subpath:
+       opencode installs the configured package spec BEFORE resolving the TUI
+       export, so a bare subpath entry is reported unresolvable by
+       `oh-my-openagent doctor` ("OpenCode installs the configured package spec
+       before resolving the TUI export"). Using the package spec lets opencode
+       install it, then resolve the ./tui export from it. We therefore register
+       "oh-my-openagent@latest" and strip any legacy bare-subpath entries. */ -}}
+{{- $omoTuiPlugin := "oh-my-openagent@latest" -}}
 {{- $plugins := default (list) (get $config "plugin") -}}
 {{- $cleaned := list -}}
 {{- range $p := $plugins -}}
 {{-   if and (ne $p "oh-my-openagent/tui") (ne $p "oh-my-opencode/tui") -}}
 {{-     $cleaned = append $cleaned $p -}}
 {{-   end -}}
+{{- end -}}
+{{- if not (has $omoTuiPlugin $cleaned) -}}
+{{-   $cleaned = append $cleaned $omoTuiPlugin -}}
 {{- end -}}
 {{- $config = $config | setValueAtPath "plugin" $cleaned -}}
 
