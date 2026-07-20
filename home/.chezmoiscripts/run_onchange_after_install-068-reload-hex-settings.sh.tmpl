@@ -1,0 +1,78 @@
+{{- if eq .chezmoi.os "darwin" -}}
+{{- $settingsHash := include "Library/Containers/com.kitlangton.Hex/Data/Library/Application Support/com.kitlangton.Hex/modify_hex_settings.json" | sha256sum -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+# content-hash: {{ $settingsHash }}
+
+#/ Usage:
+#/   run_onchange_after_install-068-reload-hex-settings.sh
+#/
+#/ Description:
+#/   Reloads the Hex dictation app so it picks up chezmoi-managed word
+#/   remappings after they change on disk.
+#/
+#/   Why this exists: Hex (com.kitlangton.Hex) reads its
+#/   hex_settings.json ONCE at launch and does not watch the file for
+#/   external edits. chezmoi's modify-template writes the managed
+#/   wordRemappings/wordRemovals into that file during `chezmoi apply`,
+#/   but a Hex instance that was already running never sees the change —
+#/   the managed remappings silently fail to take effect until the next
+#/   manual restart. This script closes that lifecycle gap: whenever the
+#/   managed settings source changes (content-hash above), it restarts a
+#/   RUNNING Hex so the new settings load. If Hex is not running, it does
+#/   nothing — the settings are already on disk and will load on next
+#/   launch.
+#/
+#/   Safety: this ONLY restarts the app process. It never touches the
+#/   user's Recordings/ directory or transcription_history.json, which
+#/   are not chezmoi-managed and live alongside the settings file.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+HEX_APP="Hex"
+HEX_BUNDLE="com.kitlangton.Hex"
+
+main() {
+  # Only act if Hex is currently running; otherwise the settings already on
+  # disk will be read at next launch and there is nothing to reload.
+  if ! pgrep -x "$HEX_APP" >/dev/null 2>&1; then
+    info "▶ Hex settings reload"
+    info "╍ Hex not running — managed settings will load on next launch"
+    return 0
+  fi
+
+  info "▶ Hex settings reload"
+  info "╍ Restarting Hex to pick up managed word remappings"
+
+  # Graceful quit (lets Hex flush its own UI/window state cleanly), then wait
+  # for the process to actually exit before relaunching.
+  osascript -e "quit app \"${HEX_APP}\"" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -x "$HEX_APP" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+
+  if pgrep -x "$HEX_APP" >/dev/null 2>&1; then
+    warning "╍ Hex did not quit in time; leaving it running (settings load on next manual restart)"
+    return 0
+  fi
+
+  open -b "$HEX_BUNDLE" >/dev/null 2>&1 || open -a "$HEX_APP" >/dev/null 2>&1 || {
+    warning "╍ Could not relaunch Hex; launch it manually to load managed settings"
+    return 0
+  }
+
+  info "╍ Done"
+}
+
+main "$@"
+{{- end -}}
