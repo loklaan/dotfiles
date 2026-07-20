@@ -88,8 +88,9 @@
 {{-   end -}}
 {{-   $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
 {{-   $opencodeApiKey := "" -}}
-{{-   if and (ne "" $bwsToken) (stat $bwsGet) -}}
-{{-     $opencodeApiKey = output $bwsGet .bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
+{{-   $bwsIdOpencodeApiKey := dig "bwsIdOpencodeApiKey" "" . -}}
+{{-   if and (ne "" $bwsToken) (ne "" $bwsIdOpencodeApiKey) (stat $bwsGet) -}}
+{{-     $opencodeApiKey = output $bwsGet $bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
 {{-   end -}}
 {{-   if ne "" $opencodeApiKey -}}
 {{-     $config = $config | setValueAtPath "provider.opencode.options.apiKey" $opencodeApiKey -}}
