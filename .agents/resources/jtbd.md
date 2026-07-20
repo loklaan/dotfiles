@@ -27,7 +27,7 @@ condition (toggle Coder Connect off/on), not a JTBD failure.
 
 **PATH on a box.** Tools live behind mise shims. Export
 `PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"` at the top of any
-remote script, otherwise `opencode`/`claude`/`codex`/`oh-my-openagent`/`ast-grep`
+remote script, otherwise `opencode`/`claude`/`oh-my-openagent`/`ast-grep`
 will appear missing when they are actually installed.
 
 **Interpreting results.** Each step lists what PASS looks like. If a step can't run
@@ -39,24 +39,29 @@ repo) distinctly from genuine JTBD regressions.
 
 ## JTBD 1 — Open my coding agents
 
-**Job:** Launch each of my three coding agents and reach a model provider.
+**Job:** Launch each of my coding agents and reach a model provider.
 
 **Why it matters:** This is the floor. If an agent binary won't start or can't
 resolve its provider, nothing else matters.
 
-**Agents:** `opencode`, `claude` (Claude Code), `codex`.
+**Agents:** `opencode`, `claude` (Claude Code).
+
+> Note: `codex` was intentionally dropped from the mise tool set (commit
+> "switch service mngmt to pitchfork and personal/work profiles better" —
+> "remove codex since i never use it anyway"). It is NOT expected on PATH; a
+> missing `codex` is correct, not a FAIL. Leftover `codex` installs may linger
+> under `~/.local/share/mise/installs/` with no shim — that is inert.
 
 **Validation:**
 1. Each binary is on PATH and reports a version:
-   - `opencode --version` → prints a version (e.g. `1.17.11`)
+   - `opencode --version` → prints a version (e.g. `1.18.3`)
    - `claude --version` → prints `<ver> (Claude Code)`
-   - `codex --version` → prints `codex-cli <ver>`
-   - PASS: all three print a version, non-zero/`command not found` is a FAIL.
+   - PASS: both print a version, non-zero/`command not found` is a FAIL.
 2. mise pins them (all `latest`): `mise current <tool>` reports a version for each
-   of `claude`, `codex`, `opencode` (one tool per invocation — `mise current`
+   of `claude`, `opencode` (one tool per invocation — `mise current`
    takes a single plugin arg). No `missing`.
 
-**Known-good evidence:** all three resolve via mise shims on local and Coder boxes.
+**Known-good evidence:** both resolve via mise shims on local and Coder boxes.
 
 ---
 
@@ -145,7 +150,7 @@ routes through `@canva/opencode-plugin-llmproxy`, with two modes:
 ## JTBD 4 — Shared agent rules and skills resolve
 
 **Job:** My vendor-neutral agent rules and Agent Skills load identically across
-opencode, Claude Code, and Codex, so behaviour and capabilities are consistent
+opencode and Claude Code, so behaviour and capabilities are consistent
 whichever agent I open.
 
 **Why it matters:** The rules/skills are authored once under `~/.agents/` and
