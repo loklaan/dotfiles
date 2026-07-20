@@ -104,7 +104,7 @@ main() {
   fi
 
   local bws_token_path="{{ .bwsTokenPath }}"
-  local bws_secret_id="{{ .bwsIdOpencodeApiKey }}"
+  local bws_secret_id="{{ dig "bwsIdOpencodeApiKey" "" . }}"
 
   info "▶ opencode auth sync (Linux)"
 

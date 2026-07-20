@@ -33,7 +33,7 @@ const bwsTokenPath: Effect.Effect<string> = Effect.gen(function* () {
 // Canary secret used to probe BWS token validity. Any live secret ID works;
 // GitHub auth token is present on all machines (personal and work) in this
 // repo's Bitwarden project.
-const BWS_PROBE_SECRET_ID = "{{ .bwsIdGithubAuthToken }}";
+const BWS_PROBE_SECRET_ID = "{{ dig "bwsIdGithubAuthToken" "" . }}";
 
 const DriftTool = Schema.Struct({
   name: Schema.String,
