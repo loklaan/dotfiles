@@ -8,8 +8,7 @@
             "enabled_providers": [
                 "amazon-bedrock",
                 "google",
-                "openai",
-                "opencode"
+                "openai"
             ],
             "model": "amazon-bedrock/global.anthropic.claude-opus-4-8",
             "provider_block": {
@@ -50,9 +49,6 @@
                         "meta.llama4-scout-17b-instruct-v1:0",
                         "mistral.magistral-small-2509"
                     ]
-                },
-                "opencode": {
-                    "name": "OpenCode"
                 }
             },
             "server": null,
