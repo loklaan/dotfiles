@@ -52,17 +52,23 @@
 {{-   $config = $config | setValueAtPath "enabled_providers" $enabledProviders -}}
 {{- end -}}
 
-{{- /* provider block via mergeOverwrite so it fully replaces any stale config */ -}}
+{{- /* provider block is authoritative from the profile: replace, don't merge,
+     so a provider absent from the profile (e.g. a stale opencode entry carried
+     in from a prior apply) is dropped rather than preserved. */ -}}
 {{- $providerBlock := dig "provider_block" nil $p -}}
 {{- if ne nil $providerBlock -}}
-{{-   $config = mergeOverwrite $config (dict "provider" $providerBlock) -}}
+{{-   $config = $config | setValueAtPath "provider" $providerBlock -}}
+{{- else -}}
+{{-   $config = unset $config "provider" -}}
 {{- end -}}
 
 {{- /* Self-heal: drop retired per-model limit entries so re-applies don't
      leave orphaned caps (e.g. claude-sonnet-4-6 was superseded by 5). */ -}}
-{{- $bedrockModels := dig "provider" "amazon-bedrock" "models" (dict) $config -}}
-{{- $bedrockModels = unset $bedrockModels "global.anthropic.claude-sonnet-4-6" -}}
-{{- $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
+{{- if hasKey (dig "provider" (dict) $config) "amazon-bedrock" -}}
+{{-   $bedrockModels := dig "provider" "amazon-bedrock" "models" (dict) $config -}}
+{{-   $bedrockModels = unset $bedrockModels "global.anthropic.claude-sonnet-4-6" -}}
+{{-   $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
+{{- end -}}
 
 {{- /* Inject the OpenCode API key via the documented options.apiKey
      config path (https://opencode.ai/docs/providers). `opencode` is a single
@@ -79,8 +85,7 @@
      any bash-launched opencode would see an empty value and fall back to the
      "public" free-tier key. The key is already stored plaintext in
      auth.json (chezmoi-managed), so embedding it here is equivalent
-     exposure. Only injected for the `opencode` provider when present in the
-     profile's provider_block. */ -}}
+     exposure. Runs only when the profile's provider block includes opencode. */ -}}
 {{- if and (hasKey $config "provider") (hasKey (index $config "provider") "opencode") -}}
 {{-   $bwsToken := "" -}}
 {{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
@@ -94,6 +99,24 @@
 {{-   end -}}
 {{-   if ne "" $opencodeApiKey -}}
 {{-     $config = $config | setValueAtPath "provider.opencode.options.apiKey" $opencodeApiKey -}}
+{{-   else -}}
+{{- /* Drop the opencode provider when no key resolves. A keyless block makes opencode advertise the provider and its models, but every call fails auth. Keep enabled_providers in sync. */ -}}
+{{-     $providers := index $config "provider" -}}
+{{-     $providers = unset $providers "opencode" -}}
+{{-     if eq 0 (len $providers) -}}
+{{-       $config = unset $config "provider" -}}
+{{-     else -}}
+{{-       $config = $config | setValueAtPath "provider" $providers -}}
+{{-     end -}}
+{{-     if hasKey $config "enabled_providers" -}}
+{{-       $ep := list -}}
+{{-       range $prov := (index $config "enabled_providers") -}}
+{{-         if ne $prov "opencode" -}}
+{{-           $ep = append $ep $prov -}}
+{{-         end -}}
+{{-       end -}}
+{{-       $config = $config | setValueAtPath "enabled_providers" $ep -}}
+{{-     end -}}
 {{-   end -}}
 {{- end -}}
 
