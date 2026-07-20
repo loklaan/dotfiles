@@ -20,7 +20,7 @@
 #:schema https://pitchfork.jdx.dev/schema.json
 
 [daemons.df-orca-server]
-run = "exec df-orca-serve --pairing-address {{ $workspaceName }}.coder --json"
+run = "df-orca-serve --pairing-address {{ $workspaceName }}.coder --json"
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
 retry = true
@@ -30,7 +30,7 @@ ready_delay = 2
 
 {{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
 [daemons.df-opencode-serve]
-run = "exec opencode serve --hostname 0.0.0.0 --port 4096"
+run = "opencode serve --hostname 0.0.0.0 --port 4096"
 watch = ["{{ .chezmoi.homeDir }}/.config/opencode/opencode.json"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
@@ -41,7 +41,7 @@ ready_delay = 2
 
 {{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
 [daemons.df-code-server]
-run = "exec code-server --bind-addr 0.0.0.0:4444 --auth password"
+run = "code-server --bind-addr 0.0.0.0:4444 --auth password"
 watch = ["{{ .chezmoi.homeDir }}/.config/code-server/config.yaml"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
@@ -52,7 +52,7 @@ ready_delay = 2
 
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
 [daemons.df-mcpproxy]
-run = "exec mcpproxy serve --log-level info"
+run = "mcpproxy serve --log-level info"
 watch = ["{{ .chezmoi.homeDir }}/.mcpproxy/mcp_config.json"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
