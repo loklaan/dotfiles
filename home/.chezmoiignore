@@ -1,6 +1,6 @@
 .local/share/fonts/**/.uuid
 *.zwc
-{{ if ne .machineProfile "work" }}
+{{ if ne (dig "machineProfile" "personal" .) "work" }}
 .local/share/opencode/auth.json
 {{ end }}
 {{ if not (stat (joinPath .chezmoi.homeDir "work/canva/tools/dotslash/bin/gh")) }}
