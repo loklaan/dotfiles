@@ -1,6 +1,6 @@
 ---
 name: lochy:pm
-description: Project management facilitation — organising work (naming milestones, writing task tickets) and structured self-interviews for scoping, breakdown, and decision-making. Use when naming milestones, writing task tickets, planning deliverables, scoping work, or facilitating structured decisions.
+description: Project management facilitation — organising work (naming milestones, writing task tickets, outcome notes on ticket close, splitting long-running tickets) and structured self-interviews for scoping, breakdown, and decision-making. Use when naming milestones, writing task tickets, planning deliverables, scoping work, marking a ticket done or closing it, writing an outcome/resolution note, splitting or breaking up a long-running or multi-sprint ticket, or facilitating structured decisions.
 ---
 
 # Project Management
@@ -28,6 +28,18 @@ See [references/writing-a-jira-task.md](references/writing-a-jira-task.md) for t
 Operational reference for Jira — Markdown-to-ADF conversion (supported/unsupported syntax, panels, checkboxes), string escaping, custom field value types, priority workarounds, issue linking, and instance-specific field IDs. Shared across all issue type workflows.
 
 See [references/using-jira.md](references/using-jira.md) for the full reference.
+
+### Tap Me Out — Outcome Notes on Close
+
+Every ticket gets a short outcome note when marked done — the record of what the work actually produced, distinct from acceptance criteria. Link PRs where they exist; everything else gets a ≤10-word summary plus a link. Grill the human on the qualitative residue automation misses. Kept in a standard, visible field so custom tooling never loses it.
+
+See [references/tap-me-out.md](references/tap-me-out.md) for the convention, the outcome-vs-acceptance-criteria distinction, the qualitative-interrogation prompts, and enforcement.
+
+### Split — Breaking Up Long-Running Tickets
+
+When a ticket runs long — especially across multiple sprints — stop, close it with an outcome note for what's delivered so far, and spin the remainder into a "Part 2" ticket that goes through planning as a fresh candidate (it might not be worth continuing).
+
+See [references/splitting-long-tickets.md](references/splitting-long-tickets.md) for the move, why remaining work gets re-planned rather than continued, and the signals it's time to split.
 
 ## Self-Interview
 
