@@ -70,23 +70,26 @@
 {{-   $config = $config | setValueAtPath "provider.amazon-bedrock.models" $bedrockModels -}}
 {{- end -}}
 
-{{- /* Inject the OpenCode API key via the documented options.apiKey
-     config path (https://opencode.ai/docs/providers). `opencode` is a single
-     provider; Go and Zen are just subscription SKUs on the same account/key.
-     The provider's liveness check reads provider["opencode"].options.apiKey
-     (packages/opencode/src/provider/provider.ts); without a key it strips
-     non-free models from autoload. The BWS secret (opencode_zen_api_key) is
-     the singular opencode account key — SKU-agnostic — so this always
-     targets the `opencode` provider.
+{{- /* Inject the OpenCode API key into every opencode-family provider present
+      in the profile's provider block, via the documented options.apiKey config
+      path (https://opencode.ai/docs/providers). Go and Zen are DISTINCT
+      providers in opencode's registry — `opencode-go` (subscription bundling,
+      endpoint https://opencode.ai/zen/go/v1/...) and `opencode` (Zen per-token,
+      endpoint https://opencode.ai/zen/v1/...) — but they share ONE account key
+      (SKU-agnostic), fetched from BWS as bwsIdOpencodeApiKey.
 
-     We embed the literal key (fetched from BWS at render time) rather than
-     {env:OPENCODE_API_KEY}: that env var is only exported in zsh shells
-     (env.zsh.tmpl), so the pitchfork-managed `opencode serve` daemon and
-     any bash-launched opencode would see an empty value and fall back to the
-     "public" free-tier key. The key is already stored plaintext in
-     auth.json (chezmoi-managed), so embedding it here is equivalent
-     exposure. Runs only when the profile's provider block includes opencode. */ -}}
-{{- if and (hasKey $config "provider") (hasKey (index $config "provider") "opencode") -}}
+      The provider's liveness check reads provider[<id>].options.apiKey
+      (packages/opencode/src/provider/provider.ts); without a key it strips
+      non-free models from autoload.
+
+      We embed the literal key (fetched from BWS at render time) rather than
+      {env:OPENCODE_API_KEY}: that env var is only exported in zsh shells
+      (env.zsh.tmpl), so the pitchfork-managed `opencode serve` daemon and
+      any bash-launched opencode would see an empty value and fall back to the
+      "public" free-tier key. The key is already stored plaintext in
+      auth.json (chezmoi-managed), so embedding it here is equivalent
+      exposure. */ -}}
+{{- if hasKey $config "provider" -}}
 {{-   $bwsToken := "" -}}
 {{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
 {{-     $bwsToken = include .bwsTokenPath | trim -}}
@@ -97,35 +100,45 @@
 {{-   if and (ne "" $bwsToken) (ne "" $bwsIdOpencodeApiKey) (stat $bwsGet) -}}
 {{-     $opencodeApiKey = output $bwsGet $bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
 {{-   end -}}
-{{-   if ne "" $opencodeApiKey -}}
-{{-     $config = $config | setValueAtPath "provider.opencode.options.apiKey" $opencodeApiKey -}}
-{{-   else -}}
-{{- /* Drop the opencode provider when no key resolves. A keyless block makes opencode advertise the provider and its models, but every call fails auth. Keep enabled_providers in sync. */ -}}
-{{-     $providers := index $config "provider" -}}
-{{-     $providers = unset $providers "opencode" -}}
-{{-     if eq 0 (len $providers) -}}
-{{-       $config = unset $config "provider" -}}
-{{-     else -}}
-{{-       $config = $config | setValueAtPath "provider" $providers -}}
-{{-     end -}}
-{{-     if hasKey $config "enabled_providers" -}}
-{{-       $ep := list -}}
-{{-       range $prov := (index $config "enabled_providers") -}}
-{{-         if ne $prov "opencode" -}}
-{{-           $ep = append $ep $prov -}}
+{{-   $opencodeFamily := list "opencode-go" "opencode" -}}
+{{-   range $provId := $opencodeFamily -}}
+{{-     if hasKey $config "provider" -}}
+{{-       if hasKey (index $config "provider") $provId -}}
+{{-         if ne "" $opencodeApiKey -}}
+{{-           $config = $config | setValueAtPath (printf "provider.%s.options.apiKey" $provId) $opencodeApiKey -}}
+{{-         else -}}
+{{- /* Drop the provider when no key resolves. A keyless block makes opencode
+      advertise the provider and its models, but every call fails auth. Keep
+      enabled_providers in sync. */ -}}
+{{-           $providers := index $config "provider" -}}
+{{-           $providers = unset $providers $provId -}}
+{{-           if eq 0 (len $providers) -}}
+{{-             $config = unset $config "provider" -}}
+{{-           else -}}
+{{-             $config = $config | setValueAtPath "provider" $providers -}}
+{{-           end -}}
+{{-           if hasKey $config "enabled_providers" -}}
+{{-             $ep := list -}}
+{{-             range $eprov := (index $config "enabled_providers") -}}
+{{-               if ne $eprov $provId -}}
+{{-                 $ep = append $ep $eprov -}}
+{{-               end -}}
+{{-             end -}}
+{{-             $config = $config | setValueAtPath "enabled_providers" $ep -}}
+{{-           end -}}
 {{-         end -}}
 {{-       end -}}
-{{-       $config = $config | setValueAtPath "enabled_providers" $ep -}}
 {{-     end -}}
 {{-   end -}}
 {{- end -}}
 
-{{- /* model: only set if base doesn't already have it */ -}}
-{{- if not (hasKey $base "model") -}}
-{{-   $model := dig "model" nil $p -}}
-{{-   if ne nil $model -}}
-{{-     $config = $config | setValueAtPath "model" $model -}}
-{{-   end -}}
+{{- /* model: authoritative from the profile (matches small_model below).
+      The previous `if not (hasKey $base "model")` guard prevented convergence
+      — a stale model in the live config (e.g. opencode/... after a profile
+      switch to opencode-go/...) survived every re-apply. */ -}}
+{{- $model := dig "model" nil $p -}}
+{{- if ne nil $model -}}
+{{-   $config = $config | setValueAtPath "model" $model -}}
 {{- end -}}
 
 {{- /* small_model from profile (if non-null) */ -}}

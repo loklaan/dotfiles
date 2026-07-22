@@ -205,13 +205,13 @@
                 "opencode"
             ],
             "enabled_providers": [
-                "opencode"
+                "opencode-go"
             ],
-            "model": "opencode/kimi-k2.7-code",
-            "small_model": "opencode/qwen3.6-plus",
+            "model": "opencode-go/kimi-k2.7-code",
+            "small_model": "opencode-go/qwen3.6-plus",
             "provider_block": {
-                "opencode": {
-                    "name": "OpenCode"
+                "opencode-go": {
+                    "name": "OpenCode Go"
                 }
             },
             "server": {},
@@ -219,64 +219,64 @@
             "work_plugin": false,
             "agents": {
                 "sisyphus": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "hephaestus": {
-                    "model": "opencode/gpt-5.6-sol",
+                    "model": "opencode-go/kimi-k3",
                     "variant": "medium"
                 },
                 "oracle": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "librarian": {
-                    "model": "opencode/qwen3.6-plus"
+                    "model": "opencode-go/qwen3.6-plus"
                 },
                 "explore": {
-                    "model": "opencode/qwen3.6-plus"
+                    "model": "opencode-go/qwen3.6-plus"
                 },
                 "metis": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "momus": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "prometheus": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "atlas": {
-                    "model": "opencode/qwen3.7-plus"
+                    "model": "opencode-go/qwen3.7-plus"
                 },
                 "multimodal-looker": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 },
                 "sisyphus-junior": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 }
             },
             "categories": {
                 "visual-engineering": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "ultrabrain": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "deep": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 },
                 "artistry": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 },
                 "quick": {
-                    "model": "opencode/minimax-m3"
+                    "model": "opencode-go/minimax-m3"
                 },
                 "unspecified-low": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 },
                 "unspecified-high": {
-                    "model": "opencode/glm-5.2"
+                    "model": "opencode-go/glm-5.2"
                 },
                 "writing": {
-                    "model": "opencode/kimi-k2.7-code"
+                    "model": "opencode-go/kimi-k2.7-code"
                 }
             }
         }

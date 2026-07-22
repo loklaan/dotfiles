@@ -20,7 +20,8 @@ BWS_GET="${HOME}/.local/lib/bws-get-or-empty"
 #/
 #/ Description:
 #/   Fetches the opencode API key from Bitwarden Secrets Manager and injects
-#/   it into ~/.local/share/opencode/auth.json under the "opencode" provider.
+#/   it into ~/.local/share/opencode/auth.json under the opencode-family
+#/   providers (opencode and opencode-go), which share one account key.
 #/   All other providers (google, openai, amazon-bedrock, etc.) are preserved.
 #/
 #/   Soft-fail: if the BWS token is missing, expired, or the secret is
@@ -68,16 +69,16 @@ merge_auth_json() {
     printf '{}' > "$tmp_file"
   fi
 
-  # Merge: update only the opencode credential, preserve everything else.
-  # Shape MUST be { type: "api", key: ... } — this is what opencode's own
-  # Auth.set writes and what `opencode auth list` reads (it filters entries
-  # by .type==="api" && typeof .key==="string"; a bare {key} is ignored and
-  # shows as 0 credentials). NOTE: opencode key *resolution* for actual
-  # API calls does not read this file — it uses options.apiKey in config
-  # (see modify_opencode.json). auth.json is kept well-formed for
-  # `opencode auth list` and other providers regardless.
+  # Merge: update the opencode-family credentials (opencode + opencode-go),
+  # preserve everything else. Shape MUST be { type: "api", key: ... } — this
+  # is what opencode's own Auth.set writes and what `opencode auth list` reads
+  # (it filters entries by .type==="api" && typeof .key==="string"; a bare
+  # {key} is ignored and shows as 0 credentials). NOTE: opencode key
+  # *resolution* for actual API calls does not read this file — it uses
+  # options.apiKey in config (see modify_opencode.json). auth.json is kept
+  # well-formed for `opencode auth list` and other providers regardless.
   jq --arg key "$api_key" \
-    '."opencode" = { type: "api", key: $key }' \
+    '."opencode" = { type: "api", key: $key } | ."opencode-go" = { type: "api", key: $key }' \
     "$tmp_file" > "${tmp_file}.merged" \
     && mv "${tmp_file}.merged" "$tmp_file"
 
