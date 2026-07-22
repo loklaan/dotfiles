@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Runs every chezmoi apply. Converges the opencode plugin at
+# ~/.config/opencode/plugins/rtk.ts by invoking `rtk init -g --opencode`,
+# which is idempotent (writes-if-changed, atomic).
+#
+# Why imperative init, not a chezmoi-vendored file:
+#   - Drift protection: the plugin ships from the installed rtk binary, so it
+#     always matches the installed version. A vendored copy would silently
+#     diverge if rtk's plugin interface changed between releases.
+#   - mise's [hooks] postinstall = chezmoi:apply ensures this runs after every
+#     rtk upgrade, converging the plugin without manual intervention.
+#   - rtk's `write_if_changed` makes the write a no-op when content matches.
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+main() {
+  # Activate mise shims so rtk is found even when chezmoi apply is triggered
+  # by mise's postinstall hook (which doesn't inherit the shell's mise env).
+  eval "$(mise activate bash --quiet 2>/dev/null)" || true
+
+  if ! command -v rtk >/dev/null 2>&1; then
+    info "╍ rtk not on PATH — skipping opencode plugin sync"
+    return 0
+  fi
+
+  info "▶ rtk opencode plugin sync"
+
+  # Ensure the plugins directory exists (rtk init creates it, but being
+  # explicit avoids a race with other scripts that might touch the path).
+  mkdir -p "${HOME}/.config/opencode/plugins"
+
+  # Idempotent: rtk's write_if_changed skips the write when content matches.
+  # Squelch stdout (it prints an install banner) — stderr still surfaces errors.
+  if rtk init -g --opencode >/dev/null 2>&1; then
+    info "╍ rtk opencode plugin converged"
+  else
+    warning "╍ rtk init -g --opencode failed (non-fatal — plugin may be stale)"
+  fi
+}
+
+main "$@"
