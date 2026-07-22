@@ -2,6 +2,11 @@
 # Global tools listed here will be automatically installed.
 "github:bitwarden/sdk" = { version = "bws-v2.1.0", exe = "bws", tag_regex = "^bws" }
 "github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt" }
+# RTK — Rust CLI that rewrites shell commands to compact output, saving 60-90%
+# of token spend on common dev commands (git status, ls, cargo test, etc.).
+# Installed on every machine; the opencode plugin lives in
+# private_dot_config/opencode/plugins/rtk.ts (managed here, not via `rtk init`).
+"github:rtk-ai/rtk" = { version = "v0.43.0", exe = "rtk" }
 {{ if eq .chezmoi.os "linux" -}}
 "github:smart-mcp-proxy/mcpproxy-go" = { version = "0.46.0", exe = "mcpproxy" }
 {{ end -}}
@@ -9,6 +14,9 @@
 "npm:@getpaseo/cli" = "0.1.101"
 {{ end -}}
 {{ if eq .chezmoi.os "linux" -}}
+# usage — jdx's CLI shell-completion runtime. Required by pitchfork's
+# `completion` subcommand; kept next to pitchfork since they're paired.
+usage = "3.5.5"
 "github:jdx/pitchfork" = { version = "2.14.0", exe = "pitchfork" }
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
