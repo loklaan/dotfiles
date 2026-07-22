@@ -124,7 +124,7 @@ manage_linux() {
   # extracted squashfs view until restart). Pitchfork's start command is
   # idempotent; stop first so a running daemon is replaced cleanly.
   "$PITCHFORK_BIN" stop df-orca-server 2>/dev/null || true
-  "$PITCHFORK_BIN" start df-orca-server >/dev/null 2>&1
+  "$PITCHFORK_BIN" start --quiet df-orca-server
   info "╍ started df-orca-server daemon (picks up any AppImage version change)"
 
   sleep 2
