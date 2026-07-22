@@ -115,7 +115,7 @@ start_linux() {
   fi
 
   pitchfork stop df-mcpproxy 2>/dev/null || true
-  pitchfork start df-mcpproxy
+  pitchfork start --quiet df-mcpproxy
   info "╍ started df-mcpproxy via pitchfork"
 
   sleep 2

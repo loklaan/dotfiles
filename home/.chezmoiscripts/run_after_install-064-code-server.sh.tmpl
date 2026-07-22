@@ -121,7 +121,7 @@ manage_linux() {
   # Pitchfork's start command is idempotent; stop first so a running
   # daemon is replaced cleanly.
   "$PITCHFORK_BIN" stop df-code-server 2>/dev/null || true
-  "$PITCHFORK_BIN" start df-code-server >/dev/null 2>&1
+  "$PITCHFORK_BIN" start --quiet df-code-server
   info "╍ started df-code-server daemon"
 
   sleep 2

@@ -66,7 +66,7 @@ ready_delay = 2
 
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
 [daemons.df-mcpproxy]
-run = "mcpproxy serve --log-level info"
+run = "mcpproxy serve --log-level error"
 watch = ["{{ .chezmoi.homeDir }}/.mcpproxy/mcp_config.json"]
 dir = "{{ .chezmoi.homeDir }}"
 env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
