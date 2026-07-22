@@ -1,0 +1,84 @@
+{{- /* chezmoi:template */ -}}
+{{- $bwsToken := "" -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-   $bwsToken = include .bwsTokenPath | trim -}}
+{{- end -}}
+{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{- $exaKey := "" -}}
+{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-   $exaKey = output $bwsGet .bwsIdExaApiKey .bwsTokenPath | trim -}}
+{{- end -}}
+// chezmoi-managed custom tool. Overrides opencode's built-in `websearch` with
+// EXA-powered search that uses a BWS-managed API key (no OPENCODE_ENABLE_EXA env
+// var needed). The key is resolved from Bitwarden Secrets at chezmoi render
+// time and embedded as a literal — same pattern as provider.opencode-go.options
+// .apiKey in modify_opencode.json. When the key is absent (fresh machine before
+// df-setup, expired BWS token), the tool soft-fails with a clear message instead
+// of making a doomed API call.
+
+import { tool } from "@opencode-ai/plugin"
+
+const EXA_KEY = "{{ $exaKey }}"
+
+export default tool({
+  description:
+    "Search the web for current information, news, facts, docs, people, or companies. " +
+    "Returns clean text content from the top results. " +
+    "Best for: finding current info beyond training data, researching topics, looking up docs. " +
+    "If the highlights are insufficient, follow up with the webfetch tool on the best URLs.",
+  args: {
+    query: tool.schema
+      .string()
+      .describe(
+        "Natural language search query. Describe the ideal page, not just keywords. " +
+          'e.g. "blog post comparing React and Vue performance" not "React vs Vue". ' +
+          "Use category:people / category:company to search through LinkedIn profiles / companies.",
+      ),
+    numResults: tool.schema
+      .number()
+      .optional()
+      .describe("Number of results to return (default: 10)."),
+  },
+  async execute(args) {
+    if (!EXA_KEY) {
+      return "EXA API key not configured — web search unavailable. Run `df-setup` for guidance."
+    }
+
+    try {
+      const res = await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: {
+          "x-api-key": EXA_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: args.query,
+          numResults: args.numResults ?? 10,
+          contents: { text: { maxCharacters: 3000 } },
+        }),
+      })
+
+      if (!res.ok) {
+        return `EXA search failed: ${res.status} ${res.statusText}`
+      }
+
+      const data = (await res.json()) as {
+        results?: Array<{ title?: string; url?: string; text?: string }>
+      }
+
+      const results = data.results ?? []
+      if (results.length === 0) {
+        return "No results found."
+      }
+
+      return results
+        .map(
+          (r) =>
+            `## ${r.title ?? "(untitled)"}\n${r.url ?? ""}\n\n${r.text ?? ""}`,
+        )
+        .join("\n\n---\n\n")
+    } catch (e) {
+      return `EXA search error: ${e instanceof Error ? e.message : String(e)}`
+    }
+  },
+})
