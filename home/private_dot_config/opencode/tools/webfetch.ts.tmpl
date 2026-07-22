@@ -1,0 +1,78 @@
+{{- /* chezmoi:template */ -}}
+{{- $bwsToken := "" -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-   $bwsToken = include .bwsTokenPath | trim -}}
+{{- end -}}
+{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{- $exaKey := "" -}}
+{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-   $exaKey = output $bwsGet .bwsIdExaApiKey .bwsTokenPath | trim -}}
+{{- end -}}
+// chezmoi-managed custom tool. Overrides opencode's built-in `webfetch` with
+// EXA-powered content extraction that returns clean markdown from any URL.
+// Uses a BWS-managed API key (resolved at chezmoi render time). When the key is
+// absent, the tool soft-fails with a clear message. Batch multiple URLs in one
+// call for efficiency.
+
+import { tool } from "@opencode-ai/plugin"
+
+const EXA_KEY = "{{ $exaKey }}"
+
+export default tool({
+  description:
+    "Read a webpage's full content as clean markdown. " +
+    "Best for: extracting full content from known URLs, reading documentation pages, " +
+    "fetching articles or blog posts. " +
+    "Batch multiple URLs in one call for efficiency. " +
+    "Use after websearch when the search highlights are insufficient.",
+  args: {
+    urls: tool.schema
+      .array(tool.schema.string())
+      .describe("URLs to read. Batch multiple URLs in one call for efficiency."),
+    maxCharacters: tool.schema
+      .number()
+      .optional()
+      .describe("Maximum characters to extract per page (default: 3000)."),
+  },
+  async execute(args) {
+    if (!EXA_KEY) {
+      return "EXA API key not configured — web fetch unavailable. Run `df-setup` for guidance."
+    }
+
+    try {
+      const res = await fetch("https://api.exa.ai/contents", {
+        method: "POST",
+        headers: {
+          "x-api-key": EXA_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          urls: args.urls,
+          text: { maxCharacters: args.maxCharacters ?? 3000 },
+        }),
+      })
+
+      if (!res.ok) {
+        return `EXA fetch failed: ${res.status} ${res.statusText}`
+      }
+
+      const data = (await res.json()) as {
+        results?: Array<{ title?: string; url?: string; text?: string }>
+      }
+
+      const results = data.results ?? []
+      if (results.length === 0) {
+        return "No content found for the given URL(s)."
+      }
+
+      return results
+        .map(
+          (r) =>
+            `## ${r.title ?? "(untitled)"}\n${r.url ?? ""}\n\n${r.text ?? ""}`,
+        )
+        .join("\n\n---\n\n")
+    } catch (e) {
+      return `EXA fetch error: ${e instanceof Error ? e.message : String(e)}`
+    }
+  },
+})

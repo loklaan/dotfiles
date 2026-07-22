@@ -22,9 +22,11 @@
         "agents" false
         "plugins" false)) -}}
 
-{{- /* Disable default built-in MCPs — context7 and websearch are behind
-       mcpproxy-go, grep_app is not needed */ -}}
-{{- $config = $config | setValueAtPath "disabled_mcps" (list "context7" "websearch" "grep_app") -}}
+{{- /* Disable default built-in MCPs — context7, websearch, and webfetch are
+      served via mcpproxy-managed EXA instead (web_search_exa + web_fetch_exa
+      at https://mcp.exa.ai; provider block in modify_private_mcp_config.json).
+      grep_app is not needed. */ -}}
+{{- $config = $config | setValueAtPath "disabled_mcps" (list "context7" "websearch" "webfetch" "grep_app") -}}
 
 {{- /* Team Mode — off on cost grounds */ -}}
 {{- $config = mergeOverwrite $config (dict
