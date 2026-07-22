@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,mise,bw,bws,rustup,chezmoi,coder,cw,delta,deno,fzf,npm,opencode,otter,pnpm,starship --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,mise,bw,bws,rustup,chezmoi,coder,cw,delta,deno,fzf,npm,opencode,otter,pnpm,starship,ast-grep,mcpproxy,pitchfork --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
 // install-my-completions — generate zsh completions for managed CLI tools.
 //
@@ -55,16 +55,24 @@ type CompletionJob = {
   readonly kind: "path" | "mise";
   readonly miseToolName?: string;
   readonly command: readonly string[];
+  readonly optional?: boolean;
 };
 
 type CompletionResult = Data.TaggedEnum<{
   success: { readonly toolName: string };
   failed: { readonly toolName: string; readonly message: string };
   timeout: { readonly toolName: string };
+  skipped: { readonly toolName: string };
 }>;
 const CompletionResult = Data.taggedEnum<CompletionResult>();
 
 const completionJobs: ReadonlyArray<CompletionJob> = [
+  {
+    toolName: "ast-grep",
+    kind: "mise",
+    miseToolName: "ast-grep",
+    command: ["completions", "zsh"],
+  },
   {
     toolName: "bw",
     kind: "mise",
@@ -106,6 +114,12 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
   { toolName: "fzf", kind: "mise", miseToolName: "fzf", command: ["--zsh"] },
   { toolName: "mise", kind: "path", command: ["completion", "zsh"] },
   {
+    toolName: "mcpproxy",
+    kind: "mise",
+    miseToolName: "mcpproxy",
+    command: ["completion", "zsh"],
+  },
+  {
     toolName: "npm",
     kind: "mise",
     miseToolName: "npm",
@@ -116,14 +130,31 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
     // so it must run via `mise exec` like the other mise tools. Spawning the
     // bare shim through Effect's ChildProcessSpawner fails with PlatformError:
     // Unknown on ChildProcess.spawn under the reconstructed PATH; mise exec is
-    // the reliable invocation. pnpm is also a shim but resolves; opencode does not.
+    // the reliable invocation.
     toolName: "opencode",
     kind: "mise",
     miseToolName: "opencode",
     command: ["completion"],
   },
-  { toolName: "otter", kind: "path", command: ["completion", "zsh"] },
-  { toolName: "pnpm", kind: "path", command: ["completion", "zsh"] },
+  {
+    toolName: "otter",
+    kind: "path",
+    command: ["completion", "zsh"],
+    optional: true,
+  },
+  {
+    toolName: "pitchfork",
+    kind: "mise",
+    miseToolName: "pitchfork",
+    command: ["completion", "zsh"],
+  },
+  {
+    toolName: "pnpm",
+    kind: "mise",
+    miseToolName: "pnpm",
+    command: ["completion", "zsh"],
+    optional: true,
+  },
   {
     toolName: "rustup",
     kind: "mise",
@@ -249,6 +280,34 @@ const runCommand = (
     );
   });
 
+// Run a command and return its exit code (0 = success). Unlike runCommand
+// (which uses spawner.string and does NOT throw on non-zero exit), this uses
+// spawner.exitCode so a failing command is actually detected.
+const runCommandExitCode = (
+  augmentedPath: string,
+  command: string,
+  args: readonly string[],
+): Effect.Effect<
+  number,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner.exitCode(
+      ChildProcess.make(command, args, {
+        env: { PATH: augmentedPath },
+        extendEnv: true,
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    ).pipe(
+      Effect.timeout(Duration.seconds(JOB_TIMEOUT_SECONDS)),
+      Effect.map((code) => code ?? 1),
+      Effect.catch(() => Effect.succeed(1)),
+    );
+  });
+
 const checkMiseTool = (
   augmentedPath: string,
   toolName: string,
@@ -257,14 +316,18 @@ const checkMiseTool = (
   never,
   ChildProcessSpawner.ChildProcessSpawner
 > =>
-  runCommand(augmentedPath, "mise", ["which", toolName]).pipe(
-    Effect.map((result) => {
-      if (result._tag === "ok") return null;
-      if (result._tag === "timeout") {
-        return `Timed out checking mise tool '${toolName}'`;
-      }
-      return `Tool '${toolName}' not installed in mise`;
-    }),
+  // Use exitCode (not string) so a non-zero exit is detected as a real
+  // failure. spawner.string does NOT throw on non-zero exit — it returns
+  // the captured stderr as output, which would pass the check and produce
+  // garbage completion files.
+  runCommandExitCode(
+    augmentedPath,
+    "mise",
+    ["which", toolName],
+  ).pipe(
+    Effect.map((code) =>
+      code === 0 ? null : `Tool '${toolName}' not installed in mise`
+    ),
   );
 
 const generateCommand = (
@@ -354,12 +417,18 @@ const generateCompletion = (
         job.miseToolName ?? job.toolName,
       );
       if (miseError !== null) {
+        if (job.optional) {
+          return CompletionResult.skipped({ toolName: job.toolName });
+        }
         return CompletionResult.failed({
           toolName: job.toolName,
           message: miseError,
         });
       }
     } else if (!(yield* commandExists(augmentedPath, job.toolName))) {
+      if (job.optional) {
+        return CompletionResult.skipped({ toolName: job.toolName });
+      }
       return CompletionResult.failed({
         toolName: job.toolName,
         message: `Tool '${job.toolName}' not found in PATH`,
@@ -421,17 +490,23 @@ const installCompletions = Effect.gen(function* () {
   const successCount = results.filter(CompletionResult.$is("success")).length;
   const failed = results.filter(CompletionResult.$is("failed"));
   const timedOut = results.filter(CompletionResult.$is("timeout"));
+  const skipped = results.filter(CompletionResult.$is("skipped"));
 
   yield* Effect.logInfo("▶ Completion installation summary:");
   yield* Effect.logInfo(`  ✓ Installed: ${successCount}`);
-  if (failed.length > 0) {
-    yield* Effect.logInfo(`  ✗ Failed: ${failed.length}`);
-  }
-  if (timedOut.length > 0) {
+  if (skipped.length > 0) {
     yield* Effect.logInfo(
-      `  ⏱ Timed out (>${JOB_TIMEOUT_SECONDS}s): ${timedOut.length} (${
-        timedOut.map((job) => job.toolName).join(" ")
-      })`,
+      `  ⊘ Skipped (not installed): ${
+        skipped.map((s) => s.toolName).join(", ")
+      }`,
+    );
+  }
+  for (const f of failed) {
+    yield* Effect.logWarning(`  ✗ ${f.toolName}: ${f.message}`);
+  }
+  for (const t of timedOut) {
+    yield* Effect.logWarning(
+      `  ⏱ ${t.toolName}: timed out after ${JOB_TIMEOUT_SECONDS}s`,
     );
   }
 
@@ -495,6 +570,7 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     job,
   ) => [job.toolName, job.kind, job.miseToolName ?? ""]);
   const expected = [
+    ["ast-grep", "mise", "ast-grep"],
     ["bw", "mise", "bw"],
     ["bws", "mise", "bws"],
     ["cargo", "mise", "rustup"],
@@ -505,10 +581,12 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     ["deno", "mise", "deno"],
     ["fzf", "mise", "fzf"],
     ["mise", "path", ""],
+    ["mcpproxy", "mise", "mcpproxy"],
     ["npm", "mise", "npm"],
     ["opencode", "mise", "opencode"],
     ["otter", "path", ""],
-    ["pnpm", "path", ""],
+    ["pitchfork", "mise", "pitchfork"],
+    ["pnpm", "mise", "pnpm"],
     ["rustup", "mise", "rustup"],
     ["starship", "mise", "starship"],
   ];
@@ -542,6 +620,13 @@ Deno.test("completion commands match bash command lines", () => {
     "--shell",
     "zsh",
   ]]);
+  assertCommand("ast-grep", ["mise", [
+    "exec",
+    "--",
+    "ast-grep",
+    "completions",
+    "zsh",
+  ]]);
   assertCommand("cargo", ["mise", [
     "exec",
     "--",
@@ -552,8 +637,22 @@ Deno.test("completion commands match bash command lines", () => {
   ]]);
   assertCommand("coder", ["coder", ["completion", "zsh"]]);
   assertCommand("mise", ["mise", ["completion", "zsh"]]);
+  assertCommand("mcpproxy", ["mise", [
+    "exec",
+    "--",
+    "mcpproxy",
+    "completion",
+    "zsh",
+  ]]);
   assertCommand("opencode", ["mise", ["exec", "--", "opencode", "completion"]]);
-  assertCommand("pnpm", ["pnpm", ["completion", "zsh"]]);
+  assertCommand("pitchfork", ["mise", [
+    "exec",
+    "--",
+    "pitchfork",
+    "completion",
+    "zsh",
+  ]]);
+  assertCommand("pnpm", ["mise", ["exec", "--", "pnpm", "completion", "zsh"]]);
 });
 
 Deno.test("completion target file keeps zsh underscore naming", () => {
