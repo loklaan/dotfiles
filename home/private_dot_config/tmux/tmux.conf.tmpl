@@ -66,7 +66,15 @@ bind-key < swap-window -t -1 \; select-window -t -1
 bind-key > swap-window -t +1 \; select-window -t +1
 
 ## Mouse to copy highlighted text
+# On macOS pipe to pbcopy; on other hosts (e.g. headless Coder devboxes, which
+# have no pbcopy) rely on tmux's OSC52 emit so the copy reaches the local
+# terminal's clipboard over SSH. set-clipboard=on is required for the OSC52 path.
+set-option -g set-clipboard on
+{{ if eq .chezmoi.os "darwin" -}}
 bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
+{{- else -}}
+bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
+{{- end }}
 
 ###--------------------------------------------------------------------------###
 ### Theming / Layouts
