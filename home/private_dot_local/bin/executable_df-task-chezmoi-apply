@@ -13,18 +13,25 @@ setup_session_logging "$(basename "$0")"
 #/   df-task-chezmoi-apply
 #/
 #/ Description:
-#/   Wrapper around `chezmoi apply` invoked from mise tasks (notably
-#/   `[tasks."chezmoi:apply"]` and the `[hooks].postinstall` mise hook).
+#/   Wrapper around `chezmoi apply` invoked from the `[tasks."chezmoi:apply"]`
+#/   mise task (and `tasks.update` via `depends_post`).
 #/
 #/   Hoisted out of mise.toml so the task body lives next to other
 #/   dotfiles-task-* scripts and so it can be run directly for debugging.
 #/
-#/   When stdin is not a TTY (mise postinstall hooks, CI, agent shells),
-#/   chezmoi's "X has changed since last write — overwrite/skip?" prompt
-#/   would otherwise crash with "could not open a new TTY". This wrapper
-#/   detects non-interactive contexts and adds `--force --no-tty` so the
-#/   apply converges instead of halting. Override by exporting
-#/   CHEZMOI_INTERACTIVE=1 to force the prompt-capable path.
+#/   When stdin is not a TTY (CI, agent shells), chezmoi's
+#/   "X has changed since last write — overwrite/skip?" prompt would otherwise
+#/   crash with "could not open a new TTY". This wrapper detects
+#/   non-interactive contexts and adds `--force --no-tty` so the apply
+#/   converges instead of halting. Override by exporting CHEZMOI_INTERACTIVE=1
+#/   to force the prompt-capable path.
+#/
+#/   Note: this script is NOT invoked from any mise `[hooks].postinstall` hook.
+#/   Such a hook would re-enter `chezmoi apply` from inside the
+#/   `mise install`/`mise upgrade` calls that `install-050-install-packages.sh`
+#/   runs during an outer `chezmoi apply`, deadlocking on chezmoi's
+#/   persistent-state lock. Tool versions are converged by lifecycle scripts
+#/   that run later in the outer apply instead.
 #/
 #/   On success: silent. On failure: surfaces chezmoi's error output and
 #/   propagates the exit code.

@@ -706,8 +706,6 @@ Deno is unavailable only during base-OS bootstrap. After initial install it is
 guaranteed. So the bash-only set is small and specific:
 
 - **`install.sh`** — entry point, runs before mise/deno exist.
-- **mise `postinstall` hook target** (`df-task-chezmoi-apply`) — fires during
-  the first `mise use` in bootstrap, before deno installs.
 - **`run_after_install-050-install-packages`** (+ `bash-logging.sh`) — installs
   deno; cannot depend on it.
 - **`chezmoi-preflight.sh`** — apply/update pre-hook, runs on the bootstrap
