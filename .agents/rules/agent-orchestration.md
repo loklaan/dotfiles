@@ -359,7 +359,8 @@ The drift report aggregates three sources, each emitting JSON to stdout:
 
 Where the previous operating model said `mise upgrade -y && chezmoi apply`, the new equivalent is `mise run update` (local) or `cw fleet --include-local update` (fleet). The old ritual still works because:
 - `mise:upgrade` task runs `mise upgrade -y` internally
-- `[hooks].postinstall = chezmoi:apply` ensures `mise upgrade` triggers a chezmoi apply automatically
 - `chezmoi:update` task runs as a `depends_post` on the `update` task — it pulls the source repo, then applies, so `update` converges pushed commits as well as tool versions
+
+Convergence of mise-pinned tool versions is delivered by the `update` task ordering itself: `mise:upgrade` first, then `chezmoi:update` applies. Do NOT reintroduce a `[hooks].postinstall = { task = "chezmoi:apply" }` mise hook to "auto-converge on every install" — `mise install`/`mise upgrade` are themselves invoked from `run_after_install-050-install-packages.sh` during an outer `chezmoi apply`, so the hook would re-enter `chezmoi apply` and deadlock on chezmoi's persistent-state lock (timeout obtaining persistent state lock). Tool versions are picked up by lifecycle `run_onchange_*` scripts later in the SAME outer apply.
 
 So `mise run update` does both, in the right order, with discoverability via `mise tasks ls`.
