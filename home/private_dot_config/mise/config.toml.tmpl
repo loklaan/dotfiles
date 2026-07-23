@@ -40,13 +40,6 @@ delta = "0.19.2"
 deno = "2.9.0"
 difftastic = "0.69.0"
 fzf = "0.73.1"
-# Pinned to an explicit version rather than `latest`: mise's default
-# `minimum_release_age` filter roll-back renders the eligible "previous" for
-# 0.0.X-shaped versions as `0.0.8999999999999999` (float arithmetic in the
-# `0.9` minor), a version npm refuses, which then aborts `mise upgrade -y`
-# (and so wipes out `chezmoi apply` via `install-050`). Explicit pins bypass
-# the roll-back path; bump manually when wanted.
-gemini = "0.51.0"
 gh = "latest"
 go = "1.26.4"
 jq = "latest"
