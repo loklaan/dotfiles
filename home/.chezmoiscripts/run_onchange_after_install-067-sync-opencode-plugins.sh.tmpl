@@ -4,17 +4,6 @@
 {{- if and (eq "" $llmproxyLocal) (eq .machineProfile "work") -}}
 {{-   $llmproxyVersion = output "npm" "view" "@canva/opencode-plugin-llmproxy" "version" | trim -}}
 {{- end -}}
-{{- /* Semver validation (finding #4): reject non-empty versions that don't match strict semver.
-     regexMatch is an unanchored search — the ^...$ anchors are the security boundary.
-     A malformed non-empty version (e.g. "1.0.0$(id)") aborts the render loudly.
-     An empty version soft-degrades: the sync line is skipped rather than emitting "pkg@". */ -}}
-{{- $semverRe := `^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$` -}}
-{{- if and (ne "" $omoVersion) (not (regexMatch $semverRe $omoVersion)) -}}
-{{-   fail (printf "omo version %q is not valid semver — aborting render to prevent shell injection" $omoVersion) -}}
-{{- end -}}
-{{- if and (ne "" $llmproxyVersion) (not (regexMatch $semverRe $llmproxyVersion)) -}}
-{{-   fail (printf "llmproxy version %q is not valid semver — aborting render to prevent shell injection" $llmproxyVersion) -}}
-{{- end -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -26,38 +15,38 @@ setup_session_logging "$(basename "$0")"
 
 # content-hash: {{ printf "%s|%s|%s" $omoVersion $llmproxyVersion $llmproxyLocal | sha256sum }}
 # omo-version-tracked: {{ $omoVersion }}
-# llmproxy-version-tracked: {{ $llmproxyVersion }}{{ if ne "" $llmproxyLocal }} (overridden by local path: {{ $llmproxyLocal }}){{ end }}
+# llmproxy-version-tracked: {{ $llmproxyVersion }}{{ if ne "" $llmproxyLocal }} (local override: {{ $llmproxyLocal }}){{ end }}
 
 #/ Usage:
 #/   run_onchange_after_install-067-sync-opencode-plugins.sh
 #/
 #/ Description:
-#/   Bridges current plugin versions into OpenCode's sticky private plugin
-#/   cache. See .agents/rules/agent-orchestration.md "Plugin Versioning" for
-#/   the architectural rationale (sticky cache, npm not bun, ETARGET self-heal).
+#/   Forces OpenCode to re-resolve its @latest plugins by clearing their cache
+#/   dirs. OpenCode installs an @latest plugin once and thereafter treats the
+#/   presence of packages/<spec>/node_modules/<pkg> as a cache hit — it never
+#/   re-checks the registry, so a plugin frozen at first-install version
+#/   indefinitely (see packages/core/src/npm.ts Npm.add in sst/opencode). There
+#/   is no CLI flag, env var, or lockfile check that re-resolves @latest;
+#/   deleting the cache dir is the only lever, and OpenCode reinstalls the
+#/   current @latest on next launch.
 #/
-#/   Two plugins, two version-resolution sources:
-#/     - oh-my-openagent — version from `mise current` (it's a CLI mise pins)
-#/     - @canva/opencode-plugin-llmproxy — version from `npm view` against
-#/       the depot registry (it's a plugin-only package, not in mise)
+#/   The tracked plugin versions are content-hashed above, so this runs only
+#/   when a version advances; in steady state it is a no-op. A running OpenCode
+#/   process still needs a restart to pick up the reinstall — OpenCode has no
+#/   hot-reload.
 #/
-#/   The combined version string is content-hashed so this script re-runs
-#/   whenever either version advances.
+#/   Version sources: oh-my-openagent from `mise current`;
+#/   @canva/opencode-plugin-llmproxy from `npm view` (work profile only, and
+#/   skipped entirely when a local dist path overrides it).
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-eval "$(mise activate bash --quiet)"
-
-tcs_require_command opencode || exit 0
-
 cache_dir=$(tcs_get_opencode_cache) || exit 0
+packages_dir="${cache_dir}/packages"
+[ -d "$packages_dir" ] || exit 0
 
-{{- if ne "" $omoVersion }}
-tcs_npm_sync "$cache_dir" "oh-my-openagent@{{ $omoVersion }}"
-{{- end }}
+# tcs_bust_opencode_plugin <packages_dir> <sanitized-spec-dir>
+tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
 {{- if and (eq "" $llmproxyLocal) (eq .machineProfile "work") }}
-{{- if ne "" $llmproxyVersion }}
-tcs_npm_sync "$cache_dir" "@canva/opencode-plugin-llmproxy@{{ $llmproxyVersion }}"
-{{- end }}
-{{- else }}
-# llmproxy plugin is loaded from local dist path, no npm sync needed: {{ $llmproxyLocal }}
+tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy@latest"
+tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy"
 {{- end }}
