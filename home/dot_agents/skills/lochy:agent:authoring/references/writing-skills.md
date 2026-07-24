@@ -58,16 +58,17 @@ Not all instructions need the same level of prescription:
 
 ### Storage Locations
 
-Skills are stored in one of four locations (highest priority wins when names collide):
+Skills are authored in shared `.agents` directories first. Vendor-specific skill directories should symlink or copy from there when a tool cannot autoload `.agents` directly.
 
-| Location       | Path                                     | Scope                        |
-|----------------|------------------------------------------|------------------------------|
-| **Enterprise** | Managed settings (deployed by IT/DevOps) | All users in an organization |
-| **Personal**   | `~/.claude/skills/skill-name/`           | All your projects            |
-| **Project**    | `.claude/skills/skill-name/`             | Current project only         |
-| **Plugin**     | Bundled with Claude Code plugins         | Where plugin is enabled      |
+| Location           | Path                                              | Scope                        |
+|--------------------|---------------------------------------------------|------------------------------|
+| **Enterprise**     | Managed settings (deployed by IT/DevOps)          | All users in an organization |
+| **Personal shared**| `~/.agents/skills/skill-name/`                    | All your projects            |
+| **Project shared** | `.agents/skills/skill-name/`                      | Current project only         |
+| **Vendor adapter** | `~/.claude/skills/`, `~/.config/opencode/skills/` | Tool-specific autoload paths |
+| **Plugin**         | Bundled with agent plugins                        | Where plugin is enabled      |
 
-Plugin skills use a `plugin-name:skill-name` namespace, so they cannot conflict with other levels.
+If a coding assistant cannot discover `.agents/`, point to it from `AGENTS.md`, `CLAUDE.md`, or that tool's equivalent instruction file.
 
 ### Naming Convention
 
@@ -89,22 +90,34 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 |--------------------------------------------|--------------------|----------------------------|
 | `lochy:env:coding`                         | env                | Coding conventions and practices |
 | `lochy:env:architecture`                   | env                | System design environment  |
+| `lochy:env:autonomous`                     | env                | Autonomous work frame      |
 | `lochy:env:devil`                          | env                | Devil's advocate frame     |
-| `lochy:coding:comments`                    | coding             | Comment conventions        |
 | `lochy:coding:effect-ts`                   | coding             | Effect TypeScript patterns |
+| `lochy:coding:errors`                      | coding             | Error message review       |
+| `lochy:coding:frontend-design`             | coding             | Frontend design quality    |
 | `lochy:coding:shell`                       | coding             | Bash script patterns       |
 | `lochy:agent:authoring`                    | agent              | Authoring agent extensions |
+| `lochy:agent:costs`                        | agent              | Claude Code cost reporting |
+| `lochy:agent:extract`                      | agent              | Session transcript extraction |
 | `lochy:pm`                                 | pm                 | Milestones, tickets, and facilitated scoping |
+| `lochy:agent:workflows`                    | agent              | Durable agent workflows    |
+| `lochy:challenge`                          | (top-level)        | Adversarial self-review    |
 | `lochy:writing`                            | (top-level)        | Tone of voice for writing  |
 | `lochy:compress`                           | (top-level)        | Information compression    |
 | `lochy:handoff`                            | (top-level)        | Session context handoff    |
+| `lochy:patch`                              | (top-level)        | Fast root-cause patch advice |
+| `lochy:paydown`                            | (top-level)        | Tech debt paydown gate     |
+| `lochy:productionise-vibe-tools`           | (top-level)        | Brownfield tool formalisation |
+| `lochy:prompts`                            | (top-level)        | Prompt artifact delivery   |
+| `lochy:sweep`                              | (top-level)        | End-of-task observations   |
+| `lochy:tmux-panes`                         | (top-level)        | Visible tmux process panes |
 
 **Rules:**
 - The Agent Skills standard allows lowercase letters, numbers, and hyphens only—no colons, no consecutive hyphens, must not start or end with a hyphen
 - Claude Code extends this to also accept colons, which enables the namespace hierarchy shown above
 - The `name` field has a max of 64 characters and must match the directory name
 - Top-level skills (no domain) are fine when the skill doesn't fit a broader category
-- The `meta:` domain is reserved for skills about agent extensibility itself
+- The `agent:` domain is for agent extensibility, session tooling, and agent operations
 
 ### Directory Structure
 
@@ -482,17 +495,17 @@ When a domain grows to contain multiple related skills, use a single skill with 
        - Documentation & long-form (references/doc-coauthoring.md) -->
 
 <!-- lochy:env namespace
-     Cognitive environment skills that set up *how* the agent should
-     think for a session. Each is a distinct frame: coding
-     (conventions and practices), architecture (system design),
-     devil (devil's advocate / edge-case surfacing). New env
-     skills should follow the lochy:env:topic-name pattern. The
-     coding env is loaded by default via the lochy:coding rule. -->
+     Cognitive environment skills set *how* the agent should think for a
+     session. They compose when already loaded, but references between them are
+     not activation triggers. New env skills should follow the
+     lochy:env:topic-name pattern. The coding env is loaded by default via the
+     lochy:coding-loader rule. -->
 
 <!-- lochy:coding namespace
-     Coding skills are separate per topic (comments, effect-ts,
-     errors, shell) because each is a distinct, self-contained
-     concern. New coding skills should follow the
+     Coding skills are separate per topic (effect-ts, errors, shell,
+     frontend-design) because each is a distinct, self-contained
+     concern. Comment conventions currently live in lochy:env:coding rather
+     than a separate code-commenting skill. New coding skills should follow the
      lochy:coding:topic-name pattern. -->
 
 <!-- lochy:pm namespace
@@ -502,9 +515,9 @@ When a domain grows to contain multiple related skills, use a single skill with 
      own reference file under references/. Do not create separate
      lochy:pm:topic-name skills. -->
 
-<!-- lochy:meta namespace
-     Reserved for skills about agent extensibility itself.
-     Currently unused—authoring skills live under lochy:agent:. -->
+<!-- lochy:agent namespace
+     Skills about agent extensibility, sessions, and operations live under
+     lochy:agent:. -->
 
 ## Completion Summary
 
@@ -517,4 +530,3 @@ After creating or updating a skill, print a summary table: SKILL.md first, then 
 | Total | 111 | 1,150 |
 
 **Lines** = `wc -l`. **~Tokens** = `wc -c / 3.5` (rounded to nearest 10).
-

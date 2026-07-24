@@ -4,6 +4,8 @@ description: Creates a cognitive environment for code generation where edge case
 attribution: https://x.com/BLUECOW009/status/2010221837389570364
 ---
 
+Composition: if other `lochy:env:*` skills are already loaded, apply them alongside this one; do not load another environment skill because of this sentence.
+
 Do not write code before stating assumptions.
 
 Do not claim correctness you haven't verified.

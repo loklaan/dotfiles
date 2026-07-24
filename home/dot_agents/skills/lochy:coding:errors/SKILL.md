@@ -5,7 +5,6 @@ description: >-
   structured error objects, and no information-hiding. Use when writing
   throw/raise statements, designing error types, or reviewing error messages
   that are vague, bundled, or missing context.
-disable-model-invocation: true
 ---
 
 # Error Message Review

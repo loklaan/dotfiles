@@ -1,22 +1,22 @@
 # Writing Rules
 
-Claude Code supports organizing project instructions into multiple modular files using the `.claude/rules/` directory, allowing teams to maintain focused, well-organized rule files instead of one large CLAUDE.md.
+Use shared `.agents/rules/` directories for reusable agent instructions. Vendor-specific paths can symlink to `.agents/rules/`, and `AGENTS.md`, `CLAUDE.md`, or equivalent files can point assistants there when they do not autoload `.agents` directly.
 
 ## Basic Structure
 
-Place markdown files in your project's `.claude/rules/` directory:
+Place markdown files in your project's `.agents/rules/` directory:
 
 ```
 your-project/
-├── .claude/
-│   ├── CLAUDE.md           # Main project instructions
-│   └── rules/
-│       ├── code-style.md   # Code style guidelines
-│       ├── testing.md      # Testing conventions
-│       └── security.md     # Security requirements
+├── AGENTS.md               # Points assistants at .agents/ if needed
+└── .agents/
+    └── rules/
+        ├── code-style.md   # Code style guidelines
+        ├── testing.md      # Testing conventions
+        └── security.md     # Security requirements
 ```
 
-All `.md` files in `.claude/rules/` are automatically loaded as project memory, with the same priority as `.claude/CLAUDE.md`.
+Tools that understand `.agents/` can load these directly. Tools that only know vendor paths should symlink their rules directory to `.agents/rules/` or be pointed at it from their main instruction file.
 
 ## Path-Specific Rules
 
@@ -76,7 +76,7 @@ paths:
 Rules can be organized into subdirectories for better structure:
 
 ```
-.claude/rules/
+.agents/rules/
 ├── frontend/
 │   ├── react.md
 │   └── styles.md
@@ -90,29 +90,29 @@ All `.md` files are discovered recursively.
 
 ## Symlinks
 
-The `.claude/rules/` directory supports symlinks, allowing you to share common rules across multiple projects:
+Vendor rule directories can symlink to shared `.agents` rules:
 
 ```bash
-# Symlink a shared rules directory
-ln -s ~/shared-claude-rules .claude/rules/shared
+# Symlink a vendor rules directory to shared project rules
+ln -s ../.agents/rules .claude/rules
 
-# Symlink individual rule files
-ln -s ~/company-standards/security.md .claude/rules/security.md
+# Symlink individual shared rule files
+ln -s ~/.agents/rules/security.md .agents/rules/security.md
 ```
 
 Symlinks are resolved and their contents are loaded normally. Circular symlinks are detected and handled gracefully.
 
 ## User-Level Rules
 
-You can create personal rules that apply to all your projects in `~/.claude/rules/`:
+You can create personal rules that apply to all your projects in `~/.agents/rules/`:
 
 ```
-~/.claude/rules/
+~/.agents/rules/
 ├── preferences.md    # Your personal coding preferences
 └── workflows.md      # Your preferred workflows
 ```
 
-User-level rules are loaded before project rules, giving project rules higher priority.
+User-level rules are loaded before project rules when the host supports both, giving project rules higher priority.
 
 ## Best Practices
 

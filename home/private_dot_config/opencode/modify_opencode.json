@@ -6,7 +6,7 @@
 
 {{- /* Configure instructions to reference shared agent rules and project rules directories (unchanged) */ -}}
 {{- $instructions := list
-      (printf "%s/.agents/rules/coding-system-prompts.md" .chezmoi.homeDir)
+      (printf "%s/.agents/rules/coding-loader.md" .chezmoi.homeDir)
       "AGENTS.md"
       "CLAUDE.md"
       ".claude/rules/*.md"

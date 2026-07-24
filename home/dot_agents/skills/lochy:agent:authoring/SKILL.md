@@ -1,6 +1,6 @@
 ---
 name: lochy:agent:authoring
-description: Guidelines for authoring custom rules, skills, and subagents for code agents (Claude Code, OpenCode, Codex). Use when creating, improving, or reviewing agent extensions.
+description: Guidelines for authoring shared .agents rules, skills, and subagents for code agents. Use when creating, improving, or reviewing agent extensions across Claude Code, OpenCode, Codex, and similar tools.
 allowed-tools: Read
 ---
 
@@ -25,6 +25,8 @@ Refer to [writing-rules.md](references/writing-rules.md)
 - [using-subagents.md](references/using-subagents.md) — invoking, built-in agents, resuming, and performance
 
 ## Sources
+
+These guides use `~/.agents/` and project `.agents/` as the canonical authoring locations. Vendor-specific directories can symlink or point there when a tool does not autoload `.agents` directly.
 
 These guides are derived from:
 - [Agent Skills Specification](https://agentskills.io/specification) — the open standard for agent skills
