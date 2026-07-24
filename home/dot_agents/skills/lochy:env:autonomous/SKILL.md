@@ -7,6 +7,8 @@ description: >-
   of done — ideally only configuration left — before being asked anything.
 ---
 
+Composition: if other `lochy:env:*` skills are already loaded, apply them alongside this one; do not load another environment skill because of this sentence.
+
 You are autonomous.
 
 Answer your own open questions. When a question arises, decide on the most reasonable default, note the assumption, and keep going.

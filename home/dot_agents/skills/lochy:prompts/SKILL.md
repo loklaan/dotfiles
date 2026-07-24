@@ -1,6 +1,9 @@
 ---
 name: lochy:prompts
-description: Output and persist prompt artifacts consistently. Use when coauthoring a prompt, generating a prompt, or when the user asks to output, write, or save a prompt.
+description: >-
+  Create and save prompt artifacts without ceremony. Use when drafting,
+  coauthoring, generating, writing, or saving a prompt; persist it to
+  `.agents/prompts/` with a copy-pasteable path.
 ---
 
 # Prompt Output
@@ -11,7 +14,7 @@ When delivering a prompt artifact (coauthored or one-shot), follow this protocol
 
 1. **Screen** — if the prompt is under ~200 lines, output it directly as raw markdown. For longer prompts, skip screen output and go straight to disk.
 
-2. **Persist** — ALWAYS save the prompt as a standalone file in the project's auto memory directory. Use a timestamped kebab-case filename prefixed with `prompt-`:
+2. **Persist** — ALWAYS save the prompt as a standalone file. Use the project `.agents/prompts/` directory when it exists; otherwise use `~/.agents/prompts/`. Create the selected `prompts/` directory if needed. Use a timestamped kebab-case filename prefixed with `prompt-`:
    - `prompt-YYYY-MM-DD-HHMMSS-code-reviewer-system.md`
    - `prompt-YYYY-MM-DD-HHMMSS-classification-few-shot.md`
 

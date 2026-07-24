@@ -2,7 +2,7 @@
 
 ## What Are Subagents?
 
-Subagents are specialized AI assistants that Claude Code can delegate tasks to. Each subagent:
+Subagents are specialized AI assistants that a host coding agent can delegate tasks to. Each subagent:
 - Has a specific purpose and expertise area
 - Uses its own context window separate from the main conversation
 - Can be configured with specific tools it's allowed to use
@@ -51,8 +51,8 @@ Your subagent's system prompt goes here...
 | Type        | Location              | Scope                   | Priority    |
 |-------------|-----------------------|-------------------------|-------------|
 | **CLI**     | `--agents` flag JSON  | Current session only    | 1 (highest) |
-| **Project** | `.claude/agents/`     | Current project         | 2           |
-| **User**    | `~/.claude/agents/`   | All your projects       | 3           |
+| **Project** | `.agents/agents/`     | Current project         | 2           |
+| **User**    | `~/.agents/agents/`   | All your projects       | 3           |
 | **Plugin**  | Plugin `agents/` dir  | Where plugin is enabled | 4 (lowest)  |
 
 When multiple subagents share the same name, the higher-priority location wins.
@@ -450,4 +450,3 @@ failing test is provided, ask for one.
 - Do not add features or improvements beyond the fix.
 - If the root cause is in a dependency, report it rather than patching around it.
 ```
-

@@ -14,7 +14,7 @@ Generate a handoff document that preserves this session's accumulated context fo
 1. **Review** the full conversation to identify what matters for continuity
 2. **Chain check** — if this session was resumed from a handoff, note its path for the `Previous` field
 3. **Draft** the handoff document using the structure below — aim for **~500 tokens** (roughly 40-60 lines of markdown). Trim aggressively; the next session can always read files for detail.
-4. **Save** to `~/.claude/handoffs/<timestamp>-<slug>.md` (create the directory if needed). Use the format `YYYY-MM-DD-HHMMSS-<slug>.md`.
+4. **Save** to the project `.agents/handoffs/` directory when it exists; otherwise use `~/.agents/handoffs/`. Create the selected `handoffs/` directory if needed. Use the format `YYYY-MM-DD-HHMMSS-<slug>.md`.
 5. **Print** the absolute path and a ready-to-paste prompt for the next session
 
 ## Handoff Document Structure
@@ -78,7 +78,7 @@ The **Context** section is the highest-value section for the resuming session. I
 
 ## File Naming
 
-Save to: `~/.claude/handoffs/YYYY-MM-DD-HHMMSS-<slug>.md`
+Save to: `.agents/handoffs/YYYY-MM-DD-HHMMSS-<slug>.md` in the project when available, otherwise `~/.agents/handoffs/YYYY-MM-DD-HHMMSS-<slug>.md`.
 
 Examples:
 - `2026-03-14-153022-effect-ts-migration.md`

@@ -8,7 +8,7 @@ description: >-
   boundaries and integration patterns.
 ---
 
-The collaboration rules, foundational principles, and naming conventions from `lochy:env:coding` apply here. This skill adds architecture-specific guidance.
+Composition: if other `lochy:env:*` skills are already loaded, apply them alongside this one; do not load another environment skill because of this sentence.
 
 You are an experienced, pragmatic principal architect. You design elegant, scalable systems without over-architecting when simpler patterns suffice.
 
@@ -96,4 +96,3 @@ YOU MUST NEVER propose point solutions without considering system-wide implicati
 - Document decisions in ADRs with context, decision, and consequences
 - Provide implementation guidance without over-specifying
 - Define verification criteria for architectural compliance
-

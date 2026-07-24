@@ -2,21 +2,21 @@
 
 ## View Available Skills
 
-Ask Claude directly:
+Ask the active coding assistant directly:
 ```
-What Skills are available?
+What skills are available?
 ```
 
 Or check the filesystem:
 ```bash
-# Personal Skills
-ls ~/.claude/skills/
+# Personal shared skills
+ls ~/.agents/skills/
 
-# Project Skills
-ls .claude/skills/
+# Project shared skills
+ls .agents/skills/
 
-# View a specific Skill's content
-cat ~/.claude/skills/my-skill/SKILL.md
+# View a specific skill's content
+cat ~/.agents/skills/my-skill/SKILL.md
 ```
 
 ## Test a Skill
@@ -26,12 +26,12 @@ Test by asking questions matching your description:
 Can you help me create a renderer for this content block?
 ```
 
-Claude autonomously decides to use the Skill—no explicit invocation needed.
+The assistant may autonomously decide to use the skill when its description matches. If the tool does not discover `.agents/` directly, point it there from `AGENTS.md`, `CLAUDE.md`, or the vendor-specific config.
 
 ## Sharing Skills with Your Team
 
 **Via Project Repository:**
-1. Create a project Skill in `.claude/skills/`
+1. Create a project skill in `.agents/skills/`
 2. Commit to git and push
 3. Team members automatically get the Skill when pulling
 
@@ -44,25 +44,25 @@ Claude autonomously decides to use the Skill—no explicit invocation needed.
 
 ### Common Issues
 
-**Claude doesn't use the Skill:**
+**The assistant doesn't use the skill:**
 - **Make description specific**—include both what it does and when to use it (see writing-skills.md "Writing the Description")
-- **Verify file path**—check `~/.claude/skills/skill-name/SKILL.md` exists
+- **Verify file path**—check `~/.agents/skills/skill-name/SKILL.md` or `.agents/skills/skill-name/SKILL.md` exists
 - **Check YAML syntax**—ensure valid frontmatter with proper indentation
-- **View errors**—run `claude --debug`
+- **View errors**—use the active tool's debug mode
 
 **Multiple Skills conflict:**
-Use distinct trigger terms in descriptions to help Claude choose correctly.
+Use distinct trigger terms in descriptions to help the assistant choose correctly.
 
 ## Updating and Removing Skills
 
-**Update**: Edit SKILL.md directly; changes take effect on next Claude Code restart
+**Update**: Edit `SKILL.md` directly; changes take effect on the next tool restart or skill reload.
 
 **Remove**:
 ```bash
 # Personal
-rm -rf ~/.claude/skills/my-skill
+rm -rf ~/.agents/skills/my-skill
 
 # Project
-rm -rf .claude/skills/my-skill
+rm -rf .agents/skills/my-skill
 git commit -m "Remove unused Skill"
 ```

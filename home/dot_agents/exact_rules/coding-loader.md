@@ -1,6 +1,6 @@
 ---
-name: lochy:coding
-description: "Default coding environment loader"
+name: lochy:coding-loader
+description: "Loads the default coding environment when a project does not provide one"
 ---
 
 Before loading, check if the project has its own coding skill: glob for
