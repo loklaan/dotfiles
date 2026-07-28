@@ -1,5 +1,7 @@
 .local/share/fonts/**/.uuid
+# zsh bytecode is generated at runtime beside sourced plugin files.
 *.zwc
+**/*.zwc
 {{ if ne (dig "machineProfile" "personal" .) "work" }}
 .local/share/opencode/auth.json
 {{ end }}
