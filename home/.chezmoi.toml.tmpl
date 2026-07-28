@@ -51,7 +51,8 @@
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
-MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+MARKER_DIR="${HOME}/.cache/dotfiles"
+MARKER_FILE="${MARKER_DIR}/chezmoi-session-current"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SESSION_LOG="${TMPDIR}/chezmoi-session.${TIMESTAMP}.log"
 
@@ -74,6 +75,7 @@ echo "Log file: $SESSION_LOG" >> "$SESSION_LOG"
 echo "" >> "$SESSION_LOG"
 
 # Write marker file atomically
+mkdir -p "$MARKER_DIR"
 MARKER_TEMP="${MARKER_FILE}.$$"
 echo "$SESSION_LOG" > "$MARKER_TEMP"
 mv "$MARKER_TEMP" "$MARKER_FILE"
@@ -100,12 +102,14 @@ PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
-MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+MARKER_FILE="${HOME}/.cache/dotfiles/chezmoi-session-current"
+TMP_MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
 
 if [ -f "$MARKER_FILE" ]; then
   # Clean up marker file
   rm -f "$MARKER_FILE"
 fi
+rm -f "$TMP_MARKER_FILE" /tmp/.chezmoi-session-current 2>/dev/null || true
 ''']
 [hooks.update.pre]
   command = "bash"
@@ -114,7 +118,8 @@ fi
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
-MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+MARKER_DIR="${HOME}/.cache/dotfiles"
+MARKER_FILE="${MARKER_DIR}/chezmoi-session-current"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SESSION_LOG="${TMPDIR}/chezmoi-session.${TIMESTAMP}.log"
 
@@ -137,6 +142,7 @@ echo "Log file: $SESSION_LOG" >> "$SESSION_LOG"
 echo "" >> "$SESSION_LOG"
 
 # Write marker file atomically
+mkdir -p "$MARKER_DIR"
 MARKER_TEMP="${MARKER_FILE}.$$"
 echo "$SESSION_LOG" > "$MARKER_TEMP"
 mv "$MARKER_TEMP" "$MARKER_FILE"
@@ -164,10 +170,12 @@ PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
 TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
-MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
+MARKER_FILE="${HOME}/.cache/dotfiles/chezmoi-session-current"
+TMP_MARKER_FILE="${TMPDIR}/.chezmoi-session-current"
 
 if [ -f "$MARKER_FILE" ]; then
   # Clean up marker file
   rm -f "$MARKER_FILE"
 fi
+rm -f "$TMP_MARKER_FILE" /tmp/.chezmoi-session-current 2>/dev/null || true
 ''']

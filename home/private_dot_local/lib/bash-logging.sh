@@ -12,7 +12,8 @@
 #|   info "Your message"                                                      |
 #|                                                                            |
 #| Logging behavior:                                                          |
-#|   - Via chezmoi (marker at /tmp/.chezmoi-session-current): uses session   |
+#|   - Via chezmoi (marker at ~/.cache/dotfiles/chezmoi-session-current):    |
+#|     uses session log shared across all chezmoi scripts                    |
 #|     log shared across all chezmoi scripts                                  |
 #|   - Standalone: creates /tmp/<script>.<timestamp>.log                     |
 #|                                                                            |
@@ -65,14 +66,14 @@ _print() {
 }
 
 # Logging functions just output - redirection handles file logging
-info() { _print cyan "info $@" >&2 ; }
-warning() { _print yellow "warning $@" >&2 ; }
-error() { _print red "error $@" >&2 ; }
-fatal() { _print red bold "fatal $@" >&2 ; exit 1 ; }
-infof() { color_printf cyan "info $@" >&2 ; }
-warningf() { color_printf yellow "warning $@" >&2 ; }
-errorf() { color_printf red "error $@" >&2 ; }
-fatalf() { color_printf red bold "fatal $@" >&2 ; exit 1 ; }
+info() { _print cyan "info $*" >&2 ; }
+warning() { _print yellow "warning $*" >&2 ; }
+error() { _print red "error $*" >&2 ; }
+fatal() { _print red bold "fatal $*" >&2 ; exit 1 ; }
+infof() { color_printf cyan "info $*" >&2 ; }
+warningf() { color_printf yellow "warning $*" >&2 ; }
+errorf() { color_printf red "error $*" >&2 ; }
+fatalf() { color_printf red bold "fatal $*" >&2 ; exit 1 ; }
 
 # Run a command quietly, showing output only on failure.
 # On success, output is appended to the session log (if active) but hidden from terminal.
@@ -92,26 +93,103 @@ run_quiet() {
   return "$rc"
 }
 
+_read_session_marker() {
+  local marker_file="$1"
+  local session_log
+
+  [ -f "$marker_file" ] || return 1
+
+  session_log=$(cat "$marker_file" 2>/dev/null | head -n 1 | tr -d '\n')
+  if [ -z "$session_log" ] || [ ! -w "$(dirname "$session_log")" ]; then
+    warning "Invalid log path in marker file: $session_log"
+    return 1
+  fi
+
+  printf '%s\n' "$session_log"
+}
+
+_latest_session_log() {
+  local dir="$1"
+  local newest=""
+  local candidate
+  local nullglob_was_set=0
+
+  [ -d "$dir" ] || return 1
+
+  if shopt -q nullglob; then
+    nullglob_was_set=1
+  fi
+  shopt -s nullglob
+
+  for candidate in "$dir"/chezmoi-session.*.log; do
+    if [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; then
+      newest="$candidate"
+    fi
+  done
+
+  if [ "$nullglob_was_set" -eq 0 ]; then
+    shopt -u nullglob
+  fi
+
+  [ -n "$newest" ] && [ -w "$newest" ] || return 1
+  printf '%s\n' "$newest"
+}
+
 setup_session_logging() {
   local script_name="${1:-unknown}"
-  local timestamp=$(date +"%Y%m%d_%H%M%S")
-  local marker_file="/tmp/.chezmoi-session-current"
+  local timestamp
+  local marker_file="${HOME}/.cache/dotfiles/chezmoi-session-current"
+  local tmp_marker_file
+  local tmpdir_marker_file="/tmp/.chezmoi-session-current"
+  local darwin_tmpdir
+  local darwin_marker_file
   local session_log=""
+
+  timestamp=$(date +"%Y%m%d_%H%M%S")
 
   # Normalize TMPDIR
   local tmpdir="${TMPDIR:-/tmp}"
   tmpdir="${tmpdir%/}"
+  tmp_marker_file="${tmpdir}/.chezmoi-session-current"
 
   # Print startup message
   _print magenta dim "Script: $script_name" >&2
 
+  if [ "${BASH_LOGGING_ACTIVE:-0}" = "1" ] && [ -n "${BASH_LOGGING_FILE:-}" ]; then
+    session_log="$BASH_LOGGING_FILE"
+    echo "" >> "$session_log"
+    echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
+    if [ "${DEBUG:-0}" = "1" ]; then
+      set -x
+      info "DEBUG mode enabled - command tracing active"
+    fi
+    return 0
+  fi
+
   # Determine log file location (in priority order)
-  if [ -f "$marker_file" ]; then
-    # Chezmoi session marker exists - use shared session log
-    session_log=$(cat "$marker_file" 2>/dev/null | head -n 1 | tr -d '\n')
-    if [ -z "$session_log" ] || [ ! -w "$(dirname "$session_log")" ]; then
-      warning "Invalid log path in marker file: $session_log"
-      session_log=""
+  session_log=$(_read_session_marker "$marker_file" || true)
+
+  if [ -z "$session_log" ]; then
+    session_log=$(_read_session_marker "$tmp_marker_file" || true)
+  fi
+
+  if [ -z "$session_log" ]; then
+    session_log=$(_read_session_marker "$tmpdir_marker_file" || true)
+  fi
+
+  if [ -z "$session_log" ]; then
+    session_log=$(_latest_session_log "$tmpdir" || true)
+  fi
+
+  if [ -z "$session_log" ] && command -v getconf >/dev/null 2>&1; then
+    darwin_tmpdir=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)
+    darwin_tmpdir="${darwin_tmpdir%/}"
+    if [ -n "$darwin_tmpdir" ]; then
+      darwin_marker_file="${darwin_tmpdir}/.chezmoi-session-current"
+      session_log=$(_read_session_marker "$darwin_marker_file" || true)
+      if [ -z "$session_log" ]; then
+        session_log=$(_latest_session_log "$darwin_tmpdir" || true)
+      fi
     fi
   fi
 
@@ -141,6 +219,7 @@ setup_session_logging() {
 
   # Store log path for reference
   export BASH_LOGGING_FILE="$session_log"
+  export BASH_LOGGING_ACTIVE=1
 }
 
 print_log_path() {

@@ -87,8 +87,8 @@ All bash scripts use a shared logging library at `home/private_dot_local/lib/bas
 
 Session logging is driven by chezmoi hooks in `.chezmoi.toml.tmpl`:
 
-1. **Pre-apply/pre-update hook** creates a session log at `$TMPDIR/chezmoi-session.<timestamp>.log` and writes its path to `$TMPDIR/.chezmoi-session-current`
-2. **`setup_session_logging`** in each script checks for the marker file, reads the shared log path, and redirects output (stdout + stderr via `tee -a`) to both terminal and session log
+1. **Pre-apply/pre-update hook** creates a session log at `$TMPDIR/chezmoi-session.<timestamp>.log` and writes its path to `~/.cache/dotfiles/chezmoi-session-current`
+2. **`setup_session_logging`** in each script checks the same per-user marker file, reads the shared log path, and redirects output (stdout + stderr via `tee -a`) to both terminal and session log
 3. **Post-apply/post-update hook** removes the marker file
 
 Standalone execution (no marker file): output goes to terminal only.
