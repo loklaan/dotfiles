@@ -51,7 +51,6 @@ main() {
     IFS='|' read -r dir original patched <<< "$entry"
     patch_skill_name "$dir" "$original" "$patched"
   done
-  info "╍ Done"
 }
 
 main "$@"
