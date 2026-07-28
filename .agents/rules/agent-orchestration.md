@@ -62,7 +62,7 @@ No tool aggregates session state across machines. State lives where each session
 | `Paseo.app` | MacBook | macOS (user-launched) | Per-user-session |
 | `openchamber serve` | MacBook | manual / launchd if you set it up | Per-invocation |
 | `paseo daemon` | Coder box | systemd-user via chezmoi | Long-running, auto-restart on failure |
-| `opencode serve` | Anywhere | per-session (started by client tools or manually) | Per-session |
+| `opencode serve` | Anywhere | Pitchfork when `openCodeServer`; otherwise per-session/manual | Long-running opt-in or per-session |
 
 ## Server Model
 
@@ -217,7 +217,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
 | `home/private_dot_local/bin/executable_df-orca-pair` | macOS: discover running Coder boxes hosting `df-orca-server`, pull each `orca://pair` offer, register them as Remote Orca Servers via `orca environment add` (`--dry-run`/`--replace`) |
 | `home/private_dot_local/bin/executable_df-orca-serve` | Linux: headless `orca serve` wrapper the `df-orca-server` Pitchfork daemon launches (resolves AppImage, injects headless Electron flags, emits the `orca://pair` offer) |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines the `df-orca-server` Pitchfork daemon (Linux + `orcaServer`); bakes `--pairing-address <ws>.coder` from `/run/coder/agent.conf` |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines Pitchfork daemons: `df-opencode-serve` on any OS when `openCodeServer`, plus Linux/Coder daemons (`df-orca-server`, `df-code-server`, `df-mcpproxy`) behind their opt-ins |
 | `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` | Lifecycle: start `df-orca-server` on opt-in, stop on opt-out (Linux) |
 
 ## Operating Runbook
@@ -316,7 +316,11 @@ Both opt-in tools that run on Coder boxes are installed by mise as a normal `[to
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.101`
 - **orca**: `http:orca` — pinned to `1.4.114`, downloads `orca-linux.AppImage` from GitHub releases
 
-Additionally, **pitchfork** itself is always installed on Linux (`github:jdx/pitchfork`) because it now manages the mcpproxy, opencode-serve, code-server, and orca-server daemons.
+Additionally, **pitchfork** itself is always installed on macOS and Linux (`github:jdx/pitchfork`). It manages `opencode serve` on any machine with `openCodeServer = true`, and manages the Coder/Linux daemon set (`mcpproxy`, `code-server`, `orca-server`) behind their opt-ins.
+
+macOS still intentionally has two non-Pitchfork service surfaces:
+- **MCPProxy.app** is a GUI app/cask, not the `mcpproxy-go` CLI daemon.
+- **dotfiles drift notifier** remains a launchd calendar trigger because Pitchfork manages long-running daemons, not once-per-day scheduling.
 
 To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cw fleet --include-local update` to converge the fleet.
 
