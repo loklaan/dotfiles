@@ -1,3 +1,5 @@
+#:schema https://pitchfork.jdx.dev/schema.json
+
 {{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 {{- /* CODER_WORKSPACE_NAME is the canonical workspace identifier on Coder
        boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
@@ -17,8 +19,6 @@
 {{- if eq "" $workspaceName -}}
 {{-   fail "orcaServer = true but CODER_WORKSPACE_NAME could not be resolved from /run/coder/agent.conf" -}}
 {{- end -}}
-#:schema https://pitchfork.jdx.dev/schema.json
-
 [daemons.df-orca-server]
 run = "df-orca-serve --pairing-address {{ $workspaceName }}.coder --json"
 dir = "{{ .chezmoi.homeDir }}"
@@ -28,13 +28,16 @@ boot_start = true
 ready_delay = 2
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) -}}
+{{- if dig "openCodeServer" false . -}}
 {{- /* When nginxProxy is enabled, daemons bind to loopback on the internal
       port and nginx reverse-proxies the external port. When disabled, daemons
-      bind directly to 0.0.0.0 on the external port (no nginx in front). */ -}}
-{{- $ocBind := "0.0.0.0" -}}
+      bind directly to 0.0.0.0 on Linux/Coder. macOS stays loopback-only. */ -}}
+{{- $ocBind := "127.0.0.1" -}}
 {{- $ocPort := .ports.opencode.external -}}
-{{- if dig "nginxProxy" false . -}}
+{{- if and (eq .chezmoi.os "linux") (not (dig "nginxProxy" false .)) -}}
+{{-   $ocBind = "0.0.0.0" -}}
+{{- end -}}
+{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) -}}
 {{-   $ocBind = "127.0.0.1" -}}
 {{-   $ocPort = .ports.opencode.internal -}}
 {{- end }}

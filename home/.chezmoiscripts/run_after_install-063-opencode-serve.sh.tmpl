@@ -1,6 +1,6 @@
-{{- if eq .chezmoi.os "linux" -}}
+{{- if or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") -}}
 #!/usr/bin/env bash
-# Runs every chezmoi apply on Linux. Manages the df-opencode-serve Pitchfork daemon
+# Runs every chezmoi apply. Manages the df-opencode-serve Pitchfork daemon
 # lifecycle. Install is handled by mise; this script only manages the daemon,
 # it does not touch apt or download anything.
 set -euo pipefail
@@ -19,8 +19,8 @@ PITCHFORK_BIN=""
 #/   run_after_install-063-opencode-serve.sh
 #/
 #/ Description:
-#/   Manages the df-opencode-serve Pitchfork daemon lifecycle on Linux Coder
-#/   workspaces. Opt-in via the `openCodeServer` chezmoi flag.
+#/   Manages the df-opencode-serve Pitchfork daemon lifecycle. Opt-in via the
+#/   `openCodeServer` chezmoi flag.
 #/
 #/   When `openCodeServer` is true:
 #/     - Verifies opencode is installed via mise
@@ -33,9 +33,6 @@ PITCHFORK_BIN=""
 #/   Install of opencode itself is handled by mise (see
 #/   home/private_dot_config/mise/config.toml.tmpl). This script does NOT
 #/   download or apt-install anything.
-#/
-#/   macOS: opencode runs locally on the macbook, not via this script
-#/   or Pitchfork. The script renders empty on macOS.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -96,11 +93,11 @@ probe_opencode_health() {
   fi
 }
 
-manage_linux() {
+manage_service() {
   local enabled={{ dig "openCodeServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ opencode server (Linux, opt-out)"
+    info "▶ opencode server (opt-out)"
 
     if verify_pitchfork_installed; then
       "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
@@ -111,7 +108,7 @@ manage_linux() {
     return 0
   fi
 
-  info "▶ opencode server (Linux, opt-in)"
+  info "▶ opencode server (opt-in)"
 
   if ! verify_opencode_installed; then
     warning "╍ skipping daemon lifecycle — opencode not installed"
@@ -166,7 +163,7 @@ manage_linux() {
 
 main() {
   parse_args "$@"
-  manage_linux
+  manage_service
 }
 
 main "$@"

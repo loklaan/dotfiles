@@ -308,7 +308,7 @@ const orcaVersionState: Effect.Effect<OrcaVersionState> = Effect.gen(function* (
 });
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
+{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
 const checkOpencodeServe: Effect.Effect<boolean> = Effect.gen(function* () {
   const pitchfork = (yield* hasCommand("pitchfork"))
@@ -455,7 +455,7 @@ const printStatus = (
       print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
     }
 {{- end }}
-{{- if and (eq .chezmoi.os "linux") (dig "openCodeServer" false .) }}
+{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
     printPlain();
 

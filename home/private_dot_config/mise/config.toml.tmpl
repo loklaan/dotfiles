@@ -13,12 +13,10 @@
 {{ if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) -}}
 "npm:@getpaseo/cli" = "0.1.101"
 {{ end -}}
-{{ if eq .chezmoi.os "linux" -}}
 # usage — jdx's CLI shell-completion runtime. Required by pitchfork's
 # `completion` subcommand; kept next to pitchfork since they're paired.
 usage = "3.5.5"
 "github:jdx/pitchfork" = { version = "2.14.0", exe = "pitchfork" }
-{{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 # orca on Linux: AppImage via http: backend. mise downloads, makes executable,
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
