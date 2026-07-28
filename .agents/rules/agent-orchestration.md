@@ -145,74 +145,73 @@ If new patterns ever require a static inventory, prefer:
 
 ## Plugin Versioning
 
-opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux) with its own `package.json` + `bun.lock`, managed by an embedded bun runtime compiled into the opencode binary. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. So mise upgrading `npm:oh-my-openagent`, or the depot npm registry publishing a newer `@canva/opencode-plugin-llmproxy`, does not on its own update opencode's runtime plugin. Without a bridge, plugins freeze at first-install version indefinitely.
+opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux), managed by an embedded bun runtime compiled into the opencode binary. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. Without a bridge, plugins freeze at first-install version indefinitely.
 
-### Why npm and not bun
+### Why cache busting and not a second installer
 
-opencode's cache uses `bun.lock`, which suggests the bridge should also use bun. It shouldn't. The bun runtime is *embedded* inside the opencode binary (search `strings opencode | grep BunPlugin` to confirm) — it is not exposed as a separate CLI we can shell out to. Pinning a second bun in mise just to populate `node_modules/` would be redundant tooling that doubles up on what opencode already owns.
+opencode already owns plugin installation. The bridge must not install `oh-my-openagent` with mise or write packages into opencode's cache with npm, because that creates a second package owner and can break `chezmoi apply` when npm/mise resolution fails.
 
-Instead, the bridge writes to `node_modules/` via `npm install --no-save --no-package-lock`, using the npm that ships with the node already pinned in mise. The flags matter:
+Instead, the bridge removes only opencode's cached package directories on every apply:
 
-- `--no-save` — leaves the cache's `package.json` untouched (opencode owns it)
-- `--no-package-lock` — does not generate `package-lock.json` (would conflict with `bun.lock`)
+- `packages/oh-my-openagent@latest/`
+- `packages/@canva/opencode-plugin-llmproxy@latest/`
+- legacy `packages/@canva/opencode-plugin-llmproxy/`
 
-opencode's embedded bun reconciles its own state from `node_modules/` on next startup. Mixed-tool lockfile concerns don't apply because npm never writes a lockfile in this mode.
+On the next opencode launch, opencode's embedded bun reinstalls the configured `@latest` plugin spec. Chezmoi does not probe plugin versions or install plugins itself; it only invalidates the sticky cache.
 
-`opencode plugin <module>` exists as a first-class CLI command but doesn't fit the bridge use case: it mutates `~/.config/opencode/opencode.json` (which chezmoi owns) and updates `packages/<spec>/` rather than `node_modules/`, so opencode keeps loading the stale `node_modules/` version anyway. Use `npm install` directly.
+`opencode plugin <module>` exists as a first-class CLI command but doesn't fit the bridge use case: it mutates `~/.config/opencode/opencode.json` (which chezmoi owns) and updates `packages/<spec>/` rather than forcing opencode to re-resolve an already-configured `@latest` plugin. Use cache busting instead.
 
-### The bridges
+### The bridge
 
-Two plugins are bridged today:
+Two opencode-owned package caches are cleared today:
 
 ```
-mise (npm:oh-my-openagent = "latest")        npm registry (depot, @canva scope)
-  └─ mise upgrade -y                            └─ npm view @canva/opencode-plugin-llmproxy version
-       resolves to current latest                    resolves to current latest
-                         │                                      │
-                         └────────────┬─────────────────────────┘
-                                      │
-chezmoi apply           ┌──────────────┴──────────────┐
-                        │                             │
-  run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl
-  reads `mise current 'npm:oh-my-openagent'`
-  reads `npm view @canva/opencode-plugin-llmproxy version` (work profile only)
-  content-hash on version → reruns when it changes
-  runs `npm install --no-save --no-package-lock` in cache
+chezmoi apply
+  run_after_install-067-sync-opencode-plugins.sh.tmpl
+  deletes opencode's cached plugin package dirs
+  opencode reinstalls @latest on next launch
 ```
 
-Different version-resolution sources reflect different ownership:
+Both plugins are opencode-owned:
 
-- **omo** is mise-managed (it's a CLI we install with `mise install`), so the version comes from `mise current`.
-- **llmproxy** is purely an opencode plugin (no CLI), so the version comes from `npm view` against the depot registry where `@canva` is configured in `~/.npmrc`. It is only synced on `machineProfile = "work"`.
+- **omo** is always cache-busted because it is configured as `oh-my-openagent@latest` in opencode.
+- **llmproxy** is cache-busted on work-profile machines when no local dist path overrides it.
 
-Both flow through the same `tcs_npm_sync` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
+Both flow through the same `tcs_bust_opencode_plugin` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
 
 ### Upgrade ritual
 
-`mise upgrade -y && chezmoi apply` upgrades both plugins in lock-step. Run them paired on every machine.
+`chezmoi apply` clears opencode plugin cache directories. Restart opencode after the apply so opencode reinstalls and loads the current `@latest` packages.
 
-Verify with `oh-my-openagent doctor` — should report `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`. If `Loaded X · latest Y` mismatch appears, the bridge hasn't run.
+Verify OMO after opencode has launched at least once:
+
+```bash
+jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json
+opencode agent list
+```
+
+The cached package should exist after opencode has restarted, and `opencode agent list` should include the Sisyphus primary agent.
 
 For llmproxy, verify by checking the version on disk:
 
 ```bash
-jq -r .version ~/Library/Caches/opencode/node_modules/@canva/opencode-plugin-llmproxy/package.json
+jq -r .version ~/Library/Caches/opencode/packages/@canva/opencode-plugin-llmproxy@latest/node_modules/@canva/opencode-plugin-llmproxy/package.json
 ```
 
-Compare against `npm view @canva/opencode-plugin-llmproxy version`. They should match.
+If the package path is missing after opencode restarts, opencode did not reinstall the configured plugin.
 
-The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm_sync`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to bridge into another tool's private cache can be one-liners.
+The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bust_opencode_plugin`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to refresh another tool's private cache can be one-liners.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` prompt and data variable |
-| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; openchamber via npm always; pins omo via `npm:oh-my-openagent` |
+| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; openchamber via npm always; opencode itself is mise-managed, opencode plugins are not |
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |
 | `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
-| `home/.chezmoiscripts/run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl` | Bridge: pushes mise's omo version into opencode's cache, and the work-profile llmproxy plugin from the depot registry |
+| `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Bridge: clears opencode-owned plugin cache dirs on every apply |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_df-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
@@ -268,12 +267,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_npm
 - `df-setup` shows the daemon line on opt-in Linux machines.
 - On macbooks the line is absent (correct — no daemon there).
 
-**Upgrade omo plugin (every machine):**
-1. `mise upgrade -y` → mise reports if there's a new version, resolves it.
-2. `chezmoi apply` → run_onchange_067 detects the version change and runs `npm install --no-save --no-package-lock` in opencode's cache.
-3. Verify: `oh-my-openagent doctor` → expect `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`.
+**Upgrade OMO plugin (every machine):**
+1. `chezmoi apply` → run_after_067 clears opencode's cached `oh-my-openagent@latest` package dir.
+2. Restart opencode → opencode reinstalls `oh-my-openagent@latest` into its own cache.
+3. Verify: `opencode agent list` includes the Sisyphus primary agent.
 
-If the doctor reports `Loaded X · latest Y` after step 2, the bridge didn't run — check the chezmoi session log for `tool-cache-sync` warnings (most likely `bun not found` or `opencode not found`).
+If the package cache is still absent after step 2, opencode did not reinstall the configured plugin.
 
 ## Update Architecture
 
@@ -341,7 +340,8 @@ cw fleet --include-local update
 
 | Scenario | Action |
 |---|---|
-| `latest`-pinned tool drifted (e.g. opencode, oh-my-openagent) | `mise run update` (local) or `cw fleet --include-local update` (fleet) |
+| `latest`-pinned mise tool drifted (e.g. opencode) | `mise run update` (local) or `cw fleet --include-local update` (fleet) |
+| opencode `@latest` plugin drifted (e.g. oh-my-openagent) | `chezmoi apply`, then restart opencode so it reinstalls the cleared plugin cache |
 | Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cw fleet --include-local update` |
 | Cask drift on macOS (orca/paseo .app vs cask formula) | `brew upgrade --greedy --cask <name>` (Homebrew owns this; mise doesn't see casks) |
 | Repo itself behind origin/main | `mise run update` (local) or `cw fleet --include-local update` (fleet) — `update` now pulls the source before applying |

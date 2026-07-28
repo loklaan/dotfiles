@@ -46,7 +46,6 @@ jq = "latest"
 yq = "latest"
 node = "24.11.1"
 "npm:@openchamber/web" = "latest"
-"npm:oh-my-openagent" = "latest"
 opencode = "latest"
 python = "3.13"
 ripgrep = "latest"
@@ -57,7 +56,6 @@ tmux = "3.6b"
 uv = "0.11.25"
 
 [env]
-OMO_SEND_ANONYMOUS_TELEMETRY = "0"
 DISABLE_AUTOUPDATER = "1"
 DENO_NO_UPDATE_CHECK = "1"
 
@@ -124,6 +122,5 @@ run = "df-drift notify"
 # invoked from `run_after_install-050-install-packages.sh` during an outer
 # `chezmoi apply`. Chezmoi serializes apply via a persistent-state lock, so
 # the nested apply deadlocks with "timeout obtaining persistent state lock".
-# Convergence is already delivered by the outer apply: lifecycle scripts that
-# depend on tool versions (e.g. run_onchange-067 sync-opencode-plugins) run
+# Convergence is already delivered by the outer apply: lifecycle scripts run
 # later in the same chezmoi apply, after install-050 returns.

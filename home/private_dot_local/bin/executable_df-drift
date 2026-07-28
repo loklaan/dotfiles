@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,oh-my-openagent,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
 // drift — version-drift detection for the dotfiles fleet (Deno + Effect v4 beta).
 //
@@ -126,7 +126,11 @@ const isMacOS = () => Deno.build.os === "darwin";
 // expose a numeric distance). source = "mise:<name>".
 
 class MiseChecker extends Context.Service<MiseChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
+  readonly tools: () => Effect.Effect<
+    ReadonlyArray<DriftTool>,
+    never,
+    CheckerEnv
+  >;
 }>()("drift/MiseChecker") {
   static readonly layer = Layer.succeed(MiseChecker)(MiseChecker.of({
     tools: () =>
@@ -158,7 +162,11 @@ class MiseChecker extends Context.Service<MiseChecker, {
 // Counts commits behind origin/main. Single-element array when behind, else [].
 
 class DotfilesChecker extends Context.Service<DotfilesChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
+  readonly tools: () => Effect.Effect<
+    ReadonlyArray<DriftTool>,
+    never,
+    CheckerEnv
+  >;
 }>()("drift/DotfilesChecker") {
   static readonly layer = Layer.succeed(DotfilesChecker)(
     DotfilesChecker.of({
@@ -245,7 +253,11 @@ const bundleVersion = (
   }).pipe(Effect.orElseSucceed(() => ""));
 
 class CaskChecker extends Context.Service<CaskChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
+  readonly tools: () => Effect.Effect<
+    ReadonlyArray<DriftTool>,
+    never,
+    CheckerEnv
+  >;
 }>()("drift/CaskChecker") {
   static readonly layer = Layer.succeed(CaskChecker)(CaskChecker.of({
     tools: () =>
@@ -298,15 +310,11 @@ const extractCaskVersion = (parsed: unknown): string => {
 };
 
 // ===========================================================================
-// Checker: oh-my-openagent (roster + model bracket drift)
+// Checker: oh-my-openagent config model bracket drift
 // ===========================================================================
-// Two signals, both in the shared schema:
-//   omo:roster  — an agent/category omo knows that our config doesn't pin
-//                 (suppressed via _dotfilesUnmanaged allowlist).
-//   omo:bracket — a pinned model has a newer same-family sibling in
-//                 models.dev. Bedrock IDs are matched WITHIN their region
-//                 prefix (global.anthropic. / us.anthropic. / …), so drift on
-//                 a global.* pin reports a global.* successor, never us.*.
+// A pinned model has a newer same-family sibling in models.dev. Bedrock IDs are
+// matched WITHIN their region prefix (global.anthropic. / us.anthropic. / …),
+// so drift on a global.* pin reports a global.* successor, never us.*.
 
 // Bedrock region prefix like "global.anthropic." — "" for non-Bedrock IDs.
 const regionPrefix = (id: string): string => {
@@ -364,47 +372,12 @@ const newerSameFamily = (
   return candidates[candidates.length - 1][0];
 };
 
-// omo doctor emits a "Models" result whose `details` lines look like:
-//   "  ● build: anthropic/claude-... [ ... ]"
-// split into an Agents: block and a Categories: block. Parse name→model.
-const parseRoster = (
-  doctorJson: unknown,
-): { agents: Record<string, string>; categories: Record<string, string> } => {
-  const empty = { agents: {}, categories: {} };
-  if (typeof doctorJson !== "object" || doctorJson === null) return empty;
-  const results = (doctorJson as Record<string, unknown>).results;
-  if (!Array.isArray(results)) return empty;
-  const models = results.find((r) =>
-    typeof r === "object" && r !== null &&
-    (r as Record<string, unknown>).name === "Models"
-  );
-  if (models === undefined) return empty;
-  const details = (models as Record<string, unknown>).details;
-  if (!Array.isArray(details)) return empty;
-  const lines = details.filter((d): d is string => typeof d === "string");
-
-  const aIdx = lines.indexOf("Agents:");
-  const cIdx = lines.indexOf("Categories:");
-  if (aIdx === -1 || cIdx === -1) return empty;
-
-  const parseBlock = (block: string[]): Record<string, string> => {
-    const out: Record<string, string> = {};
-    for (const line of block) {
-      if (!/[●○]/.test(line)) continue;
-      const m = line.match(/^ {2}[●○] ([a-z][a-z0-9-]*?): ([^[]+) \[/);
-      if (m) out[m[1]] = m[2].replace(/ $/, "");
-    }
-    return out;
-  };
-
-  return {
-    agents: parseBlock(lines.slice(aIdx + 1, cIdx - 1)),
-    categories: parseBlock(lines.slice(cIdx + 1)),
-  };
-};
-
 class OmoChecker extends Context.Service<OmoChecker, {
-  readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
+  readonly tools: () => Effect.Effect<
+    ReadonlyArray<DriftTool>,
+    never,
+    CheckerEnv
+  >;
 }>()("drift/OmoChecker") {
   static readonly layer = Layer.effect(
     OmoChecker,
@@ -437,63 +410,12 @@ class OmoChecker extends Context.Service<OmoChecker, {
 
       const tools = () =>
         Effect.gen(function* () {
-          if (!(yield* hasCommand("oh-my-openagent"))) return [];
           const cfgRaw = parseJson(yield* readTextFile(omoConfig()));
           if (cfgRaw === null || typeof cfgRaw !== "object") return [];
           const cfg = cfgRaw as Record<string, unknown>;
 
           const out: DriftTool[] = [];
 
-          // --- roster drift ---
-          const doctorRes = yield* run("oh-my-openagent", [
-            "doctor",
-            "--json",
-            "--verbose",
-          ]);
-          if (doctorRes.ok) {
-            const roster = parseRoster(parseJson(doctorRes.stdout));
-            const cfgAgents = asRecord(cfg.agents);
-            const cfgCategories = asRecord(cfg.categories);
-            const unmanaged = asRecord(cfg._dotfilesUnmanaged);
-            const unmanagedAgents = asStringArray(unmanaged.agents);
-            const unmanagedCategories = asStringArray(unmanaged.categories);
-
-            const pinnedAgents = new Set([
-              ...Object.keys(cfgAgents),
-              ...unmanagedAgents,
-            ]);
-            const pinnedCategories = new Set([
-              ...Object.keys(cfgCategories),
-              ...unmanagedCategories,
-            ]);
-
-            for (const [name, resolved] of Object.entries(roster.agents)) {
-              if (!pinnedAgents.has(name)) {
-                out.push({
-                  name: `omo.agents.${name}`,
-                  installed: "not-managed-by-template",
-                  latest: resolved,
-                  behind: 1,
-                  source: "omo:roster",
-                });
-              }
-            }
-            for (
-              const [name, resolved] of Object.entries(roster.categories)
-            ) {
-              if (!pinnedCategories.has(name)) {
-                out.push({
-                  name: `omo.categories.${name}`,
-                  installed: "not-managed-by-template",
-                  latest: resolved,
-                  behind: 1,
-                  source: "omo:roster",
-                });
-              }
-            }
-          }
-
-          // --- bracket drift ---
           const modelsDb = yield* ensureModelsDev();
           if (modelsDb !== null) {
             const pins: { kind: string; name: string; model: string }[] = [];
@@ -544,7 +466,11 @@ class OmoChecker extends Context.Service<OmoChecker, {
 
 class OpencodeTokenizerChecker
   extends Context.Service<OpencodeTokenizerChecker, {
-    readonly tools: () => Effect.Effect<ReadonlyArray<DriftTool>, never, CheckerEnv>;
+    readonly tools: () => Effect.Effect<
+      ReadonlyArray<DriftTool>,
+      never,
+      CheckerEnv
+    >;
   }>()("drift/OpencodeTokenizerChecker") {
   static readonly layer = Layer.succeed(OpencodeTokenizerChecker)(
     OpencodeTokenizerChecker.of({
@@ -782,9 +708,9 @@ if (import.meta.main) {
 // import.meta.main is false under `deno test`, so the CLI never fires.
 //
 // The risky surfaces are the parsers that replace jq: region-prefix matching,
-// the bracket family/region successor pick, roster line parsing, the cask
-// version extractor, and schema round-tripping. Process/FS/HTTP paths are
-// integration concerns excluded from the offline suite by design.
+// the bracket family/region successor pick, the cask version extractor, and
+// schema round-tripping. Process/FS/HTTP paths are integration concerns
+// excluded from the offline suite by design.
 // ===========================================================================
 
 if (!import.meta.main) {
@@ -874,35 +800,6 @@ if (!import.meta.main) {
     if (newerSameFamily(db, "absent", "x") !== null) {
       throw new Error("unknown provider — expected null");
     }
-  });
-
-  Deno.test("parseRoster splits Agents/Categories blocks", () => {
-    const doctor = {
-      results: [
-        { name: "Other", details: ["irrelevant"] },
-        {
-          name: "Models",
-          details: [
-            "Agents:",
-            "  ● build: anthropic/claude-sonnet [resolved]",
-            "  ○ plan: anthropic/claude-haiku [resolved]",
-            "",
-            "Categories:",
-            "  ● ultrabrain: anthropic/claude-opus [resolved]",
-          ],
-        },
-      ],
-    };
-    const roster = parseRoster(doctor);
-    assertEq(roster.agents.build, "anthropic/claude-sonnet");
-    assertEq(roster.agents.plan, "anthropic/claude-haiku");
-    assertEq(roster.categories.ultrabrain, "anthropic/claude-opus");
-  });
-
-  Deno.test("parseRoster empty on missing Models result", () => {
-    const roster = parseRoster({ results: [{ name: "Nope", details: [] }] });
-    assertEq(Object.keys(roster.agents).length, 0);
-    assertEq(Object.keys(roster.categories).length, 0);
   });
 
   Deno.test("extractCaskVersion reads casks[0].version", () => {

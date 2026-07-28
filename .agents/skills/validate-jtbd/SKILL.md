@@ -52,7 +52,7 @@ a follow-up task), not auto-repaired.
    ```bash
    export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
    ```
-   Otherwise mise-managed tools (opencode/claude/codex/oh-my-openagent/ast-grep)
+   Otherwise mise-managed tools (opencode/claude/codex/ast-grep)
    look missing when they're installed.
 
 5. **Batch checks per target.** Write ONE script per target that runs every
@@ -79,7 +79,7 @@ one-line root-cause read. Lead with what's broken.
 | JTBD | Result | Evidence |
 |------|--------|----------|
 | 1 Open agents          | PASS | opencode 1.17.11 · claude 2.1.193 · codex 0.142.0 |
-| 2 OMO config loads     | PASS | doctor ✓ System OK · cache 4.13.0 == mise 4.13.0 · Sisyphus listed |
+| 2 OMO config loads     | PASS | plugin registered · Sisyphus listed · cache package present |
 | 3 Proxy auth           | PASS | opencode run returned "pong" via bedrock SigV4 |
 | 4 Rules/skills resolve | PASS | ~/.claude/rules → ../.agents/rules, 6 rules · 24 skills |
 
