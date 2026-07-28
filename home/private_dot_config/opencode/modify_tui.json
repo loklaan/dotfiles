@@ -16,9 +16,9 @@
        export). BUT the correct TUI plugin spec is the PACKAGE spec
        "oh-my-openagent@latest", NOT the "oh-my-openagent/tui" subpath:
        opencode installs the configured package spec BEFORE resolving the TUI
-       export, so a bare subpath entry is reported unresolvable by
-       `oh-my-openagent doctor` ("OpenCode installs the configured package spec
-       before resolving the TUI export"). Using the package spec lets opencode
+       export, so a bare subpath entry is reported unresolvable because OpenCode
+       installs the configured package spec before resolving the TUI export.
+       Using the package spec lets opencode
        install it, then resolve the ./tui export from it. We therefore register
        "oh-my-openagent@latest" and strip any legacy bare-subpath entries. */ -}}
 {{- $omoTuiPlugin := "oh-my-openagent@latest" -}}

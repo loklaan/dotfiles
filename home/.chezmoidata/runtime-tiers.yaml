@@ -156,7 +156,7 @@ runtimeTiers:
     - path: home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl
       tier: runtime
       lang: bash
-    - path: home/.chezmoiscripts/run_onchange_after_install-067-sync-opencode-plugins.sh.tmpl
+    - path: home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-100-canva-misc.sh.tmpl

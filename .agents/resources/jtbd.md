@@ -27,7 +27,7 @@ condition (toggle Coder Connect off/on), not a JTBD failure.
 
 **PATH on a box.** Tools live behind mise shims. Export
 `PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"` at the top of any
-remote script, otherwise `opencode`/`claude`/`oh-my-openagent`/`ast-grep`
+remote script, otherwise `opencode`/`claude`/`ast-grep`
 will appear missing when they are actually installed.
 
 **Interpreting results.** Each step lists what PASS looks like. If a step can't run
@@ -68,8 +68,8 @@ resolve its provider, nothing else matters.
 ## JTBD 2 — opencode loads its oh-my-openagent config
 
 **Job:** When I open opencode, my oh-my-openagent (OMO) agent configuration is
-live — the Sisyphus orchestrator and its sub-agents are available, the plugin
-matches the version mise pins, and OMO's own health check is green.
+live — the Sisyphus orchestrator and its sub-agents are available, and the OMO
+plugin is registered in opencode.
 
 **Why it matters:** OMO is the orchestration layer (Sisyphus, sub-agents, skills,
 the ast-grep/debugging/review tooling). A stale or unhealthy plugin silently
@@ -78,29 +78,23 @@ real OMO health regression (ast-grep `sg` unavailable).
 
 **Background:** opencode loads plugins from a private cache
 (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux). The cache
-is sticky — a chezmoi bridge script syncs mise's OMO version into it. See
+is sticky — a chezmoi bridge script clears the opencode-owned package cache so
+opencode reinstalls `oh-my-openagent@latest` on next launch. See
 `agent-orchestration.md` § Plugin Versioning.
 
 **Validation:**
-1. **OMO health is green:** `oh-my-openagent doctor` →
-   `✓ System OK (opencode <ver> · oh-my-openagent <ver>)`.
-   - Any `⚠ N issue(s) found` is a FAIL — capture each issue. (The original
-     `for-tasks-2` failure was `AST-Grep unavailable`, since fixed by pinning
-     `ast-grep` in mise so both `ast-grep` and `sg` resolve on PATH.)
-2. **Plugin version matches mise:** the cached plugin version equals
-   `mise current 'npm:oh-my-openagent'`:
-   - macOS: `jq -r .version ~/Library/Caches/opencode/node_modules/oh-my-openagent/package.json`
-   - Linux: `jq -r .version ~/.cache/opencode/node_modules/oh-my-openagent/package.json`
-   - PASS: cache version == mise version. A mismatch means the bridge didn't run.
-3. **Agents are loaded:** `opencode agent list` includes the Sisyphus primary
-   (output starts with `Sisyphus - ultraworker (primary)`).
-   - PASS: Sisyphus present. Empty/erroring list is a FAIL.
-4. **Plugins are registered:** `jq -c .plugin ~/.config/opencode/opencode.json`
+1. **Plugins are registered:** `jq -c .plugin ~/.config/opencode/opencode.json`
    includes `oh-my-openagent@latest` (and `@canva/opencode-plugin-llmproxy` on
    work machines / Coder boxes).
-5. **ast-grep resolves** (the original regression): `ast-grep --version` succeeds,
-   and OMO's helper prefers `ast-grep` over the system `/usr/bin/sg` (setgroups).
-   - PASS: `ast-grep --version` prints a version and doctor step 1 is green.
+2. **Agents are loaded:** `opencode agent list` includes the Sisyphus primary
+   (output starts with `Sisyphus - ultraworker (primary)`).
+   - PASS: Sisyphus present. Empty/erroring list is a FAIL.
+3. **Plugin cache materialises after opencode launch:**
+   - macOS: `jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
+   - Linux: `jq -r .version ~/.cache/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
+   - PASS: prints a version. Missing package means opencode did not reinstall the configured plugin.
+4. **ast-grep resolves** (the original regression): `ast-grep --version` succeeds.
+   - PASS: `ast-grep --version` prints a version.
 
 ---
 

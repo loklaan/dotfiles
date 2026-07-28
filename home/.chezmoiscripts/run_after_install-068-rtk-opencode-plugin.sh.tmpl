@@ -33,12 +33,10 @@ main() {
   # explicit avoids a race with other scripts that might touch the path).
   mkdir -p "${HOME}/.config/opencode/plugins"
 
-  # Idempotent: rtk's write_if_changed skips the write when content matches.
-  # Squelch stdout (it prints an install banner) — stderr still surfaces errors.
-  if rtk init -g --opencode >/dev/null 2>&1; then
+  if rtk init -g --opencode --no-patch </dev/null >/dev/null 2>&1; then
     info "╍ rtk opencode plugin converged"
   else
-    warning "╍ rtk init -g --opencode failed (non-fatal — plugin may be stale)"
+    warning "╍ rtk init -g --opencode --no-patch failed (non-fatal — plugin may be stale)"
   fi
 }
 

@@ -1,0 +1,32 @@
+{{- $llmproxyLocal := dig "openCodeWorkPluginLocalPath" "" . -}}
+{{- $machineProfile := dig "machineProfile" "personal" . -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/tool-cache-sync.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-067-sync-opencode-plugins.sh
+#/
+#/ Description:
+#/   Clears OpenCode's cached @latest plugin package dirs on every apply so
+#/   OpenCode re-resolves them on next launch. OpenCode owns plugin
+#/   installation; chezmoi only invalidates the sticky cache.
+#/
+#/   The work plugin is skipped when a local dist path overrides it.
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+cache_dir=$(tcs_get_opencode_cache) || exit 0
+packages_dir="${cache_dir}/packages"
+[ -d "$packages_dir" ] || exit 0
+
+# tcs_bust_opencode_plugin <packages_dir> <sanitized-spec-dir>
+tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
+{{- if and (eq "" $llmproxyLocal) (eq $machineProfile "work") }}
+tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy@latest"
+tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy"
+{{- end }}
