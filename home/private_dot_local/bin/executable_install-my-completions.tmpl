@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,mise,bw,bws,rustup,chezmoi,coder,cw,delta,deno,fzf,npm,opencode,otter,pnpm,starship,ast-grep,mcpproxy,pitchfork --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,mise,bw,bws,rustup,chezmoi,coder,cw,delta,deno,fzf,npm,opencode,otter,pitchfork,pnpm,starship,ast-grep{{ if eq .chezmoi.os "linux" }},mcpproxy{{ end }} --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
 // install-my-completions — generate zsh completions for managed CLI tools.
 //
@@ -113,12 +113,14 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
   },
   { toolName: "fzf", kind: "mise", miseToolName: "fzf", command: ["--zsh"] },
   { toolName: "mise", kind: "path", command: ["completion", "zsh"] },
+{{- if eq .chezmoi.os "linux" }}
   {
     toolName: "mcpproxy",
     kind: "mise",
     miseToolName: "mcpproxy",
     command: ["completion", "zsh"],
   },
+{{- end }}
   {
     toolName: "npm",
     kind: "mise",
@@ -581,7 +583,9 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     ["deno", "mise", "deno"],
     ["fzf", "mise", "fzf"],
     ["mise", "path", ""],
+{{- if eq .chezmoi.os "linux" }}
     ["mcpproxy", "mise", "mcpproxy"],
+{{- end }}
     ["npm", "mise", "npm"],
     ["opencode", "mise", "opencode"],
     ["otter", "path", ""],
@@ -637,6 +641,7 @@ Deno.test("completion commands match bash command lines", () => {
   ]]);
   assertCommand("coder", ["coder", ["completion", "zsh"]]);
   assertCommand("mise", ["mise", ["completion", "zsh"]]);
+{{- if eq .chezmoi.os "linux" }}
   assertCommand("mcpproxy", ["mise", [
     "exec",
     "--",
@@ -644,6 +649,7 @@ Deno.test("completion commands match bash command lines", () => {
     "completion",
     "zsh",
   ]]);
+{{- end }}
   assertCommand("opencode", ["mise", ["exec", "--", "opencode", "completion"]]);
   assertCommand("pitchfork", ["mise", [
     "exec",
