@@ -1,5 +1,6 @@
 {{- $llmproxyLocal := dig "openCodeWorkPluginLocalPath" "" . -}}
 {{- $machineProfile := dig "machineProfile" "personal" . -}}
+{{- $workRegistry := dig "npmWorkRegistry" "" . -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -17,11 +18,14 @@ setup_session_logging "$(basename "$0")"
 #/   OpenCode re-resolves them on next launch. OpenCode owns plugin
 #/   installation; chezmoi only invalidates the sticky cache.
 #/
-#/   OpenCode installs plugins with its embedded bun, which resolves the @canva
-#/   depot scope from ~/.config/.npmrc (bun's XDG userconfig path, honoured
-#/   regardless of cwd). Busting the @canva cache dir is therefore enough for
-#/   bun to re-fetch @latest from the depot on next launch — no out-of-band
-#/   delivery is needed.
+#/   OpenCode installs plugins with npm. npm resolves the @canva depot scope
+#/   from ~/.config/.npmrc (npm's XDG userconfig path). BUT npm's HTTP cache
+#/   (~/.npm/_cacache) can hold a STALE packument whose `latest` dist-tag points
+#/   at an old version; OpenCode only re-resolves @latest when its package cache
+#/   dir is absent, and on that re-resolve it reads npm's cached packument. So a
+#/   frozen plugin needs BOTH levers: bust OpenCode's package dir AND invalidate
+#/   npm's cached packument for that package, so the next launch resolves the
+#/   current @latest from the depot.
 #/
 #/   The work plugin cache is skipped when a local dist path overrides it.
 usage() { grep '^#/' "$0" | cut -c4-; }
@@ -36,8 +40,22 @@ tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
 tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy@latest"
 tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy"
 
+# Invalidate npm's cached packument for the work plugin so OpenCode's next-launch
+# npm install re-resolves @latest against the depot instead of a stale cached
+# manifest. The key is make-fetch-happen's request-cache entry keyed by the
+# scoped package URL (/ URL-encoded as %2f). Best-effort: never fail the apply.
+{{- if ne "" $workRegistry }}
+work_registry="{{ $workRegistry }}"
+if command -v npm >/dev/null 2>&1; then
+  packument_key="make-fetch-happen:request-cache:${work_registry}@canva%2fopencode-plugin-llmproxy"
+  if npm cache clean "$packument_key" >/dev/null 2>&1; then
+    info "╍ Invalidated npm packument cache for @canva/opencode-plugin-llmproxy"
+  fi
+fi
+{{- end }}
+
 # Remove any leftover self-managed on-disk bundle from the previous delivery
-# approach so OpenCode doesn't load a stale duplicate alongside the bun-managed
+# approach so OpenCode doesn't load a stale duplicate alongside the npm-managed
 # plugin[] entry. No-op once migrated.
 legacy_bundle="${HOME}/.config/opencode/plugins/canva-llmproxy.js"
 if [ -f "$legacy_bundle" ]; then
