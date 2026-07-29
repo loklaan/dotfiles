@@ -21,7 +21,12 @@
 {{- $config = $config | setValueAtPath "mcp" $mcpServers -}}
 {{- $config = $config | setValueAtPath "instructions" $instructions -}}
 
-{{- /* Register plugins: oh-my-openagent@latest + work plugin with local-path override (unchanged) */ -}}
+{{- /* Register plugins: oh-my-openagent@latest + the @canva work plugin.
+      OpenCode installs npm plugins with its embedded bun; bun resolves the
+      @canva depot scope from ~/.config/.npmrc (bun's XDG userconfig path,
+      honoured regardless of cwd — see home/private_dot_config/dot_npmrc.tmpl,
+      symlinked from ~/.npmrc). A non-empty openCodeWorkPluginLocalPath
+      overrides the published spec with a local dist path for dev. */ -}}
 {{- $plugins := list "oh-my-openagent@latest" -}}
 {{- $workPlugin := .openCodeWorkPlugin -}}
 {{- $localPath := dig "openCodeWorkPluginLocalPath" "" . -}}

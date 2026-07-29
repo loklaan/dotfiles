@@ -17,7 +17,13 @@ setup_session_logging "$(basename "$0")"
 #/   OpenCode re-resolves them on next launch. OpenCode owns plugin
 #/   installation; chezmoi only invalidates the sticky cache.
 #/
-#/   The work plugin is skipped when a local dist path overrides it.
+#/   OpenCode installs plugins with its embedded bun, which resolves the @canva
+#/   depot scope from ~/.config/.npmrc (bun's XDG userconfig path, honoured
+#/   regardless of cwd). Busting the @canva cache dir is therefore enough for
+#/   bun to re-fetch @latest from the depot on next launch — no out-of-band
+#/   delivery is needed.
+#/
+#/   The work plugin cache is skipped when a local dist path overrides it.
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 cache_dir=$(tcs_get_opencode_cache) || exit 0
@@ -29,4 +35,13 @@ tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
 {{- if and (eq "" $llmproxyLocal) (eq $machineProfile "work") }}
 tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy@latest"
 tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy"
+
+# Remove any leftover self-managed on-disk bundle from the previous delivery
+# approach so OpenCode doesn't load a stale duplicate alongside the bun-managed
+# plugin[] entry. No-op once migrated.
+legacy_bundle="${HOME}/.config/opencode/plugins/canva-llmproxy.js"
+if [ -f "$legacy_bundle" ]; then
+  rm -f "$legacy_bundle" "${legacy_bundle}.version"
+  info "╍ Removed legacy self-managed bundle: ${legacy_bundle}"
+fi
 {{- end }}
