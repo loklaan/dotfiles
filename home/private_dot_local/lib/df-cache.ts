@@ -161,5 +161,17 @@ export const parseJson = (text: string | null): unknown => {
   }
 };
 
+// Effect ships no JSONC parser (its CLI `json` format is a bare JSON.parse), and
+// OMO writes ~/.omo/omo.jsonc with a `// OMO configuration` header. Strips only
+// whole-line // comments, so `//` inside a string value (a URL) is preserved.
+export const parseJsonc = (text: string | null): unknown => {
+  if (text === null) return null;
+  const stripped = text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+  return parseJson(stripped);
+};
+
 export const rfc3339Now = (): string =>
   new Date().toISOString().replace(/\.\d{3}Z$/, "Z");

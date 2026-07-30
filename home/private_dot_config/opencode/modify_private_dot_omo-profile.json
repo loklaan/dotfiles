@@ -1,0 +1,35 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /*
+     Dotfiles-owned OMO tier-state sidecar (~/.config/opencode/.omo-profile.json).
+
+     This file is the SINGLE SOURCE OF TRUTH for the active oh-my-openagent
+     cost tier. It is deliberately NOT part of OMO's config chain: OMO validates
+     its own config against a strict schema (additionalProperties:false), so the
+     dotfiles' private bookkeeping keys cannot live inside ~/.omo/omo.jsonc
+     without tripping "Unknown config key" doctor warnings. Keeping tier state in
+     a dotfiles-owned file has zero coupling to OMO's schema.
+
+     Shape:
+       { "profile": "<active tier>", "availableTiers": ["default", "cheap"] }
+
+     Read/written by:
+       - modify_omo.jsonc  reads `profile` to decide which tier's models to render
+       - df-omo-profile     reads/writes `profile` to switch tiers without a full apply
+
+     modify_ semantics: this template REVISES the existing sidecar (its current
+     contents arrive on .chezmoi.stdin). It preserves a user/CLI-written `profile`
+     when that profile is still a valid tier, so a `df-omo-profile` switch survives
+     a later full `chezmoi apply`. availableTiers is always re-derived from
+     profiles.json (the ultimate source of truth for which tiers exist).
+*/ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
+{{- $tiers := $p.agent_tiers -}}
+{{- $active := index $tiers 0 -}}
+{{- if hasKey $base "profile" -}}
+{{-   $requested := index $base "profile" -}}
+{{-   if and (ne "" $requested) (has $requested $tiers) -}}
+{{-     $active = $requested -}}
+{{-   end -}}
+{{- end -}}
+{{ dict "profile" $active "availableTiers" $tiers | toPrettyJson }}
