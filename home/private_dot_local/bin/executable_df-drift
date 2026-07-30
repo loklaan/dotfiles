@@ -51,6 +51,7 @@ import {
   fileExists,
   hasCommand,
   parseJson,
+  parseJsonc,
   readTextFile,
   rfc3339Now,
   run,
@@ -103,7 +104,7 @@ const cacheDir = () => `${home()}/.cache/dotfiles`;
 const cacheFile = () => `${cacheDir()}/drift.json`;
 const markerFile = () => `${cacheDir()}/.drift-notified`;
 const iconPath = () => `${home()}/.local/share/dotfiles/icon.png`;
-const omoConfig = () => `${home()}/.config/opencode/oh-my-openagent.json`;
+const omoConfig = () => `${home()}/.omo/omo.jsonc`;
 const modelsDevCache = () => `${cacheDir()}/models-dev.json`;
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const MODELS_DEV_TTL_SECONDS = 86400; // 24h
@@ -410,23 +411,25 @@ class OmoChecker extends Context.Service<OmoChecker, {
 
       const tools = () =>
         Effect.gen(function* () {
-          const cfgRaw = parseJson(yield* readTextFile(omoConfig()));
+          // Model pins live inside the "[opencode]" harness block since OMO's
+          // config unification; the file is JSONC (comment header).
+          const cfgRaw = parseJsonc(yield* readTextFile(omoConfig()));
           if (cfgRaw === null || typeof cfgRaw !== "object") return [];
-          const cfg = cfgRaw as Record<string, unknown>;
+          const block = asRecord((cfgRaw as Record<string, unknown>)["[opencode]"]);
 
           const out: DriftTool[] = [];
 
           const modelsDb = yield* ensureModelsDev();
           if (modelsDb !== null) {
             const pins: { kind: string; name: string; model: string }[] = [];
-            for (const [name, v] of Object.entries(asRecord(cfg.agents))) {
+            for (const [name, v] of Object.entries(asRecord(block.agents))) {
               const model = asRecord(v).model;
               if (typeof model === "string") {
                 pins.push({ kind: "agents", name, model });
               }
             }
             for (
-              const [name, v] of Object.entries(asRecord(cfg.categories))
+              const [name, v] of Object.entries(asRecord(block.categories))
             ) {
               const model = asRecord(v).model;
               if (typeof model === "string") {

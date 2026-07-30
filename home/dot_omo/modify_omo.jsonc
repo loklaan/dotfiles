@@ -1,0 +1,100 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /*
+     OMO unified config (~/.omo/omo.jsonc), [opencode] harness block.
+
+     This REPLACES the legacy ~/.config/opencode/oh-my-openagent.json rendering.
+     OMO's config-unification migration moved opencode config under the
+     "[opencode]" block of this file. OMO validates each config layer against a
+     strict schema (additionalProperties:false), so this template emits ONLY
+     schema-recognised keys — the dotfiles' private tier state lives in a
+     separate sidecar (~/.config/opencode/.omo-profile.json), never here.
+
+     Ownership split in this file:
+       - "[opencode]"        chezmoi renders (agents/categories/settings)
+       - "$schema"           OMO writes; preserved
+       - "_migrations"       OMO writes (migration ledger); preserved
+       - "legacy_migrations" OMO writes; preserved
+       - anything else OMO adds later at top level: preserved
+
+     JSONC note: OMO writes a leading `// OMO configuration` comment. chezmoi's
+     fromJson cannot parse comments, so we strip whole-line // comments before
+     parsing. We re-emit as plain JSON (no comment); OMO tolerates a
+     comment-free file and the .jsonc extension does not require comments.
+
+     Active tier: read from the sidecar's `profile` field when present and valid,
+     else the first tier in profiles.json. This is the same read-back contract
+     df-omo-profile relies on to switch tiers via a targeted apply.
+*/ -}}
+{{- /* Strip leading whole-line // comments, then parse. */ -}}
+{{- $raw := default "{}" .chezmoi.stdin -}}
+{{- $lines := splitList "\n" $raw -}}
+{{- $clean := list -}}
+{{- range $lines -}}
+{{-   if not (hasPrefix "//" (trim .)) -}}
+{{-     $clean = append $clean . -}}
+{{-   end -}}
+{{- end -}}
+{{- $existing := fromJson (default "{}" (join "\n" $clean)) -}}
+
+{{- /* Existing [opencode] block, so we merge onto (not clobber) OMO-written keys. */ -}}
+{{- $block := dict -}}
+{{- if hasKey $existing "[opencode]" -}}
+{{-   $block = index $existing "[opencode]" -}}
+{{- end -}}
+
+{{- /* Purge the dotfiles' legacy private keys — they belong in the sidecar now
+       and OMO's strict schema rejects them ("Unknown config key"). */ -}}
+{{- $block = omit $block "_dotfilesProfile" "_dotfilesAvailableTiers" "_dotfilesUnmanaged" "_dotfilesProfileRequested" -}}
+
+{{- /* --- OMO settings the dotfiles own (identical policy to the legacy template) --- */ -}}
+{{- $block = mergeOverwrite $block (dict
+      "git_master" (dict
+        "commit_footer" false
+        "include_co_authored_by" false)) -}}
+{{- $block = mergeOverwrite $block (dict
+      "claude_code" (dict
+        "hooks" false
+        "mcp" false
+        "commands" false
+        "skills" false
+        "agents" false
+        "plugins" false)) -}}
+{{- $block = set $block "disabled_mcps" (list "context7" "websearch" "webfetch" "grep_app") -}}
+{{- $block = mergeOverwrite $block (dict
+      "team_mode" (dict
+        "enabled" false
+        "tmux_visualization" false
+        "max_parallel_members" 4
+        "max_members" 8)) -}}
+
+{{- /* --- Tier selection: sidecar profile (if valid) else first tier --- */ -}}
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
+{{- $tiers := $p.agent_tiers -}}
+{{- $effective := index $tiers 0 -}}
+{{- $sidecar := joinPath .chezmoi.homeDir ".config/opencode/.omo-profile.json" -}}
+{{- if stat $sidecar -}}
+{{-   $sc := include $sidecar | fromJson -}}
+{{-   if hasKey $sc "profile" -}}
+{{-     $requested := index $sc "profile" -}}
+{{-     if and (ne "" $requested) (has $requested $tiers) -}}
+{{-       $effective = $requested -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* --- Models for the effective tier --- */ -}}
+{{- if eq (len $tiers) 1 -}}
+{{-   $block = set $block "agents" (index $p "agents") -}}
+{{-   $block = set $block "categories" (index $p "categories") -}}
+{{- else -}}
+{{-   $block = set $block "agents" (index (index $p $effective) "agents") -}}
+{{-   $block = set $block "categories" (index (index $p $effective) "categories") -}}
+{{- end -}}
+
+{{- /* Write the block back; preserve all OMO-owned top-level keys. */ -}}
+{{- $out := $existing -}}
+{{- $out = set $out "[opencode]" $block -}}
+{{- if not (hasKey $out "$schema") -}}
+{{-   $out = set $out "$schema" "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json" -}}
+{{- end -}}
+{{ $out | toPrettyJson }}

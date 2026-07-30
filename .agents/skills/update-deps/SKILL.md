@@ -158,7 +158,7 @@ memory.
 **Cross-file integrity:** when changing a Bedrock model ID, also check
 `home/private_dot_config/opencode/modify_opencode.json` — it whitelists which
 `amazon-bedrock` IDs appear in the model picker. A pin in
-`modify_oh-my-openagent.json` (or any other opencode config) that isn't in
+`dot_omo/modify_omo.jsonc` (or any other opencode config) that isn't in
 that whitelist will silently fail to surface. The two files must agree.
 
 ## Output

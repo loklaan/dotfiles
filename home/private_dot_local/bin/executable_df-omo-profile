@@ -5,17 +5,20 @@
 // cost while preserving each agent's personality family (Claude-likes stay
 // Claude-likes, GPT stays GPT, Gemini stays Gemini).
 //
-// Single source of truth: the rendered omo config JSON
-// (~/.config/opencode/oh-my-openagent.json) contains `_dotfilesProfile` (the
-// active profile) and `_dotfilesAvailableTiers` (the valid profile names).
-// This tool reads those fields from the JSON — no separate state file.
+// Single source of truth: a dotfiles-owned sidecar
+// (~/.config/opencode/.omo-profile.json) holds `profile` (the active tier) and
+// `availableTiers` (the valid tier names). Tier state lives OUTSIDE OMO's config
+// because OMO validates its config against a strict schema
+// (additionalProperties:false) and rejects unknown keys — so the dotfiles'
+// bookkeeping cannot sit inside ~/.omo/omo.jsonc. This tool reads/writes the
+// sidecar; the rendered OMO config is read only to list resolved models.
 //
-// Mechanism: this tool edits `_dotfilesProfile` in the JSON file directly, then
-// runs a TARGETED `chezmoi apply` on just the omo config so the new models
-// land immediately. The profile table is the source of truth in the chezmoi
-// template; a later full `chezmoi apply` re-derives the same result — the
-// switch survives. omo reads its config once per session, so START A NEW
-// opencode SESSION for the switch to take effect.
+// Mechanism: this tool writes `profile` in the sidecar, then runs a TARGETED
+// `chezmoi apply` on just ~/.omo/omo.jsonc; that file's modify-template reads the
+// sidecar to pick the tier and re-renders the models. The profile table is the
+// source of truth in the chezmoi template; a later full `chezmoi apply`
+// re-derives the same result — the switch survives. omo reads its config once
+// per session, so START A NEW opencode SESSION for the switch to take effect.
 //
 // CLI surface (preserved from the original bash):
 //   df-omo-profile            Show the active profile and its resolved models
@@ -52,17 +55,21 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-beta.97";
+} from "npm:effect@4.0.0-beta.93";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.97/unstable/process";
+} from "npm:effect@4.0.0-beta.93/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
 // --------------------------------------------------------------------------
 
-const OMO_CONFIG_REL = ".config/opencode/oh-my-openagent.json";
+// Tier state lives in a dotfiles-owned sidecar — NOT inside OMO's config, whose
+// strict schema (additionalProperties:false) rejects unknown keys. The rendered
+// OMO config is only read for the model listing in `showStatus`.
+const SIDECAR_REL = ".config/opencode/.omo-profile.json";
+const OMO_CONFIG_REL = ".omo/omo.jsonc";
 
 const USAGE = `Usage:
   df-omo-profile            Show the active profile and its resolved models
@@ -76,16 +83,17 @@ Description:
   preserving each agent's personality family (Claude-likes stay
   Claude-likes, GPT stays GPT, Gemini stays Gemini).
 
-  Single source of truth: the rendered omo config
-  (~/.config/opencode/oh-my-openagent.json) contains \`_dotfilesProfile\`
-  (the active profile) and \`_dotfilesAvailableTiers\` (the valid names).
-  This tool reads and edits those fields directly.
+  Single source of truth: a dotfiles-owned sidecar
+  (~/.config/opencode/.omo-profile.json) holds \`profile\` (the active tier)
+  and \`availableTiers\` (the valid names). Tier state lives outside OMO's
+  config, whose strict schema rejects unknown keys. This tool reads and
+  writes the sidecar directly.
 
-  Mechanism: this tool edits \`_dotfilesProfile\` in the JSON file,
-  then runs a TARGETED \`chezmoi apply\` on just the omo config so the
-  new models land immediately. The profile table is the source of truth
-  in the chezmoi template; a later full \`chezmoi apply\` re-derives
-  the same result — the switch survives.
+  Mechanism: this tool writes \`profile\` in the sidecar, then runs a
+  TARGETED \`chezmoi apply\` on just ~/.omo/omo.jsonc so the new models
+  land immediately. The profile table is the source of truth in the chezmoi
+  template; a later full \`chezmoi apply\` re-derives the same result — the
+  switch survives.
 
   omo reads its config once per session, so START A NEW opencode SESSION
   for the switch to take effect.
@@ -150,7 +158,11 @@ type FatalCliError =
   | ChezmoiApplyError;
 
 // --------------------------------------------------------------------------
-// Rendered omo config schema (only the fields this tool reads).
+// Schemas.
+//
+// Tier state (active profile + valid tiers) lives in the dotfiles-owned sidecar.
+// The rendered OMO config is read ONLY for the agent/category model listing in
+// `showStatus`; its models sit inside the "[opencode]" harness block.
 // --------------------------------------------------------------------------
 
 const ModelEntry = Schema.Struct({
@@ -159,19 +171,35 @@ const ModelEntry = Schema.Struct({
 });
 type ModelEntry = typeof ModelEntry.Type;
 
+// Dotfiles-owned tier-state sidecar (~/.config/opencode/.omo-profile.json).
+const Sidecar = Schema.Struct({
+  profile: Schema.optional(Schema.String),
+  availableTiers: Schema.optional(Schema.Array(Schema.String)),
+});
+type Sidecar = typeof Sidecar.Type;
+
+// Rendered OMO config — only the "[opencode]" block's model maps are read.
 const OmoConfig = Schema.Struct({
-  _dotfilesProfile: Schema.optional(Schema.String),
-  _dotfilesAvailableTiers: Schema.optional(Schema.Array(Schema.String)),
-  agents: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
-  categories: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+  "[opencode]": Schema.optional(Schema.Struct({
+    agents: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+    categories: Schema.optional(Schema.Record(Schema.String, ModelEntry)),
+  })),
 });
 type OmoConfig = typeof OmoConfig.Type;
 
+const decodeSidecarSync = Schema.decodeUnknownSync(Sidecar);
 const decodeOmoConfigSync = Schema.decodeUnknownSync(OmoConfig);
 
-// Decode-or-none: the status command tolerates a malformed/foreign config by
-// degrading to a warning, so a decode failure becomes Option.none rather than a
-// thrown error. Unknown keys (omo's own config) are tolerated by Schema.Struct.
+// Decode-or-none: callers tolerate a malformed/foreign file by degrading rather
+// than throwing. Unknown keys (OMO's own config) are tolerated by Schema.Struct.
+const decodeSidecar = (input: unknown): Option.Option<Sidecar> => {
+  try {
+    return Option.some(decodeSidecarSync(input));
+  } catch {
+    return Option.none();
+  }
+};
+
 const decodeOmoConfig = (input: unknown): Option.Option<OmoConfig> => {
   try {
     return Option.some(decodeOmoConfigSync(input));
@@ -179,6 +207,15 @@ const decodeOmoConfig = (input: unknown): Option.Option<OmoConfig> => {
     return Option.none();
   }
 };
+
+// OMO writes ~/.omo/omo.jsonc with a leading `// OMO configuration` comment.
+// JSON.parse rejects comments, so strip whole-line // comments before parsing.
+// Exported-shaped as a pure helper so the in-file tests can exercise it.
+const stripJsoncComments = (text: string): string =>
+  text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
 
 // --------------------------------------------------------------------------
 // Pure helpers (unit-testable without FS or env).
@@ -205,32 +242,43 @@ const formatModelLines = (
 // Native Deno.* honours exactly `--allow-read` / `--allow-write`.
 // --------------------------------------------------------------------------
 
-// Read + parse the omo config JSON, returning Option.none on any failure.
-// Uses Effect.sync so the async read doesn't pollute the error channel,
-// avoiding the Effect.tryPromise error-type issues seen in some v4 beta builds.
-const readOmoConfig = (
+// Read + parse the tier-state sidecar, returning Option.none on any failure.
+const readSidecar = (
   path: string,
-): Effect.Effect<Option.Option<OmoConfig>> =>
+): Effect.Effect<Option.Option<Sidecar>> =>
   Effect.sync(() => {
     try {
-      // Deno.readTextFile is async; Effect.sync runs a synchronous thunk that
-      // can yield to the scheduler. The async read is safe here because
-      // Effect.gen fibre-schedules the underlying Promise.
       const raw = JSON.parse(Deno.readTextFileSync(path)) as unknown;
-      return decodeOmoConfig(raw);
+      return decodeSidecar(raw);
     } catch {
       return Option.none();
     }
   });
 
-// Write the omo config JSON (whole-file rewrite).
-const writeOmoConfig = (
+// Write the tier-state sidecar (whole-file rewrite).
+const writeSidecar = (
   path: string,
-  config: OmoConfig,
+  sidecar: Sidecar,
 ): Effect.Effect<void> =>
   Effect.tryPromise(() =>
-    Deno.writeTextFile(path, JSON.stringify(config, null, 2))
+    Deno.writeTextFile(path, JSON.stringify(sidecar, null, 2))
   ).pipe(Effect.orDie);
+
+// Read + parse the rendered OMO config (JSONC), returning Option.none on any
+// failure. Strips // comments before parsing since OMO writes a comment header.
+const readOmoConfig = (
+  path: string,
+): Effect.Effect<Option.Option<OmoConfig>> =>
+  Effect.sync(() => {
+    try {
+      const raw = JSON.parse(
+        stripJsoncComments(Deno.readTextFileSync(path)),
+      ) as unknown;
+      return decodeOmoConfig(raw);
+    } catch {
+      return Option.none();
+    }
+  });
 
 // Recursively create a directory, swallowing "already exists".
 const makeDirRecursive = (path: string): Effect.Effect<void> =>
@@ -266,22 +314,23 @@ class Profiles extends Context.Service<Profiles, {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
       const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
+      const sidecarPath = joinHome(home, SIDECAR_REL);
       const omoConfigPath = joinHome(home, OMO_CONFIG_REL);
 
-      // Active profile: read _dotfilesProfile from the rendered JSON.
-      // Fallback to the first item of _dotfilesAvailableTiers if absent.
-      const activeProfile: Effect.Effect<string> = readOmoConfig(
-        omoConfigPath,
+      // Active profile: read `profile` from the sidecar. Fall back to the first
+      // item of `availableTiers` when unset, else a sentinel.
+      const activeProfile: Effect.Effect<string> = readSidecar(
+        sidecarPath,
       ).pipe(
         Effect.map((maybe) =>
           Option.match(maybe, {
             onNone: () => "(unknown)" as string,
-            onSome: (config) => {
-              const profile = config._dotfilesProfile;
+            onSome: (sidecar) => {
+              const profile = sidecar.profile;
               if (profile !== undefined && profile.length > 0) {
                 return profile;
               }
-              const tiers = config._dotfilesAvailableTiers;
+              const tiers = sidecar.availableTiers;
               if (tiers !== undefined && tiers.length > 0) {
                 return tiers[0];
               }
@@ -308,14 +357,13 @@ class Profiles extends Context.Service<Profiles, {
       const info = (msg: string) => Console.error(`info ${msg}`);
       const warning = (msg: string) => Console.error(`warning ${msg}`);
 
-      // Read _dotfilesAvailableTiers from the rendered JSON for validation.
+      // Read `availableTiers` from the sidecar for validation.
       const getAvailableTiers = (): Effect.Effect<ReadonlyArray<string>> =>
-        readOmoConfig(omoConfigPath).pipe(
+        readSidecar(sidecarPath).pipe(
           Effect.map((maybe) =>
             Option.match(maybe, {
               onNone: () => [] as string[],
-              onSome: (config) =>
-                config._dotfilesAvailableTiers ?? [],
+              onSome: (sidecar) => sidecar.availableTiers ?? [],
             })
           ),
         );
@@ -325,30 +373,27 @@ class Profiles extends Context.Service<Profiles, {
 
         yield* info(`\u25B6 Active omo profile: ${active}`);
 
+        const tiers = yield* getAvailableTiers();
+
         const maybeConfig = yield* readOmoConfig(omoConfigPath);
         if (Option.isNone(maybeConfig)) {
           yield* warning(
             `omo config not found at ${omoConfigPath} — run \`chezmoi apply\` first`,
           );
+          if (tiers.length > 0) {
+            yield* info(`\u254D Available tiers: ${tiers.join(", ")}`);
+          }
           return;
         }
 
-        const config = maybeConfig.value;
-        const rendered = config._dotfilesProfile ?? "(unset)";
-        const tiers = config._dotfilesAvailableTiers ?? [];
-
-        if (rendered !== active) {
-          yield* warning(
-            `rendered config reports profile '${rendered}', state says '${active}'`,
-          );
-        }
+        const block = maybeConfig.value["[opencode]"] ?? {};
 
         yield* info("\u254D Agents");
-        for (const line of formatModelLines(config.agents)) {
+        for (const line of formatModelLines(block.agents)) {
           yield* Console.error(line);
         }
         yield* info("\u254D Categories");
-        for (const line of formatModelLines(config.categories)) {
+        for (const line of formatModelLines(block.categories)) {
           yield* Console.error(line);
         }
 
@@ -397,29 +442,29 @@ class Profiles extends Context.Service<Profiles, {
             );
           }
 
-          const maybeConfig = yield* readOmoConfig(omoConfigPath);
-          if (Option.isNone(maybeConfig)) {
-            yield* warning(
-              `omo config not found at ${omoConfigPath} — run \`chezmoi apply\` first`,
-            );
-            return;
-          }
-
-          // Edit _dotfilesProfile in the JSON and write it back.
-          const updatedConfig: OmoConfig = {
-            ...maybeConfig.value,
-            _dotfilesProfile: name,
+          // Write the active tier to the dotfiles-owned sidecar. Preserve the
+          // known tier list so a fresh read is self-describing even before the
+          // next full apply re-derives it from profiles.json.
+          const maybeSidecar = yield* readSidecar(sidecarPath);
+          const priorTiers = Option.match(maybeSidecar, {
+            onNone: () => tiers,
+            onSome: (s) => s.availableTiers ?? tiers,
+          });
+          const updatedSidecar: Sidecar = {
+            profile: name,
+            availableTiers: priorTiers,
           };
 
-          yield* makeDirRecursive(posixDirname(omoConfigPath));
-          yield* writeOmoConfig(omoConfigPath, updatedConfig);
-          yield* info(`\u254D Wrote ${omoConfigPath}`);
+          yield* makeDirRecursive(posixDirname(sidecarPath));
+          yield* writeSidecar(sidecarPath, updatedSidecar);
+          yield* info(`\u254D Wrote ${sidecarPath}`);
 
           yield* info(
             `\u254D Re-rendering ${omoConfigPath} via targeted chezmoi apply`,
           );
 
-          // Targeted apply on just the omo config. Inherit stdio so chezmoi's
+          // Targeted apply on just the omo config; its modify-template reads the
+          // sidecar we just wrote to pick the tier. Inherit stdio so chezmoi's
           // own output reaches the terminal, matching the bash behaviour.
           const exitCode = yield* spawner.exitCode(
             ChildProcess.make("chezmoi", ["apply", "--force", omoConfigPath], {
@@ -519,7 +564,7 @@ if (import.meta.main) {
   // load time (via ioredis -> msgpackr), which would force --allow-env onto
   // `deno test`. Loading it only here keeps the test surface permission-free.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.97"
+    "npm:@effect/platform-node@4.0.0-beta.93"
   );
   runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }
@@ -530,69 +575,112 @@ if (import.meta.main) {
 //   deno test home/private_dot_local/bin/executable_df-omo-profile
 //
 // The `import.meta.main` guard above keeps the CLI from firing under test. These
-// tests cover the pure surfaces that carry the contract: profile-name
-// validation, the omo-config schema decode (the shape the status command relies
-// on), and the model-line formatting that reproduces the old jq pipeline. No FS,
-// env, or subprocess access is touched, so no permissions are required.
+// tests cover the pure surfaces that carry the contract: sidecar tier-state
+// decode, the omo-config [opencode]-block model decode (the shape the status
+// command relies on), the JSONC comment stripping, profile-name validation, and
+// the model-line formatting. No FS, env, or subprocess access is touched, so no
+// permissions are required.
 // ===========================================================================
 
 const assert = (cond: boolean, msg: string) => {
   if (!cond) throw new Error(msg);
 };
 
-Deno.test("OmoConfig decodes a rendered config with all fields", () => {
-  const decoded = decodeOmoConfig({
-    _dotfilesProfile: "opencode",
-    _dotfilesAvailableTiers: ["opencode", "default"],
-    agents: {
-      oracle: { model: "openai/gpt-5.4-mini" },
-      explore: { model: "amazon-bedrock/...haiku" },
-    },
-    categories: {
-      ultrabrain: { model: "openai/gpt-5.4-mini" },
-      "visual-engineering": { model: "google/flash" },
-    },
-    // Unknown keys (omo's own config) must be tolerated, not rejected.
-    permission: { bash: "allow" },
+Deno.test("Sidecar decodes tier state with all fields", () => {
+  const decoded = decodeSidecar({
+    profile: "cheap",
+    availableTiers: ["default", "cheap"],
   });
   assert(Option.isSome(decoded), "expected a successful decode");
   if (Option.isSome(decoded)) {
+    assert(decoded.value.profile === "cheap", "profile field did not decode");
     assert(
-      decoded.value._dotfilesProfile === "opencode",
-      "profile field did not decode",
-    );
-    assert(
-      decoded.value._dotfilesAvailableTiers !== undefined &&
-        decoded.value._dotfilesAvailableTiers.length === 2,
-      "_dotfilesAvailableTiers did not decode",
-    );
-    assert(
-      decoded.value.agents?.oracle.model === "openai/gpt-5.4-mini",
-      "agent model did not decode",
+      decoded.value.availableTiers !== undefined &&
+        decoded.value.availableTiers.length === 2,
+      "availableTiers did not decode",
     );
   }
 });
 
-Deno.test("OmoConfig decodes a config missing optional fields", () => {
+Deno.test("Sidecar decodes with missing optional fields", () => {
+  const decoded = decodeSidecar({});
+  assert(Option.isSome(decoded), "empty object should decode");
+  if (Option.isSome(decoded)) {
+    assert(decoded.value.profile === undefined, "profile should be undefined");
+    assert(
+      decoded.value.availableTiers === undefined,
+      "availableTiers should be undefined",
+    );
+  }
+});
+
+Deno.test("OmoConfig decodes models from the [opencode] block", () => {
+  const decoded = decodeOmoConfig({
+    "[opencode]": {
+      agents: {
+        oracle: { model: "openai/gpt-5.4-mini" },
+        explore: { model: "amazon-bedrock/...haiku" },
+      },
+      categories: {
+        ultrabrain: { model: "openai/gpt-5.4-mini" },
+        "visual-engineering": { model: "google/flash" },
+      },
+      // Unknown keys (OMO's own config) must be tolerated, not rejected.
+      git_master: { commit_footer: false },
+    },
+    // Top-level OMO keys must be tolerated too.
+    _migrations: ["2026-07-opencode-config-unification"],
+  });
+  assert(Option.isSome(decoded), "expected a successful decode");
+  if (Option.isSome(decoded)) {
+    assert(
+      decoded.value["[opencode]"]?.agents?.oracle.model ===
+        "openai/gpt-5.4-mini",
+      "agent model did not decode",
+    );
+    assert(
+      decoded.value["[opencode]"]?.categories?.["visual-engineering"].model ===
+        "google/flash",
+      "category model did not decode",
+    );
+  }
+});
+
+Deno.test("OmoConfig decodes a config missing the block", () => {
   const decoded = decodeOmoConfig({});
   assert(Option.isSome(decoded), "empty object should decode");
   if (Option.isSome(decoded)) {
     assert(
-      decoded.value._dotfilesProfile === undefined,
-      "_dotfilesProfile should be undefined",
+      decoded.value["[opencode]"] === undefined,
+      "[opencode] should be undefined",
     );
-    assert(
-      decoded.value._dotfilesAvailableTiers === undefined,
-      "_dotfilesAvailableTiers should be undefined",
-    );
-    assert(decoded.value.agents === undefined, "agents should be undefined");
   }
 });
 
 Deno.test("OmoConfig decode fails on the wrong shape", () => {
   // agents must be a record of {model,variant}; a string is invalid.
-  const decoded = decodeOmoConfig({ agents: "nope" });
+  const decoded = decodeOmoConfig({ "[opencode]": { agents: "nope" } });
   assert(Option.isNone(decoded), "string agents should fail to decode");
+});
+
+Deno.test("stripJsoncComments removes whole-line // comments only", () => {
+  const input = [
+    "// OMO configuration",
+    "{",
+    '  "a": 1,',
+    "  // indented comment",
+    '  "url": "https://not-a-comment"',
+    "}",
+  ].join("\n");
+  const out = stripJsoncComments(input);
+  assert(!out.includes("// OMO configuration"), "leading comment not stripped");
+  assert(!out.includes("indented comment"), "indented comment not stripped");
+  assert(
+    out.includes('"url": "https://not-a-comment"'),
+    "inline // inside a string value was wrongly stripped",
+  );
+  const parsed = JSON.parse(out) as { a: number; url: string };
+  assert(parsed.a === 1 && parsed.url === "https://not-a-comment", "bad parse");
 });
 
 Deno.test("formatModelLines sorts and renders model + variant", () => {

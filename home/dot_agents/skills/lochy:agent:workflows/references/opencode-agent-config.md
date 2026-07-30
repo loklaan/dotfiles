@@ -9,7 +9,7 @@ agent; prefer it inside `<Task>` nodes on these machines.
 ## OpenCodeAgent
 
 `OpenCodeAgent` spawns `opencode run --agent <name>` as a local subprocess. The
-`agentName` resolves model and system prompt from `oh-my-openagent.json`; no
+`agentName` resolves model and system prompt from `~/.omo/omo.jsonc`; no
 separate API keys are needed beyond what opencode already has.
 
 ### Factory pattern (`.smithers/agents/opencode.ts`)
@@ -35,11 +35,11 @@ const agent = (agentName: string) =>
 | `librarian` | `librarian` | Docs / remote repos |
 | `multimodal-looker` | `multimodal-looker` | Image/diagram inspection |
 
-Models resolve at runtime from the rendered
-`~/.config/opencode/oh-my-openagent.json`. Inspect the current mapping with:
+Models resolve at runtime from the rendered `[opencode]` block of
+`~/.omo/omo.jsonc`. Inspect the current mapping with:
 
 ```bash
-jq '.agents' ~/.config/opencode/oh-my-openagent.json
+sed 's#^[[:space:]]*//.*$##' ~/.omo/omo.jsonc | jq '.["[opencode]"].agents'
 ```
 
 ## Semantic pools (`.smithers/agents.ts`)

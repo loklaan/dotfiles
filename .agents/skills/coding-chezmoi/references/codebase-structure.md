@@ -188,7 +188,7 @@ When adding commands, check if they can prompt and add the appropriate flag.
 
 `modify_opencode.json` uses a `whitelist` on the `amazon-bedrock` provider to control which models appear in the model picker. Without it, every model variant from models.dev is shown (bare, `us.`, `eu.`, `global.`, `au.` — often 4+ entries per model).
 
-> For routine model ID bumps (across this file and `modify_oh-my-openagent.json`), see `update-deps` § 7.
+> For routine model ID bumps (across this file and `dot_omo/modify_omo.jsonc`), see `update-deps` § 7.
 
 ### Principles
 
@@ -209,4 +209,4 @@ When updating the whitelist for new model releases:
 
 ### oh-my-openagent model references
 
-`modify_oh-my-openagent.json` sets default models for agent categories. These must reference models that are either in the whitelist or from a non-bedrock provider. Keep these in sync when updating the whitelist.
+`dot_omo/modify_omo.jsonc` (renders the `[opencode]` block of `~/.omo/omo.jsonc`) sets default models for agent categories. These must reference models that are either in the whitelist or from a non-bedrock provider. Keep these in sync when updating the whitelist.
