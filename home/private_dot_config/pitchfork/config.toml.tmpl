@@ -1,6 +1,5 @@
 #:schema https://pitchfork.jdx.dev/schema.json
-
-{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
+{{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
 {{- /* CODER_WORKSPACE_NAME is the canonical workspace identifier on Coder
        boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
        at chezmoi-render time so Pitchfork gets a baked-in pairing address — no
