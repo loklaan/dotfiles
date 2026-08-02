@@ -6,7 +6,7 @@ From inside the user's project, use any Node.js-compatible runtime available on
 the machine (Node.js, Deno, Bun, etc.) plus the model credentials the selected
 worker agents need. Examples below assume a `smithers` command is on `PATH`; if
 not, substitute the local package launcher for the runtime in use, such as
-`npx -y smithers-orchestrator` or `bunx smithers-orchestrator`.
+`npx -y smthrs` or `bunx smthrs`.
 
 ```bash
 # 1. Scaffold .smithers/ with ready-made workflows (implement, review, plan, ralph, debug…)
@@ -32,8 +32,8 @@ Crash mid-run and the next render picks up exactly where it left off: completed
 nodes are never re-run.
 
 ```tsx
-/** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Task } from "smithers-orchestrator";
+/** @jsxImportSource smthrs */
+import { createSmithers, Sequence, Task } from "smthrs";
 import { z } from "zod";
 
 const { Workflow, smithers, outputs } = createSmithers({
@@ -109,7 +109,7 @@ the reusable building blocks (`components/*.tsx`).
 
 Everything is a CLI verb. If `smithers` is not on `PATH`, prefix commands with
 the package launcher available on the machine, such as
-`npx -y smithers-orchestrator` or `bunx smithers-orchestrator`:
+`npx -y smthrs` or `bunx smthrs`:
 
 ```bash
 smithers up workflow.tsx --input '{"description":"Fix bug"}'   # start a run
@@ -164,7 +164,7 @@ smithers ask "How do I add a human approval gate?"
 
 - Docs: <https://smithers.sh> · fragments at `smithers.sh/llms-*.txt`
 - Repo: <https://github.com/smithersai/smithers>
-- npm package: `smithers-orchestrator`
+- npm package: `smthrs`
 
 When in doubt, read the source: docs and `llms-*.txt` bundles can lag the code.
 Ground truth lives in `packages/components/src/components/`, `apps/cli/src/`,
