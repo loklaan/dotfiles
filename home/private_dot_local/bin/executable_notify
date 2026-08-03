@@ -78,11 +78,25 @@ Options:
   --sender <bundle>  macOS terminal-notifier only: borrow another app's
                      identity (e.g. com.apple.Terminal) so the notification
                      shows that app's icon. Useful when no --icon is set.
+  --execute <cmd>    macOS terminal-notifier only: shell command run when the
+                     banner is clicked. Dispatched detached (fire-and-forget),
+                     so the caller returns immediately rather than blocking
+                     until the click. Takes precedence over --open.
+  --open <url>       macOS terminal-notifier only: URL opened when the banner
+                     is clicked. Also dispatched detached.
+  --group <id>       macOS terminal-notifier only: coalescing id. A new
+                     notification with the same id REPLACES the previous banner
+                     instead of stacking a new one. Ideal for a recurring nag.
+  --ignore-dnd       macOS terminal-notifier only: deliver even while Do Not
+                     Disturb / a Focus mode is active. Without this, a Focus
+                     schedule silently suppresses low-trust CLI notifications.
   --help             Display this help message
 
 Examples:
   notify "Build complete"
   notify --title "dotfiles" --subtitle "drift" --icon ~/icon.png "3 tools behind"
+  notify --title "dotfiles" --subtitle "3 tools behind" --ignore-dnd \\
+    --group dotfiles-drift --execute "df-drift-update" "click to update"
   notify mcp
 
 Exit codes:
@@ -100,6 +114,11 @@ interface NotifyOptions {
   readonly icon: string;
   readonly sender: string;
   readonly message: string;
+  // macOS terminal-notifier only. Empty string means "not set".
+  readonly execute: string; // shell command run when the banner is clicked
+  readonly open: string; // URL opened when the banner is clicked
+  readonly group: string; // coalescing id: a new notify replaces the prior one
+  readonly ignoreDnd: boolean; // deliver even while Do Not Disturb is active
 }
 
 // Mirror the bash arg parser: option/value pairs, `--` terminator, first
@@ -115,6 +134,10 @@ const parseArgs = (argv: readonly string[]): ParseResult => {
   let subtitle = "";
   let icon = "";
   let sender = "";
+  let execute = "";
+  let open = "";
+  let group = "";
+  let ignoreDnd = false;
   let i = 0;
   let message: string | undefined;
 
@@ -141,6 +164,27 @@ const parseArgs = (argv: readonly string[]): ParseResult => {
       i += 2;
       continue;
     }
+    if (arg === "--execute") {
+      execute = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--open") {
+      open = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (arg === "--group") {
+      group = argv[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    // Boolean flag: no value consumed.
+    if (arg === "--ignore-dnd") {
+      ignoreDnd = true;
+      i += 1;
+      continue;
+    }
     if (arg === "--") {
       message = argv[i + 1];
       break;
@@ -160,15 +204,34 @@ const parseArgs = (argv: readonly string[]): ParseResult => {
 
   return {
     kind: "options",
-    options: { title, subtitle, icon, sender, message },
+    options: {
+      title,
+      subtitle,
+      icon,
+      sender,
+      message,
+      execute,
+      open,
+      group,
+      ignoreDnd,
+    },
   };
 };
 
 // Run an external notifier. Resolves to the child's exit code; 127 when the
 // binary cannot be spawned (missing / not on PATH), matching shell semantics.
+//
+// `detached`: when true, spawn-and-forget instead of awaiting the child.
+// terminal-notifier with -execute / -open stays ALIVE until the banner is
+// clicked or dismissed (it must, to run the action), so awaiting it would hang
+// the caller — fatal for a scheduled daemon that has to exit. In detached mode
+// we start the process, unref it so it outlives us, and report success (0) for
+// "dispatched" without waiting for the click. A spawn failure still surfaces as
+// 127. Only meaningful with an action flag set; plain banners await normally.
 const runNotifier = (
   cmd: string,
   args: readonly string[],
+  detached = false,
 ): Effect.Effect<number> =>
   Effect.tryPromise({
     try: async () => {
@@ -177,6 +240,13 @@ const runNotifier = (
         stdout: "inherit",
         stderr: "inherit",
       });
+      if (detached) {
+        // spawn() returns immediately; unref() lets this process exit while
+        // terminal-notifier keeps waiting for the click in the background.
+        const child = command.spawn();
+        child.unref();
+        return 0;
+      }
       const { code } = await command.output();
       return code;
     },
@@ -216,6 +286,18 @@ const terminalNotifierArgs = (o: NotifyOptions): string[] => {
   if (o.subtitle) args.push("-subtitle", o.subtitle);
   if (o.icon) args.push("-contentImage", o.icon);
   if (o.sender) args.push("-sender", o.sender);
+  // A group id coalesces repeat alerts: a new one replaces the prior banner
+  // for the same id rather than stacking. Wanted for a daily drift nag.
+  if (o.group) args.push("-group", o.group);
+  // Click actions. -open (URL) and -execute (shell command) are mutually
+  // usable, but a caller sets at most one; -execute wins if both are present
+  // (terminal-notifier honours -execute over -open).
+  if (o.execute) args.push("-execute", o.execute);
+  else if (o.open) args.push("-open", o.open);
+  // Deliver even while Do Not Disturb / a Focus mode is active. This is the
+  // whole point for the drift nag: the default DND schedule blanket-suppresses
+  // low-trust CLI senders, so without this the banner never appears.
+  if (o.ignoreDnd) args.push("-ignoreDnD");
   return args;
 };
 
@@ -240,9 +322,14 @@ const dispatchNotification = (
     switch (osType()) {
       case "darwin": {
         if (yield* hasCommand("terminal-notifier")) {
+          // A click action (-execute / -open) keeps terminal-notifier alive
+          // until the banner is actioned, so dispatch detached: fire the
+          // banner and return, rather than blocking the caller on a click.
+          const hasAction = o.execute !== "" || o.open !== "";
           const code = yield* runNotifier(
             "terminal-notifier",
             terminalNotifierArgs(o),
+            hasAction,
           );
           if (code !== 0) {
             return yield* Effect.fail(
@@ -687,6 +774,22 @@ const eq = (a: unknown, b: unknown, msg: string) => {
   }
 };
 
+// Build a NotifyOptions with sensible empty defaults, overriding only the
+// fields a test cares about. Keeps the builder tests readable now that
+// NotifyOptions carries execute/open/group/ignoreDnd.
+const opts = (o: Partial<NotifyOptions>): NotifyOptions => ({
+  title: "Notification",
+  subtitle: "",
+  icon: "",
+  sender: "",
+  message: "",
+  execute: "",
+  open: "",
+  group: "",
+  ignoreDnd: false,
+  ...o,
+});
+
 Deno.test("parseArgs: bare message keeps defaults", () => {
   const r = parseArgs(["Build complete"]);
   if (r.kind !== "options") throw new Error("expected options");
@@ -717,6 +820,41 @@ Deno.test("parseArgs: --sender is captured", () => {
   eq(r.options.sender, "com.apple.Terminal", "sender");
 });
 
+Deno.test("parseArgs: --execute / --open / --group captured, defaults empty", () => {
+  const r = parseArgs([
+    "--execute",
+    "df-drift-update",
+    "--open",
+    "https://example.com",
+    "--group",
+    "dotfiles-drift",
+    "click me",
+  ]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.execute, "df-drift-update", "execute");
+  eq(r.options.open, "https://example.com", "open");
+  eq(r.options.group, "dotfiles-drift", "group");
+  eq(r.options.message, "click me", "message");
+
+  const bare = parseArgs(["hi"]);
+  if (bare.kind !== "options") throw new Error("expected options");
+  eq(bare.options.execute, "", "execute defaults empty");
+  eq(bare.options.open, "", "open defaults empty");
+  eq(bare.options.group, "", "group defaults empty");
+});
+
+Deno.test("parseArgs: --ignore-dnd is a boolean flag (no value consumed)", () => {
+  const r = parseArgs(["--ignore-dnd", "--title", "T", "the message"]);
+  if (r.kind !== "options") throw new Error("expected options");
+  eq(r.options.ignoreDnd, true, "ignoreDnd set");
+  eq(r.options.title, "T", "title still parsed after boolean flag");
+  eq(r.options.message, "the message", "message still parsed");
+
+  const off = parseArgs(["hi"]);
+  if (off.kind !== "options") throw new Error("expected options");
+  eq(off.options.ignoreDnd, false, "ignoreDnd defaults false");
+});
+
 Deno.test("parseArgs: -- terminator passes the message through", () => {
   const r = parseArgs(["--title", "t", "--", "--looks-like-a-flag"]);
   if (r.kind !== "options") throw new Error("expected options");
@@ -734,24 +872,21 @@ Deno.test("parseArgs: --help requests help", () => {
 
 Deno.test("terminalNotifierArgs: includes only set options", () => {
   eq(
-    terminalNotifierArgs({
+    terminalNotifierArgs(opts({
       title: "T",
-      subtitle: "",
-      icon: "",
-      sender: "",
       message: "M",
-    }),
+    })),
     ["-message", "M", "-title", "T"],
     "minimal",
   );
   eq(
-    terminalNotifierArgs({
+    terminalNotifierArgs(opts({
       title: "T",
       subtitle: "S",
       icon: "/i.png",
       sender: "com.x",
       message: "M",
-    }),
+    })),
     [
       "-message",
       "M",
@@ -768,26 +903,76 @@ Deno.test("terminalNotifierArgs: includes only set options", () => {
   );
 });
 
+Deno.test("terminalNotifierArgs: group + execute + ignore-dnd (drift shape)", () => {
+  eq(
+    terminalNotifierArgs(opts({
+      title: "dotfiles",
+      subtitle: "3 tools behind",
+      sender: "com.mitchellh.ghostty",
+      message: "mise, deno",
+      group: "dotfiles-drift",
+      execute: "df-drift-update",
+      ignoreDnd: true,
+    })),
+    [
+      "-message",
+      "mise, deno",
+      "-title",
+      "dotfiles",
+      "-subtitle",
+      "3 tools behind",
+      "-sender",
+      "com.mitchellh.ghostty",
+      "-group",
+      "dotfiles-drift",
+      "-execute",
+      "df-drift-update",
+      "-ignoreDnD",
+    ],
+    "drift dispatch argv",
+  );
+});
+
+Deno.test("terminalNotifierArgs: execute wins over open when both set", () => {
+  eq(
+    terminalNotifierArgs(opts({
+      title: "T",
+      message: "M",
+      execute: "do-thing",
+      open: "https://example.com",
+    })),
+    ["-message", "M", "-title", "T", "-execute", "do-thing"],
+    "execute precedes, open dropped",
+  );
+});
+
+Deno.test("terminalNotifierArgs: open used when no execute", () => {
+  eq(
+    terminalNotifierArgs(opts({
+      title: "T",
+      message: "M",
+      open: "https://example.com",
+    })),
+    ["-message", "M", "-title", "T", "-open", "https://example.com"],
+    "open passthrough",
+  );
+});
+
 Deno.test("osascriptScript: appends subtitle only when set", () => {
   eq(
-    osascriptScript({
+    osascriptScript(opts({
       title: "T",
-      subtitle: "",
-      icon: "",
-      sender: "",
       message: "M",
-    }),
+    })),
     `display notification "M" with title "T"`,
     "no subtitle",
   );
   eq(
-    osascriptScript({
+    osascriptScript(opts({
       title: "T",
       subtitle: "S",
-      icon: "",
-      sender: "",
       message: "M",
-    }),
+    })),
     `display notification "M" with title "T" subtitle "S"`,
     "with subtitle",
   );
@@ -795,24 +980,19 @@ Deno.test("osascriptScript: appends subtitle only when set", () => {
 
 Deno.test("notifySendArgs: icon precedes title/message when set", () => {
   eq(
-    notifySendArgs({
+    notifySendArgs(opts({
       title: "T",
-      subtitle: "",
-      icon: "",
-      sender: "",
       message: "M",
-    }),
+    })),
     ["T", "M"],
     "no icon",
   );
   eq(
-    notifySendArgs({
+    notifySendArgs(opts({
       title: "T",
-      subtitle: "",
       icon: "/i.png",
-      sender: "",
       message: "M",
-    }),
+    })),
     ["--icon", "/i.png", "T", "M"],
     "with icon",
   );

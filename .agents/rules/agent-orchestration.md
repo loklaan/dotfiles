@@ -217,7 +217,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | `home/private_dot_local/bin/executable_cw` | Coder dev box CLI: `cw connect` (attach), `cw fleet` (mise fan-out), `cw migrate` (devbox state transfer) |
 | `home/private_dot_local/bin/executable_df-orca-pair` | macOS: discover running Coder boxes hosting `df-orca-server`, pull each `orca://pair` offer, register them as Remote Orca Servers via `orca environment add` (`--dry-run`/`--replace`) |
 | `home/private_dot_local/bin/executable_df-orca-serve` | Linux: headless `orca serve` wrapper the `df-orca-server` Pitchfork daemon launches (resolves AppImage, injects headless Electron flags, emits the `orca://pair` offer) |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines Pitchfork daemons: `df-opencode-serve` on any OS when `openCodeServer`, plus Linux/Coder daemons (`df-orca-server`, `df-code-server`, `df-mcpproxy`) behind their opt-ins |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines Pitchfork daemons: `df-opencode-serve` on any OS when `openCodeServer`, `df-drift-notify` cron daemon on macOS (daily 09:30), plus Linux/Coder daemons (`df-orca-server`, `df-code-server`, `df-mcpproxy`) behind their opt-ins |
 | `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` | Lifecycle: start `df-orca-server` on opt-in, stop on opt-out (Linux) |
 
 ## Operating Runbook
@@ -285,9 +285,9 @@ mise tasks (update / drift:check / drift:notify) dispatch dotfiles-task-* script
   ↓
 cw fleet ssh-fans-out a `mise run <task>` across `coder list -o json` workspaces
   ↓
-LaunchAgent (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/drift.json
+Pitchfork cron (macOS only) runs drift:notify daily; populates ~/.cache/dotfiles/drift.json
   ↓
-Surfaces: df-setup drift block · zsh login one-liner · macOS notification
+Surfaces: df-setup drift block · zsh login one-liner · macOS notification (DND-piercing, clickable)
 ```
 
 ### Coder box convergence: active vs inactive
@@ -316,11 +316,14 @@ Both opt-in tools that run on Coder boxes are installed by mise as a normal `[to
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.101`
 - **orca**: `http:orca` — pinned to `1.4.114`, downloads `orca-linux.AppImage` from GitHub releases
 
-Additionally, **pitchfork** itself is always installed on macOS and Linux (`github:jdx/pitchfork`). It manages `opencode serve` on any machine with `openCodeServer = true`, and manages the Coder/Linux daemon set (`mcpproxy`, `code-server`, `orca-server`) behind their opt-ins.
+Additionally, **pitchfork** itself is always installed on macOS and Linux (`github:jdx/pitchfork`, pinned to `2.19.0`). It manages `opencode serve` on any machine with `openCodeServer = true`, the Coder/Linux daemon set (`mcpproxy`, `code-server`, `orca-server`) behind their opt-ins, and — on macOS — the daily **drift notifier** via its cron scheduler (see below).
 
-macOS still intentionally has two non-Pitchfork service surfaces:
+> **Pitchfork version is load-bearing for cron.** The drift notifier relies on Pitchfork's `cron` daemon field, which is only actually implemented in **>= 2.19.0**. Earlier releases (e.g. 2.14.0) accept the `cron` key in config and expose it in the JSON schema, but the binary silently ignores it — a cron daemon runs once at supervisor boot and then stops, never on schedule. Do NOT downgrade the pin below 2.19.0 without moving the drift notifier back to launchd.
+
+macOS still intentionally has one non-Pitchfork service surface:
 - **MCPProxy.app** is a GUI app/cask, not the `mcpproxy-go` CLI daemon.
-- **dotfiles drift notifier** remains a launchd calendar trigger because Pitchfork manages long-running daemons, not once-per-day scheduling.
+
+The dotfiles **drift notifier** was formerly a launchd calendar agent (`io.lochlan.dotfiles.drift`). It now runs as the `df-drift-notify` Pitchfork cron daemon (`cron = "0 30 9 * * *"`, daily 09:30) — Pitchfork's cron uses a **6-field** expression (second minute hour day month weekday), NOT standard 5-field crontab, so the leading `0` is required. This unifies the macOS service surface with the Linux daemons, at the cost of the Pitchfork supervisor now running on macBooks at all times (`pitchfork boot enable`), where it previously only ran when `openCodeServer` was set.
 
 To bump either: edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` (within the `{{ if and (eq .chezmoi.os "linux") .X -}}` conditional block), commit, and `cw fleet --include-local update` to converge the fleet.
 
@@ -352,7 +355,15 @@ cw fleet --include-local update
 
 ### Drift detection scope (macOS only)
 
-The launchd agent `io.lochlan.dotfiles.drift` runs `mise run drift:notify` once per 24h. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `df-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
+The `df-drift-notify` Pitchfork cron daemon runs `mise run drift:notify` daily at 09:30. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `df-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
+
+**Notification delivery (the load-bearing bit).** The daily banner is dispatched by `df-drift`'s `notify` path through the `notify` tool (terminal-notifier under the hood) with four flags that turn it from an invisible no-op into a usable alert:
+- `--ignore-dnd` — deliver even during a Focus/Do Not Disturb *schedule*. This is the actual fix for "the notification never appeared": it fired daily but a scheduled DND blanket-suppressed the low-trust CLI sender, silently routing it to Notification Center with no banner. The launchd→cron switch alone does NOT fix visibility — this flag does.
+- `--sender com.mitchellh.ghostty` — borrow Ghostty's identity for a real icon + trusted sender.
+- `--group dotfiles-drift` — coalesce, so the daily nag replaces the prior banner instead of stacking.
+- `--execute df-drift-update` — click action. `df-drift-update` opens a Ghostty window running the fleet update, so the user converges without touching a terminal.
+
+Because `--execute` keeps terminal-notifier alive until clicked, dispatch is **detached** end-to-end: `notify` spawns terminal-notifier with `unref()`, and `df-drift` spawns `notify` with null stdio (NOT the shared `run()` helper, which captures stdout and would block on the pipe the detached grandchild inherits — a real hang, verified). Neither the daily cron job nor an interactive run blocks waiting for a click. Caveat inherited from launchd: a fire while the mac is asleep is missed, not queued.
 
 The drift report aggregates three sources, each emitting JSON to stdout:
 - **`mise outdated --json`** — every tool mise tracks (latest pins + explicit github/npm pins)

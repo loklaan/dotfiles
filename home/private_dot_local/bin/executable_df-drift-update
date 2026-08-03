@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+#/ Usage:
+#/   df-drift-update
+#/
+#/ Description:
+#/   The click action behind the daily "dotfiles — N tools behind" drift
+#/   notification. Opens a VISIBLE Ghostty window and runs the fleet update
+#/   inside it, so the user watches convergence happen without touching a
+#/   terminal themselves.
+#/
+#/   Invoked by `terminal-notifier -execute` (wired in df-drift's `notify`
+#/   path). That invocation is DETACHED and runs with a MINIMAL environment
+#/   and NO controlling terminal, so this script must not assume a rich PATH
+#/   and must not try to print to a terminal it does not have — it hands the
+#/   actual work to a fresh Ghostty window via `open -na Ghostty --args -e`.
+#/
+#/   Runs `mise run update` (this machine) by default. Pass --fleet to run
+#/   `cw fleet --include-local update` across every running Coder box too.
+#/
+#/ Options:
+#/   --fleet   Update the whole fleet (local + running Coder boxes), not just
+#/             this machine.
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+# The click-time environment is minimal (launched by terminal-notifier, not a
+# login shell), so PATH may lack ~/.local/bin and the mise shims. Prepend the
+# real locations of the tools this action needs; keep the inherited PATH as a
+# fallback tail.
+export PATH="${HOME}/.local/bin:${HOME}/.local/share/mise/shims:/opt/homebrew/bin:/usr/bin:/bin:${PATH:-}"
+
+main() {
+  local fleet=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --fleet) fleet=1; shift ;;
+      --help) usage; exit 0 ;;
+      *) shift ;;
+    esac
+  done
+
+  # The command the Ghostty window runs. A login shell (`zsh -lic`) so the
+  # user's full environment (mise activation, aliases, PATH) is present exactly
+  # as an interactive session would have it — the click action itself runs in a
+  # bare env, but the work should run in the real one. `read` at the end holds
+  # the window open so the user can see the result instead of it vanishing.
+  local inner
+  if [ "$fleet" -eq 1 ]; then
+    inner='cw fleet --include-local update'
+  else
+    inner='mise run update'
+  fi
+
+  local script="echo '▶ dotfiles drift update'; ${inner}; status=\$?; echo; if [ \$status -eq 0 ]; then echo '✓ update complete — press Return to close'; else echo \"✗ update exited \$status — press Return to close\"; fi; read -r"
+
+  # Open a NEW Ghostty window (-n) running the update. -e passes the command;
+  # we wrap it in a login shell so mise/PATH/aliases are live. Ghostty's own
+  # process is what stays attached to the window — this script returns as soon
+  # as `open` hands off, which is what the detached click action wants.
+  open -na Ghostty --args -e zsh -lic "$script"
+}
+
+main "$@"

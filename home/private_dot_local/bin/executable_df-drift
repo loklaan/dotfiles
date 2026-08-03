@@ -110,7 +110,44 @@ const MODELS_DEV_URL = "https://models.dev/api.json";
 const MODELS_DEV_TTL_SECONDS = 86400; // 24h
 const DEBOUNCE_SECONDS = 86400; // 24h
 
+// Notification delivery knobs (macOS `drift notify`). See runNotify for why
+// each flag is load-bearing.
+//   - GHOSTTY_BUNDLE_ID: borrowed --sender identity (real icon + trusted sender).
+//   - NOTIFY_GROUP_ID:   --group coalescing id (daily nag replaces, not stacks).
+//   - UPDATE_COMMAND:    --execute click action; the self-managing updater that
+//                        opens a terminal and runs the fleet update. Resolved by
+//                        name off PATH by terminal-notifier at click time.
+const GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty";
+const NOTIFY_GROUP_ID = "dotfiles-drift";
+const UPDATE_COMMAND = "df-drift-update";
+
 const isMacOS = () => Deno.build.os === "darwin";
+
+// Fire `notify` and return WITHOUT waiting. Why not the shared `run()`: run()
+// captures stdout via a pipe and blocks until that pipe CLOSES. `notify` with
+// --execute spawns terminal-notifier detached, and that grandchild INHERITS the
+// stdout pipe, holding it open until the banner is clicked — so run() would
+// hang for as long as the notification sits unclicked (verified: it blocked
+// indefinitely). Spawning with null stdio hands the child no pipe to inherit,
+// unref() lets df-drift exit while the banner lives on. spawn failure is
+// swallowed (missing binary) — the daily job must never hang or crash on the
+// notification step. Returns after the OS accepts the spawn.
+const spawnNotifyDetached = (
+  args: readonly string[],
+): Effect.Effect<void, never> =>
+  Effect.sync(() => {
+    try {
+      const child = new Deno.Command("notify", {
+        args: [...args],
+        stdout: "null",
+        stderr: "null",
+        stdin: "null",
+      }).spawn();
+      child.unref();
+    } catch {
+      // binary missing / spawn denied — soft-fail, matching run()'s contract.
+    }
+  });
 
 // ===========================================================================
 // Small process/fs helpers now live in ~/.local/lib/df-cache.ts (imported
@@ -638,15 +675,49 @@ const runNotify = (force: boolean) =>
 
     const names = tools.map((t) => t.name).join(", ").slice(0, 120);
     const plural = count !== 1 ? "s" : "";
-    const subtitle = `${count} tool${plural} behind`;
+    const subtitle = `${count} tool${plural} behind — click to update`;
 
-    const args = ["--title", "dotfiles", "--subtitle", subtitle];
+    // The banner is delivered by `notify` (terminal-notifier under the hood).
+    // Four flags turn it from an invisible no-op into a clickable, DND-piercing
+    // alert:
+    //   --ignore-dnd  Deliver even during the default Focus/DND schedule, which
+    //                 otherwise blanket-suppresses low-trust CLI senders. This
+    //                 is THE reason the notification was never seen: it fired
+    //                 daily but macOS silently dropped it under a scheduled DND.
+    //   --sender      Borrow Ghostty's identity so the banner shows a real app
+    //                 icon and a trusted sender (bundle id below), rather than
+    //                 terminal-notifier's default identity.
+    //   --group       Coalesce: a new daily nag replaces the previous banner
+    //                 instead of stacking one per day.
+    //   --execute     Click action. Runs the self-managing updater, which opens
+    //                 a terminal and runs the fleet update — no keyboard needed.
+    //                 Because that keeps terminal-notifier alive until clicked,
+    //                 the dispatch is DETACHED (spawnNotifyDetached) — df-drift
+    //                 must not block waiting for a click on a scheduled run.
+    const args = [
+      "--title",
+      "dotfiles",
+      "--subtitle",
+      subtitle,
+      "--ignore-dnd",
+      "--sender",
+      GHOSTTY_BUNDLE_ID,
+      "--group",
+      NOTIFY_GROUP_ID,
+      "--execute",
+      UPDATE_COMMAND,
+    ];
     if (yield* fileExists(iconPath())) {
       args.push("--icon", iconPath());
     }
     args.push(names);
 
-    yield* run("notify", args);
+    // Detached: fire the banner and return. The marker is written optimistically
+    // (dispatch attempted) — with a fire-and-forget spawn we cannot observe the
+    // notifier's exit, and re-nagging on the next run if this one silently failed
+    // is worse than honouring the 24h debounce. `notify`'s own guard + the
+    // hasCommand check above cover the "notifier missing" case.
+    yield* spawnNotifyDetached(args);
     yield* ensureDir(cacheDir());
     yield* touchFile(markerFile());
   });
