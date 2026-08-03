@@ -330,13 +330,48 @@ const parsePin = (s: string): { provider: string; id: string } | null => {
   return { provider: m[1], id: m[2] };
 };
 
+interface Modalities {
+  readonly input?: ReadonlyArray<string>;
+  readonly output?: ReadonlyArray<string>;
+}
+
 interface ModelEntry {
   readonly family?: string;
   readonly release_date?: string;
+  readonly modalities?: Modalities;
 }
 
+// models.dev `family` is coarse: OpenAI files text, audio and realtime models
+// alike under family "gpt", so family+release_date alone offers
+// gpt-realtime-2.1 (audio, 2026-07-06) as the successor to gpt-5.5
+// (text/pdf, 2026-04-23) — a different model class, not an upgrade.
+//
+// A successor must therefore be a DROP-IN REPLACEMENT for the pin: it may ADD
+// input capabilities, but never DROP one the pin has, and its output contract
+// must match exactly (gaining audio output breaks a text-consuming harness).
+//
+// Modalities missing on either side is not evidence of incompatibility, so the
+// check abstains and leaves the family+region+date verdict standing.
+const isDropInReplacement = (pin: ModelEntry, cand: ModelEntry): boolean => {
+  const pinIn = pin.modalities?.input;
+  const candIn = cand.modalities?.input;
+  if (pinIn !== undefined && candIn !== undefined) {
+    if (!pinIn.every((m) => candIn.includes(m))) return false;
+  }
+
+  const pinOut = pin.modalities?.output;
+  const candOut = cand.modalities?.output;
+  if (pinOut !== undefined && candOut !== undefined) {
+    if (pinOut.length !== candOut.length) return false;
+    if (!pinOut.every((m) => candOut.includes(m))) return false;
+  }
+
+  return true;
+};
+
 // Find the newest model in the same provider sharing `family` AND region
-// prefix, released strictly after the pinned model. Returns its id or null.
+// prefix, released strictly after the pinned model, that is also a drop-in
+// replacement for it. Returns its id or null.
 const newerSameFamily = (
   modelsDb: unknown,
   provider: string,
@@ -361,7 +396,8 @@ const newerSameFamily = (
     .filter(([key, value]) =>
       value.family === fam &&
       (value.release_date ?? "1970-01-01") > myDate &&
-      regionPrefix(key) === myRegion
+      regionPrefix(key) === myRegion &&
+      isDropInReplacement(me, value)
     )
     .sort((a, b) =>
       (a[1].release_date ?? "1970-01-01").localeCompare(
@@ -803,6 +839,64 @@ if (!import.meta.main) {
     if (newerSameFamily(db, "absent", "x") !== null) {
       throw new Error("unknown provider — expected null");
     }
+  });
+
+  Deno.test("newerSameFamily rejects a different model class in a coarse family", () => {
+    // Real models.dev shapes: OpenAI files both under family "gpt", and the
+    // realtime model is NEWER, so family+date alone would offer it as the
+    // successor to gpt-5.5. It drops pdf input and adds audio output.
+    const db = {
+      openai: {
+        models: {
+          "gpt-5.5": {
+            family: "gpt",
+            release_date: "2026-04-23",
+            modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+          },
+          "gpt-realtime-2.1": {
+            family: "gpt",
+            release_date: "2026-07-06",
+            modalities: {
+              input: ["text", "audio", "image"],
+              output: ["text", "audio"],
+            },
+          },
+        },
+      },
+    };
+    if (newerSameFamily(db, "openai", "gpt-5.5") !== null) {
+      throw new Error("realtime model is not a successor to gpt-5.5");
+    }
+  });
+
+  Deno.test("newerSameFamily still allows a successor that ADDS input modalities", () => {
+    // gpt-5.2 -> gpt-5.4 gained pdf input; output contract unchanged.
+    const db = {
+      openai: {
+        models: {
+          "gpt-5.2": {
+            family: "gpt",
+            release_date: "2025-12-11",
+            modalities: { input: ["text", "image"], output: ["text"] },
+          },
+          "gpt-5.4": {
+            family: "gpt",
+            release_date: "2026-03-05",
+            modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+          },
+        },
+      },
+    };
+    assertEq(newerSameFamily(db, "openai", "gpt-5.2"), "gpt-5.4");
+  });
+
+  Deno.test("isDropInReplacement abstains when modalities are unknown", () => {
+    // Absent modalities are not evidence of incompatibility.
+    assertEq(isDropInReplacement({}, {}), true);
+    assertEq(
+      isDropInReplacement({ modalities: { input: ["text"] } }, {}),
+      true,
+    );
   });
 
   Deno.test("extractCaskVersion reads casks[0].version", () => {
