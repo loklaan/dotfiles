@@ -31,9 +31,9 @@ See [references/using-jira.md](references/using-jira.md) for the full reference.
 
 ### Tap Me Out — Outcome Notes on Close
 
-Every ticket gets a short outcome note when marked done — the record of what the work actually produced, distinct from acceptance criteria. Link PRs where they exist; everything else gets a ≤10-word summary plus a link. Grill the human on the qualitative residue automation misses. Kept in a standard, visible field so custom tooling never loses it.
+Every ticket gets a short outcome note when marked done — the record of what the work actually produced, distinct from acceptance criteria. The list of what was done sits under a heading spelling out exactly `Engineering actions taken` (verbatim — automated Jira flows key off that string). Link PRs where they exist; everything else gets a ≤10-word summary plus a link. Grill the human on the qualitative residue automation misses. Kept in a standard, visible field so custom tooling never loses it.
 
-See [references/tap-me-out.md](references/tap-me-out.md) for the convention, the outcome-vs-acceptance-criteria distinction, the qualitative-interrogation prompts, and enforcement.
+See [references/tap-me-out.md](references/tap-me-out.md) for the required heading, the convention, the outcome-vs-acceptance-criteria distinction, the qualitative-interrogation prompts, and enforcement.
 
 ### Split — Breaking Up Long-Running Tickets
 

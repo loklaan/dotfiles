@@ -3,10 +3,28 @@
 When a ticket is marked **done**, add an outcome note before it closes: the
 durable record of what the work *produced*. Not acceptance criteria (those are
 the author's *should*, written at creation, future tense) — this is the closer's
-*did*, written at close, past tense. Keep the two visually distinct; if there's
-no dedicated field, prefix `OUTCOME:` so it doesn't read as late-added scope.
+*did*, written at close, past tense. Keep the two visually distinct — the
+mandatory `Engineering actions taken` heading below does that work, so the note
+never reads as late-added scope.
+
+## Required heading
+
+The list of what was done **MUST** be preceded by a heading spelling out
+exactly:
+
+```
+Engineering actions taken
+```
+
+Verbatim — that exact wording, that capitalisation, no trailing punctuation, no
+synonyms ("Work done", "What shipped", "Actions taken" are all wrong).
+Automated Jira flows key off this string to find the outcome list; any drift and
+they silently skip the note. Never reword it, even when the ticket isn't
+engineering-flavoured.
 
 ## What goes in
+
+Under that heading, one item per line:
 
 - **PR links whenever they exist** — link the merged PR(s), don't retype the
   diff. One line of context only if the title doesn't carry it ("behind
@@ -14,6 +32,8 @@ no dedicated field, prefix `OUTCOME:` so it doesn't read as late-added scope.
 - **Everything else** — a **≤10-word summary + link** to the real artefact. Ten
   words forces the *result*, not the *process*:
   ```
+  Engineering actions taken
+
   CMS permissions updated (Slack thread)
   HLDD written (doc)
   Investigation inconclusive — needs follow-up ticket (link)
@@ -45,6 +65,6 @@ matters. Optimise for *nobody misses this*, not schema tidiness.
 
 ## Enforcement
 
-Add "outcome note present" to the Definition of Done first. Once the team's
-bought in, a rule that flags/reopens a ticket moved to Done without one makes it
-self-sustaining.
+Add "outcome note present, under an `Engineering actions taken` heading" to the
+Definition of Done first. Once the team's bought in, a rule that flags/reopens a
+ticket moved to Done without one makes it self-sustaining.
