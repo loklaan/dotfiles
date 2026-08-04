@@ -44,17 +44,6 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 # Resolve interactive vs non-interactive mode. Non-interactive adds
 # `--force --no-tty` so unattended runs converge instead of trying to
 # prompt. See header comment for the override knob.
@@ -71,7 +60,7 @@ resolve_mode_flags() {
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   if ! command -v chezmoi >/dev/null 2>&1; then
     fatal "chezmoi not on PATH"

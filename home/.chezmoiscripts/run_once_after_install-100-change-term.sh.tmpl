@@ -35,23 +35,23 @@ set_login_shell() {
 
   if [ -n "$sudo_prefix" ] || [ "$(id -u)" = "0" ]; then
     if command -v usermod >/dev/null 2>&1; then
-      info "╍ Running 'usermod' to change login shell to: ${shell}"
+      log_detail "Running 'usermod' to change login shell to: ${shell}"
       $sudo_prefix usermod -s "$shell" "$user"
     elif command -v dscl >/dev/null 2>&1; then
-      info "╍ Running 'dscl' to change login shell to: ${shell}"
+      log_detail "Running 'dscl' to change login shell to: ${shell}"
       $sudo_prefix dscl . -create /Users/"$user" UserShell "$shell"
     else
-      info "╍ Running 'chsh' to change login shell to: ${shell}"
+      log_detail "Running 'chsh' to change login shell to: ${shell}"
       $sudo_prefix chsh -s "$shell" "$user"
     fi
   else
-    info "╍ Running 'chsh' to change login shell to: ${shell}"
+    log_detail "Running 'chsh' to change login shell to: ${shell}"
     chsh -s "$shell"
   fi
 }
 
 main() {
-  info "▶ Setting the user shell to zsh"
+  log_step "Setting the user shell to zsh"
 
   zsh_shell="$(command -v zsh)"
 
@@ -63,12 +63,12 @@ main() {
   target_user="${SUDO_USER:-${LOGNAME:-${USER:-$(whoami)}}}"
 
   current_login_shell="$(get_login_shell "$target_user")"
-  info "╍  Target user      = ${target_user}"
-  info "╍  Current login    = ${current_login_shell:-unknown}"
-  info "╍  Desired shell    = ${zsh_shell}"
+  log_detail " Target user      = ${target_user}"
+  log_detail " Current login    = ${current_login_shell:-unknown}"
+  log_detail " Desired shell    = ${zsh_shell}"
 
   if [ "$current_login_shell" = "$zsh_shell" ]; then
-    info "╍ Login shell already set to zsh"
+    log_detail "Login shell already set to zsh"
     return
   fi
 
@@ -78,30 +78,30 @@ main() {
 
   # In Coder devbox, skip /etc/shells and sudo
   if [[ -n "${CODER:-}" ]]; then
-    info "╍ Coder detected, skipping /etc/shells modification"
-    info "╍ Running 'chsh' to change shell to: ${zsh_shell}"
+    log_detail "Coder detected, skipping /etc/shells modification"
+    log_detail "Running 'chsh' to change shell to: ${zsh_shell}"
     chsh -s "$zsh_shell"
-    info "╍ Now, run 'zsh' to start a new term session"
+    log_detail "Now, run 'zsh' to start a new term session"
     return
   fi
 
   if [ "$(id -u)" = "0" ]; then
     Sudo=''
-    info "╍ Root user detected, skipping sudo for following commands"
+    log_detail "Root user detected, skipping sudo for following commands"
   elif which sudo >/dev/null 2>&1; then
     Sudo='sudo'
-    info "╍ Sudo detected, using it for following commands"
+    log_detail "Sudo detected, using it for following commands"
   else
     Sudo=''
-    warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
+    log_warn "Cannot find 'sudo' so will attempt to run following commands without it"
   fi
 
   # Check if the zsh_shell exists in /etc/shells, if not just append it in
   if ! grep -q "^${zsh_shell}$" /etc/shells; then
-    info "╍ Adding ${zsh_shell} to /etc/shells"
+    log_detail "Adding ${zsh_shell} to /etc/shells"
     echo "$zsh_shell" | $Sudo tee -a /etc/shells >/dev/null
   else
-    info "╍ ${zsh_shell} exists in /etc/shells"
+    log_detail "${zsh_shell} exists in /etc/shells"
   fi
 
   # Change the default shell to zsh.
@@ -112,7 +112,7 @@ main() {
   # privileges.
   set_login_shell "$zsh_shell" "$target_user" "$Sudo"
 
-  info "╍ Shell change complete. Log out and log back in for changes to take effect."
+  log_detail "Shell change complete. Log out and log back in for changes to take effect."
 }
 
 main "$@"

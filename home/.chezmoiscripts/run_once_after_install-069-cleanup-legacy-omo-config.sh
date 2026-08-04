@@ -33,14 +33,14 @@ main() {
   local legacy="${HOME}/.config/opencode/oh-my-openagent.json"
   if [ -f "$legacy" ]; then
     rm -f "$legacy" "${legacy}.migrations.json"
-    info "╍ Removed legacy OMO config: ${legacy}"
+    log_detail "Removed legacy OMO config: ${legacy}"
   fi
 
   local backup
   for backup in "${HOME}/.omo/"migration-backup-*-opencode-config; do
     [ -e "$backup" ] || continue
     rm -rf "$backup"
-    info "╍ Removed OMO migration backup: ${backup}"
+    log_detail "Removed OMO migration backup: ${backup}"
   done
 }
 

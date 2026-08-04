@@ -37,22 +37,22 @@ done
 
 main() {
   if [ -z "${CODER:-}" ]; then
-    info "▶ not a Coder box (\$CODER unset) — skipping aws-region prewarm"
+    log_step "not a Coder box (\$CODER unset) — skipping aws-region prewarm"
     return 0
   fi
 
   if ! command -v df-prewarm >/dev/null 2>&1; then
-    warning "╍ df-prewarm not on PATH — skipping aws-region prewarm"
+    log_warn "df-prewarm not on PATH — skipping aws-region prewarm"
     return 0
   fi
 
-  info "▶ prewarming AWS region from IMDS"
+  log_step "prewarming AWS region from IMDS"
   # df-prewarm soft-fails: on IMDS failure it leaves aws_region unset and
   # env.zsh keeps its fallback. Never fail the apply over a region probe.
   if df-prewarm aws-region; then
-    info "╍ aws-region prewarm complete"
+    log_detail "aws-region prewarm complete"
   else
-    warning "╍ aws-region prewarm returned non-zero (continuing)"
+    log_warn "aws-region prewarm returned non-zero (continuing)"
   fi
 }
 

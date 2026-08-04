@@ -3,7 +3,14 @@ set -euo pipefail
 
 IFS=$'\n\t'
 
-source "${HOME}/.local/lib/bash-logging.sh"
+# run_before scripts execute BEFORE chezmoi materialises any target, so
+# ~/.local/lib holds the PREVIOUS apply's libs. Sourcing the installed copy
+# means a script here can only use lib API that already shipped to every
+# machine — and calling a newly added helper aborts the apply with exit 127
+# (verified: log_step not found). Source from the chezmoi source tree instead,
+# which is always the current version. bash-logging.sh is not a template, so
+# the source file and the target are byte-identical.
+source "{{ .chezmoi.sourceDir }}/private_dot_local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
@@ -34,12 +41,12 @@ reset_skill_name() {
 
   if grep -q "^name: ${patched_name}$" "$skill_md" 2>/dev/null; then
     perl -i -pe "s/^name: \Q${patched_name}\E\$/name: ${original_name}/" "$skill_md"
-    info "╍ Reset: ${patched_name} → ${original_name}"
+    log_detail "Reset: ${patched_name} → ${original_name}"
   fi
 }
 
 main() {
-  info "▶ Resetting external skill names"
+  log_step "Resetting external skill names"
   for entry in "${PATCHES[@]}"; do
     IFS='|' read -r dir patched original <<< "$entry"
     reset_skill_name "$dir" "$patched" "$original"

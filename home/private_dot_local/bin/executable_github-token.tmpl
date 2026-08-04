@@ -28,25 +28,8 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
-
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
 {{ if eq .machineProfile "work" }}
   local token

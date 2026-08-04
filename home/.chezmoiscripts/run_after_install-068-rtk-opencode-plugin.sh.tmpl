@@ -22,21 +22,23 @@ main() {
   # by mise's postinstall hook (which doesn't inherit the shell's mise env).
   eval "$(mise activate bash --quiet 2>/dev/null)" || true
 
+  log_step "rtk plugin for OpenCode"
+
   if ! command -v rtk >/dev/null 2>&1; then
-    info "╍ rtk not on PATH — skipping opencode plugin sync"
+    log_detail "Skipping — rtk is not on PATH"
     return 0
   fi
-
-  info "▶ rtk opencode plugin sync"
 
   # Ensure the plugins directory exists (rtk init creates it, but being
   # explicit avoids a race with other scripts that might touch the path).
   mkdir -p "${HOME}/.config/opencode/plugins"
 
+  local plugin="${HOME}/.config/opencode/plugins/rtk.ts"
   if rtk init -g --opencode --no-patch </dev/null >/dev/null 2>&1; then
-    info "╍ rtk opencode plugin converged"
+    log_detail "Plugin up to date: ${plugin}"
   else
-    warning "╍ rtk init -g --opencode --no-patch failed (non-fatal — plugin may be stale)"
+    log_warn "Could not update the plugin — 'rtk init -g --opencode' failed"
+    log_warn_cont "${plugin} may be stale (non-fatal)"
   fi
 }
 

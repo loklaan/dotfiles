@@ -1,21 +1,48 @@
 #!/usr/bin/env bash
 
 #|----------------------------------------------------------------------------|
-#| Shared Bash Logging Library                                               |
+#| Shared Bash Logging Library                                                |
 #|                                                                            |
-#| Provides colored logging functions and session log file redirection       |
-#| for chezmoi-managed scripts.                                               |
+#| Message shapes, level colouring, and session log file redirection for      |
+#| chezmoi-managed scripts. Colour primitives live in term-colour.sh.         |
 #|                                                                            |
 #| Usage:                                                                     |
 #|   source "${HOME}/.local/lib/bash-logging.sh"                             |
 #|   setup_session_logging "$(basename "$0")"                                |
-#|   info "Your message"                                                      |
+#|   bl_parse_help "$@"                                                       |
+#|   log_step "What this script is doing"                                     |
+#|   log_detail "What it just did"                                            |
+#|                                                                            |
+#| MESSAGE SHAPES — prefer these over hand-writing glyphs into info/warning.  |
+#|   log_step    "▶ msg"    the script's scope; one per script, printed first  |
+#|   log_detail  "╍ msg"    one outcome the script produced                    |
+#|   log_warn    "╍ msg"    one problem, at warning level                      |
+#|   log_cont    "  msg"    continuation of the line above (no glyph)          |
+#|   log_ok      "  ✓ msg"  summary block: did it                             |
+#|   log_skip    "  ⊘ msg"  summary block: skipped / unchanged                 |
+#|   log_fail    "  ✗ msg"  summary block: failed (warning level)              |
+#|   log_note    "  → msg"  summary block: where to look / what is next        |
+#|                                                                            |
+#| CONVENTIONS the shapes exist to enforce:                                    |
+#|   - Every message starts with a capital letter and leads with a verb        |
+#|     describing the outcome ("Started X", "Cleared Y"), never a bare         |
+#|     lowercase tool name.                                                    |
+#|   - Steady state prints nothing. Only transitions and problems get a line.  |
+#|   - One line per outcome. Do not log an action and then log a confirmation  |
+#|     of that same action; verify silently and warn only on failure.          |
 #|                                                                            |
 #| Logging behavior:                                                          |
 #|   - Via chezmoi (marker at ~/.cache/dotfiles/chezmoi-session-current):    |
 #|     uses session log shared across all chezmoi scripts                    |
-#|     log shared across all chezmoi scripts                                  |
 #|   - Standalone: creates /tmp/<script>.<timestamp>.log                     |
+#|   - The terminal gets colour; the log file gets the same text with ANSI    |
+#|     escapes stripped, so session logs stay greppable.                      |
+#|                                                                            |
+#| run_before_install SCRIPTS: they run before chezmoi materialises targets,   |
+#|   so ~/.local/lib is the PREVIOUS apply's copy and a newly added helper     |
+#|   here would abort their apply with exit 127. They must source this file    |
+#|   from {{ .chezmoi.sourceDir }} instead. See                                |
+#|   run_before_install-060-reset-external-skills.sh.tmpl.                     |
 #|                                                                            |
 #| Environment Variables:                                                     |
 #|   DEBUG=1              Enable command tracing (set -x) in logs            |
@@ -23,58 +50,72 @@
 #|                                                                            |
 #|----------------------------------------------------------------------------|
 
-color_printf() {
-  case "$1" in
-    black) color="30" ;;
-    red) color="31" ;;
-    green) color="32" ;;
-    yellow) color="33" ;;
-    blue) color="34" ;;
-    magenta) color="35" ;;
-    cyan) color="36" ;;
-    white) color="37" ;;
-    *) echo "Unknown color: $1" >&2; return 1 ;;
-  esac
-
-  shift
-  while [ "$#" -gt 1 ]; do
-    case "$1" in
-      bold) color="${color};1" ;;
-      italic) color="${color};3" ;;
-      underline) color="${color};4" ;;
-      dim) color="${color};2" ;;
-      *) echo "Unknown option: $1" >&2; return 1 ;;
-    esac
-    shift
-  done
-
-  supported_colors=$(tput colors 2>/dev/null || echo 0)
-  if [ -n "$supported_colors" ] && [ "$supported_colors" -gt 8 ]; then
-    printf "\\033[${color}m%b\\033[0m" "$1"
+# Colour primitives. Guarded so double-sourcing is free. `command -v` rather
+# than the bash-only `declare -f`, so the guard survives a zsh caller.
+#
+# The existence check is load-bearing, NOT defensive noise: run_before_install
+# scripts source this file BEFORE chezmoi has materialised any target, so on a
+# fresh machine term-colour.sh may not be on disk yet. `source` of a missing
+# file under `set -euo pipefail` would abort the whole apply, so fall back to
+# plain text instead of taking a hard dependency.
+if ! command -v color_printf >/dev/null 2>&1; then
+  if [ -r "${HOME}/.local/lib/term-colour.sh" ]; then
+    # shellcheck source=./term-colour.sh
+    source "${HOME}/.local/lib/term-colour.sh"
   else
-    printf "%b" "$1"
+    color_printf() { [ "$#" -gt 1 ] && shift $(( $# - 1 )); printf "%b" "${1:-}"; }
+    color_print() { color_printf "$@"; printf "\n"; }
   fi
+fi
+
+# --- Levels -----------------------------------------------------------------
+# Everything goes to stderr so a script's stdout stays usable for real output.
+info() { color_print cyan "info $*" >&2 ; }
+warning() { color_print yellow "warning $*" >&2 ; }
+error() { color_print red "error $*" >&2 ; }
+fatal() { color_print red bold "fatal $*" >&2 ; exit 1 ; }
+
+# --- Message shapes ---------------------------------------------------------
+# Namespaced because bash-logging.sh is sourced by ~30 scripts; short generic
+# names (step, ok, note, fail) would be too easy to collide with.
+log_step() { info "▶ $*" ; }
+log_detail() { info "╍ $*" ; }
+log_warn() { warning "╍ $*" ; }
+log_warn_step() { warning "▶ $*" ; }
+log_cont() { info "  $*" ; }
+log_warn_cont() { warning "  $*" ; }
+log_ok() { info "  ✓ $*" ; }
+log_skip() { info "  ⊘ $*" ; }
+log_fail() { warning "  ✗ $*" ; }
+log_note() { info "  → $*" ; }
+
+# --- Argument parsing -------------------------------------------------------
+# Default usage: the `#/` comment block at the top of the calling script.
+bl_usage() { grep '^#/' "$0" | cut -c4-; }
+
+# Handle the --help/unknown-argument boilerplate that every script repeated.
+# Uses the script's own usage() when it defines one, else the `#/` block.
+bl_parse_help() {
+  local show_usage="bl_usage"
+  if declare -f usage >/dev/null 2>&1; then
+    show_usage="usage"
+  fi
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help)
+        "$show_usage"
+        exit 0
+        ;;
+      *)
+        "$show_usage"
+        fatal "Unknown argument: $1"
+        ;;
+    esac
+  done
 }
 
-_printf() {
-  color_printf "$@"
-}
-
-_print() {
-  color_printf "$@"
-  printf "\n"
-}
-
-# Logging functions just output - redirection handles file logging
-info() { _print cyan "info $*" >&2 ; }
-warning() { _print yellow "warning $*" >&2 ; }
-error() { _print red "error $*" >&2 ; }
-fatal() { _print red bold "fatal $*" >&2 ; exit 1 ; }
-infof() { color_printf cyan "info $*" >&2 ; }
-warningf() { color_printf yellow "warning $*" >&2 ; }
-errorf() { color_printf red "error $*" >&2 ; }
-fatalf() { color_printf red bold "fatal $*" >&2 ; exit 1 ; }
-
+# --- Command running --------------------------------------------------------
 # Run a command quietly, showing output only on failure.
 # On success, output is appended to the session log (if active) but hidden from terminal.
 # On failure, all captured stdout and stderr is shown on stderr.
@@ -92,6 +133,12 @@ run_quiet() {
   rm -f "$output"
   return "$rc"
 }
+
+# --- Session logging --------------------------------------------------------
+# Strip ANSI colour so the log file is greppable. fflush() on every line means
+# nothing is lost if the script exits before the subshell would have flushed —
+# bash does not wait for process substitutions.
+bl_strip_ansi() { awk '{ gsub(/\033\[[0-9;]*m/, ""); print; fflush() }'; }
 
 _read_session_marker() {
   local marker_file="$1"
@@ -153,7 +200,7 @@ setup_session_logging() {
   tmp_marker_file="${tmpdir}/.chezmoi-session-current"
 
   # Print startup message
-  _print magenta dim "Script: $script_name" >&2
+  color_print magenta dim "Script: $script_name" >&2
 
   if [ "${BASH_LOGGING_ACTIVE:-0}" = "1" ] && [ -n "${BASH_LOGGING_FILE:-}" ]; then
     session_log="$BASH_LOGGING_FILE"
@@ -207,8 +254,8 @@ setup_session_logging() {
   echo "" >> "$session_log"
   echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
 
-  # Redirect all output to both terminal and session log
-  exec > >(tee -a "$session_log")
+  # Terminal keeps colour; the log copy has escapes stripped.
+  exec > >(tee >(bl_strip_ansi >> "$session_log"))
   exec 2>&1
 
   # Enable debug tracing if requested
@@ -220,10 +267,4 @@ setup_session_logging() {
   # Store log path for reference
   export BASH_LOGGING_FILE="$session_log"
   export BASH_LOGGING_ACTIVE=1
-}
-
-print_log_path() {
-  if [ -n "${BASH_LOGGING_FILE:-}" ]; then
-    _print white dim "Log: $BASH_LOGGING_FILE" >&2
-  fi
 }

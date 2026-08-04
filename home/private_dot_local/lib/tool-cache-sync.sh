@@ -12,20 +12,10 @@
 # package's cache dir is the only lever: OpenCode reinstalls the current @latest
 # on next launch.
 
-tcs_require_command() {
-  local cmd="$1"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    warning "▶ tool-cache-sync"
-    warning "╍ ${cmd} not found, skipping"
-    return 1
-  fi
-  return 0
-}
 
 tcs_get_opencode_cache() {
   if ! command -v opencode >/dev/null 2>&1; then
-    warning "▶ tool-cache-sync"
-    warning "╍ opencode not found"
+    log_warn "Missing opencode"
     return 1
   fi
 
@@ -33,14 +23,12 @@ tcs_get_opencode_cache() {
   cache_dir=$(opencode debug paths 2>/dev/null | awk '/^cache /{print $2}')
 
   if [ -z "$cache_dir" ]; then
-    warning "▶ tool-cache-sync"
-    warning "╍ could not resolve opencode cache dir"
+    log_warn "Could not resolve the OpenCode cache directory"
     return 1
   fi
 
   if [ ! -d "$cache_dir" ]; then
-    warning "▶ tool-cache-sync"
-    warning "╍ opencode cache not yet populated at ${cache_dir} (run opencode once first)"
+    log_warn "OpenCode cache not yet populated at ${cache_dir} — run opencode once first"
     return 1
   fi
 
@@ -56,14 +44,13 @@ tcs_bust_opencode_plugin() {
   local spec="$2"
 
   if [ -z "$packages_dir" ] || [ -z "$spec" ]; then
-    warning "▶ tool-cache-sync"
-    warning "╍ tcs_bust_opencode_plugin: missing packages_dir or spec argument"
+    log_warn "Missing packages_dir or spec argument for tcs_bust_opencode_plugin"
     return 1
   fi
 
   local target="${packages_dir}/${spec}"
   if [ -d "$target" ]; then
     rm -rf "$target"
-    info "╍ Cleared OpenCode plugin cache: ${spec} (re-resolves @latest on next launch)"
+    log_detail "Cleared OpenCode plugin cache: ${spec}"
   fi
 }

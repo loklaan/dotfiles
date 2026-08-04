@@ -66,7 +66,7 @@ TOKENIZER_REGISTRY_MJS_EOF
     return 0
   fi
   mv "$tmp" "$REGISTRY_FILE"
-  info "╍ Wrote patched tokenizer-registry.mjs"
+  log_detail "Wrote patched tokenizer-registry.mjs"
 }
 
 write_aliases() {
@@ -87,13 +87,13 @@ TOKENIZER_ALIASES_JSON_EOF
     return 0
   fi
   mv "$tmp" "$ALIASES_FILE"
-  info "╍ Wrote tokenizer-aliases.json (with amazon-bedrock family table)"
+  log_detail "Wrote tokenizer-aliases.json (with amazon-bedrock family table)"
 }
 
 install_vendor_deps() {
   mkdir -p "$VENDOR_DIR"
 
-  info "╍ Installing vendor tokenizer packages (pinned)"
+  log_detail "Installing vendor tokenizer packages (pinned)"
   npm install --prefix "$VENDOR_DIR" \
     "js-tiktoken@${TIKTOKEN_VERSION}" \
     "@huggingface/transformers@${TRANSFORMERS_VERSION}" \
@@ -105,31 +105,31 @@ main() {
   eval "$(mise activate bash --quiet)"
 
   if ! command -v node >/dev/null 2>&1; then
-    warning "▶ OpenCode plugin setup"
-    warning "╍ node not found, skipping (install via: mise install node)"
+    log_warn_step "OpenCode plugin setup"
+    log_warn "node not found, skipping (install via: mise install node)"
     return 0
   fi
 
   if ! command -v npm >/dev/null 2>&1; then
-    warning "▶ OpenCode plugin setup"
-    warning "╍ npm not found, skipping"
+    log_warn_step "OpenCode plugin setup"
+    log_warn "npm not found, skipping"
     return 0
   fi
 
   if [ ! -d "$PLUGIN_DIR" ]; then
-    warning "▶ OpenCode plugin setup"
-    warning "╍ Plugin directory not found: ${PLUGIN_DIR}"
-    warning "╍ The opencode external archive may not have been applied yet"
+    log_warn_step "OpenCode plugin setup"
+    log_warn "Plugin directory not found: ${PLUGIN_DIR}"
+    log_warn "The opencode external archive may not have been applied yet"
     return 0
   fi
 
-  info "▶ OpenCode plugin setup"
+  log_step "OpenCode plugin setup"
 
   install_vendor_deps
   write_registry
   write_aliases
 
-  info "╍ Done"
+  log_detail "Done"
 }
 
 main "$@"

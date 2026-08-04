@@ -147,13 +147,15 @@ clean_stale_zips() {
 
     if [ "$found" = false ]; then
       rm -f "$zip_file"
-      info "╍ Removed stale zip: ${zip_name}.zip"
+      log_ok "Removed stale zip: ${zip_name}.zip"
     fi
   done
 }
 
 main() {
   mkdir -p "$OUTPUT_DIR"
+
+  log_step "Packing skills for Claude Desktop"
 
   # Discover own skills (lochy:* prefix only — skip org-provisioned skills)
   local all_skills=()
@@ -168,7 +170,7 @@ main() {
   local total=${#all_skills[@]}
 
   if [ "$total" -eq 0 ]; then
-    info "╍ No skills found"
+    log_skip "No skills found"
     return 0
   fi
 
@@ -220,20 +222,21 @@ main() {
   local changed_count=${#changed[@]}
 
   if [ "$changed_count" -eq 0 ]; then
-    info "▶ Packing for Claude Desktop"
-    info "╍ All ${total} items up to date"
+    log_skip "Unchanged: all ${total} up to date"
     return 0
   fi
 
-  info "▶ Packing for Claude Desktop (${changed_count} of ${total} changed)"
-  info ""
-  info "$(printf '  %-40s %s' "Source" "Zip")"
-  info "$(printf '  %-40s %s' "──────" "───")"
+  local i
   for i in "${!changed[@]}"; do
-    info "$(printf '  %-40s %s' "${changed[$i]}" "${changed_zip_names[$i]}.zip")"
+    log_ok "Packed: ${changed[$i]} → ${changed_zip_names[$i]}.zip"
   done
-  info ""
-  info "  → ${OUTPUT_DIR}/"
+
+  local unchanged=$(( total - changed_count ))
+  if [ "$unchanged" -gt 0 ]; then
+    log_skip "Unchanged: ${unchanged} of ${total}"
+  fi
+
+  log_note "${OUTPUT_DIR}/"
 
   # Open output directory in system file manager
   if [ "$(uname)" = "Darwin" ]; then

@@ -11,9 +11,9 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 setup_session_logging "$(basename "$0")"
 
-PITCHFORK_BIN=""
 
 #/ Usage:
 #/   run_after_install-059-df-orca-server.sh
@@ -39,44 +39,19 @@ PITCHFORK_BIN=""
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 verify_orca_installed() {
   if ! command -v mise >/dev/null 2>&1; then
-    warning "╍ mise not on PATH — cannot resolve orca install"
+    log_warn "Cannot resolve orca install — mise not on PATH"
     return 1
   fi
   local orca_path
   orca_path=$(mise which orca 2>/dev/null || echo "")
   if [ -z "$orca_path" ] || [ ! -x "$orca_path" ]; then
-    warning "╍ orca not yet installed by mise. Try: mise install"
+    log_warn "Missing orca — install with: mise install"
     return 1
   fi
-  info "╍ orca AppImage available at ${orca_path}"
 }
 
-verify_pitchfork_installed() {
-  if command -v pitchfork >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(command -v pitchfork)
-  elif command -v mise >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
-  fi
-
-  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
-    warning "╍ pitchfork not yet installed by mise. Try: mise install"
-    return 1
-  fi
-  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
-}
 
 verify_fuse() {
   # AppImages require FUSE2 to mount themselves at runtime.
@@ -84,8 +59,8 @@ verify_fuse() {
   # provides this. We don't install it here — that's install-my-packages's
   # job — but we surface a clear warning if it's missing.
   if ! command -v fusermount >/dev/null 2>&1 && ! command -v fusermount3 >/dev/null 2>&1; then
-    warning "╍ FUSE not available; orca AppImage may fail to start"
-    warning "  Install: sudo apt install -y libfuse2t64 (Ubuntu 24.04+) or libfuse2"
+    log_warn "FUSE not available; orca AppImage may fail to start"
+    log_warn_cont "Install: sudo apt install -y libfuse2t64 (Ubuntu 24.04+) or libfuse2"
     return 1
   fi
 }
@@ -94,26 +69,26 @@ manage_linux() {
   local enabled={{ dig "orcaServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ orca server (Linux, opt-out)"
+    log_step "orca server (Linux, opt-out)"
 
-    if verify_pitchfork_installed; then
-      "$PITCHFORK_BIN" stop df-orca-server 2>/dev/null || true
-      info "╍ stopped df-orca-server daemon"
+    if pf_resolve; then
+      pf_stop df-orca-server
+      log_detail "Stopped df-orca-server daemon"
     else
-      info "╍ Pitchfork not installed; no daemon to stop"
+      log_detail "Pitchfork not installed; no daemon to stop"
     fi
     return 0
   fi
 
-  info "▶ orca server (Linux, opt-in)"
+  log_step "orca server (Linux, opt-in)"
 
   if ! verify_orca_installed; then
-    warning "╍ skipping daemon lifecycle — orca not installed"
+    log_warn "Skipping daemon lifecycle — orca not installed"
     return 0
   fi
 
-  if ! verify_pitchfork_installed; then
-    warning "╍ skipping daemon lifecycle — Pitchfork not installed"
+  if ! pf_resolve; then
+    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
     return 0
   fi
 
@@ -123,20 +98,11 @@ manage_linux() {
   # (mise re-installs in place, but the running process holds the old
   # extracted squashfs view until restart). Pitchfork's start command is
   # idempotent; stop first so a running daemon is replaced cleanly.
-  "$PITCHFORK_BIN" stop df-orca-server 2>/dev/null || true
-  "$PITCHFORK_BIN" start --quiet df-orca-server
-  info "╍ started df-orca-server daemon (picks up any AppImage version change)"
-
-  sleep 2
-  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'df-orca-server'; then
-    info "╍ df-orca-server daemon is registered with Pitchfork"
-  else
-    warning "╍ df-orca-server daemon was not reported by Pitchfork — check: pitchfork logs df-orca-server"
-  fi
+  pf_restart df-orca-server
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
   manage_linux
 }
 

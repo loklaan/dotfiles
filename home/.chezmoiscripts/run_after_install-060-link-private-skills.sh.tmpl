@@ -49,8 +49,8 @@ main() {
   parse_args "$@"
 
   if [ ! -d "$STAGING_DIR" ]; then
-    info "▶ Linking private skills"
-    info "╍ Staging directory not found, skipping (next chezmoi apply should clone it)"
+    log_step "Linking private skills"
+    log_detail "Staging directory not found, skipping (next chezmoi apply should clone it)"
     return 0
   fi
 
@@ -66,7 +66,7 @@ main() {
 
     # Skip if a non-symlink entry already exists (chezmoi-managed skill)
     if [ -e "$target" ] && [ ! -L "$target" ]; then
-      warning "╍ Skipping '${skill_name}': already exists as a chezmoi-managed skill"
+      log_warn "Skipping '${skill_name}': already exists as a chezmoi-managed skill"
       continue
     fi
 
@@ -75,7 +75,7 @@ main() {
   done
 
   if [ "$linked" -gt 0 ]; then
-    info "▶ Linking private skills (${linked} linked)"
+    log_step "Linking private skills (${linked} linked)"
   fi
 }
 

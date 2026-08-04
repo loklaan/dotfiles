@@ -40,17 +40,6 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:  Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 system_gitconfig() {
   # Prefer Homebrew-prefixed system gitconfig (arm64 and x86_64 cellars).
   # Fall back to /etc/gitconfig if neither exists — git's own default.
@@ -118,7 +107,7 @@ register_optout() {
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   local config
   config=$(system_gitconfig)
