@@ -48,18 +48,18 @@ MANAGED_SITES="opencode code-server mcpproxy exe-index"
 
 main() {
   if [ ! -d "$SRC_DIR" ]; then
-    warning "▶ nginx site installer"
-    warning "╍ ${SRC_DIR} does not exist — nothing to install"
+    log_warn_step "nginx site installer"
+    log_warn "${SRC_DIR} does not exist — nothing to install"
     return 0
   fi
 
   if ! command -v nginx >/dev/null 2>&1; then
-    warning "▶ nginx site installer"
-    warning "╍ nginx not installed — skipping (install via: sudo apt install nginx)"
+    log_warn_step "nginx site installer"
+    log_warn "nginx not installed — skipping (install via: sudo apt install nginx)"
     return 0
   fi
 
-  info "▶ nginx site installer"
+  log_step "nginx site installer"
 
   sudo mkdir -p "$SITES_AVAILABLE" "$SITES_ENABLED"
 
@@ -73,11 +73,11 @@ main() {
     if [ ! -s "$src" ]; then
       if [ -L "$link" ] || [ -e "$link" ]; then
         sudo rm -f "$link"
-        info "╍ removed stale symlink: ${site} (gated off)"
+        log_detail "removed stale symlink: ${site} (gated off)"
       fi
       if [ -f "$dst" ]; then
         sudo rm -f "$dst"
-        info "╍ removed stale site: ${site} (gated off)"
+        log_detail "removed stale site: ${site} (gated off)"
       fi
       continue
     fi
@@ -85,13 +85,13 @@ main() {
     # Install the rendered config (only write if changed to avoid noise).
     if [ ! -f "$dst" ] || ! sudo cmp -s "$src" "$dst"; then
       sudo install -m 644 "$src" "$dst"
-      info "╍ installed ${site}.conf"
+      log_detail "installed ${site}.conf"
     fi
 
     # Ensure symlink exists.
     if [ ! -L "$link" ]; then
       sudo ln -sf "../sites-available/${site}.conf" "$link"
-      info "╍ enabled ${site}"
+      log_detail "enabled ${site}"
     fi
   done
 
@@ -101,12 +101,12 @@ main() {
     fatal "╍ nginx -t failed — config NOT reloaded. Fix the template and re-apply."
     return 1
   fi
-  info "╍ nginx config valid"
+  log_detail "nginx config valid"
 
   # Reload nginx (graceful, no dropped connections).
   sudo systemctl reload nginx
-  info "╍ nginx reloaded"
-  info "╍ Done"
+  log_detail "nginx reloaded"
+  log_detail "Done"
 }
 
 main "$@"

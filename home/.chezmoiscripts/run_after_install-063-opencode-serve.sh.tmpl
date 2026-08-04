@@ -11,9 +11,8 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 setup_session_logging "$(basename "$0")"
-
-PITCHFORK_BIN=""
 
 #/ Usage:
 #/   run_after_install-063-opencode-serve.sh
@@ -36,44 +35,19 @@ PITCHFORK_BIN=""
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 verify_opencode_installed() {
   if ! command -v mise >/dev/null 2>&1; then
-    warning "╍ mise not on PATH — cannot resolve opencode install"
+    log_warn "Cannot resolve opencode install — mise not on PATH"
     return 1
   fi
   local opencode_path
   opencode_path=$(mise which opencode 2>/dev/null || echo "")
   if [ -z "$opencode_path" ] || [ ! -x "$opencode_path" ]; then
-    warning "╍ opencode not yet installed by mise. Try: mise install"
+    log_warn "Missing opencode — install with: mise install"
     return 1
   fi
-  info "╍ opencode available at ${opencode_path}"
 }
 
-verify_pitchfork_installed() {
-  if command -v pitchfork >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(command -v pitchfork)
-  elif command -v mise >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
-  fi
-
-  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
-    warning "╍ pitchfork not yet installed by mise. Try: mise install"
-    return 1
-  fi
-  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
-}
 
 {{- /* The daemon's bind port depends on nginxProxy: internal (loopback) when
       nginx is in front, external (0.0.0.0) when not. Health probes and the
@@ -83,47 +57,37 @@ verify_pitchfork_installed() {
 {{-   $ocPort = .ports.opencode.internal -}}
 {{- end }}
 
-probe_opencode_health() {
-  if curl -sf http://127.0.0.1:{{ $ocPort }}/ -o /dev/null 2>/dev/null; then
-    info "╍ health probe OK — opencode server is responding"
-    return 0
-  else
-    warning "╍ health probe failed — opencode server not responding at http://127.0.0.1:{{ $ocPort }}/"
-    return 1
-  fi
-}
-
 manage_service() {
   local enabled={{ dig "openCodeServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ opencode server (opt-out)"
+    log_step "opencode server (opt-out)"
 
-    if verify_pitchfork_installed; then
-      "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
-      info "╍ stopped df-opencode-serve daemon"
+    if pf_resolve; then
+      pf_stop df-opencode-serve
+      log_detail "Stopped df-opencode-serve daemon"
     else
-      info "╍ Pitchfork not installed; no daemon to stop"
+      log_detail "Pitchfork not installed; no daemon to stop"
     fi
     return 0
   fi
 
-  info "▶ opencode server (opt-in)"
+  log_step "opencode server (opt-in)"
 
   if ! verify_opencode_installed; then
-    warning "╍ skipping daemon lifecycle — opencode not installed"
+    log_warn "Skipping daemon lifecycle — opencode not installed"
     return 0
   fi
 
-  if ! verify_pitchfork_installed; then
-    warning "╍ skipping daemon lifecycle — Pitchfork not installed"
+  if ! pf_resolve; then
+    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
     return 0
   fi
 
   # Restart on every apply — picks up potential version bumps.
   # Pitchfork's start command is idempotent; stop first so a running
   # daemon is replaced cleanly.
-  "$PITCHFORK_BIN" stop df-opencode-serve 2>/dev/null || true
+  pf_stop df-opencode-serve
 
   # Reap any orphaned `opencode serve` still bound to the daemon's port. The
   # pitchfork supervisor can lose track of its child (e.g. across VM resumes /
@@ -148,21 +112,13 @@ manage_service() {
     sleep 1
   fi
 
-  "$PITCHFORK_BIN" start df-opencode-serve >/dev/null 2>&1
-  info "╍ started df-opencode-serve daemon"
+  pf_start df-opencode-serve
 
-  sleep 2
-  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'df-opencode-serve'; then
-    info "╍ df-opencode-serve daemon is registered with Pitchfork"
-  else
-    warning "╍ df-opencode-serve daemon was not reported by Pitchfork — check: pitchfork logs df-opencode-serve"
-  fi
-
-  probe_opencode_health || true   # warn but don't block
+  pf_probe_http {{ $ocPort }} "opencode server" || true   # warn but don't block
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
   manage_service
 }
 

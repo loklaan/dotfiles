@@ -34,6 +34,8 @@ cache_dir=$(tcs_get_opencode_cache) || exit 0
 packages_dir="${cache_dir}/packages"
 [ -d "$packages_dir" ] || exit 0
 
+log_step "OpenCode plugin cache"
+
 # tcs_bust_opencode_plugin <packages_dir> <sanitized-spec-dir>
 tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
 {{- if and (eq "" $llmproxyLocal) (eq $machineProfile "work") }}
@@ -49,7 +51,7 @@ work_registry="{{ $workRegistry }}"
 if command -v npm >/dev/null 2>&1; then
   packument_key="make-fetch-happen:request-cache:${work_registry}@canva%2fopencode-plugin-llmproxy"
   if npm cache clean "$packument_key" >/dev/null 2>&1; then
-    info "╍ Invalidated npm packument cache for @canva/opencode-plugin-llmproxy"
+    log_detail "Invalidated npm packument cache for @canva/opencode-plugin-llmproxy"
   fi
 fi
 {{- end }}
@@ -60,6 +62,6 @@ fi
 legacy_bundle="${HOME}/.config/opencode/plugins/canva-llmproxy.js"
 if [ -f "$legacy_bundle" ]; then
   rm -f "$legacy_bundle" "${legacy_bundle}.version"
-  info "╍ Removed legacy self-managed bundle: ${legacy_bundle}"
+  log_detail "Removed legacy self-managed bundle: ${legacy_bundle}"
 fi
 {{- end }}

@@ -36,7 +36,6 @@ import {
   Data,
   Duration,
   Effect,
-  Logger,
 } from "npm:effect@4.0.0-beta.93";
 import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
 import {
@@ -45,6 +44,10 @@ import {
 } from "npm:effect@4.0.0-beta.93/unstable/process";
 import * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
 import * as Path from "npm:effect@4.0.0-beta.93/Path";
+
+// Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
+// ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
+import { makeLoggerLayer } from "../lib/df-log.ts";
 
 const REL_COMPLETION_DIR = ".local/share/zsh-completions";
 const JOB_TIMEOUT_SECONDS = 15;
@@ -452,23 +455,6 @@ const generateCompletion = (
     return yield* writeCompletion(dir, job, result.output);
   });
 
-// Custom logger matching bash-logging.sh format:
-//   info <message>    → cyan  (\x1b[36m) on stderr
-//   warning <message> → yellow (\x1b[33m) on stderr
-// No timestamp, no fiber id, no bracketed level — just `<prefix> <message>\n`.
-const enc = new TextEncoder();
-const bashStyleLogger = Logger.make((opts) => {
-  let line: string;
-  if (opts.logLevel === "Warn") {
-    line = `\x1b[33mwarning ${opts.message}\x1b[0m\n`;
-  } else {
-    // Info and everything else falls through as "info"
-    line = `\x1b[36minfo ${opts.message}\x1b[0m\n`;
-  }
-  Deno.stderr.writeSync(enc.encode(line));
-});
-const loggerLayer = Logger.layer([bashStyleLogger]);
-
 const installCompletions = Effect.gen(function* () {
   const home = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const basePath = yield* Config.string("PATH").pipe(Config.withDefault(""));
@@ -556,6 +542,7 @@ if (import.meta.main) {
   const { NodeRuntime, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-beta.93"
   );
+  const loggerLayer = await makeLoggerLayer();
   command.pipe(
     Command.run({ version: "1.0.0" }),
     Effect.provide(NodeServices.layer),

@@ -25,6 +25,10 @@ import {
   ChildProcessSpawner,
 } from "npm:effect@4.0.0-beta.93/unstable/process";
 
+// Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
+// ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
+import { error, info, warning } from "../lib/df-log.ts";
+
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
   Deno.exit(1);
@@ -350,13 +354,13 @@ const writeStderr = (value: string): Effect.Effect<void> =>
   Console.error(consoleValue(value));
 
 const logInfo = (value: string): Effect.Effect<void> =>
-  writeStderr(`[INFO] ${value}\n`);
+  Effect.sync(() => info(value));
 
 const logWarning = (value: string): Effect.Effect<void> =>
-  writeStderr(`[WARN] ${value}\n`);
+  Effect.sync(() => warning(value));
 
 const logError = (value: string): Effect.Effect<void> =>
-  writeStderr(`[ERROR] ${value}\n`);
+  Effect.sync(() => error(value));
 
 const tmpdir = Config.string("TMPDIR").pipe(
   Config.withDefault("/tmp"),

@@ -34,17 +34,6 @@ BWS_GET="${HOME}/.local/lib/bws-get-or-empty"
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 fetch_bws_secret() {
   local secret_id="$1"
   local token_path="$2"
@@ -86,35 +75,35 @@ merge_auth_json() {
   mv "$tmp_file" "$auth_file"
   trap - EXIT
 
-  info "╍ updated ${auth_file} with opencode key"
+  log_detail "updated ${auth_file} with opencode key"
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   # Verify bws-get-or-empty is available
   if [ ! -x "$BWS_GET" ]; then
-    warning "╍ bws-get-or-empty not found at ${BWS_GET} — skipping auth sync"
+    log_warn "bws-get-or-empty not found at ${BWS_GET} — skipping auth sync"
     return 0
   fi
 
   # Verify jq is available
   if ! command -v jq >/dev/null 2>&1; then
-    warning "╍ jq not on PATH — skipping auth sync"
+    log_warn "jq not on PATH — skipping auth sync"
     return 0
   fi
 
   local bws_token_path="{{ .bwsTokenPath }}"
   local bws_secret_id="{{ dig "bwsIdOpencodeApiKey" "" . }}"
 
-  info "▶ opencode auth sync (Linux)"
+  log_step "opencode auth sync (Linux)"
 
   local api_key
   api_key=$(fetch_bws_secret "$bws_secret_id" "$bws_token_path")
 
   if [ -z "$api_key" ]; then
-    warning "╍ opencode API key is empty (BWS token missing, expired, or no access)"
-    warning "╍ skipping auth sync — run df-setup for guidance"
+    log_warn "opencode API key is empty (BWS token missing, expired, or no access)"
+    log_warn "skipping auth sync — run df-setup for guidance"
     return 0
   fi
 
@@ -122,7 +111,7 @@ main() {
   mkdir -p "$(dirname "$AUTH_FILE")"
 
   merge_auth_json "$AUTH_FILE" "$api_key"
-  info "╍ opencode auth updated"
+  log_detail "opencode auth updated"
 }
 
 main "$@"

@@ -20,7 +20,7 @@ usage() { grep '^#/' "$0" | cut -c4-; }
 main() {
   if command -v install-my-completions >/dev/null 2>&1; then
     install-my-completions
-    info "╍ Note: Completions available new term sessions (restart your terminal or run 'exec zsh')"
+    log_detail "Note: Completions available new term sessions (restart your terminal or run 'exec zsh')"
   else
     warning "install-my-completions command not found in PATH"
     warning "Expected location: ${HOME}/.local/bin/install-my-completions"

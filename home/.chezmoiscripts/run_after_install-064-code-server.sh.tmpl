@@ -11,9 +11,9 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 setup_session_logging "$(basename "$0")"
 
-PITCHFORK_BIN=""
 
 #/ Usage:
 #/   run_after_install-064-code-server.sh
@@ -36,106 +36,63 @@ PITCHFORK_BIN=""
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 verify_code_server_installed() {
   if ! command -v mise >/dev/null 2>&1; then
-    warning "╍ mise not on PATH — cannot resolve code-server install"
+    log_warn "Cannot resolve code-server install — mise not on PATH"
     return 1
   fi
   local code_server_path
   code_server_path=$(mise which code-server 2>/dev/null || echo "")
   if [ -z "$code_server_path" ] || [ ! -x "$code_server_path" ]; then
-    warning "╍ code-server not yet installed by mise. Try: mise install"
+    log_warn "Missing code-server — install with: mise install"
     return 1
   fi
-  info "╍ code-server available at ${code_server_path}"
 }
 
-verify_pitchfork_installed() {
-  if command -v pitchfork >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(command -v pitchfork)
-  elif command -v mise >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
-  fi
-
-  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
-    warning "╍ pitchfork not yet installed by mise. Try: mise install"
-    return 1
-  fi
-  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
-}
 
 {{- $csPort := .ports.code_server.external -}}
 {{- if dig "nginxProxy" false . -}}
 {{-   $csPort = .ports.code_server.internal -}}
 {{- end }}
 
-probe_code_server_health() {
-  if curl -sf http://127.0.0.1:{{ $csPort }}/ -o /dev/null 2>/dev/null; then
-    info "╍ health probe OK — code-server is responding"
-    return 0
-  else
-    warning "╍ health probe failed — code-server not responding at http://127.0.0.1:{{ $csPort }}/"
-    return 1
-  fi
-}
 
 manage_linux() {
   local enabled={{ dig "codeServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ code-server (Linux, opt-out)"
+    log_step "code-server (Linux, opt-out)"
 
-    if verify_pitchfork_installed; then
-      "$PITCHFORK_BIN" stop df-code-server 2>/dev/null || true
-      info "╍ stopped df-code-server daemon"
+    if pf_resolve; then
+      pf_stop df-code-server
+      log_detail "Stopped df-code-server daemon"
     else
-      info "╍ Pitchfork not installed; no daemon to stop"
+      log_detail "Pitchfork not installed; no daemon to stop"
     fi
     return 0
   fi
 
-  info "▶ code-server (Linux, opt-in)"
+  log_step "code-server (Linux, opt-in)"
 
   if ! verify_code_server_installed; then
-    warning "╍ skipping daemon lifecycle — code-server not installed"
+    log_warn "Skipping daemon lifecycle — code-server not installed"
     return 0
   fi
 
-  if ! verify_pitchfork_installed; then
-    warning "╍ skipping daemon lifecycle — Pitchfork not installed"
+  if ! pf_resolve; then
+    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
     return 0
   fi
 
   # Restart on every apply — picks up potential version bumps.
   # Pitchfork's start command is idempotent; stop first so a running
   # daemon is replaced cleanly.
-  "$PITCHFORK_BIN" stop df-code-server 2>/dev/null || true
-  "$PITCHFORK_BIN" start --quiet df-code-server
-  info "╍ started df-code-server daemon"
+  pf_restart df-code-server
 
-  sleep 2
-  if "$PITCHFORK_BIN" list 2>/dev/null | grep -q 'df-code-server'; then
-    info "╍ df-code-server daemon is registered with Pitchfork"
-  else
-    warning "╍ df-code-server daemon was not reported by Pitchfork — check: pitchfork logs df-code-server"
-  fi
-
-  probe_code_server_health || true   # warn but don't block
+  pf_probe_http {{ $csPort }} "code-server" || true   # warn but don't block
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
   manage_linux
 }
 

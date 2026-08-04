@@ -163,8 +163,16 @@ runtimeTiers:
       tier: runtime
       lang: bash
 
-    # --- home/private_dot_local/lib (10, all sourced) ---
+    # --- home/private_dot_local/lib (12, all sourced) ---
     - path: home/private_dot_local/lib/bash-logging.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/term-colour.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/pitchfork-lifecycle.sh
       tier: bootstrap
       lang: bash
       sourced: true

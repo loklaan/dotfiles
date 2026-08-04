@@ -9,7 +9,7 @@
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
 
-source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/term-colour.sh"
 
 message_string_decorations=("✨ 🔮 ✨" "🕒 🧠 🕒" "💥 ✌️ 💥" "☔️ 🐳 ☔️" "🌟 🌙 🌟" "⏰ 💡 ⏰" "⚡️ 🤘 ⚡️" "🌨️ 🐋 🌨️" "🔥 🤙 🔥" "⏳ 💭 ⏳" "🌈 🙌 🌈" "🍀 💪 🍀" "🌞 🤞 🌞" "🍁 🤟 🍁")
 message_string_welcome="welcome, bunny boi!"

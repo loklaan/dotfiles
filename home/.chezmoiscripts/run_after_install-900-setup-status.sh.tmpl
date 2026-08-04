@@ -36,15 +36,15 @@ main() {
 
   if [ "$has_bws" = "false" ] || [ "$has_signing" = "false" ]; then
     echo ""
-    warning "╍ Dotfiles setup incomplete"
+    log_warn "Dotfiles setup incomplete"
     if [ "$has_bws" = "false" ]; then
-      info "╍ Missing: BWS token (for npm auth, GitHub tokens)"
+      log_detail "Missing: BWS token (for npm auth, GitHub tokens)"
     fi
     if [ "$has_signing" = "false" ]; then
-      info "╍ Missing: Signing key (for git commit signing)"
+      log_detail "Missing: Signing key (for git commit signing)"
     fi
     echo ""
-    info "╍ Run 'df-setup' for instructions"
+    log_detail "Run 'df-setup' for instructions"
   fi
 }
 

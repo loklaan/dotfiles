@@ -23,78 +23,67 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
-
 start_darwin() {
   local enabled={{ dig "mcpproxyGate" true . }}
   if [ "$enabled" != "true" ]; then
-    info "▶ mcpproxy (macOS, opt-out)"
-    info "╍ skipping MCPProxy.app launch"
+    log_step "mcpproxy (macOS, opt-out)"
+    log_detail "Skipping MCPProxy.app launch"
     return 0
   fi
 
   local domain="gui/$(id -u)"
 
-  info "▶ mcpproxy (macOS, opt-in)"
+  log_step "mcpproxy (macOS, opt-in)"
 
   # Unload legacy launchd agents (replaced by native MCPProxy.app)
   local label
   for label in io.mcpproxy.serve io.mcpproxy.tray; do
     if launchctl print "${domain}/${label}" >/dev/null 2>&1; then
       launchctl bootout "${domain}/${label}" 2>/dev/null || true
-      info "╍ unloaded legacy ${label}"
+      log_detail "Unloaded legacy ${label}"
     fi
     rm -f "${HOME}/Library/LaunchAgents/${label}.plist"
   done
 
-  # Open MCPProxy.app if installed (idempotent — noop if already running)
+  # Launch MCPProxy.app if installed. `open -a` is technically idempotent, but
+  # it re-focuses the app and logs a launch line every apply, so check for a
+  # live process first and stay quiet when it's already up.
   local app="/Applications/MCPProxy.app"
-  if [ -d "$app" ]; then
-    open -a "$app"
-    info "╍ opened MCPProxy.app"
-  else
-    warning "╍ MCPProxy.app not found (install via: brew install --cask mcpproxy)"
+  if [ ! -d "$app" ]; then
+    log_warn "Missing MCPProxy.app — install with: brew install --cask mcpproxy"
     return 0
   fi
+
+  if pgrep -x MCPProxy >/dev/null 2>&1; then
+    return 0
+  fi
+
+  open -a "$app"
+  log_detail "Opened MCPProxy.app"
 }
 
 start_linux() {
   local enabled={{ dig "mcpproxyGate" true . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ mcpproxy (Linux, opt-out)"
+    log_step "mcpproxy (Linux, opt-out)"
 
     if command -v pitchfork >/dev/null 2>&1; then
       pitchfork stop df-mcpproxy 2>/dev/null || true
-      info "╍ stopped df-mcpproxy daemon"
+      log_detail "Stopped df-mcpproxy daemon"
     else
-      info "╍ Pitchfork not installed; no daemon to stop"
+      log_detail "Pitchfork not installed; no daemon to stop"
     fi
     return 0
   fi
 
-  info "▶ mcpproxy (Linux, opt-in)"
+  log_step "mcpproxy (Linux, opt-in)"
 
   # Activate mise so the mcpproxy shim is on PATH
   eval "$(mise activate bash --quiet)"
 
   if ! command -v mcpproxy >/dev/null 2>&1; then
-    warning "╍ mcpproxy not found, skipping (install via: mise install)"
+    log_warn "Missing mcpproxy — install with: mise install"
     return 0
   fi
 
@@ -107,7 +96,7 @@ start_linux() {
     local _unit="mcpproxy.service"
     if systemctl --user cat "$_unit" >/dev/null 2>&1; then
       systemctl --user disable --now "$_unit" >/dev/null 2>&1 || true
-      info "╍ disabled legacy systemd --user $_unit"
+      log_detail "Disabled legacy systemd --user $_unit"
       # Remove the orphan unit file; no longer managed by chezmoi.
       rm -f "${HOME}/.config/systemd/user/${_unit}"
       systemctl --user daemon-reload >/dev/null 2>&1 || true
@@ -116,25 +105,25 @@ start_linux() {
 
   pitchfork stop df-mcpproxy 2>/dev/null || true
   pitchfork start --quiet df-mcpproxy
-  info "╍ started df-mcpproxy via pitchfork"
+  log_detail "Started df-mcpproxy daemon"
 
   sleep 2
   if curl -sf http://127.0.0.1:{{ .ports.mcpproxy.internal }}/ -o /dev/null 2>&1; then
-    info "╍ mcpproxy responding on port {{ .ports.mcpproxy.internal }}"
+    log_detail "Health probe OK — mcpproxy is responding on port {{ .ports.mcpproxy.internal }}"
   else
-    warning "╍ mcpproxy may not be ready yet (port {{ .ports.mcpproxy.internal }} not responding)"
+    log_warn "Health probe failed — mcpproxy not responding on port {{ .ports.mcpproxy.internal }}"
   fi
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   case "$(uname -s)" in
     Darwin) start_darwin ;;
     Linux)  start_linux ;;
     *)
-      warning "▶ mcpproxy daemon"
-      warning "╍ unsupported OS: $(uname -s), skipping"
+      log_warn_step "mcpproxy daemon"
+      log_warn "Unsupported OS: $(uname -s), skipping"
       return 0
       ;;
   esac

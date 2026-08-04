@@ -26,33 +26,16 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
-
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   if ! command -v peon-ping-setup >/dev/null 2>&1; then
-    info "▶ Peon-ping setup"
-    info "╍ peon-ping-setup not found, skipping (install via: brew install PeonPing/tap/peon-ping)"
+    log_step "Peon-ping setup"
+    log_detail "peon-ping-setup not found, skipping (install via: brew install PeonPing/tap/peon-ping)"
     return 0
   fi
 
-  info "▶ Running peon-ping-setup"
+  log_step "Running peon-ping-setup"
   peon-ping-setup
 }
 

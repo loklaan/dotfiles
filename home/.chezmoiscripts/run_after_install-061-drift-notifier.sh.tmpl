@@ -8,6 +8,7 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
@@ -38,21 +39,9 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help    Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help) usage; exit 0 ;;
-      *) usage; fatal "Unknown argument: $1" ;;
-    esac
-  done
-}
-
 LABEL="io.lochlan.dotfiles.drift"
 LEGACY_PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 DAEMON="df-drift-notify"
-PITCHFORK_BIN=""
 
 # Tear down the retired launchd agent so we don't double-schedule. Idempotent:
 # succeeds whether or not the agent was ever loaded, and whether or not the
@@ -65,9 +54,9 @@ retire_launchd_agent() {
 
   if launchctl print "${domain}/${LABEL}" >/dev/null 2>&1; then
     if launchctl bootout "${domain}/${LABEL}" 2>/dev/null; then
-      info "╍ booted out retired launchd agent ${LABEL}"
+      log_detail "Booted out retired launchd agent ${LABEL}"
     else
-      warning "╍ failed to bootout ${LABEL} (continuing)"
+      log_warn "Failed to boot out ${LABEL} (continuing)"
     fi
   fi
 
@@ -75,94 +64,30 @@ retire_launchd_agent() {
   # the source file). chezmoi manages the source; this is belt-and-braces.
   if [ -f "$LEGACY_PLIST" ]; then
     rm -f "$LEGACY_PLIST"
-    info "╍ removed stale plist ${LEGACY_PLIST}"
-  fi
-}
-
-resolve_pitchfork() {
-  if command -v pitchfork >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(command -v pitchfork)
-  elif command -v mise >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
-  fi
-
-  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
-    warning "╍ pitchfork not yet installed by mise. Try: mise install"
-    return 1
-  fi
-  info "╍ Pitchfork available at ${PITCHFORK_BIN}"
-}
-
-# Guard: the cron field is only honoured by pitchfork >= 2.19.0. If an older
-# binary is somehow active, warn loudly rather than silently scheduling nothing.
-verify_cron_capable() {
-  local ver
-  ver=$("$PITCHFORK_BIN" --version 2>/dev/null | awk '{print $NF}')
-  # Compare against 2.19.0 using sort -V; if the lowest is not >= 2.19.0, warn.
-  local lowest
-  lowest=$(printf '%s\n2.19.0\n' "$ver" | sort -V | head -1)
-  if [ "$lowest" != "2.19.0" ] && [ "$ver" != "2.19.0" ]; then
-    warning "╍ pitchfork ${ver} predates cron support (needs >= 2.19.0);"
-    warning "  the drift daemon will NOT fire on schedule. Run: mise install"
-    return 1
-  fi
-  info "╍ pitchfork ${ver} supports cron scheduling"
-}
-
-ensure_supervisor() {
-  # The supervisor must be running for cron daemons to fire. `supervisor start`
-  # is idempotent (no-op if already up).
-  "$PITCHFORK_BIN" supervisor start >/dev/null 2>&1 || true
-
-  # Enable boot start so the supervisor (and thus the daily cron) survives
-  # reboots. Idempotent; safe to run every apply.
-  if "$PITCHFORK_BIN" boot status 2>/dev/null | grep -qi 'enabled'; then
-    info "╍ Pitchfork boot start already enabled"
-  else
-    if "$PITCHFORK_BIN" boot enable >/dev/null 2>&1; then
-      info "╍ enabled Pitchfork boot start (supervisor now runs at login)"
-    else
-      warning "╍ could not enable Pitchfork boot start — cron may not survive reboot"
-    fi
-  fi
-}
-
-start_daemon() {
-  # Restart so config changes (schedule, run command) are picked up. stop is
-  # idempotent; start registers the cron schedule with the supervisor.
-  "$PITCHFORK_BIN" stop "$DAEMON" >/dev/null 2>&1 || true
-  if "$PITCHFORK_BIN" start --quiet "$DAEMON" >/dev/null 2>&1; then
-    info "╍ registered ${DAEMON} cron daemon (daily 09:30)"
-  else
-    warning "╍ failed to start ${DAEMON} — check: pitchfork logs ${DAEMON}"
-    return 0
-  fi
-
-  if "$PITCHFORK_BIN" daemons 2>/dev/null | grep -q "$DAEMON"; then
-    info "╍ ${DAEMON} is registered with Pitchfork"
-  else
-    warning "╍ ${DAEMON} not reported by Pitchfork — check: pitchfork daemons"
+    log_detail "Removed stale plist ${LEGACY_PLIST}"
   fi
 }
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
-  info "▶ drift notifier (macOS, Pitchfork cron)"
+  log_step "drift notifier (macOS, Pitchfork cron)"
 
   # Always retire the launchd agent, even if pitchfork isn't ready — otherwise
   # a half-migrated machine keeps the old schedule alive.
   retire_launchd_agent
 
-  if ! resolve_pitchfork; then
-    warning "╍ skipping cron setup — pitchfork not installed"
+  if ! pf_resolve; then
+    log_warn "Skipping cron setup — Pitchfork not installed"
     return 0
   fi
 
-  verify_cron_capable || true   # warn but continue; daemon still registers
+  # Both warn and continue: the daemon still registers, it just may not fire.
+  pf_verify_cron_capable || true
+  pf_warn_if_supervisor_stale || true
 
-  ensure_supervisor
-  start_daemon
+  pf_ensure_supervisor
+  pf_restart "$DAEMON" "Registered ${DAEMON} to run daily at 09:30"
 }
 
 main "$@"

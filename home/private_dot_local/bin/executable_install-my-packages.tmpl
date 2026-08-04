@@ -73,7 +73,7 @@ run_apt_quiet() {
       return "$rc"
     fi
 
-    warning "╍ apt hit a transient lock or mirror-sync error; waiting up to ${transient_wait_seconds}s total, retrying in ${delay}s"
+    log_warn "apt hit a transient lock or mirror-sync error; waiting up to ${transient_wait_seconds}s total, retrying in ${delay}s"
     rm -f "$output"
     sleep "$delay"
   done
@@ -104,12 +104,12 @@ apt_update_advisory() {
   if [ "${attempted:-0}" -gt 0 ] && [ "${failed:-0}" -ge "$attempted" ]; then
     fatal "╍ apt-get update failed for ALL sources — likely a network or mirror outage, not a single dead third-party repo"
   fi
-  warning "╍ apt-get update reported errors on ${failed} source(s); continuing — apt-get install is the authoritative gate"
+  log_warn "apt-get update reported errors on ${failed} source(s); continuing — apt-get install is the authoritative gate"
 }
 
 main() {
   parse_args "$@"
-  info "▶ Installing non-critical packages"
+  log_step "Installing non-critical packages"
 
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
@@ -121,7 +121,7 @@ main() {
   #-----------------------------------------------------------------------------
   #
 
-  info "╍ Running 'brew install'"
+  log_detail "Running 'brew install'"
   if ! command -v brew >/dev/null 2>&1; then
     fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"
   fi
@@ -281,13 +281,13 @@ EOF
 
   if [ "$(id -u)" = "0" ]; then
     Sudo=''
-    info "╍ Root user detected, skipping sudo for following commands"
+    log_detail "Root user detected, skipping sudo for following commands"
   elif which sudo >/dev/null 2>&1; then
     Sudo='sudo'
-    info "╍ Sudo detected, using it for following commands"
+    log_detail "Sudo detected, using it for following commands"
   else
     Sudo=''
-    warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
+    log_warn "Cannot find 'sudo' so will attempt to run following commands without it"
   fi
   linux_distro=$(
     . /etc/os-release
@@ -301,7 +301,7 @@ EOF
 {{ end -}}
 EOF
 )
-      info "╍ Running 'apk add \$packages \$apk_extra'"
+      log_detail "Running 'apk add \$packages \$apk_extra'"
       run_quiet bash -c "$Sudo apk add --update $(echo "$packages $apk_extra" | xargs)"
     ;;
     amzn|rhel|fedora|rocky)
@@ -311,7 +311,7 @@ EOF
 {{ end -}}
 EOF
 )
-      info "╍ Running 'yum install \$packages \$yum_extra'"
+      log_detail "Running 'yum install \$packages \$yum_extra'"
       run_quiet $Sudo yum update -y
       run_quiet bash -c "$Sudo yum install -y $(echo "$packages $yum_extra" | xargs)"
     ;;
@@ -334,11 +334,11 @@ EOF
       done
       if [ -n "$fuse_pkg" ]; then
         apt_extra="$apt_extra \"$fuse_pkg\""
-        info "╍ FUSE2 package resolved to: $fuse_pkg"
+        log_detail "FUSE2 package resolved to: $fuse_pkg"
       else
-        warning "╍ neither libfuse2 nor libfuse2t64 found in apt cache; AppImage execution may fail"
+        log_warn "neither libfuse2 nor libfuse2t64 found in apt cache; AppImage execution may fail"
       fi
-      info "╍ Running 'apt-get install \$packages \$apt_extra'"
+      log_detail "Running 'apt-get install \$packages \$apt_extra'"
       apt_update_advisory $Sudo apt-get update
       run_apt_quiet bash -c "$Sudo apt-get install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"
     ;;
@@ -358,13 +358,13 @@ EOF
 
   {{ end }}
 
-  info "╍ Running 'mise self-update --yes'"
+  log_detail "Running 'mise self-update --yes'"
   run_quiet mise self-update --yes || true
 
-  info "╍ Running 'mise install'"
+  log_detail "Running 'mise install'"
   run_quiet mise install -y
 
-  info "╍ Running 'mise upgrade'"
+  log_detail "Running 'mise upgrade'"
   run_quiet mise upgrade -y
 }
 

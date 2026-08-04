@@ -29,24 +29,24 @@ patch_skill_name() {
   local skill_md="${HOME}/.agents/skills/${skill_dir}/SKILL.md"
 
   if [ ! -f "$skill_md" ]; then
-    warning "╍ Skill not found: $skill_md"
+    log_warn "Skill not found: $skill_md"
     return 0
   fi
 
   if grep -q "^name: ${patched_name}$" "$skill_md" 2>/dev/null; then
-    info "╍ Already patched: ${patched_name}"
+    log_detail "Already patched: ${patched_name}"
     return 0
   fi
 
   if perl -i -pe "s/^name: \Q${original_name}\E\$/name: ${patched_name}/" "$skill_md"; then
-    info "╍ Patched: ${original_name} → ${patched_name}"
+    log_detail "Patched: ${original_name} → ${patched_name}"
   else
-    warning "╍ Failed to patch: ${skill_md}"
+    log_warn "Failed to patch: ${skill_md}"
   fi
 }
 
 main() {
-  info "▶ Patching external skill names to lochy: namespace"
+  log_step "Patching external skill names to lochy: namespace"
   for entry in "${PATCHES[@]}"; do
     IFS='|' read -r dir original patched <<< "$entry"
     patch_skill_name "$dir" "$original" "$patched"

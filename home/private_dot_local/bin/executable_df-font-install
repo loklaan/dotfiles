@@ -43,6 +43,10 @@ import {
   ChildProcessSpawner,
 } from "npm:effect@4.0.0-beta.93/unstable/process";
 
+// Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
+// ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
+import { makeLoggerLayer } from "../lib/df-log.ts";
+
 /** Print "fatal <msg>" to stderr and exit 1 (entrypoint argument/OS-fatal paths). */
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
@@ -327,6 +331,7 @@ if (import.meta.main) {
   const { NodeRuntime, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-beta.93"
   );
+  const loggerLayer = await makeLoggerLayer();
   program.pipe(
     // unsupported/unknown OS -> "fatal <message>" + exit 1 (local fatal helper).
     Effect.catchTag(
@@ -342,6 +347,7 @@ if (import.meta.main) {
     // fc-cache's code for the update path).
     Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
     Effect.provide(NodeServices.layer),
+    Effect.provide(loggerLayer),
     NodeRuntime.runMain,
   );
 }

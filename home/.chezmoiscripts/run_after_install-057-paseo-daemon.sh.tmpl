@@ -23,51 +23,34 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
-
 {{ if eq .chezmoi.os "linux" -}}
 manage_linux() {
   local enabled={{ dig "paseoDaemon" false . }}
 
   if [ "$enabled" != "true" ]; then
-    info "▶ paseo daemon (Linux, opt-out)"
+    log_step "paseo daemon (Linux, opt-out)"
 
     # Stop and disable if it's running, so an explicit opt-out actually sticks.
     if systemctl --user list-unit-files paseo-daemon.service >/dev/null 2>&1; then
       if systemctl --user is-active --quiet paseo-daemon.service; then
         systemctl --user stop paseo-daemon.service
-        info "╍ stopped paseo-daemon.service"
+        log_detail "Stopped paseo-daemon.service"
       fi
       if systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
         systemctl --user disable paseo-daemon.service >/dev/null
-        info "╍ disabled paseo-daemon.service"
+        log_detail "Disabled paseo-daemon.service"
       fi
     fi
     return 0
   fi
 
-  info "▶ paseo daemon (Linux, opt-in)"
+  log_step "paseo daemon (Linux, opt-in)"
 
   # Activate mise so the paseo shim is on PATH
   eval "$(mise activate bash --quiet)"
 
   if ! command -v paseo >/dev/null 2>&1; then
-    warning "╍ paseo not found, skipping (install via: mise install)"
+    log_warn "Missing paseo — install with: mise install"
     return 0
   fi
 
@@ -76,23 +59,23 @@ manage_linux() {
 
   if systemctl --user is-active --quiet paseo-daemon.service; then
     systemctl --user restart paseo-daemon.service
-    info "╍ restarted paseo-daemon.service"
+    log_detail "Restarted paseo-daemon.service"
   else
     systemctl --user start paseo-daemon.service
-    info "╍ started paseo-daemon.service"
+    log_detail "Started paseo-daemon.service"
   fi
 
   sleep 2
   if curl -sf http://127.0.0.1:6767/ -o /dev/null 2>/dev/null; then
-    info "╍ paseo daemon responding on port 6767"
+    log_detail "Health probe OK — paseo daemon is responding"
   else
-    warning "╍ paseo daemon may not be ready yet (port 6767 not responding)"
+    log_warn "Health probe failed — paseo daemon not responding on port 6767"
   fi
 }
 {{- end }}
 
 main() {
-  parse_args "$@"
+  bl_parse_help "$@"
 
   case "$(uname -s)" in
 {{ if eq .chezmoi.os "linux" -}}
@@ -103,8 +86,8 @@ main() {
       return 0
       ;;
     *)
-      warning "▶ paseo daemon"
-      warning "╍ unsupported OS: $(uname -s), skipping"
+      log_warn_step "paseo daemon"
+      log_warn "Unsupported OS: $(uname -s), skipping"
       return 0
       ;;
   esac
