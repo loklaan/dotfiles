@@ -12,48 +12,54 @@
 
 Ticket markdown files use YAML frontmatter for metadata that maps to Jira fields, followed by the ticket body.
 
+Every paragraph sits on **one line**, however long. Hard-wrapping breaks the Jira converter — single newlines inside a paragraph are dropped without inserting a space, so `merch\nprocess` becomes `merchprocess`. Bullets are `-`, never `*`.
+
 ```markdown
 ---
 category: KTLO | Efficiency | New Capability | Quality Improvements
 parent: TEAM-123
+points: 3
 labels: [label-one, label-two]
 priority: Must have | Should have | Nice to have | Someday
 ---
 
-[Context — situation, relevance, scope boundaries, key dependencies if any]
+[Context — situation, relevance, scope boundaries, key dependencies if any. One line.]
 
-NOTE: [Origin — where this came from: retro action item, roadmap,
-incident, ad-hoc request, etc.]
+NOTE: [Origin — retro action item, roadmap, incident, ad-hoc request. Any ticket reference is a full browse URL, never a bare key.]
 
-🚀 Action Items
-
-[Concrete, actionable steps]
+### 🚀 Action Items
 
 - Step 1
 - Step 2
 - Step 3
 
-💥 Impact
+### 💥 Impact
 
-[Why this matters. What value does completing this deliver?]
+[Why this matters. What value does completing this deliver? One line.]
 
-✅ Success Criteria
+### ✅ Success Criteria
 
 [1-3 verifiable statements describing the end state.]
 
 - Criterion 1
 - Criterion 2
-- Criterion 3
+
+### Engineering actions taken
+
+- To be filled in as work progresses.
 
 ```
+
+The `### Engineering actions taken` section is not optional — a board automation moves the ticket to **Blocked** if the description lacks that exact string. Ship it as a placeholder from creation; it becomes the outcome note on close (see [tap-me-out.md](tap-me-out.md)).
 
 ### Frontmatter Fields
 
 | Field | Required | Description |
 |---|---|---|
 | `category` | Yes | One of: `KTLO`, `Efficiency`, `New Capability`, `Quality Improvements` (see guidance below) |
-| `parent` | No | Ticket key of the parent issue (epic, milestone, team goal, etc.) |
-| `labels` | No | Array of labels for categorisation and origin tracking |
+| `parent` | No | Ticket key of the parent issue. Epic → higher-order goal may be a **link** rather than a parent (see [using-jira.md](using-jira.md)) |
+| `points` | No | Integer estimate. Team convention: 1 point = 1 day. Omit if genuinely unestimated — the board's `needs-refinement` label is correct to stick in that case |
+| `labels` | No | Array here; the tools take a comma-joined string (`labels="engineering,ldk"`) |
 | `priority` | No | One of: `Must have`, `Should have`, `Nice to have`, `Someday` |
 
 #### Category of Work
@@ -124,6 +130,13 @@ Examples:
 - Answer: "What becomes possible or better when this is done?"
 - Avoid generic justifications — be specific to this ticket
 
+### Ticket References
+
+- Every ticket reference is a **full browse URL** — `https://<instance>.atlassian.net/browse/PROJ-123`, never a bare `PROJ-123`
+- Bare keys render as plain text; URLs render as rich smart links
+- Applies to prose, `NOTE:` lines, checklist items, and outcome notes
+- Where a paragraph mentions the same ticket repeatedly, the first mention takes the URL and later ones may stay bare for readability
+
 ### Success Criteria
 
 Aim for 1-3 criteria per ticket. Each criterion should be:
@@ -144,6 +157,8 @@ Not every ticket needs all four types, but every ticket should have at least one
 ## Example
 
 Title: `[Atlas] Organise team merch`
+
+Wrapped here for readability — unwrap every paragraph onto one line before sending it to Jira.
 
 ```markdown
 ---
@@ -203,20 +218,21 @@ The ticket content splits across Jira fields from two sources — the frontmatte
 | Template Section | Jira Field | Notes |
 |---|---|---|
 | Title (from title convention) | Summary | Standard field |
-| Context, Origin, Action Items, Impact | Description | Standard field |
-| Success Criteria | Acceptance Criteria | Custom textarea; field ID is instance-specific (see [using-jira.md](using-jira.md)) |
+| Everything | Description | Context, Origin, Action Items, Impact, Success Criteria, Engineering actions taken |
 
-The description body contains everything from the template **except** Success Criteria. Format it with the emoji headers as written in the template — Jira renders markdown/rich text.
-
-Success Criteria goes into the **Acceptance Criteria** custom field, not into the description. This is a separate textarea field. Write the criteria as a bulleted list.
+Success Criteria stays **in the description** as its own `### ✅ Success Criteria` section. The Acceptance Criteria custom field is also writable (via escaped ADF — see [using-jira.md](using-jira.md)), but keeping criteria in the description means one artefact, visible in every export and view. Use the field as well only if something downstream reads it.
 
 ### Creation Steps
 
-1. **Parse frontmatter** — Extract category, parent, labels, and priority from the YAML frontmatter
-2. **Compose the description** — Assemble Context, Origin, Action Items, and Impact sections into a single formatted string using the emoji headers
-3. **Extract acceptance criteria** — Pull the Success Criteria section out as a separate value for the Acceptance Criteria field
-4. **Ask for remaining metadata** — Ask the user for issue type if not already known. Default to `Task`. If `parent` is blank, search for recent epics in the target project and let the user pick one (or proceed without)
-5. **Create the ticket** — Use the `jira-create` tool with the project key, summary, description, acceptance criteria, category, parent, labels, and any other metadata
-6. **Set priority** — If priority is specified, update the ticket via `jira_update` immediately after creation
-7. **Link dependencies** — If creating multiple tickets with dependencies between them, link them (see [using-jira.md](using-jira.md))
-8. **Confirm** — Return the created ticket key and URL to the user
+Order matters — it is derived from the board automations, not preference. One field per call, and read back at the end.
+
+1. **Duplicate guard** — `jira_search` on the exact summary, scoped with an explicit `jira_url`. A same-summary hit means stop and report, not create.
+2. **Create** — `jira_create` with `project_key`, `issue_type`, `summary`, `description`, `parent_key` and **nothing else**. No `labels` (the automation wipes them seconds later), no `customfield_*` (silently dropped).
+3. **Story points** — `jira_update` with `fields="customfield_10060=<N>"`. Skip if unestimated.
+4. **Priority** — `jira_update` with `fields="priority=\"<value>\""`.
+5. **Category of Work** — `jira_update` with the select wrapper, e.g. `fields="customfield_10107={\"value\":\"<Category>\"}"`. A bare string fails.
+6. **Labels — always last.** `jira_update` with `fields="labels=\"engineering,<slug>\""`. The automation replaces the label set shortly after creation, so setting labels last overwrites it; setting them earlier loses them.
+7. **Read back** — `jira_get_issue` with **no** `fields` filter. Confirm summary, parent, priority, points, category, labels, and the literal string `Engineering actions taken`. Repair with single-field updates; give up after 3 attempts and report the ticket as partial.
+8. **Link dependencies** — if creating several with dependencies between them, link them (see [using-jira.md](using-jira.md)).
+9. **Sweep the batch** — automations resolve late, so a passing read-back is not sufficient. After the whole batch, re-check the drift-prone gates with JQL (see [using-jira.md](using-jira.md)).
+10. **Confirm** — return the created ticket keys and URLs.
