@@ -78,7 +78,9 @@
 
      `excluded_roots` is matched with pathIsWithin() against the realpath of
      the workspace, so this covers the whole subtree, and `~`-relative roots
-     resolve per-machine. Harmless on machines where the path is absent.
+     resolve per-machine. Harmless on machines where the path is absent —
+     which is why both known checkout locations are listed unconditionally:
+     `~/work/canva` on the Coder devboxes, `~/dev/canva/canva` on macbooks.
 
      Top-level (not "[opencode]"): codegraph gating is harness-agnostic. */ -}}
 {{- $cg := dict -}}
@@ -89,7 +91,7 @@
 {{- if hasKey $cg "excluded_roots" -}}
 {{-   $roots = index $cg "excluded_roots" -}}
 {{- end -}}
-{{- $cg = set $cg "excluded_roots" (concat $roots (list "~/work/canva") | uniq | sortAlpha) -}}
+{{- $cg = set $cg "excluded_roots" (concat $roots (list "~/work/canva" "~/dev/canva/canva") | uniq | sortAlpha) -}}
 
 {{- /* --- Tier selection: sidecar profile (if valid) else first tier --- */ -}}
 {{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
