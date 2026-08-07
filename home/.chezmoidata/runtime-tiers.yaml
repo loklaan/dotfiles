@@ -29,13 +29,16 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (22) ---
+    # --- home/private_dot_local/bin (23) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_d2.tmpl
       tier: na
       lang: stub
+    - path: home/private_dot_local/bin/executable_df-coder-url
+      tier: runtime
+      lang: deno
     - path: home/private_dot_local/bin/executable_df-drift
       tier: runtime
       lang: deno

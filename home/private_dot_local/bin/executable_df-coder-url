@@ -1,0 +1,451 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-env=CODER_WORKSPACE_NAME --allow-read=/run/coder/agent.conf
+
+// df-coder-url (Deno + Effect v4 beta). Rewrites a loopback URL into one a
+// macbook can open across Coder Connect: the host becomes <workspace>.coder and
+// everything else — protocol, port, path, query, fragment — is preserved.
+//
+//   df-coder-url http://localhost:5173/app?x=1
+//   -> http://for-tasks-1.coder:5173/app?x=1
+//
+// Exists so the agent rule `lochy:coder-local-urls` can stay three lines: the
+// deterministic mechanics (which hosts count as loopback, where the workspace
+// name really comes from) live here, and the rule keeps only the judgement about
+// WHEN to translate a URL.
+//
+// SAFE TO CALL ANYWHERE — that is the point. Off a Coder box, or on any host
+// that is not loopback, the input is echoed back unchanged with exit 0. So the
+// caller never has to branch on "am I on a dev box"; it pipes every URL through
+// and uses whatever comes out. Rewriting is also idempotent: an already
+// translated <ws>.coder URL passes straight through.
+//
+// WHY NOT $(hostname): on a Coder box hostname is the container/pod id on some
+// templates and the workspace name on others, and Coder Connect's *.coder DNS
+// only resolves the workspace name. CODER_WORKSPACE_NAME is the canonical
+// identifier, set by the Coder agent; /run/coder/agent.conf is the fallback for
+// contexts where it was never exported into the environment. Same invariant as
+// home/private_dot_config/pitchfork/config.toml.tmpl — do not "simplify" it.
+//
+// IMPORTANT — why this tool does NOT use @effect/platform-node:
+// same reason as df-json-escape. platform-node transitively loads `msgpackr`,
+// which reads env at module-evaluation time and needs blanket --allow-env plus
+// --allow-ffi, which would both widen this tool's two narrow grants AND force
+// the in-file tests to run with permission flags. So it keeps the `effect` core
+// for control flow and error modelling, reads env/FS through Deno primitives
+// injected as parameters (so tests stay hermetic and zero-flag), and runs via
+// Effect.runPromiseExit + Deno.exit instead of NodeRuntime.runMain.
+
+import { Console, Effect, Option } from "npm:effect@4.0.0-beta.93";
+
+const USAGE = `Usage:
+  df-coder-url [OPTIONS] URL...
+
+Description:
+  Rewrites loopback URLs so they are reachable from a macbook over Coder
+  Connect: the host becomes <workspace>.coder, with protocol, port, path,
+  query, fragment and userinfo preserved.
+
+  Safe to call anywhere. Off a Coder box, or for a host that is not
+  loopback, the URL is echoed back unchanged.
+
+Notes:
+  Coder Connect must be running on the macbook for <workspace>.coder to
+  resolve. The tunnel dials 127.0.0.1 on the box, so a loopback-bound
+  server is already reachable — never rebind one to 0.0.0.0 to "expose" it.
+
+  A *.localhost vhost (app.localhost) passes through untouched: nothing
+  resolves beneath <workspace>.coder, so the label cannot be preserved and
+  rewriting would send the reader to the wrong vhost.
+
+Examples:
+  df-coder-url http://localhost:5173/
+  df-coder-url ws://127.0.0.1:4096 http://0.0.0.0:3000/health
+
+Options:
+  --help:    Display this help message
+`;
+
+// One cause per error.
+class HelpRequested {
+  readonly _tag = "HelpRequested";
+}
+class UnknownOption {
+  readonly _tag = "UnknownOption";
+  constructor(readonly option: string) {}
+}
+class NoUrls {
+  readonly _tag = "NoUrls";
+}
+class InvalidUrl {
+  readonly _tag = "InvalidUrl";
+  constructor(readonly raw: string) {}
+}
+
+// Injected readers. Passing these in (rather than calling Deno.* inline) keeps
+// every test hermetic and runnable with zero permission flags.
+type EnvReader = (key: string) => string | undefined;
+type FileReader = (path: string) => string;
+
+const AGENT_CONF = "/run/coder/agent.conf";
+
+export const denoEnv: EnvReader = (key) => Deno.env.get(key);
+export const denoReadFile: FileReader = (path) => Deno.readTextFileSync(path);
+
+// Hosts that mean "this machine". A remote reader cannot use any of them.
+// Covers all of 127.0.0.0/8, not just 127.0.0.1, and both IPv6 loopback and
+// wildcard forms (URL.hostname keeps the brackets for IPv6 literals).
+//
+// DELIBERATELY EXCLUDES *.localhost (e.g. app.localhost — the vhost pattern
+// some dev servers use for per-app subdomains). Coder Connect resolves exactly
+// <workspace>.coder with no wildcard beneath it, so the "app." label cannot
+// survive the rewrite; translating would yield a URL that connects but sends
+// the wrong Host header, landing the reader on the wrong vhost or a 404. An
+// obviously-unresolvable URL beats a confidently-wrong one, so these pass
+// through untouched.
+const isLoopbackHost = (host: string): boolean => {
+  const h = host.toLowerCase();
+  if (h === "localhost") return true;
+  if (h === "0.0.0.0" || h === "[::]" || h === "[::1]") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+};
+
+// Swap the host inside the authority, preserving userinfo and port.
+//
+// Textual rather than assigning url.hostname and re-serialising, because
+// re-serialising appends a "/" to bare-authority inputs
+// (http://localhost:3000 -> http://localhost:3000/), and we hand back exactly
+// the shape we were given. Parsing the authority by hand (rather than one
+// regex) is what keeps userinfo intact: a naive host pattern either eats
+// "user@" or, with a password, stops at the ":" and splices the host into the
+// middle of the credentials.
+const spliceHost = (url: string, host: string): string => {
+  const start = url.indexOf("://") + 3;
+  const offset = url.slice(start).search(/[/?#]/);
+  const end = offset === -1 ? url.length : start + offset;
+  const authority = url.slice(start, end);
+  const at = authority.lastIndexOf("@");
+  const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
+  const hostPort = authority.slice(at + 1);
+  // An IPv6 literal is bracketed, so a colon only delimits the port after "]".
+  const colon = hostPort.indexOf(
+    ":",
+    hostPort.startsWith("[") ? hostPort.indexOf("]") : 0,
+  );
+  const port = colon === -1 ? "" : hostPort.slice(colon);
+  return `${url.slice(0, start)}${userinfo}${host}${port}${url.slice(end)}`;
+};
+
+// `new URL("localhost:5173")` parses "localhost:" as the SCHEME and silently
+// yields nonsense, so a schemeless input is given an http:// prefix before
+// parsing rather than being rejected or mangled.
+const withScheme = (raw: string): string =>
+  raw.includes("://") ? raw : `http://${raw}`;
+
+// CODER_WORKSPACE_NAME first; /run/coder/agent.conf when it was never exported.
+// None here means "not on a Coder box", which is not an error — it is the
+// pass-through case.
+export const resolveWorkspace = (
+  env: EnvReader,
+  readFile: FileReader,
+): Option.Option<string> => {
+  const fromEnv = env("CODER_WORKSPACE_NAME");
+  if (fromEnv !== undefined && fromEnv !== "") return Option.some(fromEnv);
+  try {
+    const match = readFile(AGENT_CONF).match(
+      /^CODER_WORKSPACE_NAME="?([^"\r\n]+)"?/m,
+    );
+    return match === null ? Option.none() : Option.some(match[1]);
+  } catch {
+    // Absent, unreadable, or not a Coder box at all.
+    return Option.none();
+  }
+};
+
+// The core transform, isolated so tests exercise it directly. Only the hostname
+// is touched; URL serialisation preserves the rest verbatim.
+export const translate = (
+  raw: string,
+  workspace: Option.Option<string>,
+): Effect.Effect<string, InvalidUrl> =>
+  Effect.gen(function* () {
+    const normalised = withScheme(raw);
+    const url = yield* Effect.try({
+      try: () => new URL(normalised),
+      catch: () => new InvalidUrl(raw),
+    });
+    // Nothing to do: echo the input back byte for byte, scheme prefix included
+    // only when we actually rewrite (below).
+    if (Option.isNone(workspace) || !isLoopbackHost(url.hostname)) {
+      return raw;
+    }
+    // A schemeless input keeps the http:// that withScheme added, so what we
+    // print is always clickable.
+    return spliceHost(normalised, `${workspace.value}.coder`);
+  });
+
+interface Args {
+  readonly urls: ReadonlyArray<string>;
+}
+
+const parseArgs = (
+  argv: ReadonlyArray<string>,
+): Effect.Effect<Args, HelpRequested | UnknownOption | NoUrls> =>
+  Effect.gen(function* () {
+    const urls: string[] = [];
+    for (const arg of argv) {
+      if (arg === "--help") return yield* Effect.fail(new HelpRequested());
+      if (arg.startsWith("-")) {
+        return yield* Effect.fail(new UnknownOption(arg));
+      }
+      urls.push(arg);
+    }
+    if (urls.length === 0) return yield* Effect.fail(new NoUrls());
+    return { urls };
+  });
+
+const program = (
+  argv: ReadonlyArray<string>,
+  env: EnvReader,
+  readFile: FileReader,
+): Effect.Effect<
+  void,
+  HelpRequested | UnknownOption | NoUrls | InvalidUrl
+> =>
+  Effect.gen(function* () {
+    const { urls } = yield* parseArgs(argv);
+    const workspace = resolveWorkspace(env, readFile);
+    for (const raw of urls) {
+      yield* Console.log(yield* translate(raw, workspace));
+    }
+  });
+
+const main = (
+  argv: ReadonlyArray<string>,
+): Effect.Effect<void, UnknownOption | NoUrls | InvalidUrl> =>
+  program(argv, denoEnv, denoReadFile).pipe(
+    Effect.catchTags({
+      HelpRequested: () => Console.log(USAGE.trimEnd()),
+      UnknownOption: (e) =>
+        Console.error(`df-coder-url: unknown option: ${e.option}`).pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+      NoUrls: (e) =>
+        Console.error(
+          "df-coder-url: no URL given — pass one or more URLs as arguments",
+        ).pipe(Effect.andThen(Effect.fail(e))),
+      InvalidUrl: (e) =>
+        Console.error(`df-coder-url: not a parseable URL: ${e.raw}`).pipe(
+          Effect.andThen(Effect.fail(e)),
+        ),
+    }),
+  );
+
+if (import.meta.main) {
+  // Last-resort backstop: catch anything that escapes the Effect runtime
+  // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
+  // NodeRuntime.runMain does NOT install these (only SIGINT/SIGTERM) — verified
+  // against effect-smol source. Inside import.meta.main so `deno test` stays hermetic.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const exit = await Effect.runPromiseExit(main(Deno.args));
+  Deno.exit(exit._tag === "Success" ? 0 : 1);
+}
+
+// ===========================================================================
+// Testing. The heart of the tool is `translate` (host swap, everything else
+// preserved, pass-through when there is nothing to do) and `resolveWorkspace`
+// (env, then agent.conf, then none). Env and FS are injected, so these run
+// fully offline with zero permission flags.
+//
+//   deno test executable_df-coder-url
+// ===========================================================================
+
+const ws = Option.some("for-tasks-1");
+const noWs = Option.none<string>();
+
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromise(effect as Effect.Effect<A, E, never>);
+
+const eq = (actual: string, expected: string) => {
+  if (actual !== expected) {
+    throw new Error(`expected ${expected}, got ${actual}`);
+  }
+};
+
+const noFile: FileReader = () => {
+  throw new Deno.errors.NotFound(AGENT_CONF);
+};
+
+Deno.test("swaps localhost for the workspace host, keeping port and path", async () => {
+  eq(
+    await run(translate("http://localhost:5173/app?x=1#frag", ws)),
+    "http://for-tasks-1.coder:5173/app?x=1#frag",
+  );
+});
+
+Deno.test("bare authority keeps its shape (no trailing slash added)", async () => {
+  eq(
+    await run(translate("http://localhost:3000", ws)),
+    "http://for-tasks-1.coder:3000",
+  );
+});
+
+Deno.test("rewrites every loopback spelling", async () => {
+  eq(
+    await run(translate("http://127.0.0.1:8080/health", ws)),
+    "http://for-tasks-1.coder:8080/health",
+  );
+  eq(
+    await run(translate("http://0.0.0.0:3000", ws)),
+    "http://for-tasks-1.coder:3000",
+  );
+  eq(
+    await run(translate("http://127.1.2.3:9000", ws)),
+    "http://for-tasks-1.coder:9000",
+  );
+  eq(
+    await run(translate("http://[::1]:8080/x", ws)),
+    "http://for-tasks-1.coder:8080/x",
+  );
+});
+
+Deno.test("preserves non-http protocols", async () => {
+  eq(
+    await run(translate("ws://localhost:4096", ws)),
+    "ws://for-tasks-1.coder:4096",
+  );
+  eq(
+    await run(translate("https://localhost:8443/", ws)),
+    "https://for-tasks-1.coder:8443/",
+  );
+});
+
+Deno.test("a schemeless host:port gains http:// so the result is clickable", async () => {
+  eq(
+    await run(translate("localhost:5173", ws)),
+    "http://for-tasks-1.coder:5173",
+  );
+});
+
+Deno.test("userinfo survives the host swap", async () => {
+  eq(
+    await run(translate("http://user@localhost:3000/x", ws)),
+    "http://user@for-tasks-1.coder:3000/x",
+  );
+});
+
+Deno.test("a password in the userinfo does not derail the splice", async () => {
+  // Regression: a naive host pattern stops at the ":" in "user:pass" and
+  // splices the host into the middle of the credentials, producing
+  // http://for-tasks-1.coder:pass@localhost:3000/x — nonsense that still
+  // points at localhost.
+  eq(
+    await run(translate("http://user:pass@localhost:3000/x", ws)),
+    "http://user:pass@for-tasks-1.coder:3000/x",
+  );
+});
+
+Deno.test("an IPv6 loopback with userinfo keeps both", async () => {
+  eq(
+    await run(translate("http://user@[::1]:8080/x", ws)),
+    "http://user@for-tasks-1.coder:8080/x",
+  );
+});
+
+Deno.test("a *.localhost vhost is left alone, not silently flattened", async () => {
+  // Regression: rewriting drops the "app." label, yielding a URL that connects
+  // but sends the wrong Host header. No wildcard exists beneath <ws>.coder, so
+  // this cannot be represented — pass it through instead.
+  eq(
+    await run(translate("http://app.localhost:3000/", ws)),
+    "http://app.localhost:3000/",
+  );
+});
+
+Deno.test("a portless loopback host stays portless", async () => {
+  eq(
+    await run(translate("http://localhost/health", ws)),
+    "http://for-tasks-1.coder/health",
+  );
+});
+
+Deno.test("an uppercase host is still detected as loopback", async () => {
+  eq(
+    await run(translate("http://LOCALHOST:5173/", ws)),
+    "http://for-tasks-1.coder:5173/",
+  );
+});
+
+Deno.test("off a Coder box the URL is echoed back unchanged", async () => {
+  eq(
+    await run(translate("http://localhost:5173/", noWs)),
+    "http://localhost:5173/",
+  );
+});
+
+Deno.test("a non-loopback host is left alone", async () => {
+  eq(
+    await run(translate("https://www.canva.com/x", ws)),
+    "https://www.canva.com/x",
+  );
+});
+
+Deno.test("translation is idempotent", async () => {
+  const once = await run(translate("http://localhost:5173/", ws));
+  eq(await run(translate(once, ws)), once);
+});
+
+Deno.test("an unparseable URL fails with InvalidUrl", async () => {
+  const exit = await Effect.runPromiseExit(translate("http://[oops", ws));
+  if (exit._tag !== "Failure") throw new Error("expected InvalidUrl");
+});
+
+Deno.test("workspace comes from the environment first", () => {
+  const got = resolveWorkspace(() => "for-tasks-2", noFile);
+  if (!Option.isSome(got) || got.value !== "for-tasks-2") {
+    throw new Error(`unexpected: ${JSON.stringify(got)}`);
+  }
+});
+
+Deno.test("workspace falls back to agent.conf when env is unset", () => {
+  const conf =
+    'CODER_AGENT_TOKEN="secret"\nCODER_WORKSPACE_NAME="for-tasks-3"\n';
+  const got = resolveWorkspace(() => undefined, () => conf);
+  if (!Option.isSome(got) || got.value !== "for-tasks-3") {
+    throw new Error(`unexpected: ${JSON.stringify(got)}`);
+  }
+});
+
+Deno.test("an empty env value does not shadow agent.conf", () => {
+  const got = resolveWorkspace(
+    () => "",
+    () => 'CODER_WORKSPACE_NAME="for-tasks-3"',
+  );
+  if (!Option.isSome(got) || got.value !== "for-tasks-3") {
+    throw new Error(`unexpected: ${JSON.stringify(got)}`);
+  }
+});
+
+Deno.test("a CRLF agent.conf does not leak a carriage return into the host", () => {
+  const got = resolveWorkspace(
+    () => undefined,
+    () => "CODER_WORKSPACE_NAME=for-tasks-3\r\n",
+  );
+  if (!Option.isSome(got) || got.value !== "for-tasks-3") {
+    throw new Error(`unexpected: ${JSON.stringify(got)}`);
+  }
+});
+
+Deno.test("no env and no agent.conf means not on a Coder box", () => {
+  if (Option.isSome(resolveWorkspace(() => undefined, noFile))) {
+    throw new Error("expected none");
+  }
+});
