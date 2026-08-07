@@ -61,6 +61,22 @@ DENO_NO_UPDATE_CHECK = "1"
 idiomatic_version_file_enable_tools = ["node"]
 experimental = true
 gix = false
+# Shims in ~/.local/share/mise/shims are symlinks to the mise binary itself, and
+# that dir is first on PATH. With auto-install enabled, a shim invoked for a
+# not-yet-installed tool re-enters mise to install it — which deadlocks when the
+# caller IS mise installing that same tool. A source build makes this reachable:
+# CPython's ./configure probes `python3.13 -V` to bootstrap itself, PATH resolves
+# that to the shim, the shim tries to install python@3.13, and it blocks forever
+# on the tool-version flock its own grandparent build already holds. Its nested
+# python-build then spawns another ./configure, so the cycle compounds. Observed
+# on a Coder box: `mise install` hung 1h45m with no output, and because
+# install-my-packages runs it via run_quiet under a non-TTY `chezmoi apply`, a
+# fresh workspace wedges silently and permanently.
+# Disabling this severs the cycle at its only active step. Shims for INSTALLED
+# tools are unaffected; a shim for a missing tool now fails fast instead of
+# self-installing, which is correct here — installs come from `mise install`
+# during `chezmoi apply`, not from incidental shim calls.
+not_found_auto_install = false
 
 # ── Tasks ────────────────────────────────────────────────────────────────────
 # Task bodies are hoisted into ~/.local/bin/dotfiles-task-* scripts so they
