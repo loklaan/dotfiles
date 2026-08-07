@@ -22,7 +22,7 @@ usage = "3.5.5"
 # and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
 # `df-orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
 # (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
-"http:orca" = { version = "1.4.114", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
+"http:orca" = { version = "1.4.176", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
 {{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "codeServer" false .) -}}
 "npm:code-server" = "latest"

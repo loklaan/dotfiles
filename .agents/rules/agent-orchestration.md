@@ -314,7 +314,7 @@ So a stopped box is never left stale: it does not receive the manual fan-out, bu
 Both opt-in tools that run on Coder boxes are installed by mise as a normal `[tools]` entry and supervised by Pitchfork:
 
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.101`
-- **orca**: `http:orca` — pinned to `1.4.114`, downloads `orca-linux.AppImage` from GitHub releases
+- **orca**: `http:orca` — pinned to `1.4.176`, downloads `orca-linux.AppImage` from GitHub releases
 
 Additionally, **pitchfork** itself is always installed on macOS and Linux (`github:jdx/pitchfork`, pinned to `2.19.0`). It manages `opencode serve` on any machine with `openCodeServer = true`, the Coder/Linux daemon set (`mcpproxy`, `code-server`, `orca-server`) behind their opt-ins, and — on macOS — the daily **drift notifier** via its cron scheduler (see below).
 
