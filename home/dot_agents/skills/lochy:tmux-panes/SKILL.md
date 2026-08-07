@@ -142,6 +142,9 @@ done
 Look for lines like `Local: http://localhost:5173/` — the actual port may
 differ from what was requested.
 
+On a Coder dev box, translate it with `df-coder-url` before a human opens it —
+see the `lochy:coder-local-urls` rule.
+
 ## Sending keys to panes
 
 ```bash
