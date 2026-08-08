@@ -68,7 +68,7 @@
 {{- $servers = append $servers (dict
       "name" "smithers"
       "command" "bunx"
-      "args" (list "smithers-orchestrator" "--mcp")
+      "args" (list "smthrs" "--mcp")
       "protocol" "stdio"
       "enabled" true
     ) -}}

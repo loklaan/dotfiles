@@ -2,7 +2,7 @@
 
 Smithers is wired here as an mcpproxy MCP server named `smithers`, launched with
 the available Node.js-compatible runtime (for example `smithers --mcp`,
-`npx -y smithers-orchestrator --mcp`, or `bunx smithers-orchestrator --mcp`), so
+`npx -y smthrs --mcp`, or `bunx smthrs --mcp`), so
 the CLI verbs are also reachable as MCP tools. OpenCode is a first-class worker
 agent; prefer it inside `<Task>` nodes on these machines.
 
