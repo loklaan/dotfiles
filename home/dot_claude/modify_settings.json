@@ -55,6 +55,17 @@
 
 {{- $ourHooks := includeTemplate "hooks-json-tmpl" . | fromJson -}}
 {{- $merged := merge (dict) $existingHooks -}}
+
+{{- /* Entry identity within an event is the matcher, and an ABSENT matcher is
+       identical to an empty one. Claude Code only gives `matcher` meaning for
+       the tool events (PreToolUse/PostToolUse); for everything else third-party
+       writers legitimately omit the key — Orca, for instance, writes
+       matcher-less SessionStart/Stop/UserPromptSubmit entries.
+
+       Normalising is not cosmetic. chezmoi renders templates with
+       missingkey=error, so a bare `.matcher` on a matcher-less entry aborts the
+       whole template, and with it every `chezmoi apply` on the machine — not
+       just this file. Read the matcher through hasKey, never directly. */ -}}
 {{- range $event, $ourEntries := $ourHooks -}}
 {{-   $existing := list -}}
 {{-   if hasKey $existingHooks $event -}}
@@ -62,18 +73,25 @@
 {{-   end -}}
 {{-   $result := list -}}
 {{-   $ourMatchers := list -}}
-{{-   range $ourEntries -}}
-{{-     $m := .matcher -}}
+{{-   range $ourEntry := $ourEntries -}}
+{{-     $m := "" -}}
+{{-     if hasKey $ourEntry "matcher" -}}
+{{-       $m = $ourEntry.matcher -}}
+{{-     end -}}
 {{-     $ourMatchers = append $ourMatchers $m -}}
 {{-     $hooks := list -}}
 {{-     $commands := list -}}
-{{-     range .hooks -}}
+{{-     range $ourEntry.hooks -}}
 {{-       $hooks = append $hooks . -}}
 {{-       $commands = append $commands .command -}}
 {{-     end -}}
-{{-     range $existing -}}
-{{-       if eq .matcher $m -}}
-{{-         range .hooks -}}
+{{-     range $entry := $existing -}}
+{{-       $em := "" -}}
+{{-       if hasKey $entry "matcher" -}}
+{{-         $em = $entry.matcher -}}
+{{-       end -}}
+{{-       if eq $em $m -}}
+{{-         range $entry.hooks -}}
 {{-           if not (has .command $commands) -}}
 {{-             $hooks = append $hooks . -}}
 {{-             $commands = append $commands .command -}}
@@ -83,9 +101,13 @@
 {{-     end -}}
 {{-     $result = append $result (dict "matcher" $m "hooks" $hooks) -}}
 {{-   end -}}
-{{-   range $existing -}}
-{{-     if not (has .matcher $ourMatchers) -}}
-{{-       $result = append $result . -}}
+{{-   range $entry := $existing -}}
+{{-     $em := "" -}}
+{{-     if hasKey $entry "matcher" -}}
+{{-       $em = $entry.matcher -}}
+{{-     end -}}
+{{-     if not (has $em $ourMatchers) -}}
+{{-       $result = append $result $entry -}}
 {{-     end -}}
 {{-   end -}}
 {{-   $merged = set $merged $event $result -}}
