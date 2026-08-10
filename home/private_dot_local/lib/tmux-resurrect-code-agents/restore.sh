@@ -16,10 +16,6 @@
 
 set -euo pipefail
 
-RESURRECT_DIR="${HOME}/.tmux/resurrect"
-INPUT="$RESURRECT_DIR/code-agent-sessions.json"
-LEGACY_INPUT="$RESURRECT_DIR/claude-sessions.json"
-
 DROP_PREFIX="resume-"
 STALE_MINUTES=60
 
@@ -27,10 +23,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=state-dir.sh
 source "$DIR/state-dir.sh"
+# shellcheck source=resurrect-dir.sh
+source "$DIR/resurrect-dir.sh"
 # shellcheck source=agents/claude.sh
 source "$DIR/agents/claude.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
+
+RESURRECT_DIR="$(tcsa_resurrect_dir)" || exit 0
+INPUT="$RESURRECT_DIR/code-agent-sessions.json"
+LEGACY_INPUT="$RESURRECT_DIR/claude-sessions.json"
 
 # Drop files now live in the per-uid guarded dir, not world-shared ${TMPDIR:-/tmp}
 # (finding #1). exit 0 on guard refusal: never fall back to an unsafe location.
