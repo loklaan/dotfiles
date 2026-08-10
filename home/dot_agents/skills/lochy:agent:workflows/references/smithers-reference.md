@@ -45,6 +45,9 @@ The API builds first-class graph values that share Smithers' durable runtime:
 SQLite persistence, schema-validated outputs, dependency scheduling, and
 resume without rerunning completed work.
 
+For further guidance on Effect patterns and APIs, load the
+`lochy:coding:effect` skill.
+
 ```ts
 import { Smithers } from "smthrs";
 import { Effect, Schema } from "effect";
