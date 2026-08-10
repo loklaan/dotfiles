@@ -2,10 +2,24 @@
 
 ## 60 seconds to the aha
 
-From inside the user's project, use Bun (>=1.3) plus the model credentials the
-selected worker agents need. The published package is `smthrs`; always prefer
-`bunx smthrs <command>`. The installed binary is still named `smithers`, but
-the unrelated `smithers` npm package makes `bunx smithers` unsafe.
+From inside the user's project, use its primary JavaScript runtime plus the model
+credentials the selected worker agents need. Before running Smithers, inspect
+`mise.toml` and then `package.json` for the project's runtime and package
+manager (`mise.toml` tool versions take precedence; `package.json`'s
+`packageManager` or `engines` is the fallback). Use that runtime's package
+runner:
+
+| Project runtime | Runner |
+| --- | --- |
+| Bun | `bunx` |
+| Node.js + npm | `npx` |
+| Node.js + pnpm | `pnpm dlx` |
+| Node.js + Yarn | `yarn dlx` |
+
+The published package is `smthrs`; the installed binary is still named
+`smithers`, but the unrelated `smithers` npm package makes `bunx smithers`
+unsafe. In the examples below, replace `bunx` with the selected project's
+runner.
 
 ```bash
 # 1. Scaffold .smithers/ with workflows, prompts, and agent configuration
