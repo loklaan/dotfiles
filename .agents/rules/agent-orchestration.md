@@ -334,6 +334,8 @@ Additionally, **pitchfork** itself is always installed on macOS and Linux (`gith
 
 > **Pitchfork version is load-bearing for cron.** The drift notifier relies on Pitchfork's `cron` daemon field, which is only actually implemented in **>= 2.19.0**. Earlier releases (e.g. 2.14.0) accept the `cron` key in config and expose it in the JSON schema, but the binary silently ignores it — a cron daemon runs once at supervisor boot and then stops, never on schedule. Do NOT downgrade the pin below 2.19.0 without moving the drift notifier back to launchd.
 
+> **Boot-enabling is an invariant of starting a daemon, not a caller's chore.** `pf_start` in `pitchfork-lifecycle.sh` calls `pf_ensure_supervisor` before every start, so any machine that starts a Pitchfork daemon is also boot-enabled (`pitchfork boot enable`, one `boot status` probe in steady state, logged only on the transition). This was previously called only by the macOS-only drift notifier, which meant **Linux boxes were never boot-enabled** and every daemon's liveness depended on a successful `chezmoi apply` at boot — a template abort anywhere in the apply left mcpproxy, orca-server, opencode-serve and code-server all dead, with `pitchfork boot status` reporting `disabled`. The failure was invisible because `pitchfork start` auto-spawns the supervisor, so the daemon came up and the apply looked clean; it just never survived a reboot. Do NOT move this back out to the call sites. Note `boot_start = true` in `pitchfork/config.toml` is a per-daemon flag and is a **no-op while pitchfork itself is not boot-enabled**.
+
 macOS still intentionally has one non-Pitchfork service surface:
 - **MCPProxy.app** is a GUI app/cask, not the `mcpproxy-go` CLI daemon.
 
