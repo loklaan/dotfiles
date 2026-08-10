@@ -249,5 +249,5 @@ get_linux_distro() {
   )
 }
 
-trap print_log_path EXIT
+trap 'print_log_path || true' EXIT
 main "$@"

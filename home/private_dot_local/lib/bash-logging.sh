@@ -268,3 +268,21 @@ setup_session_logging() {
   export BASH_LOGGING_FILE="$session_log"
   export BASH_LOGGING_ACTIVE=1
 }
+
+# Tell the caller where the full output went, so a terse one-line failure is
+# still traceable. install.sh installs this as an EXIT trap.
+#
+# NEVER let this fail. Under `set -e` a trap command that exits non-zero
+# REPLACES the script's own exit status, so a broken print_log_path reports 127
+# for a run that succeeded and 127 for a run that failed for an unrelated
+# reason — identically. That is not hypothetical: this function was documented
+# here but never actually defined, so every `install.sh` failure surfaced to
+# `coder dotfiles` as a bare `exit status 127`. It masked a chezmoi template
+# abort that had silently left every Pitchfork daemon dead since boot, because
+# daemon startup is a side effect of a successful apply.
+print_log_path() {
+  if [ -n "${BASH_LOGGING_FILE:-}" ] && [ -f "${BASH_LOGGING_FILE}" ]; then
+    color_print magenta dim "Log: ${BASH_LOGGING_FILE}" >&2
+  fi
+  return 0
+}
