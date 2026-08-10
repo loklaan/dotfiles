@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_after_install-054-tmux-continuum-boot.sh
+#/
+#/ Description:
+#/   Removes the systemd user unit that tmux-continuum's @continuum-boot option
+#/   installs on Linux. tmux.conf now sets @continuum-boot 'off' there, so
+#/   continuum disables the unit on its own at the next tmux start — but it
+#/   never deletes the unit file, leaving a booby-trapped ExecStop chain
+#/   (`resurrect/scripts/save.sh` then `tmux kill-server`) on disk that anyone
+#/   could restart. That save runs against a dying server, writes a 0-byte
+#/   snapshot, and resurrect still claims it as `last`, which is how a restored
+#/   session comes back as one blank window.
+#/
+#/   Deliberately never stops an ACTIVE unit: `systemctl stop` would execute
+#/   exactly that destructive ExecStop chain, including killing the tmux server
+#/   the user may currently be attached to. An active unit is only disabled and
+#/   left to expire at the next boot.
+#/
+#/   macOS is unaffected — @continuum-boot stays on there, where continuum
+#/   installs a LaunchAgent with no stop action.
+#/
+#/ Options:
+#/   --help:      Display this help message
+{{ if eq .chezmoi.os "linux" -}}
+UNIT_NAME="tmux.service"
+UNIT_FILE="${HOME}/.config/systemd/user/${UNIT_NAME}"
+
+remove_continuum_boot_unit() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ ! -f "$UNIT_FILE" ]; then
+    return 0
+  fi
+
+  log_step "tmux continuum boot unit (Linux, opt-out)"
+
+  if systemctl --user is-enabled --quiet "$UNIT_NAME" 2>/dev/null; then
+    systemctl --user disable "$UNIT_NAME" >/dev/null 2>&1 || true
+    log_detail "Disabled ${UNIT_NAME}"
+  fi
+
+  if systemctl --user is-active --quiet "$UNIT_NAME" 2>/dev/null; then
+    log_warn "${UNIT_NAME} is active — leaving it in place; stopping it would run its destructive ExecStop (resurrect save against a dying server, then kill-server). It is disabled and will not return after the next boot."
+    return 0
+  fi
+
+  rm -f "$UNIT_FILE"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  log_detail "Removed ${UNIT_FILE}"
+}
+{{- end }}
+
+main() {
+  bl_parse_help "$@"
+
+  case "$(uname -s)" in
+{{ if eq .chezmoi.os "linux" -}}
+    Linux)  remove_continuum_boot_unit ;;
+{{- end }}
+    Darwin)
+      # @continuum-boot stays on for macOS; its LaunchAgent has no stop action.
+      return 0
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+main "$@"
