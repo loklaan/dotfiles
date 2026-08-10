@@ -14,12 +14,15 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=state-dir.sh
 source "$DIR/state-dir.sh"
+# shellcheck source=resurrect-dir.sh
+source "$DIR/resurrect-dir.sh"
 # Resolve the guarded state dir BEFORE sourcing the agent modules so their
 # detect_* readers inherit it; exit 0 on refusal so the post-save hook never
 # writes the sidecar from an unsafe dir nor disables tmux-resurrect.
 STATE_DIR="$(tcsa_state_dir)" || exit 0
 
-RESURRECT_DIR="${HOME}/.tmux/resurrect"
+RESURRECT_DIR="$(tcsa_resurrect_dir)" || exit 0
+mkdir -p "$RESURRECT_DIR"
 OUTPUT="$RESURRECT_DIR/code-agent-sessions.json"
 
 # Source agent modules
