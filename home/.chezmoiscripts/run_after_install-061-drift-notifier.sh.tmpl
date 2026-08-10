@@ -86,7 +86,6 @@ main() {
   pf_verify_cron_capable || true
   pf_warn_if_supervisor_stale || true
 
-  pf_ensure_supervisor
   pf_restart "$DAEMON" "Registered ${DAEMON} to run daily at 09:30"
 }
 

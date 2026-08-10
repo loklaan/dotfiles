@@ -66,9 +66,20 @@ pf_stop() {
 # start with an overridable message (a scheduled daemon is "Registered ... to
 # run daily at 09:30", not "Started"); stays silent on a successful confirm and
 # warns only when the supervisor does not report the daemon.
+#
+# Boot-enabling is done HERE rather than left to callers, because a caller that
+# forgets it fails invisibly: `pitchfork start` auto-spawns the supervisor, so
+# the daemon comes up and the apply looks clean — it just never survives a
+# reboot. That gap shipped. `pf_ensure_supervisor` was only ever called by the
+# macOS-only drift notifier, so on Linux boxes pitchfork was never boot-enabled
+# and EVERY daemon's liveness silently depended on a successful `chezmoi apply`
+# at boot. Starting a daemon and wanting it to persist are the same intent, so
+# they belong in one place.
 pf_start() {
   local daemon="$1"
   local message="${2:-Started ${daemon} daemon}"
+
+  pf_ensure_supervisor
 
   if ! "$PITCHFORK_BIN" start --quiet "$daemon" >/dev/null 2>&1; then
     log_warn "Failed to start ${daemon} — check: pitchfork logs ${daemon}"
@@ -99,9 +110,13 @@ pf_is_registered() {
   "$PITCHFORK_BIN" list 2>/dev/null | grep -q "$daemon"
 }
 
-# Ensure the supervisor is up, and boot-enabled so scheduled (cron) daemons
-# survive a reboot. Only reports the transition — already-enabled is the steady
-# state, not news.
+# Ensure the supervisor is up, and boot-enabled so daemons survive a reboot
+# without depending on a `chezmoi apply` to restart them. Only reports the
+# transition — already-enabled is the steady state, not news.
+#
+# Called from pf_start on every apply, so it must stay idempotent and quiet: the
+# `boot status` check short-circuits before `boot enable` precisely so a steady
+# state costs one probe and logs nothing.
 pf_ensure_supervisor() {
   "$PITCHFORK_BIN" supervisor start >/dev/null 2>&1 || true
 

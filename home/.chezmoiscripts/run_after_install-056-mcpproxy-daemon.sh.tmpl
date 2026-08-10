@@ -9,6 +9,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 setup_session_logging "$(basename "$0")"
 
 #/ Usage:
@@ -68,8 +69,8 @@ start_linux() {
   if [ "$enabled" != "true" ]; then
     log_step "mcpproxy (Linux, opt-out)"
 
-    if command -v pitchfork >/dev/null 2>&1; then
-      pitchfork stop df-mcpproxy 2>/dev/null || true
+    if pf_resolve; then
+      pf_stop df-mcpproxy
       log_detail "Stopped df-mcpproxy daemon"
     else
       log_detail "Pitchfork not installed; no daemon to stop"
@@ -103,16 +104,16 @@ start_linux() {
     fi
   fi
 
-  pitchfork stop df-mcpproxy 2>/dev/null || true
-  pitchfork start --quiet df-mcpproxy
-  log_detail "Started df-mcpproxy daemon"
-
-  sleep 2
-  if curl -sf http://127.0.0.1:{{ .ports.mcpproxy.internal }}/ -o /dev/null 2>&1; then
-    log_detail "Health probe OK — mcpproxy is responding on port {{ .ports.mcpproxy.internal }}"
-  else
-    log_warn "Health probe failed — mcpproxy not responding on port {{ .ports.mcpproxy.internal }}"
+  if ! pf_resolve; then
+    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
+    return 0
   fi
+
+  # Restart on every apply so config changes are picked up. Pitchfork's start
+  # command is idempotent; stop first so a running daemon is replaced cleanly.
+  pf_restart df-mcpproxy
+
+  pf_probe_http {{ .ports.mcpproxy.internal }} "mcpproxy" || true   # warn but don't block
 }
 
 main() {
