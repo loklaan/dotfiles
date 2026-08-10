@@ -1,8 +1,8 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=coder,ssh,orca,scutil --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi,coder,jq,ssh,orca,scutil --allow-read --allow-env --allow-ffi
 
-// df-orca-pair — discover running Coder dev boxes that host our headless Orca
-// server (the `df-orca-server` Pitchfork daemon) and register each as a "Remote
-// Orca Server" in the local macOS Orca.app.
+// df-orca-pair — discover hosts running our headless Orca server (the
+// `df-orca-server` Pitchfork daemon) and register each as a "Remote Orca Server"
+// in the local macOS Orca.app.
 //
 // Why a tool and not a chezmoi template: an Orca remote-server entry
 // (orca-environments.json) carries a per-pairing deviceToken + Curve25519
@@ -11,15 +11,32 @@
 // produced by chezmoi rendering. So chezmoi manages THIS TOOL; the tool performs
 // the live discovery + handshake and hands the offer to `orca environment add`.
 //
+// PROFILE-SCOPED DISCOVERY. Which hosts are candidates depends on the machine
+// profile (work | personal), read at runtime from `chezmoi data`:
+//
+//   work      -> ["coder"]                  Coder workspaces only
+//   personal  -> ["coder", "ssh-config"]    Coder workspaces + ad-hoc SSH VMs
+//
+// Both sources are DYNAMIC. There is deliberately no host inventory in the
+// dotfiles repo: Coder boxes churn, and the repo is public, so committing box
+// names would both go stale and leak internal naming. `coder` enumerates
+// workspaces at run time; `ssh-config` enumerates concrete Host aliases from the
+// user's ssh config at run time. Adding a personal VM therefore means adding an
+// ssh config Host block — which you must do anyway for the box to be reachable.
+//
+// Because the SSH probe is itself the qualifier (a host only pairs when its
+// df-orca-server is CURRENTLY running and has emitted an offer), discovering
+// broadly is safe: non-orca hosts simply report as skipped.
+//
 // FAN-OUT shape (see deno-effect-tools.md §9): N independent SSH probes with
 // bounded concurrency and typed partial-failure aggregation, mirroring `cw
-// fleet`. Each box is probed read-only over SSH; pairing is applied locally via
+// fleet`. Each host is probed read-only over SSH; pairing is applied locally via
 // the vendored `orca` CLI.
 //
-// Hard runtime dependency (macOS): Coder Connect must be running. Every
-// `<workspace>.coder` endpoint baked into a pairing offer is resolved by Coder
-// Connect's DNS/VPN. Without it the saved environments point at unresolvable
-// hosts. We preflight-probe it and warn loudly (non-blocking) before pairing.
+// Hard runtime dependency for Coder-sourced hosts (macOS): Coder Connect must be
+// running. Every `<workspace>.coder` endpoint baked into a pairing offer is
+// resolved by Coder Connect's DNS/VPN. Without it the saved environments point
+// at unresolvable hosts. We preflight-probe it and warn loudly (non-blocking).
 
 import {
   Config,
@@ -50,34 +67,48 @@ const USAGE = `Usage:
   df-orca-pair [OPTIONS]
 
 Description:
-  Discover running Coder dev boxes that host our headless Orca server
-  (the df-orca-server Pitchfork daemon) and register each as a Remote
-  Orca Server in the local macOS Orca.app.
+  Discover hosts running our headless Orca server (the df-orca-server
+  Pitchfork daemon) and register each as a Remote Orca Server in the
+  local macOS Orca.app.
 
-  Discovery is dynamic via \`coder list -o json\` (filtered to running
-  workspaces). Each candidate is probed over SSH: a box qualifies only
-  when its df-orca-server daemon is CURRENTLY running and has emitted a
-  pairing offer. The freshest offer is fed to \`orca environment add\`.
+  Which hosts are candidates depends on this machine's chezmoi profile
+  (work | personal), read at run time from \`chezmoi data\`:
 
-  Coder Connect must be running on this Mac — every <ws>.coder endpoint
-  inside a pairing offer is resolved by it. The tool warns if it can't
-  detect Coder Connect, but does not block (you may be on a setup it
-  cannot probe).
+    work      coder                Coder workspaces only
+    personal  coder, ssh-config    Coder workspaces + ad-hoc SSH VMs
+
+  Both sources are dynamic — there is no host inventory in the dotfiles
+  repo. \`coder\` enumerates running workspaces via \`coder list -o json\`.
+  \`ssh-config\` enumerates concrete Host aliases from ~/.ssh/config
+  (following Include), skipping wildcard patterns and coder.* entries.
+  So adding a personal VM just means adding an ssh config Host block.
+
+  Every candidate is probed over SSH: a host qualifies only when its
+  df-orca-server daemon is CURRENTLY running and has emitted a pairing
+  offer. The freshest offer is fed to \`orca environment add\`. Hosts
+  without orca simply report as skipped, so broad discovery is safe.
+
+  Coder Connect must be running on this Mac for coder-sourced hosts —
+  every <ws>.coder endpoint inside a pairing offer is resolved by it. The
+  tool warns if it can't detect Coder Connect, but does not block.
 
 Options:
+  --sources <list>     Override the profile's sources, comma-separated
+                       (coder,ssh-config). Default: from chezmoi data
   --filter <jq-expr>   jq filter against \`coder list -o json\` emitting
                        workspace names (default: running workspaces)
   --parallel <N>       Max concurrent SSH probes (default: 4)
-  --replace            Re-pair boxes that already have an environment of
+  --replace            Re-pair hosts that already have an environment of
                        the same name (removes the stale entry first)
   --dry-run            Probe + report what WOULD be paired; change nothing
   --json               Emit a machine-readable summary to stdout
   --help               Display this message
 
 Examples:
-  df-orca-pair                 # pair every newly-discovered running orca box
-  df-orca-pair --dry-run       # show what would be paired
-  df-orca-pair --replace       # refresh existing entries with fresh offers
+  df-orca-pair                          # pair newly-discovered orca hosts
+  df-orca-pair --dry-run                # show what would be paired
+  df-orca-pair --replace                # refresh entries with fresh offers
+  df-orca-pair --sources ssh-config     # only probe ssh config hosts
 `;
 
 // ============================================================================
@@ -250,6 +281,281 @@ const listWorkspaces = (filter: string) =>
   });
 
 // ============================================================================
+// Profile-scoped source selection
+// ============================================================================
+
+export const PAIRING_SOURCES = ["coder", "ssh-config"] as const;
+export type PairingSource = typeof PAIRING_SOURCES[number];
+
+export const DEFAULT_SOURCES: ReadonlyArray<PairingSource> = ["coder"];
+
+const isPairingSource = (value: string): value is PairingSource =>
+  (PAIRING_SOURCES as ReadonlyArray<string>).includes(value);
+
+// Keep declaration order, drop unknown entries and duplicates. Unknown values
+// are ignored rather than fatal so a future profiles.json source name does not
+// break older machines that have not yet updated this tool.
+export const normalizeSources = (
+  raw: ReadonlyArray<unknown>,
+): ReadonlyArray<PairingSource> => {
+  const out: PairingSource[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const value = entry.trim();
+    if (!isPairingSource(value)) continue;
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+};
+
+export const parseSourcesFlag = (
+  value: string,
+): ReadonlyArray<PairingSource> => normalizeSources(value.split(","));
+
+// Pull the active profile's source list out of `chezmoi data` output. Pure so
+// the profile-resolution rules are testable without invoking chezmoi.
+export const selectProfileSources = (
+  data: unknown,
+): ReadonlyArray<PairingSource> | null => {
+  if (typeof data !== "object" || data === null) return null;
+  const root = data as Record<string, unknown>;
+  const profileName = typeof root.machineProfile === "string"
+    ? root.machineProfile
+    : null;
+  if (profileName === null) return null;
+  const profiles = root.profiles;
+  if (typeof profiles !== "object" || profiles === null) return null;
+  const profile = (profiles as Record<string, unknown>)[profileName];
+  if (typeof profile !== "object" || profile === null) return null;
+  const sources = (profile as Record<string, unknown>).orca_pairing_sources;
+  if (!Array.isArray(sources)) return null;
+  return normalizeSources(sources);
+};
+
+// chezmoi is the source of truth for machineProfile, so we ask it rather than
+// re-parsing ~/.config/chezmoi/chezmoi.toml. Any failure degrades to the
+// coder-only default with a warning: never block pairing on profile lookup.
+const loadProfileSources = Effect.gen(function* () {
+  if (!(yield* hasCommand("chezmoi"))) {
+    yield* logWarning(
+      "chezmoi not on PATH; defaulting to sources: coder",
+    );
+    return DEFAULT_SOURCES;
+  }
+  const res = yield* runChild("chezmoi", ["data", "--format", "json"]);
+  if (res.code !== 0) {
+    yield* logWarning(
+      `chezmoi data failed (${res.code}); defaulting to sources: coder`,
+    );
+    return DEFAULT_SOURCES;
+  }
+  const parsed = yield* Effect.try({
+    try: () => JSON.parse(res.stdout) as unknown,
+    catch: () => new Error("unparseable chezmoi data output"),
+  }).pipe(Effect.orElseSucceed(() => null));
+  const sources = selectProfileSources(parsed);
+  if (sources === null) {
+    yield* logWarning(
+      "no orca_pairing_sources for this profile; defaulting to sources: coder",
+    );
+    return DEFAULT_SOURCES;
+  }
+  return sources;
+});
+
+// ============================================================================
+// ssh config discovery (personal VMs)
+// ============================================================================
+
+// Concrete Host aliases only. Everything dropped here is dropped because it
+// cannot be a pairing target:
+//   * / ?     glob patterns are config templates, not hosts
+//   !foo      negations only ever subtract from a pattern match
+//   coder.*   already enumerated by the `coder` source; probing twice wastes SSH
+// `Host` may list several patterns on one line, and directives are
+// case-insensitive per ssh_config(5).
+export const parseSshConfigHosts = (
+  text: string,
+): ReadonlyArray<string> => {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^host\s+(.*)$/i);
+    if (!match) continue;
+    for (const pattern of match[1].split(/[\s,]+/)) {
+      const host = pattern.trim();
+      if (host === "") continue;
+      if (host.includes("*") || host.includes("?")) continue;
+      if (host.startsWith("!")) continue;
+      if (host.toLowerCase().startsWith("coder.")) continue;
+      if (!out.includes(host)) out.push(host);
+    }
+  }
+  return out;
+};
+
+// Include paths, per ssh_config(5): relative paths resolve against ~/.ssh, and
+// a single directive may carry several whitespace-separated glob patterns.
+export const parseSshConfigIncludes = (
+  text: string,
+): ReadonlyArray<string> => {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^include\s+(.*)$/i);
+    if (!match) continue;
+    for (const pattern of match[1].split(/\s+/)) {
+      const value = pattern.trim().replace(/^["']|["']$/g, "");
+      if (value !== "" && !out.includes(value)) out.push(value);
+    }
+  }
+  return out;
+};
+
+const INCLUDE_DEPTH_LIMIT = 3;
+
+// Read a config and everything it Includes. Depth-capped and visited-tracked so
+// a cyclic Include cannot spin. Unreadable files are skipped, not fatal.
+const readSshConfigHosts = (
+  home: string,
+): Effect.Effect<ReadonlyArray<string>, never, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    const path = yield* Path;
+    const sshDir = path.join(home, ".ssh");
+    const visited = new Set<string>();
+    const hosts: string[] = [];
+
+    const walk = (
+      file: string,
+      depth: number,
+    ): Effect.Effect<void, never, never> =>
+      Effect.gen(function* () {
+        if (depth > INCLUDE_DEPTH_LIMIT) return;
+        const resolved = path.isAbsolute(file) ? file : path.join(sshDir, file);
+        if (visited.has(resolved)) return;
+        visited.add(resolved);
+
+        const text = yield* fs.readFileString(resolved).pipe(
+          Effect.orElseSucceed(() => ""),
+        );
+        if (text === "") return;
+
+        for (const host of parseSshConfigHosts(text)) {
+          if (!hosts.includes(host)) hosts.push(host);
+        }
+
+        for (const pattern of parseSshConfigIncludes(text)) {
+          const expanded = pattern.replace(/^~\//, `${home}/`);
+          const absolute = path.isAbsolute(expanded)
+            ? expanded
+            : path.join(sshDir, expanded);
+          const dir = path.dirname(absolute);
+          const base = path.basename(absolute);
+          if (base.includes("*") || base.includes("?")) {
+            const entries = yield* fs.readDirectory(dir).pipe(
+              Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+            );
+            const rx = new RegExp(
+              `^${
+                base.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")
+                  .replace(/\?/g, ".")
+              }$`,
+            );
+            for (const entry of entries.filter((e) => rx.test(e)).sort()) {
+              yield* walk(path.join(dir, entry), depth + 1);
+            }
+          } else {
+            yield* walk(absolute, depth + 1);
+          }
+        }
+      });
+
+    yield* walk(path.join(sshDir, "config"), 0);
+    return hosts;
+  });
+
+// ============================================================================
+// Unified candidate set
+// ============================================================================
+
+export interface Candidate {
+  readonly name: string;
+  readonly sshHost: string;
+  readonly source: PairingSource;
+}
+
+export const coderCandidates = (
+  workspaces: ReadonlyArray<string>,
+): ReadonlyArray<Candidate> =>
+  workspaces.map((ws) => ({
+    name: ws,
+    sshHost: `coder.${ws}`,
+    source: "coder" as const,
+  }));
+
+export const sshConfigCandidates = (
+  hosts: ReadonlyArray<string>,
+): ReadonlyArray<Candidate> =>
+  hosts.map((host) => ({
+    name: host,
+    sshHost: host,
+    source: "ssh-config" as const,
+  }));
+
+// Earlier sources win: a host reachable both as a Coder workspace and as an ssh
+// alias must be probed once, via its Coder identity, because that is the name
+// its pairing offer advertises.
+export const dedupeCandidates = (
+  candidates: ReadonlyArray<Candidate>,
+): ReadonlyArray<Candidate> => {
+  const out: Candidate[] = [];
+  const seenNames = new Set<string>();
+  const seenHosts = new Set<string>();
+  for (const candidate of candidates) {
+    if (seenNames.has(candidate.name) || seenHosts.has(candidate.sshHost)) {
+      continue;
+    }
+    seenNames.add(candidate.name);
+    seenHosts.add(candidate.sshHost);
+    out.push(candidate);
+  }
+  return out;
+};
+
+const discoverCandidates = (
+  sources: ReadonlyArray<PairingSource>,
+  filter: string,
+) =>
+  Effect.gen(function* () {
+    const collected: Candidate[] = [];
+    for (const source of sources) {
+      if (source === "coder") {
+        if (!(yield* hasCommand("coder"))) {
+          yield* logWarning("coder CLI not found; skipping source: coder");
+          continue;
+        }
+        const workspaces = yield* listWorkspaces(filter);
+        collected.push(...coderCandidates(workspaces));
+      } else {
+        const home = yield* Config.string("HOME").pipe(
+          Config.withDefault(""),
+          Effect.orElseSucceed(() => ""),
+        );
+        if (home === "") {
+          yield* logWarning("HOME unset; skipping source: ssh-config");
+          continue;
+        }
+        const hosts = yield* readSshConfigHosts(home);
+        collected.push(...sshConfigCandidates(hosts));
+      }
+    }
+    return dedupeCandidates(collected);
+  });
+
+// ============================================================================
 // Pure: remote probe command + offer extraction
 // ============================================================================
 
@@ -312,9 +618,12 @@ export const parseProbeOutput = (
   if (!urlMatch) return ProbeOutcome.NoOffer();
   const url = urlMatch[0];
 
-  // Best-effort endpoint for reporting only; not required for pairing.
-  const epMatch = raw.match(/"endpoint":"(ws:\/\/[^"]*\.coder:\d+)"/);
-  const endpoint = epMatch?.[1] ?? "";
+  // Reporting endpoint, taken from the DECODED offer rather than scraped from
+  // the log line. The log carries two `endpoint` fields — the server's bind
+  // address (0.0.0.0) and the reachable pairing address — and a regex cannot
+  // tell them apart without hardcoding a domain. The offer's own endpoint is
+  // the reachable one by definition, for a Coder box and a personal VM alike.
+  const endpoint = decodePairingEndpoint(url) ?? "";
   return ProbeOutcome.Paired({ url, endpoint });
 };
 
@@ -432,6 +741,7 @@ const existingEnvNames = () =>
 // ============================================================================
 
 interface Options {
+  readonly sources: string;
   readonly filter: string;
   readonly parallel: number;
   readonly replace: boolean;
@@ -440,95 +750,97 @@ interface Options {
 }
 
 export type Result = Data.TaggedEnum<{
-  Paired: { readonly ws: string; readonly endpoint: string };
-  WouldPair: { readonly ws: string; readonly endpoint: string };
-  SkippedExisting: { readonly ws: string };
-  NotRunning: { readonly ws: string; readonly detail: string };
-  NoOffer: { readonly ws: string };
-  Unreachable: { readonly ws: string };
-  PairFailed: { readonly ws: string; readonly detail: string };
+  Paired: { readonly name: string; readonly endpoint: string };
+  WouldPair: { readonly name: string; readonly endpoint: string };
+  SkippedExisting: { readonly name: string };
+  NotRunning: { readonly name: string; readonly detail: string };
+  NoOffer: { readonly name: string };
+  Unreachable: { readonly name: string };
+  PairFailed: { readonly name: string; readonly detail: string };
 }>;
 export const Result = Data.taggedEnum<Result>();
 
-const probeBox = (ws: string) =>
+const probeBox = (candidate: Candidate) =>
   Effect.gen(function* () {
     const res = yield* runChild("ssh", [
       "-o",
       "ConnectTimeout=15",
       "-o",
       "BatchMode=yes",
-      `coder.${ws}`,
+      candidate.sshHost,
       `/usr/bin/zsh -lc ${shellQuote(buildProbeScript())}`,
     ]);
     return parseProbeOutput(res.code, res.stdout);
   });
 
 const pairBox = (
-  ws: string,
+  name: string,
   outcome: ProbeOutcome,
   options: Options,
   existing: ReadonlySet<string>,
 ): Effect.Effect<Result, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     if (ProbeOutcome.$is("Unreachable")(outcome)) {
-      return Result.Unreachable({ ws });
+      return Result.Unreachable({ name });
     }
     if (ProbeOutcome.$is("NotRunning")(outcome)) {
-      return Result.NotRunning({ ws, detail: outcome.state });
+      return Result.NotRunning({ name, detail: outcome.state });
     }
     if (ProbeOutcome.$is("NoOffer")(outcome)) {
-      return Result.NoOffer({ ws });
+      return Result.NoOffer({ name });
     }
     if (decodePairingEndpoint(outcome.url) === null) {
-      return Result.NoOffer({ ws });
+      return Result.NoOffer({ name });
     }
 
-    const alreadyHave = existing.has(ws);
+    const alreadyHave = existing.has(name);
     if (alreadyHave && !options.replace) {
-      return Result.SkippedExisting({ ws });
+      return Result.SkippedExisting({ name });
     }
 
     if (options.dryRun) {
-      return Result.WouldPair({ ws, endpoint: outcome.endpoint });
+      return Result.WouldPair({ name, endpoint: outcome.endpoint });
     }
 
     if (alreadyHave && options.replace) {
-      yield* runChild("orca", ["environment", "rm", "--environment", ws]);
+      yield* runChild("orca", ["environment", "rm", "--environment", name]);
     }
 
     const add = yield* runChild("orca", [
       "environment",
       "add",
       "--name",
-      ws,
+      name,
       "--pairing-code",
       outcome.url,
       "--json",
     ]);
     const addOutcome = parseAddResult(add.code, add.stdout);
     if (AddResult.$is("Failed")(addOutcome)) {
-      return Result.PairFailed({ ws, detail: addOutcome.detail });
+      return Result.PairFailed({ name, detail: addOutcome.detail });
     }
-    return Result.Paired({ ws, endpoint: outcome.endpoint });
+    return Result.Paired({ name, endpoint: outcome.endpoint });
   });
 
 const reportLine = (r: Result): string =>
   Result.$match(r, {
-    Paired: ({ ws, endpoint }) => `[${ws}] paired -> ${endpoint}`,
-    WouldPair: ({ ws, endpoint }) => `[${ws}] would pair -> ${endpoint}`,
-    SkippedExisting: ({ ws }) =>
-      `[${ws}] already paired (use --replace to refresh)`,
-    NotRunning: ({ ws, detail }) =>
-      `[${ws}] df-orca-server not running (${detail})`,
-    NoOffer: ({ ws }) => `[${ws}] running but no usable pairing offer in logs`,
-    Unreachable: ({ ws }) => `[${ws}] unreachable over SSH`,
-    PairFailed: ({ ws, detail }) => `[${ws}] FAIL: ${detail}`,
+    Paired: ({ name, endpoint }) => `[${name}] paired -> ${endpoint}`,
+    WouldPair: ({ name, endpoint }) => `[${name}] would pair -> ${endpoint}`,
+    SkippedExisting: ({ name }) =>
+      `[${name}] already paired (use --replace to refresh)`,
+    NotRunning: ({ name, detail }) =>
+      `[${name}] df-orca-server not running (${detail})`,
+    NoOffer: ({ name }) =>
+      `[${name}] running but no usable pairing offer in logs`,
+    Unreachable: ({ name }) => `[${name}] unreachable over SSH`,
+    PairFailed: ({ name, detail }) => `[${name}] FAIL: ${detail}`,
   });
 
 // ============================================================================
 // Command
 // ============================================================================
 
+const sourcesFlag = Flag.string("sources").pipe(Flag.withDefault(""));
 const filterFlag = Flag.string("filter").pipe(Flag.withDefault(DEFAULT_FILTER));
 const parallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
 const replaceFlag = Flag.boolean("replace");
@@ -539,24 +851,33 @@ const helpArg = Argument.string("ignored").pipe(Argument.optional);
 const run = (options: Options) =>
   Effect.gen(function* () {
     yield* requireCommand(
-      "coder",
-      "coder CLI not found (needed to discover dev boxes)",
-    );
-    yield* requireCommand(
       "orca",
       "orca CLI not found (install Orca.app; expected on PATH as `orca`)",
     );
 
-    yield* checkCoderConnect();
+    const sources = options.sources === ""
+      ? yield* loadProfileSources
+      : parseSourcesFlag(options.sources);
+    if (sources.length === 0) {
+      yield* logWarning(
+        "no usable pairing sources selected; nothing to discover",
+      );
+      if (options.json) yield* writeStdout(JSON.stringify({ results: [] }));
+      return 0;
+    }
+    yield* logInfo(`discovery sources: ${sources.join(", ")}`);
 
-    const workspaces = yield* listWorkspaces(options.filter);
-    if (workspaces.length === 0) {
-      yield* logWarning("no running workspaces matched filter");
+    // Coder Connect only matters for coder-sourced endpoints.
+    if (sources.includes("coder")) yield* checkCoderConnect();
+
+    const candidates = yield* discoverCandidates(sources, options.filter);
+    if (candidates.length === 0) {
+      yield* logWarning("no candidate hosts discovered");
       if (options.json) yield* writeStdout(JSON.stringify({ results: [] }));
       return 0;
     }
     yield* logInfo(
-      `probing ${workspaces.length} running workspace(s) for df-orca-server`,
+      `probing ${candidates.length} host(s) for df-orca-server`,
     );
 
     const existing = yield* existingEnvNames();
@@ -566,15 +887,18 @@ const run = (options: Options) =>
     // orca-environments.json, and concurrent mutations race (a sibling's
     // write-back clobbers our rm, so the add then sees a duplicate name).
     const probed = yield* Effect.forEach(
-      workspaces,
-      (ws) =>
-        probeBox(ws).pipe(Effect.map((outcome) => ({ ws, outcome } as const))),
+      candidates,
+      (candidate) =>
+        probeBox(candidate).pipe(
+          Effect.map((outcome) => ({ candidate, outcome } as const)),
+        ),
       { concurrency: options.parallel },
     );
 
     const results = yield* Effect.forEach(
       probed,
-      ({ ws, outcome }) => pairBox(ws, outcome, options, existing),
+      ({ candidate, outcome }) =>
+        pairBox(candidate.name, outcome, options, existing),
       { concurrency: 1 },
     );
 
@@ -599,6 +923,7 @@ const run = (options: Options) =>
 const command = Command.make(
   "df-orca-pair",
   {
+    sources: sourcesFlag,
     filter: filterFlag,
     parallel: parallelFlag,
     replace: replaceFlag,
@@ -606,9 +931,9 @@ const command = Command.make(
     json: jsonFlag,
     ignored: helpArg,
   },
-  ({ filter, parallel, replace, dryRun, json }) =>
+  ({ sources, filter, parallel, replace, dryRun, json }) =>
     Effect.flatMap(
-      run({ filter, parallel, replace, dryRun, json }),
+      run({ sources, filter, parallel, replace, dryRun, json }),
       (code) => Effect.sync(() => Deno.exit(code)),
     ),
 );
@@ -692,12 +1017,12 @@ if (!import.meta.main) {
   Deno.test("parseProbeOutput: running + offer -> Paired with url+endpoint", () => {
     const url = encode({
       v: 2,
-      endpoint: "ws://for-tasks-1.coder:41823",
+      endpoint: "ws://devbox-one.coder:41823",
       deviceToken: "tok",
       publicKeyB64: "key",
     });
     const ready =
-      `","runtimeId":"x","endpoint":"ws://0.0.0.0:41823","pairing":{"url":"${url}","endpoint":"ws://for-tasks-1.coder:41823"}}`;
+      `","runtimeId":"x","endpoint":"ws://0.0.0.0:41823","pairing":{"url":"${url}","endpoint":"ws://devbox-one.coder:41823"}}`;
     const out = parseProbeOutput(
       0,
       `ORCA_DAEMON:running\nORCA_READY:${ready}`,
@@ -705,18 +1030,18 @@ if (!import.meta.main) {
     assertEquals(out._tag, "Paired");
     if (out._tag === "Paired") {
       assertEquals(out.url, url);
-      assertEquals(out.endpoint, "ws://for-tasks-1.coder:41823");
+      assertEquals(out.endpoint, "ws://devbox-one.coder:41823");
     }
   });
 
   Deno.test("decodePairingEndpoint: hash form decodes endpoint", () => {
     const url = encode({
       v: 2,
-      endpoint: "ws://for-tasks-2.coder:5000",
+      endpoint: "ws://devbox-two.coder:5000",
       deviceToken: "t",
       publicKeyB64: "k",
     });
-    assertEquals(decodePairingEndpoint(url), "ws://for-tasks-2.coder:5000");
+    assertEquals(decodePairingEndpoint(url), "ws://devbox-two.coder:5000");
   });
 
   Deno.test("decodePairingEndpoint: ?code= form also decodes", () => {
@@ -779,6 +1104,102 @@ if (!import.meta.main) {
     assertEquals(script.includes('if [ "$state" = "running" ]'), true);
     assertEquals(script.includes("pitchfork logs df-orca-server --raw"), true);
     assertEquals(script.includes("ORCA_DAEMON:"), true);
+  });
+
+  Deno.test("selectProfileSources reads the active profile's list", () => {
+    const data = {
+      machineProfile: "personal",
+      profiles: {
+        work: { orca_pairing_sources: ["coder"] },
+        personal: { orca_pairing_sources: ["coder", "ssh-config"] },
+      },
+    };
+    assertEquals(selectProfileSources(data), ["coder", "ssh-config"]);
+    assertEquals(
+      selectProfileSources({ ...data, machineProfile: "work" }),
+      ["coder"],
+    );
+  });
+
+  Deno.test("selectProfileSources returns null when unresolvable", () => {
+    assertEquals(selectProfileSources(null), null);
+    assertEquals(selectProfileSources({ profiles: {} }), null);
+    assertEquals(selectProfileSources({ machineProfile: "work" }), null);
+    // Profile exists but declares no sources -> null, so the caller warns and
+    // falls back rather than silently discovering nothing.
+    assertEquals(
+      selectProfileSources({ machineProfile: "work", profiles: { work: {} } }),
+      null,
+    );
+  });
+
+  Deno.test("normalizeSources drops unknown + duplicate entries, keeps order", () => {
+    assertEquals(normalizeSources(["ssh-config", "coder", "ssh-config"]), [
+      "ssh-config",
+      "coder",
+    ]);
+    // An unknown future source name must not break an older tool.
+    assertEquals(normalizeSources(["coder", "tailscale", 7, null]), ["coder"]);
+    assertEquals(normalizeSources([]), []);
+    assertEquals(parseSourcesFlag("ssh-config,coder"), ["ssh-config", "coder"]);
+    assertEquals(parseSourcesFlag(" coder , nonsense "), ["coder"]);
+  });
+
+  Deno.test("parseSshConfigHosts keeps concrete aliases only", () => {
+    const hosts = parseSshConfigHosts(`
+# comment
+Host *
+  ServerAliveInterval 60
+
+Host homelab
+  HostName 10.0.0.5
+
+host  vm-one vm-two
+  User lochy
+
+Host build-* !build-prod
+  User ci
+
+Host coder.devbox-one
+  ProxyCommand coder ssh
+`);
+    assertEquals(hosts, ["homelab", "vm-one", "vm-two"]);
+  });
+
+  Deno.test("parseSshConfigHosts dedupes and ignores indentation", () => {
+    assertEquals(
+      parseSshConfigHosts("Host a\nHost a\n   Host b\nHostName nope\n"),
+      ["a", "b"],
+    );
+  });
+
+  Deno.test("parseSshConfigIncludes extracts globs and strips quotes", () => {
+    assertEquals(
+      parseSshConfigIncludes(
+        'Include ~/.ssh/config.d/*\ninclude "work.conf" other.conf\nHost x\n',
+      ),
+      ["~/.ssh/config.d/*", "work.conf", "other.conf"],
+    );
+  });
+
+  Deno.test("candidate mapping: coder targets coder.<ws>, ssh targets alias", () => {
+    assertEquals(coderCandidates(["devbox-one"]), [
+      { name: "devbox-one", sshHost: "coder.devbox-one", source: "coder" },
+    ]);
+    assertEquals(sshConfigCandidates(["homelab"]), [
+      { name: "homelab", sshHost: "homelab", source: "ssh-config" },
+    ]);
+  });
+
+  Deno.test("dedupeCandidates: earlier source wins on name or ssh host", () => {
+    const merged = dedupeCandidates([
+      ...coderCandidates(["box"]),
+      ...sshConfigCandidates(["box", "homelab", "coder.box"]),
+    ]);
+    assertEquals(merged, [
+      { name: "box", sshHost: "coder.box", source: "coder" },
+      { name: "homelab", sshHost: "homelab", source: "ssh-config" },
+    ]);
   });
 }
 

@@ -23,7 +23,20 @@ orca runs on the macbook. The default mode is SSH-attached: it connects to Coder
 
 The "Remote Orca Servers" beta adds a second mode: a headless `orca serve` process running on the Coder box (supervised by the `df-orca-server` Pitchfork daemon, opt-in via chezmoi `orcaServer` flag), paired with the macbook app via an `orca://pair#...` URL printed at startup. Pairing is one-to-many (one server, many paired clients), Curve25519 ECDH for E2EE. Reach the WebSocket endpoint inside the offer URL via `<ws>.coder:<auto-port>` over Coder Connect. The server's `--pairing-address` is set to `<workspace>.coder` so the URL works for any macbook with Coder Connect running.
 
-On the macbook, the local Orca.app stores paired servers in `~/Library/Application Support/Orca/orca-environments.json`. Each entry carries the server endpoint plus the per-pairing `deviceToken` and Curve25519 `publicKeyB64` minted during the handshake — secrets that only exist after a live pairing, so this file cannot be chezmoi-templated. The `df-orca-pair` CLI automates registration instead: it discovers running Coder boxes, confirms each is currently running `df-orca-server`, pulls the freshest `orca://pair` offer over SSH, and feeds it to `orca environment add`. See the runbook below.
+On the macbook, the local Orca.app stores paired servers in `~/Library/Application Support/Orca/orca-environments.json`. Each entry carries the server endpoint plus the per-pairing `deviceToken` and Curve25519 `publicKeyB64` minted during the handshake — secrets that only exist after a live pairing, so this file cannot be chezmoi-templated. The `df-orca-pair` CLI automates registration instead: it discovers candidate hosts, confirms each is currently running `df-orca-server`, pulls the freshest `orca://pair` offer over SSH, and feeds it to `orca environment add`. See the runbook below.
+
+**Which hosts are candidates is profile-scoped.** `df-orca-pair` reads `machineProfile` and `profiles.<profile>.orca_pairing_sources` from `chezmoi data` at run time:
+
+| Profile | Sources | Covers |
+|---|---|---|
+| `work` | `coder` | Coder workspaces only |
+| `personal` | `coder`, `ssh-config` | Coder workspaces plus ad-hoc SSH VMs |
+
+Both sources are **dynamic**, and that is deliberate — there is no host inventory in this repo. Coder boxes churn, and the repo is public, so committing box names would go stale *and* leak internal naming. The `coder` source enumerates workspaces via `coder list -o json`; the `ssh-config` source enumerates concrete `Host` aliases from `~/.ssh/config`, following `Include` (depth-capped, cycle-safe) and skipping wildcard/negated patterns plus `coder.*` entries the `coder` source already owns. Adding a personal VM therefore means adding an ssh config `Host` block — which is required for reachability anyway.
+
+Broad discovery is safe because the SSH probe is itself the qualifier: a host pairs only when its `df-orca-server` is *currently running* and has emitted an offer, so non-orca hosts just report as skipped. `--sources coder,ssh-config` overrides the profile for one run. Note that on a work macbook the `ssh-config` source legitimately resolves to zero candidates, since every `Host` there is a wildcard pattern or a `coder.*` entry.
+
+The reported endpoint comes from the *decoded* pairing offer, not from scraping the daemon log: the log carries both the server's bind address (`0.0.0.0`) and the reachable pairing address under the same `endpoint` key, and only the offer's own endpoint is reachable-by-definition for a Coder box and a personal VM alike.
 
 The two modes coexist: SSH-attached for quick "open this workspace" sessions, paired-server for the new beta features. macbook-only on the client side; the server runs on Coder boxes only.
 
@@ -246,11 +259,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 4. On the macbook, ensure Coder Desktop / Coder Connect is running (it provides the `<ws>.coder` DNS — without it, paired endpoints are unresolvable).
 5. Register the box on the macbook with one command:
    ```bash
-   df-orca-pair               # discovers running orca boxes, pairs new ones
-   df-orca-pair --dry-run     # preview without changing anything
-   df-orca-pair --replace     # refresh an existing entry with a fresh offer
+   df-orca-pair                        # discovers orca hosts, pairs new ones
+   df-orca-pair --dry-run              # preview without changing anything
+   df-orca-pair --replace              # refresh an existing entry with a fresh offer
+   df-orca-pair --sources ssh-config   # override the profile's sources for one run
    ```
-   `df-orca-pair` lists running Coder workspaces, SSHes each to confirm `df-orca-server` is *currently running* (a stopped daemon's last offer points at a dead port, so it is skipped), pulls the freshest `orca://pair` offer from `pitchfork logs df-orca-server --raw`, and runs `orca environment add --name <ws> --pairing-code <url>`. It warns (non-blocking) if Coder Connect is not detected.
+   `df-orca-pair` resolves its sources from the machine profile (`work` → `coder`; `personal` → `coder` + `ssh-config`), SSHes each candidate to confirm `df-orca-server` is *currently running* (a stopped daemon's last offer points at a dead port, so it is skipped), pulls the freshest `orca://pair` offer from `pitchfork logs df-orca-server --raw`, and runs `orca environment add --name <host> --pairing-code <url>`. It warns (non-blocking) if Coder Connect is not detected, and skips that check entirely when no `coder` source is selected.
 
    Manual fallback — capture the pairing URL on the box and paste it into Orca.app (Settings → Remote Orca Servers → Add Server):
    ```bash
