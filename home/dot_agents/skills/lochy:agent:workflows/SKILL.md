@@ -9,7 +9,10 @@ description: >-
 
 # Durable Agent Workflows
 
-Smithers is the implementation used for this skill. Local OpenCode/OMO wiring is in [references/opencode-agent-config.md](references/opencode-agent-config.md).
+Smithers is the implementation used for this skill. The published package is
+`smthrs` (the CLI binary remains `smithers`); use `bunx smthrs` so the unrelated
+`smithers` npm package is never selected. Local OpenCode/OMO wiring is in
+[references/opencode-agent-config.md](references/opencode-agent-config.md).
 
 Smithers is a durable control plane for long-running coding agents. Workflows are
 TypeScript (JSX), run for minutes or days, and survive crashes. Every finished
@@ -34,6 +37,12 @@ When operating a workflow on the user's behalf, you run the Smithers commands,
 watch the run, clear approval gates after the user decides, and report evidence.
 Do not hand the human command snippets unless you lack tool access or the human
 explicitly wants to own the run.
+
+Smithers is agent-driven: the human asks for an outcome and the coding agent
+installs, starts, watches, verifies, and steers the durable run. The only normal
+human-run setup step is the initial `bunx smthrs init`. Keep Smithers-owned skills
+current with `bunx smthrs skills add`; register the MCP server with
+`bunx smthrs mcp add` when structured tools are preferable.
 
 Smithers becomes the execution layer only after the decision gate is met. At
 that point, avoid ad-hoc background subagents for the work Smithers owns;
