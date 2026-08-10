@@ -46,6 +46,9 @@
             "share": "disabled",
             "work_plugin": true,
             "snapshot": false,
+            "orca_pairing_sources": [
+                "coder"
+            ],
             "default": {
                 "categories": {
                     "unspecified-high": {
@@ -213,6 +216,10 @@
             "server": {},
             "share": "manual",
             "work_plugin": false,
+            "orca_pairing_sources": [
+                "coder",
+                "ssh-config"
+            ],
             "agents": {
                 "sisyphus": {
                     "model": "opencode-go/glm-5.2"
