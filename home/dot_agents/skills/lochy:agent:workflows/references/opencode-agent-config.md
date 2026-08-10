@@ -1,9 +1,10 @@
 # OpenCode Agent Configuration for Smithers
 
-Smithers is wired here as an MCP server named `smithers`, launched with
-`bunx smthrs --mcp` (or the intentionally installed `smithers --mcp` binary), so
+Smithers is wired here as an MCP server named `smithers`, launched with the
+project's selected runtime runner (`<runner> smthrs --mcp`, or the intentionally
+installed `smithers --mcp` binary), so
 the CLI verbs are also reachable as MCP tools. OpenCode is a first-class worker
-agent; prefer it inside `<Task>` nodes on these machines.
+agent; prefer it inside `G.step` nodes on these machines.
 
 ## OpenCodeAgent
 
