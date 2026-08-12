@@ -23,11 +23,15 @@ setup_session_logging "$(basename "$0")"
 #/   workspaces. Opt-in via the `orcaServer` chezmoi flag.
 #/
 #/   When `orcaServer` is true:
+#/     - Retires the legacy systemd --user unit and `orca-serve` wrapper
 #/     - Verifies orca is installed via mise (the AppImage resolved by
 #/       `mise which orca`)
 #/     - Verifies FUSE is available (AppImage requires it)
-#/     - Starts the Pitchfork daemon
+#/     - Clears a stale Electron single-instance lock
+#/     - Starts the Pitchfork daemon (non-fatal: a failure warns, it does not
+#/       abort the apply and take every later script with it)
 #/   When `orcaServer` is false:
+#/     - Retires the legacy systemd --user unit and `orca-serve` wrapper
 #/     - Stops the Pitchfork daemon (real opt-out, not just config removal)
 #/
 #/   Install of orca itself is handled by mise's http: backend (see
@@ -65,11 +69,66 @@ verify_fuse() {
   fi
 }
 
+# The pre-Pitchfork setup ran orca from a systemd --user unit invoking the
+# since-renamed `orca-serve` wrapper. Left enabled it relaunches orca at every
+# boot, and that instance owns the Electron single-instance lock on
+# ~/.config/orca — so pitchfork's df-orca-server can never acquire it and
+# crash-loops on exit 3. Because pitchfork knows the daemon only as
+# df-orca-server, pf_stop cannot reap a process running under the old name.
+#
+# Retired in BOTH the opt-in and opt-out paths: a legacy unit left enabled keeps
+# orca alive on a machine that has opted out, which is not a real opt-out.
+# Mirrors the same teardown 056 performs for mcpproxy's legacy unit.
+retire_legacy_orca_server() {
+  local unit="orca-server.service"
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$unit" >/dev/null 2>&1; then
+    systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+    rm -f "${HOME}/.config/systemd/user/${unit}"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    log_detail "Disabled legacy systemd --user $unit"
+  fi
+
+  # The wrapper is no longer in the chezmoi source, so chezmoi will never remove
+  # it; delete it so nothing can relaunch it under the old name.
+  if [ -e "${HOME}/.local/bin/orca-serve" ]; then
+    rm -f "${HOME}/.local/bin/orca-serve"
+    log_detail "Removed legacy orca-serve wrapper"
+  fi
+}
+
+# Electron refuses to start when another instance owns the userData profile, and
+# clears SingletonLock only on a CLEAN exit — so a killed or orphaned orca leaves
+# a lock behind that makes every later start exit 3. Runs between stop and start:
+# before the stop the lock is legitimately owned by the managed daemon.
+reap_orca_lock() {
+  local profile="${HOME}/.config/orca"
+  local lock="${profile}/SingletonLock"
+  local owner pid
+
+  [ -L "$lock" ] || return 0
+
+  # The symlink target is "<hostname>-<pid>". Take the PID after the LAST dash:
+  # hostnames contain dashes, so `for-tasks-1-1287` must yield 1287.
+  owner=$(readlink "$lock" 2>/dev/null || echo "")
+  pid="${owner##*-}"
+
+  if printf '%s' "$pid" | grep -qE '^[0-9]+$' && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    sleep 2
+    log_detail "Reaped orphaned orca holding the single-instance lock (pid ${pid})"
+  fi
+
+  rm -f "${profile}/SingletonLock" "${profile}/SingletonCookie" "${profile}/SingletonSocket"
+}
+
 manage_linux() {
   local enabled={{ dig "orcaServer" false . }}
 
   if [ "$enabled" != "true" ]; then
     log_step "orca server (Linux, opt-out)"
+
+    retire_legacy_orca_server
 
     if pf_resolve; then
       pf_stop df-orca-server
@@ -81,6 +140,8 @@ manage_linux() {
   fi
 
   log_step "orca server (Linux, opt-in)"
+
+  retire_legacy_orca_server
 
   if ! verify_orca_installed; then
     log_warn "Skipping daemon lifecycle — orca not installed"
@@ -96,9 +157,17 @@ manage_linux() {
 
   # Restart on every apply — picks up potential AppImage version bumps
   # (mise re-installs in place, but the running process holds the old
-  # extracted squashfs view until restart). Pitchfork's start command is
-  # idempotent; stop first so a running daemon is replaced cleanly.
-  pf_restart df-orca-server
+  # extracted squashfs view until restart). Stop first so a running daemon is
+  # replaced cleanly, and clear the lock in between (see reap_orca_lock).
+  pf_stop df-orca-server
+
+  reap_orca_lock
+
+  # An unstartable daemon must NOT abort the apply. chezmoi stops at the first
+  # failing script, so a crash-looping orca previously took every later script
+  # down with it — opencode-serve, the plugin cache bust, skill packing — leaving
+  # the box half-converged. pf_start already warns with the log command to run.
+  pf_start df-orca-server || true
 }
 
 main() {
