@@ -94,23 +94,27 @@ set -g pane-active-border-style fg=colour240
 ### Plugins
 
 ## History - panes, layouts & directories
-{{ if eq .chezmoi.os "darwin" -}}
-# @continuum-boot writes a LaunchAgent that only starts a server — there is no
-# stop action, so it cannot corrupt saved state.
-set -g @continuum-boot 'on'
-{{ else -}}
-# @continuum-boot is deliberately OFF on Linux. There, continuum installs a
-# systemd user unit whose ExecStop chain is `resurrect/scripts/save.sh` and then
-# `tmux kill-server`. On a Coder workspace shutdown the login session's cgroup
-# is torn down first, so that save runs against an ALREADY-DEAD tmux server: it
-# writes a 0-byte snapshot and resurrect still claims it as `last`. The next
-# boot then "restores" an empty file and main-session comes back as a single
-# blank window, with the real state stranded in the previous snapshot. The unit
-# also buys nothing here — nothing attaches to a boot-time detached server,
-# because sessions are always entered through `tmux new-session -A`, which
+# @continuum-boot is deliberately OFF on EVERY platform. Both of continuum's
+# boot integrations lose real sessions, by different routes, and neither buys
+# anything: sessions are always entered through `tmux new-session -A`, which
 # starts the server itself and triggers @continuum-restore anyway.
+#
+# On Linux it installs a systemd user unit whose ExecStop chain is
+# `resurrect/scripts/save.sh` and then `tmux kill-server`. On a Coder workspace
+# shutdown the login session's cgroup is torn down first, so that save runs
+# against an ALREADY-DEAD tmux server: it writes a 0-byte snapshot and
+# resurrect still claims it as `last`. The next boot then "restores" an empty
+# file and main-session comes back as a single blank window, with the real
+# state stranded in the previous snapshot.
+#
+# On macOS it installs a `Tmux.Start.plist` LaunchAgent whose damage is in the
+# START action, not a stop action. At every login it AppleScripts Terminal.app
+# open, full-screens it, and runs a BARE `tmux` — which creates a brand-new
+# session instead of attaching (`new-session -A`) to the restored one. The
+# following autosave then writes that ~140-byte stub over `last`, and the real
+# snapshot is only reachable by hand. guard-last.sh cannot catch this: the stub
+# is non-empty, so it passes every "has content" test.
 set -g @continuum-boot 'off'
-{{ end -}}
 set -g @continuum-restore 'on'
 set -g @continuum-save-interval '15'
 
