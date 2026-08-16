@@ -115,6 +115,31 @@ Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/sec
 
 See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
 
+## Per-machine MCP executables
+
+The versioned source owns the standard MCPProxy servers. Add a privileged
+stdio executable without committing its source, URL, or credentials by editing
+the machine-local chezmoi config (`chezmoi edit-config`):
+
+```toml
+[data.mcpStdioServers.private-service]
+command = "/bin/sh"
+args = ["-c", "exec /path/to/private-service-mcp"]
+
+# Optional mcpproxy fields
+enabled = true
+init_timeout = "60s"
+
+[data.mcpStdioServers.private-service.env]
+PRIVATE_SERVICE_TOKEN = "..."
+```
+
+Each table name becomes the MCP server name. The collection always renders as
+`protocol = "stdio"`; `args` defaults to an empty list and `enabled` to true.
+The entry must define `command` and cannot reuse a dotfiles-managed server
+name. Re-run `chezmoi apply` after changing it; the existing MCPProxy lifecycle
+reloads the rendered config.
+
 ## Structure
 
 ```
