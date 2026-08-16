@@ -1,8 +1,9 @@
 ---
 name: lochy:writing
-description: Write in Lochy's personal tone of voice. Supports Slack DMs, help channel replies, stakeholder updates, PR descriptions, and collaborative document authoring (specs, proposals, decision docs). Use when asked to write, draft, compose, or co-author a message, document, PR description, or written communication as Lochy.
+description: Write in Lochy's personal tone of voice. Supports Slack DMs, help channel replies, stakeholder updates, PR descriptions, and collaborative document authoring (specs, proposals, decision docs). Use when asked to write, draft, compose, or co-author a message, document, PR description, or written communication as Lochy. Also owns the opt-in `STE` mode — say "STE" to rewrite machine-facing text (error messages, tool descriptions, system prompts, agent instructions) into ASD-STE100 Simplified Technical English.
 attribution:
   - https://github.com/anthropics/skills/tree/main/skills/doc-coauthoring
+  - https://github.com/danyuchn/asd-ste100-skill
 ---
 
 # Writing as Lochy
@@ -51,6 +52,20 @@ For GitHub PR descriptions — feature work, bug fixes, hookups, and operational
 For specs, proposals, decision docs, RFCs, and similar structured content. See [doc-coauthoring.md](references/doc-coauthoring.md) for the full three-stage co-authoring workflow (context gathering → section-by-section building → reader testing).
 
 Use the [technical writing voice](references/technical-writing-voice.md) instead of the conversational tone — the core personality carries over but the colloquialisms and casual energy drop.
+
+## Opt-in: `STE` mode
+
+Say **`STE`** ("STE this", "STE the error message", "STE + show the diff") to rewrite text into
+[Simplified Technical English](references/simplified-technical-english.md) — the controlled
+language for text a machine or non-native reader parses with no author to ask: error messages,
+tool descriptions, system prompts, agent-to-agent instructions, CLI help.
+
+`STE` is the only trigger. Nothing else activates it — not "make this clearer", not "simplify
+this", not a dense draft. Everything above stays in Lochy's voice unless `STE` is said.
+
+While it is active, everything above is suspended. STE optimises for one possible reading;
+the Lochy voice optimises for warmth and momentum. They do not blend — do not apply STE to
+Slack comms, PR descriptions, specs, or proposals.
 
 ## Do
 
