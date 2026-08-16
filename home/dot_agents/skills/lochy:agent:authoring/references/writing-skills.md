@@ -385,10 +385,40 @@ Reference files live in `references/` and follow these conventions:
 
 - **Markdown only**—all reference files are `.md`
 - **No frontmatter**—only SKILL.md has YAML frontmatter
-- **One level deep**—never nest subdirectories inside `references/`
+- **Flat by default**—a single tier of files in `references/` is right for most skills. Nest only to isolate a sub-scope (see Second-Tier Spokes)
+- **No colons in any path segment**—macOS Finder renders `:` as `/`, and Claude Desktop rejects a zip containing either. This is the one hard path constraint; depth is not
 - **Linked from SKILL.md**—always reference via relative path: `[label](references/file.md)`
 - **Descriptive names**—the filename should describe the content (e.g., `tone-of-voice.md`, `methodology.md`)
 - **Supporting files only for tools or heavy reference**—if the content is short enough to live in SKILL.md without exceeding the 500-line target, keep it inline
+
+#### Second-Tier Spokes
+
+A reference file can itself be a hub when one sub-topic is large enough that loading all of it for every use wastes context. Give that sub-topic **its own subdirectory**, named for the scope, and keep the hub one level up as the single door in:
+
+```
+lochy:writing/
+├── SKILL.md                                  hub: voice + formats + opt-in triggers
+└── references/
+    ├── tone-of-voice.md                      first-tier spoke
+    ├── slack-comms.md                        first-tier spoke
+    ├── simplified-technical-english.md       first-tier spoke, second-tier hub
+    └── ste/                                  isolated sub-scope
+        ├── rules.md                          second-tier spoke
+        ├── examples.md                       second-tier spoke
+        └── standard.md                       second-tier spoke
+```
+
+Conventions for the second tier:
+
+- **The hub sits outside its directory**—an agent listing `references/` sees exactly one entry point for the sub-scope. Putting the hub inside `ste/` alongside its spokes makes "which file do I read first" ambiguous
+- **The directory supplies the namespace**—name spokes `rules.md`, not `ste-rules.md`. `ste/ste-rules.md` stutters
+- **Only SKILL.md links the tier-2 hub**—it never links the spokes directly, or the tier collapses
+- **The tier-2 hub routes**—it holds the scope boundary, the decision the agent must make, and the procedure, then ends with a load table mapping job → spoke
+- **Spokes link sideways sparingly**—a spoke may link a sibling for a definition it must not duplicate, and links back to the hub as `../hub-name.md`. The hub owns the routing
+- **Split by load cadence, not by topic size**—what is needed on every invocation belongs in the hub; what is needed for one branch (worked examples, provenance, licence detail) becomes a spoke
+- **No duplication across spokes**—one fact lives in exactly one file
+
+Depth costs nothing mechanically: the Claude Desktop packing script stages with `cp -R`, hashes with `find -type f`, and zips with `zip -r`, so it is depth-agnostic, and progressive disclosure resolves through relative links at any depth. `lochy:coding:effect-ts` vendors a five-level docs tree and packs cleanly. Depth costs *comprehension*, so stop at two tiers—a third means the sub-topic wants to be its own skill.
 
 ### Restricting Tool Access
 
