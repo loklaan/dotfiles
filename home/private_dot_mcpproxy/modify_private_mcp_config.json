@@ -25,6 +25,30 @@
 
 {{- /* Build our managed server list */ -}}
 {{- $servers := list -}}
+{{- /* Per-machine stdio servers belong in chezmoi's local config, not this
+       source model. Each [data.mcpStdioServers.<name>] table supplies the
+       executable fields; this template supplies the mcpproxy identity and
+       transport fields. `dig` keeps older machine configs valid. */ -}}
+{{- $localStdioServers := dig "mcpStdioServers" (dict) . -}}
+{{- $reservedServerNames := list "otter" "pushbullet" "effect-docs" "smithers" "pdf-tools" "chrome-devtools" "figma-desktop" "context7" "websearch" "notion" -}}
+{{- range $name, $server := $localStdioServers -}}
+{{-   if has $name $reservedServerNames -}}
+{{-     fail (printf "mcpStdioServers.%s conflicts with a dotfiles-managed MCP server" $name) -}}
+{{-   end -}}
+{{-   if not (hasKey $server "command") -}}
+{{-     fail (printf "mcpStdioServers.%s must define command" $name) -}}
+{{-   end -}}
+{{-   $server = merge (dict) $server -}}
+{{-   if not (hasKey $server "enabled") -}}
+{{-     $server = set $server "enabled" true -}}
+{{-   end -}}
+{{-   if not (hasKey $server "args") -}}
+{{-     $server = set $server "args" (list) -}}
+{{-   end -}}
+{{-   $server = set $server "name" $name -}}
+{{-   $server = set $server "protocol" "stdio" -}}
+{{-   $servers = append $servers $server -}}
+{{- end -}}
 
 {{- if eq .machineProfile "work" -}}
 {{-   $servers = append $servers (dict
