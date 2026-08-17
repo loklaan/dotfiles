@@ -9,10 +9,14 @@ description: >-
 
 # Durable Agent Workflows
 
-Smithers is the implementation used for this skill. Local OpenCode/OMO wiring is in [references/opencode-agent-config.md](references/opencode-agent-config.md).
+Smithers is the implementation used for this skill. The published package is
+`smthrs` (the CLI binary remains `smithers`); use the project's primary runtime
+runner so the unrelated `smithers` npm package is never selected. Local
+OpenCode/OMO wiring is in
+[references/opencode-agent-config.md](references/opencode-agent-config.md).
 
 Smithers is a durable control plane for long-running coding agents. Workflows are
-TypeScript (JSX), run for minutes or days, and survive crashes. Every finished
+TypeScript Effect graph values, run for minutes or days, and survive crashes. Every finished
 step is persisted to SQLite, so a restart resumes from the last completed node
 instead of starting over. Retries, human approvals, replay, evals, and sandbox
 review all live in one place.
@@ -35,6 +39,12 @@ watch the run, clear approval gates after the user decides, and report evidence.
 Do not hand the human command snippets unless you lack tool access or the human
 explicitly wants to own the run.
 
+Smithers is agent-driven: the human asks for an outcome and the coding agent
+starts, watches, verifies, and steers the durable run. Never run `smthrs skills
+add` or `smthrs mcp add`: chezmoi manages these dotfiles, including agent
+workflow instructions and MCP entries. This skill owns the preferred workflow
+instructions, and its own MCP entry owns the preferred structured tools.
+
 Smithers becomes the execution layer only after the decision gate is met. At
 that point, avoid ad-hoc background subagents for the work Smithers owns;
 Smithers should spawn the worker agents so progress is persisted, inspectable,
@@ -53,10 +63,10 @@ The division of labor in a Smithers-backed workflow:
 ## Mental model
 
 Think of Smithers as executable plan mode with persistence. You encode the plan
-as a workflow graph (`<Sequence>`, `<Parallel>`, `<Branch>`, `<Ralph>`) and hand
-it to the runtime. The plan becomes executable, resumable, and inspectable: each
-step is a real agent task whose output is persisted and checked before the next
-step runs.
+as an Effect workflow graph (`G.sequence`, `G.parallel`, `G.branch`, `G.loop`)
+and hand it to the runtime. The plan becomes executable, resumable, and
+inspectable: each step is a real agent task whose output is persisted and checked
+before the next step runs.
 
 Read [references/smithers-reference.md](references/smithers-reference.md) when
 writing workflow code, operating a run, handling human gates, or looking up

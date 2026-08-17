@@ -1,10 +1,11 @@
 # OpenCode Agent Configuration for Smithers
 
-Smithers is wired here as an mcpproxy MCP server named `smithers`, launched with
-the available Node.js-compatible runtime (for example `smithers --mcp`,
-`npx -y smithers-orchestrator --mcp`, or `bunx smithers-orchestrator --mcp`), so
-the CLI verbs are also reachable as MCP tools. OpenCode is a first-class worker
-agent; prefer it inside `<Task>` nodes on these machines.
+Smithers is wired here as an MCP server named `smithers`, but do not launch or
+register it directly with `<runner> smthrs --mcp`, `smithers --mcp`, or
+`smthrs mcp add`. Chezmoi manages MCP entries in the user's AI tools, typically
+through Mcpproxy; use that managed entry so the CLI verbs are reachable as MCP
+tools. OpenCode is a first-class worker agent; prefer it inside `G.step` nodes
+on these machines.
 
 ## OpenCodeAgent
 
@@ -57,6 +58,6 @@ gates → `agents.review`; default when unsure → `agents.implement`.
 
 ## `.smithers/`
 
-`.smithers/` is not in version control. Re-scaffold with `smithers init` (or the
-runtime-specific package launcher) after a fresh clone, then recreate
+`.smithers/` is not in version control. Re-scaffold with the selected project's
+runtime runner (`<runner> smthrs init`) after a fresh clone, then recreate
 `agents/opencode.ts` and `agents.ts` from the snippets in this reference.
