@@ -58,6 +58,6 @@ gates → `agents.review`; default when unsure → `agents.implement`.
 
 ## `.smithers/`
 
-`.smithers/` is not in version control. Re-scaffold with `bunx smthrs init` after
-a fresh clone, then recreate
+`.smithers/` is not in version control. Re-scaffold with the selected project's
+runtime runner (`<runner> smthrs init`) after a fresh clone, then recreate
 `agents/opencode.ts` and `agents.ts` from the snippets in this reference.
