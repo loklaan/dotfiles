@@ -8,7 +8,7 @@ How AI coding agent sessions are managed across macbooks and Coder dev boxes.
 
 ## Model
 
-Two orchestration tools span machines, plus one single-machine deep-UI tool.
+Two orchestration tools span machines.
 
 ### orca: SSH-attached client (today) + paired-server (beta)
 
@@ -51,10 +51,6 @@ The two modes coexist: SSH-attached for quick "open this workspace" sessions, pa
 
 paseo's desktop/mobile/web clients on the macbook talk to per-host daemons. The daemon runs on the Coder box as a systemd-user service, opt-in via chezmoi (default off). Reach is via `coder port-forward <ws> --tcp 6767:6767`, then connect to `localhost:6767` from the client. Each client maintains a `HostProfile` registry (multiple daemons → one client) in browser localStorage on desktop.
 
-### openchamber: single-machine deep UI
-
-Not multi-machine. openchamber is a 1:1 UI for a single opencode server, typically run locally on the macbook (`openchamber serve`, default `:3000` UI talking to `localhost:4096` opencode). It's installed via `mise` (`npm:@openchamber/web`) on every machine but only used on macbooks. Doesn't aggregate across opencodes; each instance binds to one server. Useful for deep work in a single session.
-
 ## Network Model
 
 | Path | Mechanism | Auth |
@@ -62,7 +58,6 @@ Not multi-machine. openchamber is a 1:1 UI for a single opencode server, typical
 | MacBook → Coder box (any agent) | `coder.<ws>` SSH host (Coder writes to `~/.ssh/config`) | SSH agent + Coder CLI tunnel |
 | MacBook orca → remote agents | Orca's SSH relay protocol over the same SSH path | SSH (delegated) |
 | MacBook paseo client → Coder daemon | `coder port-forward <ws> --tcp 6767:6767`, then connect to `localhost:6767` | None at the daemon (gated by SSH/Coder reach) |
-| MacBook openchamber → local opencode | `localhost:4096` direct | None |
 | Discovery: "what Coder workspaces exist" | `coder list -o json` at run time | Coder CLI session |
 
 No tool aggregates session state across machines. State lives where each session was created. Discovery is dynamic — there's no inventory file in the repo.
@@ -73,7 +68,6 @@ No tool aggregates session state across machines. State lives where each session
 |---|---|---|---|
 | `Orca.app` | MacBook | macOS (user-launched) | Per-user-session |
 | `Paseo.app` | MacBook | macOS (user-launched) | Per-user-session |
-| `openchamber serve` | MacBook | manual / launchd if you set it up | Per-invocation |
 | `paseo daemon` | Coder box | systemd-user via chezmoi | Long-running, auto-restart on failure |
 | `opencode serve` | Anywhere | Pitchfork when `openCodeServer`; otherwise per-session/manual | Long-running opt-in or per-session |
 
@@ -82,7 +76,6 @@ No tool aggregates session state across machines. State lives where each session
 - **opencode** is the only one with an HTTP+SSE server. Default `:4096`, configurable via `--hostname`/`--port`. Each opencode is its own server with its own SQLite. No federation between opencodes.
 - **paseo daemon** is HTTP+WebSocket on `:6767`. Manages local agent processes. Each daemon is independent; clients aggregate them via per-client `HostProfile` registry (browser localStorage on the desktop).
 - **orca** has no server. The desktop app is the client; the relay binary it deploys to remote hosts via SSH is a thin process-launcher, not a server.
-- **openchamber** has a server (default `:3000`) but it's strictly 1:1 with one opencode. Not aggregated.
 
 ## Configuration & Opt-In
 
@@ -123,8 +116,7 @@ chezmoi apply
 
 install-my-packages --gui
   ├─ installs Paseo.app cask (macOS)
-  ├─ installs Orca.app cask via stablyai/orca tap (macOS)
-  └─ installs openchamber via mise npm:@openchamber/web
+  └─ installs Orca.app cask via stablyai/orca tap (macOS)
 ```
 
 Opt-in flip later:
@@ -220,7 +212,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | Path | Purpose |
 |---|---|
 | `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` prompt and data variable |
-| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; openchamber via npm always; opencode itself is mise-managed, opencode plugins are not |
+| `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; opencode itself is mise-managed, opencode plugins are not |
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |
 | `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
@@ -238,7 +230,6 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 **Daily use from a macbook:**
 - Open Orca.app → Coder hosts already in the SSH-target list. Click in.
 - Open Paseo.app → daemons you've added show up. Click in.
-- For local opencode work: `openchamber serve` in a terminal, browser to `localhost:3000`.
 
 **Add a new Coder box as a paseo daemon host:**
 1. SSH into the box (`cw <ws>`).

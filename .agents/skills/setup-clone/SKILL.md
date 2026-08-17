@@ -177,7 +177,7 @@ and a final block showing the live state of `git remote -v` and
 `git config user.email`. If `df-setup` reported any non-OK status,
 include those lines verbatim with a pointer to the relevant remediation
 doc (`df-setup --probe-bws` for BWS issues,
-`.agents/rules/agent-orchestration.md` for paseo/orca/openchamber, etc.).
+`.agents/rules/agent-orchestration.md` for paseo/orca, etc.).
 
 ## Out of scope
 
