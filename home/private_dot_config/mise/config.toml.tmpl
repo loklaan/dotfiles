@@ -77,6 +77,9 @@ gix = false
 # during `chezmoi apply`, not from incidental shim calls.
 not_found_auto_install = false
 
+[settings.github]
+credential_command = "gh auth token"
+
 # ── Tasks ────────────────────────────────────────────────────────────────────
 # Task bodies are hoisted into ~/.local/bin/dotfiles-task-* scripts so they
 # follow the repo's standard script header pattern (set -euo pipefail, doc
