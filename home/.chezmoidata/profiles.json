@@ -207,7 +207,7 @@
                 "opencode-go"
             ],
             "model": "opencode-go/kimi-k2.7-code",
-            "small_model": "opencode-go/qwen3.6-plus",
+            "small_model": "opencode-go/qwen3.7-plus",
             "provider_block": {
                 "opencode-go": {
                     "name": "OpenCode Go"
@@ -222,29 +222,29 @@
             ],
             "agents": {
                 "sisyphus": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "hephaestus": {
                     "model": "opencode-go/kimi-k3",
                     "reasoning": "medium"
                 },
                 "oracle": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "librarian": {
-                    "model": "opencode-go/qwen3.6-plus"
+                    "model": "opencode-go/qwen3.7-plus"
                 },
                 "explore": {
-                    "model": "opencode-go/qwen3.6-plus"
+                    "model": "opencode-go/qwen3.7-plus"
                 },
                 "metis": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "momus": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "prometheus": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "atlas": {
                     "model": "opencode-go/qwen3.7-plus"
@@ -258,10 +258,10 @@
             },
             "categories": {
                 "visual-engineering": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "ultrabrain": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "deep": {
                     "model": "opencode-go/kimi-k2.7-code"
@@ -276,7 +276,7 @@
                     "model": "opencode-go/kimi-k2.7-code"
                 },
                 "unspecified-high": {
-                    "model": "opencode-go/glm-5.2"
+                    "model": "opencode-go/glm-5.3"
                 },
                 "writing": {
                     "model": "opencode-go/kimi-k2.7-code"
