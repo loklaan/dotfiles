@@ -28,11 +28,11 @@
 //   - env.zsh   reads .aws_region (Coder block), keeps the ap-southeast-2 fallback.
 //   - login.zsh reads .gh_auth_ok to decide the setup-incomplete reminder.
 //
-// Effect v4 beta import path verified against effect@4.0.0-beta.93.
+// Effect v4 import path verified against effect@4.0.0-rc.112.
 
-import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-beta.93";
-import type * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
-import type * as Process from "npm:effect@4.0.0-beta.93/unstable/process";
+import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-rc.112";
+import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
 import {
   ensureDir,
@@ -45,7 +45,7 @@ import {
   writeTextFile,
 } from "../lib/df-cache.ts";
 
-// Requirement carried by the prewarm effects now that the shared primitives
+// Requirement carried by the prewarm effects because the shared primitives
 // run on the canonical Effect platform services. Satisfied once at the top by
 // NodeServices.layer (bundles FileSystem + ChildProcessSpawner + …), which is
 // imported DYNAMICALLY in import.meta.main so `deno test` stays permission-free
@@ -266,7 +266,7 @@ if (import.meta.main) {
   // the live CLI path pays that cost; the offline suite never imports it.
   (async () => {
     const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.93"
+      "npm:@effect/platform-node@4.0.0-rc.112"
     );
     const exit = await Effect.runPromiseExit(
       main(Deno.args, NodeServices.layer),

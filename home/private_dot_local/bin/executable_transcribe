@@ -1,8 +1,7 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-lock --allow-net --allow-read --allow-write --allow-env --allow-run=ffmpeg --unstable-webgpu --allow-ffi
 
 // Transcribe audio/video with any HuggingFace ASR model, grouped into
-// fixed-duration chunks. Deno + Effect v4 beta rewrite of the original
-// `uv run --script` Python tool.
+// fixed-duration chunks (Deno + Effect v4).
 //
 // Pipeline: ffmpeg shells out to decode any audio/video container into mono
 // 16 kHz f32 PCM, which is fed as a Float32Array into a Transformers.js v4 ASR
@@ -18,7 +17,7 @@
 //   -l/--language      source language code, or "auto" (default en)
 //   --no-timestamps    print plain text only
 //
-// Effect v4 beta import paths verified against effect@4.0.0-beta.93. The CLI,
+// Effect v4 import paths verified against effect@4.0.0-rc.112. The CLI,
 // process, and platform-node submodules live under the `unstable/` path prefix
 // (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
 // transcript on stdout stays clean and copy-pasteable.
@@ -30,12 +29,12 @@ import {
   Effect,
   Layer,
   Stream,
-} from "npm:effect@4.0.0-beta.93";
-import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+} from "npm:effect@4.0.0-rc.112";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 // `@effect/platform-node` is imported LAZILY (runtime dynamic import in the
 // CLI entrypoint) rather than at the top level. Its dependency chain pulls in
@@ -46,12 +45,12 @@ import {
 // `import.meta.main` path only.
 type NodePlatform = {
   readonly NodeRuntime:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.93").NodeRuntime;
+    typeof import("npm:@effect/platform-node@4.0.0-rc.112").NodeRuntime;
   readonly NodeServices:
-    typeof import("npm:@effect/platform-node@4.0.0-beta.93").NodeServices;
+    typeof import("npm:@effect/platform-node@4.0.0-rc.112").NodeServices;
 };
 
-const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-beta.93"]
+const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-rc.112"]
   .join("/");
 
 const loadNodePlatform = (): Promise<NodePlatform> =>

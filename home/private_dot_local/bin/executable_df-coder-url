@@ -1,6 +1,6 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-env=CODER_WORKSPACE_NAME --allow-read=/run/coder/agent.conf
 
-// df-coder-url (Deno + Effect v4 beta). Rewrites a loopback URL into one a
+// df-coder-url (Deno + Effect v4). Rewrites a loopback URL into one a
 // macbook can open across Coder Connect: the host becomes <workspace>.coder and
 // everything else — protocol, port, path, query, fragment — is preserved.
 //
@@ -34,7 +34,7 @@
 // injected as parameters (so tests stay hermetic and zero-flag), and runs via
 // Effect.runPromiseExit + Deno.exit instead of NodeRuntime.runMain.
 
-import { Console, Effect, Option } from "npm:effect@4.0.0-beta.93";
+import { Console, Effect, Option } from "npm:effect@4.0.0-rc.112";
 
 const USAGE = `Usage:
   df-coder-url [OPTIONS] URL...

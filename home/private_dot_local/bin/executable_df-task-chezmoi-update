@@ -1,10 +1,10 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run --allow-env --allow-ffi --allow-read
 
-// df-task-chezmoi-update (Deno + Effect v4 beta). Fast-forwards the chezmoi
+// df-task-chezmoi-update (Deno + Effect v4). Fast-forwards the chezmoi
 // SOURCE repo to origin and applies it, invoked from the
 // `[tasks."chezmoi:update"]` mise task. Owns the git step EXPLICITLY — fetch
 // origin, then `git merge --ff-only origin/<branch>` — then runs `chezmoi
-// apply` (NOT `chezmoi update`, since we now own the pull).
+// apply` (NOT `chezmoi update`, since this task owns the pull).
 //
 // Why not `chezmoi update`: chezmoi has no ff-only knob, so its built-in pull
 // can silently create a merge commit / diverge from origin (it did: a stray
@@ -55,13 +55,13 @@
 // with ZERO permission flags — they only exercise the pure resolvers.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
-// exits 1). Effect v4 beta import paths verified against effect@4.0.0-beta.93.
+// exits 1). Effect v4 import paths verified against effect@4.0.0-rc.112.
 
-import { Config, Effect } from "npm:effect@4.0.0-beta.93";
+import { Config, Effect } from "npm:effect@4.0.0-rc.112";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 // Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
 const fatal = (msg: string): never => {
@@ -203,7 +203,7 @@ const program: Effect.Effect<
     return yield* Effect.sync(() => fatal("chezmoi not on PATH"));
   }
 
-  // 2. Probe git on PATH — we now drive the pull ourselves, so git is required.
+  // 2. Probe git on PATH — this task drives the pull, so git is required.
   if (!(yield* probeOnPath("git"))) {
     return yield* Effect.sync(() => fatal("git not on PATH"));
   }
@@ -339,7 +339,7 @@ if (import.meta.main) {
   // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
   // handlers SUPERVISE relies on for graceful child teardown.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   program.pipe(
     // Config read failure (env vars) -> fatal.

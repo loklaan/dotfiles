@@ -2,11 +2,11 @@
 //
 // WHY this exists: the format is defined by ~/.local/lib/bash-logging.sh
 // (chezmoi: home/private_dot_local/lib/bash-logging.sh), which the ~30 bash
-// scripts in a `chezmoi apply` use. The TS tools that print into the same apply
-// output previously each re-derived it — four independent ANSI/prefix
-// implementations across install-my-completions, install-my-packages,
-// df-font-install, cw, df-drift-update, df-orca-serve and df-setup. Changing a
-// prefix, or dropping colour when stdout is not a TTY, meant editing every one.
+// scripts in a `chezmoi apply` use. Without a shared module every TS tool that
+// prints into the same apply output re-derives the ANSI/prefix handling, so
+// changing a prefix — or dropping colour when stdout is not a TTY — means
+// editing install-my-completions, install-my-packages, df-font-install, cw,
+// df-drift-update, df-orca-serve and df-setup one by one.
 //
 // This module is the single TS source of truth. It MUST stay behaviourally
 // identical to bash-logging.sh:
@@ -63,7 +63,7 @@ export const note = (message: string): void => info(`  → ${message}`);
 // pulls in no Effect runtime cost for the non-Effect tools.
 
 export const makeLoggerLayer = async () => {
-  const { Logger } = await import("npm:effect@4.0.0-beta.93");
+  const { Logger } = await import("npm:effect@4.0.0-rc.112");
   const logger = Logger.make((opts: { logLevel: string; message: unknown }) => {
     const message = String(opts.message);
     if (opts.logLevel === "Warn" || opts.logLevel === "Error") {

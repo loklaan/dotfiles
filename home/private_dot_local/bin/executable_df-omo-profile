@@ -55,11 +55,11 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
@@ -105,41 +105,38 @@ Options:
 // Errors — one cause per error, structured, never information-hiding.
 // --------------------------------------------------------------------------
 
-class UnknownProfileError
-  extends Schema.TaggedErrorClass<UnknownProfileError>()(
-    "UnknownProfileError",
-    {
-      name: Schema.String,
-      available: Schema.Array(Schema.String),
-    },
-  ) {
+class UnknownProfileError extends Schema.TaggedError<UnknownProfileError>()(
+  "UnknownProfileError",
+  {
+    name: Schema.String,
+    available: Schema.Array(Schema.String),
+  },
+) {
   get displayMessage(): string {
     return `Unknown profile: ${this.name} (known: ${this.available.join(" ")})`;
   }
 }
 
-class TooManyArgumentsError
-  extends Schema.TaggedErrorClass<TooManyArgumentsError>()(
-    "TooManyArgumentsError",
-    { args: Schema.Array(Schema.String) },
-  ) {
+class TooManyArgumentsError extends Schema.TaggedError<TooManyArgumentsError>()(
+  "TooManyArgumentsError",
+  { args: Schema.Array(Schema.String) },
+) {
   get displayMessage(): string {
     return "Too many arguments";
   }
 }
 
-class ChezmoiMissingError
-  extends Schema.TaggedErrorClass<ChezmoiMissingError>()(
-    "ChezmoiMissingError",
-    {},
-  ) {
+class ChezmoiMissingError extends Schema.TaggedError<ChezmoiMissingError>()(
+  "ChezmoiMissingError",
+  {},
+) {
   get displayMessage(): string {
     return "chezmoi not on PATH — required to re-render the omo config";
   }
 }
 
 class ChezmoiApplyError
-  extends Schema.TaggedErrorClass<ChezmoiApplyError>()("ChezmoiApplyError", {
+  extends Schema.TaggedError<ChezmoiApplyError>()("ChezmoiApplyError", {
     exitCode: Schema.Number,
     target: Schema.String,
   }) {
@@ -564,7 +561,7 @@ if (import.meta.main) {
   // load time (via ioredis -> msgpackr), which would force --allow-env onto
   // `deno test`. Loading it only here keeps the test surface permission-free.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
 }

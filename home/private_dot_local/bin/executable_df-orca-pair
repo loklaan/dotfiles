@@ -45,14 +45,14 @@ import {
   Effect,
   Schema,
   Stream,
-} from "npm:effect@4.0.0-beta.93";
-import { Path } from "npm:effect@4.0.0-beta.93/Path";
-import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+} from "npm:effect@4.0.0-rc.112";
+import { Path } from "npm:effect@4.0.0-rc.112/Path";
+import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
@@ -843,9 +843,11 @@ const reportLine = (r: Result): string =>
 const sourcesFlag = Flag.string("sources").pipe(Flag.withDefault(""));
 const filterFlag = Flag.string("filter").pipe(Flag.withDefault(DEFAULT_FILTER));
 const parallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
-const replaceFlag = Flag.boolean("replace");
-const dryRunFlag = Flag.boolean("dry-run");
-const jsonFlag = Flag.boolean("json");
+// An omitted `Flag.boolean` fails as a missing required flag rather than
+// resolving to `false`, so every boolean flag needs an explicit fallback.
+const replaceFlag = Flag.boolean("replace").pipe(Flag.withDefault(false));
+const dryRunFlag = Flag.boolean("dry-run").pipe(Flag.withDefault(false));
+const jsonFlag = Flag.boolean("json").pipe(Flag.withDefault(false));
 const helpArg = Argument.string("ignored").pipe(Argument.optional);
 
 const run = (options: Options) =>
@@ -960,7 +962,7 @@ if (import.meta.main) {
   }
 
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   Command.run(command, { version: "0.1.0" }).pipe(
     Effect.provide(NodeServices.layer),

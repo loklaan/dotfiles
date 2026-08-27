@@ -1,6 +1,6 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
 
-// drift — version-drift detection for the dotfiles fleet (Deno + Effect v4 beta).
+// drift — version-drift detection for the dotfiles fleet (Deno + Effect v4).
 //
 // Folds five bash scripts (dotfiles-task-drift-{check,notify,cask,dotfiles,omo})
 // into one CLI with two subcommands:
@@ -23,7 +23,7 @@
 //
 // The four checkers are Effect services so they compose and are individually
 // testable; each yields ReadonlyArray<DriftTool> and never fails the pipeline.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
+// Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import {
   Context,
@@ -31,12 +31,12 @@ import {
   Layer,
   Logger,
   Schema,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 import {
   FetchHttpClient,
   HttpClient,
-} from "npm:effect@4.0.0-beta.93/unstable/http";
-import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112/unstable/http";
+import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-rc.112";
 // NOTE: @effect/platform-node (NodeServices) is imported DYNAMICALLY in the
 // import.meta.main block below, never statically. It transitively loads
 // msgpackr, which reads process.env at module load and throws NotCapable under
@@ -59,10 +59,10 @@ import {
   touchFile,
   writeTextFile,
 } from "../lib/df-cache.ts";
-import type * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
-import type * as Process from "npm:effect@4.0.0-beta.93/unstable/process";
+import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
-// Requirement carried by every checker now that the shared primitives run on
+// Requirement carried by every checker because the shared primitives run on
 // the canonical Effect platform services. Satisfied once at the top by
 // NodeServices.layer (bundles FileSystem + ChildProcessSpawner + …).
 type CheckerEnv =
@@ -795,7 +795,7 @@ if (import.meta.main) {
   // the live CLI path pays that cost; the offline suite never imports it.
   (async () => {
     const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.93"
+      "npm:@effect/platform-node@4.0.0-rc.112"
     );
     const exit = await Effect.runPromiseExit(
       main(Deno.args, NodeServices.layer),

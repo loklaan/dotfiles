@@ -55,55 +55,59 @@ import {
   Redacted,
   Schedule,
   Schema,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 
 // Filesystem + path (top-level-safe):
-import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.93/Path";
+import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
+import { Path } from "npm:effect@4.0.0-rc.112/Path";
 
 // CLI (top-level-safe):
-import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
 // Unstable sub-paths (MCP, HTTP):
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.93/unstable/ai";
+import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-rc.112/unstable/ai";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.93/unstable/http";
+} from "npm:effect@4.0.0-rc.112/unstable/http";
 
 // Node runtime — DYNAMIC IMPORT ONLY (see below):
-// import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-beta.93";
+// import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-rc.112";
 ```
 
-**Pin**: `npm:effect@4.0.0-beta.93` + `npm:@effect/platform-node@4.0.0-beta.93`
-— every tool in this repo pins the **same** beta. The Effect packages publish in
-lock-step, so a mixed tree (some `.80`, some `.83`) is unsupported and produces
-an inconsistent lock.
+**Pin**: `npm:effect@4.0.0-rc.112` + `npm:@effect/platform-node@4.0.0-rc.112` —
+every tool in this repo pins the **same** prerelease. The Effect packages
+publish in lock-step, so a mixed tree (some `-beta.107`, some `-rc.112`) is
+unsupported and produces an inconsistent lock.
 
-**Why same-beta matters (the peer-dependency warning).**
+v4 is currently on **release candidates** (`4.0.0-rc.N`). Bump to the newest
+`rc` — `npm view effect dist-tags` reports it under the `rc` tag; `latest` still
+points at v3 and must NOT be used here.
+
+**Why the same prerelease matters (the peer-dependency warning).**
 `@effect/platform-node@X` declares `@effect/platform-node-shared: "^X"` — a
-_caret_. Left unpinned that caret floats to the newest published beta, which
-then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
-`effect@X` you pinned, so Deno prints a peer-dependency warning. (When `X`
-already _is_ the newest beta the caret has nowhere to float, so the warning
-hides — until the next beta ships and it silently returns.)
+_caret_. Left unpinned that caret floats to the newest published prerelease,
+which then demands `effect@^<newer>` as a peer; the floated peer no longer
+matches the `effect@X` you pinned, so Deno prints a peer-dependency warning.
+(When `X` already _is_ the newest prerelease the caret has nowhere to float, so
+the warning hides — until the next one ships and it silently returns.)
 
 **The fix — one canonical config at the repo root, projected to runtime, with a
 frozen lockfile.** The repo root holds the canonical `deno.json` (flat
 `compilerOptions`, no `workspace` key, a `lock` object — see "Frozen lockfile"
 below) and `tsconfig.json` (editor shim for TS servers that do not read Deno
-config). These are the single control plane — the files you edit, and what drives
-the IDE when the repo is opened at root.
+config). These are the single control plane — the files you edit, and what
+drives the IDE when the repo is opened at root.
 
 The runtime copies in `home/private_dot_local/bin/` are chezmoi `.tmpl`
 re-projections of those root files, deploying to `~/.local/bin/`:
 
 - `deno.json.tmpl` projects the root `deno.json`'s `compilerOptions` **and** its
-  `lock` object (`include "../deno.json" | fromJson | dig ...`). It must NOT carry
-  a `workspace` key — a workspace member key at a leaf dir makes Deno hard-error
-  trying to resolve the member path.
+  `lock` object (`include "../deno.json" | fromJson | dig ...`). It must NOT
+  carry a `workspace` key — a workspace member key at a leaf dir makes Deno
+  hard-error trying to resolve the member path.
 - `tsconfig.json.tmpl` `include "../tsconfig.json"` verbatim.
 
 `include` reaches the repo root via `../` because the chezmoi source root is
@@ -113,51 +117,58 @@ no-`node_modules` convention). Do **not** edit the member `.tmpl` outputs or the
 deployed `~/.local/bin/*` files directly — change the root canonical files only.
 
 **Frozen lockfile — by design.** We **keep** a committed `deno.lock` and run it
-**frozen** so Deno reads it but never rewrites it. The freeze lives in one place:
-the root `deno.json` carries `"lock": { "path": "./deno.lock", "frozen": true }`,
-and `deno.json.tmpl` projects that whole `lock` object into `~/.local/bin/deno.json`
-(the `"./deno.lock"` path is relative to the config file, so at runtime it resolves
+**frozen** so Deno reads it but never rewrites it. The freeze lives in one
+place: the root `deno.json` carries
+`"lock": { "path": "./deno.lock", "frozen": true }`, and `deno.json.tmpl`
+projects that whole `lock` object into `~/.local/bin/deno.json` (the
+`"./deno.lock"` path is relative to the config file, so at runtime it resolves
 to `~/.local/bin/deno.lock`). Tools pin **exact** specifiers
-(`npm:effect@4.0.0-beta.93`, never a range), so the lock is small and stable.
+(`npm:effect@4.0.0-rc.112`, never a range), so the lock is small and stable.
 
-Why frozen and not "no lock": an *unfrozen* `deno.lock` is auto-rewritten on every
-run (a union of every version Deno has ever resolved in that cwd, pulled from its
-registry metadata cache + `dep_analysis_cache_v2`), which races chezmoi's "did this
-file change since I wrote it?" tracking and shows up as a persistent `MM` on
-`~/.local/bin/deno.lock` that can stall `mise run update`. `frozen: true` removes
-Deno's write trigger entirely while still verifying integrity, so chezmoi's managed
-copy stays byte-stable — no race.
+Why frozen and not "no lock": an _unfrozen_ `deno.lock` is auto-rewritten on
+every run (a union of every version Deno has ever resolved in that cwd, pulled
+from its registry metadata cache + `dep_analysis_cache_v2`), which races
+chezmoi's "did this file change since I wrote it?" tracking and shows up as a
+persistent `MM` on `~/.local/bin/deno.lock` that can stall `mise run update`.
+`frozen: true` removes Deno's write trigger entirely while still verifying
+integrity, so chezmoi's managed copy stays byte-stable — no race.
 
-> **Freeze only honours the nested object form.** In Deno 2.8.x, `deno run` reads
-> the freeze from `"lock": { "frozen": true }` ONLY. The flat `"frozen": true`
-> top-level key and the `DENO_FROZEN` env var are silently ignored for `deno run`
-> (verified empirically — both let the lock get rewritten). Do not "simplify" the
-> config to the flat form.
+> **Freeze only honours the nested object form.** In Deno 2.8.x, `deno run`
+> reads the freeze from `"lock": { "frozen": true }` ONLY. The flat
+> `"frozen": true` top-level key and the `DENO_FROZEN` env var are silently
+> ignored for `deno run` (verified empirically — both let the lock get
+> rewritten). Do not "simplify" the config to the flat form.
 
 **Exemption — `transcribe`.** Its shebang passes `--no-lock`. It lazily imports
 `npm:@huggingface/transformers@^4` via a **runtime-assembled** specifier that is
-deliberately opaque to Deno's graph analyzer (see its source comment), so the dep
-is never in the lock. Under a frozen lock, that unlocked dynamic import would crash
-at runtime (Deno refuses to add to a frozen lock and throws). `--no-lock` makes
-`transcribe` ignore the lock entirely — it neither reads nor writes it — so it
-resolves transformers at runtime without erroring and without touching the managed
-`deno.lock`. (`--frozen=false` would NOT work here: it lets the tool *rewrite* the
-lock, reintroducing the exact `MM` race.) `transcribe` is macbook-only and carries
-a heavy ML tree; keeping it out of the shared lock avoids bloating the lock every
-lightweight `df-*` tool reads.
+deliberately opaque to Deno's graph analyzer (see its source comment), so the
+dep is never in the lock. Under a frozen lock, that unlocked dynamic import
+would crash at runtime (Deno refuses to add to a frozen lock and throws).
+`--no-lock` makes `transcribe` ignore the lock entirely — it neither reads nor
+writes it — so it resolves transformers at runtime without erroring and without
+touching the managed `deno.lock`. (`--frozen=false` would NOT work here: it lets
+the tool _rewrite_ the lock, reintroducing the exact `MM` race.) `transcribe` is
+macbook-only and carries a heavy ML tree; keeping it out of the shared lock
+avoids bloating the lock every lightweight `df-*` tool reads.
 
 **Ritual when bumping Effect (or any pinned dep).** The freeze is intentional
 friction: a normal run will NOT update the lock, so bumping is a deliberate,
 two-part act.
 
-1. Bump _every_ occurrence to the same new beta in lock-step — miss one and you get
-   a mixed tree:
+1. Bump _every_ occurrence to the same new prerelease in lock-step — miss one
+   and you get a mixed tree. Search `.agents/` too, not just the tools: this
+   reference file and `deno-effect-tool.template.ts` carry pins as well, and a
+   stale pin in the docs seeds the next tool with the wrong version.
    ```bash
-   grep -rl 4.0.0-beta.<old> home/private_dot_local/bin/   # find stragglers
-   # edit each to the new beta, keeping effect + @effect/platform-node identical
+   grep -rl 4.0.0-<old> home/ .agents/                   # find stragglers
+   # in zsh, unquoted $(...) does NOT word-split — pipe into a read loop:
+   grep -rl 4.0.0-<old> home/ .agents/ | while IFS= read -r f; do
+     sed -i '' 's/4\.0\.0-<old>/4.0.0-<new>/g' "$f"
+   done
    ```
-2. Regenerate the lock with the freeze lifted for that one command, then re-freeze
-   happens automatically (the config stays frozen; you only override per-invocation):
+2. Regenerate the lock with the freeze lifted for that one command, then
+   re-freeze happens automatically (the config stays frozen; you only override
+   per-invocation):
    ```bash
    deno cache --frozen=false --config deno.json home/private_dot_local/bin/executable_cw
    # repeat for any tool that introduces a NEW specifier; exact-pin bumps to an
@@ -166,13 +177,43 @@ two-part act.
    To regenerate from scratch (purge lingering removed-dep entries):
    `rm deno.lock && deno cache --frozen=false --config deno.json <tool>`.
 
-`deno outdated --update` does NOT apply here — it rewrites semver *ranges* in a
+   **A from-scratch regen must cache every tool holding a unique specifier**,
+   not just one. The lock is a union: drop it and cache only `executable_cw` and
+   you silently lose `jsr:@std/yaml@1` (only `df-lint-runtimes` imports it), and
+   that tool then dies at startup with `The lockfile is out of date`. Enumerate
+   the distinct specifiers first, and exclude `transcribe` (it runs `--no-lock`
+   by design — see the exemption above):
+   ```bash
+   grep -rhoE '(npm:|jsr:)[^"]+' home/private_dot_local/bin/ home/private_dot_local/lib/ | sort -u
+   ```
+
+Verify the bump landed before trusting it — typecheck every tool, then run the
+in-file tests, both of which must be clean with the frozen lock in place:
+
+```bash
+deno check --config deno.json home/private_dot_local/bin/executable_<tool>
+deno test  --config deno.json home/private_dot_local/bin/executable_<tool>   # zero flags
+```
+
+`.tmpl` tools cannot be checked in place — Go template syntax is not valid TS.
+Render them into a mirror of the deployed layout first, so their `../lib/*.ts`
+imports still resolve:
+
+```bash
+mkdir -p /tmp/chk/bin /tmp/chk/lib
+cp home/private_dot_local/lib/*.ts /tmp/chk/lib/
+cp deno.json deno.lock /tmp/chk/
+chezmoi cat ~/.local/bin/df-setup > /tmp/chk/bin/df-setup
+deno check --config /tmp/chk/deno.json /tmp/chk/bin/df-setup
+```
+
+`deno outdated --update` does NOT apply here — it rewrites semver _ranges_ in a
 `deno.json` import map, and these tools use exact specifiers with no import map.
 The `grep` lock-step edit above is the update path.
 
-To purge a stale resolution from a box's deno cache (e.g. after a bump leaves old
-registry metadata behind), clear the registry metadata AND the analysis DB — the
-tarball dir alone is not enough:
+To purge a stale resolution from a box's deno cache (e.g. after a bump leaves
+old registry metadata behind), clear the registry metadata AND the analysis DB —
+the tarball dir alone is not enough:
 
 ```bash
 rm -rf ~/.cache/deno/npm/registry.npmjs.org/effect \
@@ -188,7 +229,7 @@ which reads `process.env` at module load and throws `NotCapable` without
 ```typescript
 if (import.meta.main) {
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeFileSystem.layer),
@@ -202,8 +243,8 @@ if (import.meta.main) {
 **Do NOT** statically import `NodeRuntime`, `NodeFileSystem`, `NodePath`, or
 `NodeServices` at file top level — this breaks the zero-flag offline test rule.
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.93` — that package is
-unresolvable at this pin. Use `npm:effect@4.0.0-beta.93/FileSystem` and
+**Do NOT** use `npm:@effect/platform@4.0.0-rc.112` — that package is
+unresolvable at this pin. Use `npm:effect@4.0.0-rc.112/FileSystem` and
 `.../Path` instead.
 
 ---
@@ -212,7 +253,7 @@ unresolvable at this pin. Use `npm:effect@4.0.0-beta.93/FileSystem` and
 
 ```typescript
 // Error type
-class MyError extends Schema.TaggedErrorClass<MyError>()("MyError", {
+class MyError extends Schema.TaggedError<MyError>()("MyError", {
   message: Schema.String,
   cause: Schema.Unknown,
 }) {}
@@ -249,13 +290,23 @@ Key points:
 - `Effect.fn("Name.op")` wraps operations for named tracing
 - `Config.redacted()` for secrets — value is `<redacted>` in logs
 - Layer composition: `Layer.provide(FetchHttpClient.layer)` to inject HTTP
+- Error constructors are `Schema.TaggedError` / `Schema.Error`. Careful:
+  `Schema.Error` is the **error class constructor**; the schema for a plain
+  JavaScript `Error` instance is `Schema.ErrorInstance`.
+
+**`Config` treats an empty string as absent.** The built-in providers
+(`fromEnv`, `fromDotEnv`, `fromDir`, …) report `FOO=""` as missing, so
+`Config.withDefault("x")` yields `"x"` — not `""` — and `Config.option` yields
+`None`. That is usually what you want for env-var defaults; pass
+`{ preserveEmptyStrings: true }` to the provider if a tool must genuinely
+distinguish "set but empty" from unset.
 
 ---
 
 ## 4. CLI Structure
 
 Use `effect/unstable/cli` (`Command` / `Flag` / `Argument`) for ALL tools —
-complex and simple alike. Import path: `npm:effect@4.0.0-beta.93/unstable/cli`.
+complex and simple alike. Import path: `npm:effect@4.0.0-rc.112/unstable/cli`.
 
 Static import is top-level-safe: defining commands and flags does not pull
 `@effect/platform-node` at load time, so `deno test` stays zero-flag. Command
@@ -263,7 +314,7 @@ execution requires `NodeServices.layer` — keep the `Command.run(...)` tail
 behind the dynamic `import.meta.main` import.
 
 ```typescript
-import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
 // --- Command definition (top-level safe) ------------------------------------
 const verbose = Flag.boolean("verbose").pipe(Flag.withAlias("v"));
@@ -281,7 +332,7 @@ const myCommand = Command.make(
 // --- Entry point (dynamic import, runtime only) -----------------------------
 if (import.meta.main) {
   const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeFileSystem.layer),
@@ -298,20 +349,37 @@ if (import.meta.main) {
 - For MCP stdio servers, use
   `Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)` instead of `Command.run`
 
+**Every `Flag.boolean` MUST carry an explicit fallback**, normally
+`Flag.withDefault(false)`:
+
+```typescript
+// WRONG — omitting the flag is a "Missing required flag" error, exit 1
+const verbose = Flag.boolean("verbose");
+
+// RIGHT
+const verbose = Flag.boolean("verbose").pipe(Flag.withDefault(false));
+```
+
+An omitted boolean flag fails as a missing required flag rather than resolving
+to `false`; absence is handled by the optional / default / config / prompt
+fallbacks instead. A bare `Flag.boolean` therefore breaks the **no-flags
+invocation** — the common case — and `deno check` will NOT catch it, since the
+types are identical either way. Only running the tool reveals it, so run every
+CLI with no arguments after an Effect bump.
+
 ---
 
 ## 4a. FileSystem + Path
 
-Use `npm:effect@4.0.0-beta.93/FileSystem` and `npm:effect@4.0.0-beta.93/Path`
-for all filesystem and path operations. Both are top-level-safe for static
-imports.
+Use `npm:effect@4.0.0-rc.112/FileSystem` and `npm:effect@4.0.0-rc.112/Path` for
+all filesystem and path operations. Both are top-level-safe for static imports.
 
 Runtime: provided by `NodeFileSystem.layer` + `NodePath.layer` from the dynamic
 `@effect/platform-node` import in `import.meta.main`.
 
 ```typescript
-import { FileSystem } from "npm:effect@4.0.0-beta.93/FileSystem";
-import { Path } from "npm:effect@4.0.0-beta.93/Path";
+import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
+import { Path } from "npm:effect@4.0.0-rc.112/Path";
 
 const readConfig = (
   dir: string,
@@ -333,7 +401,7 @@ Permission notes:
 - `fs.exists(path)`: `--allow-read --allow-sys=uid` — avoid if possible; use
   `fs.stat` instead
 
-**Do NOT** use `npm:@effect/platform@4.0.0-beta.93` — that package is
+**Do NOT** use `npm:@effect/platform@4.0.0-rc.112` — that package is
 unresolvable at this pin. The `effect` package itself exports `FileSystem` and
 `Path` directly.
 
@@ -345,7 +413,7 @@ Use `Config` for all environment variable reads. Config reads are deferred to
 Effect execution time (not module load), so `deno test` stays permission-free.
 
 ```typescript
-import { Config, Redacted } from "npm:effect@4.0.0-beta.93";
+import { Config, Redacted } from "npm:effect@4.0.0-rc.112";
 
 // Optional env var with a default:
 const prefix = yield* Config.string("MY_PREFIX").pipe(Config.withDefault(""));
@@ -367,7 +435,7 @@ Use `Duration` for all time values. Use `Effect.timeout` and `Effect.retry` with
 `Schedule` for bounded retries — never raw `setTimeout` or `AbortController`.
 
 ```typescript
-import { Duration, Effect, Schedule } from "npm:effect@4.0.0-beta.93";
+import { Duration, Effect, Schedule } from "npm:effect@4.0.0-rc.112";
 
 // Timeout:
 const result = yield* myEffect.pipe(Effect.timeout(Duration.seconds(30)));
@@ -431,8 +499,13 @@ This applies to all SUPERVISE / FAN-OUT / HAND-OVER tools (anything that calls
 For tools that expose an MCP server over stdio:
 
 ```typescript
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-beta.93/unstable/ai";
-import { NodeStdio } from "npm:@effect/platform-node@4.0.0-beta.93";
+import {
+  McpProtocol,
+  McpServer,
+  Tool,
+  Toolkit,
+} from "npm:effect@4.0.0-rc.112/unstable/ai";
+import { NodeStdio } from "npm:@effect/platform-node@4.0.0-rc.112";
 
 // Define a tool
 const MyTool = Tool.make("my_tool", {
@@ -469,6 +542,51 @@ Annotations:
 - `Tool.Destructive` — irreversible action
 - `Tool.Idempotent` — safe to retry
 - `Tool.OpenWorld` — accesses external resources (network, filesystem)
+
+**A tool that takes no arguments must OMIT `parameters`**, inheriting
+`Tool.make`'s `EmptyParams` default. `parameters: Schema.Struct({})` derives the
+degenerate JSON Schema `{"anyOf":[{"type":"object"},{"type":"array"}]}`, which is
+not a valid MCP `inputSchema` and kills the server at startup with
+`SchemaError: Missing key at ["type"]`.
+
+**`protocols` is required.** When the server is started with
+`McpServer.layerStdio` (as `notify mcp` does), you must declare which dated MCP
+protocols it implements. Register newest first; that is the negotiation
+preference order. `McpProtocol` comes from the same `unstable/ai` import:
+
+```typescript
+McpServer.layerStdio({
+  name: "My MCP",
+  version: "1.0.0",
+  protocols: [
+    McpProtocol.v2025_11_25,
+    McpProtocol.v2025_06_18,
+    McpProtocol.v2025_03_26,
+    McpProtocol.v2024_11_05,
+  ],
+});
+```
+
+Register every adapter `McpProtocol` exports unless a client must deliberately
+be held to an older protocol — dropping a version a client offers makes its
+`initialize` fail negotiation.
+
+**Logs must be forced to stderr with `Logger.LogToStderr`.** stdout is the
+JSON-RPC channel; a log line written there corrupts the protocol stream.
+`Logger.consolePretty({ stderr: true })` does NOT do the job, because that option
+only applies to the TTY rendering path and an MCP server's stdout is a pipe:
+
+```typescript
+Layer.provide(
+  Layer.mergeAll(
+    Logger.layer([Logger.consolePretty()]),
+    Layer.succeed(Logger.LogToStderr, true),
+  ),
+);
+```
+
+Verify with `printf '' | <tool> mcp >/tmp/out 2>/tmp/err` and confirm every line
+of `/tmp/out` parses as JSON.
 
 ---
 
@@ -625,7 +743,7 @@ chosen by one question: **does the parent do anything after the child exits?**
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
