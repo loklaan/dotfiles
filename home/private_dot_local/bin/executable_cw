@@ -1,8 +1,8 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env --allow-sys=networkInterfaces
 
-// cw — Coder Workspaces CLI. Deno + Effect v4 rewrite of the original bash
-// tool. Preserves the three public subcommands (`connect`, `fleet`, `migrate`),
-// the bare workspace shorthand, and the zsh completion output.
+// cw — Coder Workspaces CLI (Deno + Effect v4). Public surface: the three
+// subcommands (`connect`, `fleet`, `migrate`), the bare workspace shorthand,
+// and the zsh completion output.
 
 import {
   Config,
@@ -13,17 +13,17 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 import {
   FileSystem,
   layerNoop as fileSystemLayerNoop,
-} from "npm:effect@4.0.0-beta.93/FileSystem";
-import { layer as pathLayer, Path } from "npm:effect@4.0.0-beta.93/Path";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+} from "npm:effect@4.0.0-rc.112/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0-rc.112/Path";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -842,13 +842,19 @@ type FleetParseResult = Data.TaggedEnum<{
 }>;
 const FleetParseResult = Data.taggedEnum<FleetParseResult>();
 
-const fleetIncludeLocalFlag = Flag.boolean("include-local");
-const fleetLocalOnlyFlag = Flag.boolean("local-only");
+// An omitted `Flag.boolean` fails as a missing required flag rather than
+// resolving to `false`, so every boolean flag needs an explicit fallback.
+const fleetIncludeLocalFlag = Flag.boolean("include-local").pipe(
+  Flag.withDefault(false),
+);
+const fleetLocalOnlyFlag = Flag.boolean("local-only").pipe(
+  Flag.withDefault(false),
+);
 const fleetFilterFlag = Flag.string("filter").pipe(
   Flag.withDefault(DEFAULT_FLEET_FILTER),
 );
 const fleetParallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
-const fleetDryRunFlag = Flag.boolean("dry-run");
+const fleetDryRunFlag = Flag.boolean("dry-run").pipe(Flag.withDefault(false));
 const fleetTaskArgs = Argument.string("mise-task").pipe(Argument.variadic);
 const fleetCli = Command.make("fleet", {
   includeLocal: fleetIncludeLocalFlag,

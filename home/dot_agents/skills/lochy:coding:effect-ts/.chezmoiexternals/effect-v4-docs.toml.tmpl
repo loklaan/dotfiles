@@ -1,6 +1,10 @@
+{{/* v4 docs live in Effect-TS/effect, NOT Effect-TS/effect-smol. smol is the v4
+     incubator and its main branch does not track published releases, so it
+     serves docs older than the version the tools pin. Every path in the
+     allowlist below must exist upstream — re-check them when editing. */ -}}
 ["v4-docs"]
     type = "archive"
-    url = "https://codeload.github.com/Effect-TS/effect-smol/tar.gz/refs/heads/main"
+    url = "https://codeload.github.com/Effect-TS/effect/tar.gz/refs/heads/main"
     stripComponents = 1
     refreshPeriod = "24h"
     include = [

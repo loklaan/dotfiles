@@ -1,12 +1,12 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }} --allow-read --allow-env --allow-net=api.github.com --allow-ffi
 
 // deno-fmt-ignore-file
-// df-setup — dotfiles health-check doctor (Deno + Effect v4 beta).
+// df-setup — dotfiles health-check doctor (Deno + Effect v4).
 //
 // `--probe-bws` returns 0=ok, 1=missing, 2=invalid; `chezmoi-preflight.sh`
 // depends on these exit codes, so keep them and the output/prose stable.
 
-import { Config, Effect, Schema } from "npm:effect@4.0.0-beta.93";
+import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.112";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);

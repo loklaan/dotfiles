@@ -7,7 +7,7 @@
 //   chezmoi execute-template < home/private_dot_local/bin/executable_install-my-completions.tmpl > /tmp/imc.ts
 //   deno check /tmp/imc.ts && deno fmt --check /tmp/imc.ts && deno lint /tmp/imc.ts && deno test /tmp/imc.ts
 //
-// Effect v4 beta design (modules verified against effect@4.0.0-beta.93):
+// Effect v4 design (modules verified against effect@4.0.0-rc.112):
 //   - effect/unstable/cli      Command + a custom Flag.boolean("help"); the flag
 //                              shadows the built-in so `--help` prints the exact
 //                              usage below rather than the auto-generated help.
@@ -36,14 +36,14 @@ import {
   Data,
   Duration,
   Effect,
-} from "npm:effect@4.0.0-beta.93";
-import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+} from "npm:effect@4.0.0-rc.112";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
-import * as FileSystem from "npm:effect@4.0.0-beta.93/FileSystem";
-import * as Path from "npm:effect@4.0.0-beta.93/Path";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
+import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import * as Path from "npm:effect@4.0.0-rc.112/Path";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -507,9 +507,12 @@ const installCompletions = Effect.gen(function* () {
 
 // One command, one optional `--help` flag. The custom `help` flag shadows the
 // CLI's built-in --help so we print the exact usage string above.
+// `Flag.withDefault(false)` is load-bearing: an omitted `Flag.boolean` fails as
+// a missing required flag rather than resolving to `false`, so without it a
+// bare `install-my-completions` (the normal invocation) exits 1.
 const command = Command.make(
   "install-my-completions",
-  { help: Flag.boolean("help") },
+  { help: Flag.boolean("help").pipe(Flag.withDefault(false)) },
   Effect.fn(function* ({ help }) {
     if (help) {
       yield* Console.log(usage);
@@ -540,7 +543,7 @@ if (import.meta.main) {
   // NodeRuntime.runMain installs the signal handlers the parallel child-process
   // fan-out relies on for graceful teardown.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   const loggerLayer = await makeLoggerLayer();
   command.pipe(

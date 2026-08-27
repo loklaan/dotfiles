@@ -13,12 +13,12 @@ import {
   Layer,
   Schema,
   Stream,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
-} from "npm:effect@4.0.0-beta.93/unstable/http";
+} from "npm:effect@4.0.0-rc.112/unstable/http";
 
 const UPSTREAM_ORIGIN =
   "https://ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com";
@@ -34,7 +34,7 @@ interface ForwardSpec {
   readonly body: Uint8Array | null;
 }
 
-class ShimError extends Schema.TaggedErrorClass<ShimError>()("ShimError", {
+class ShimError extends Schema.TaggedError<ShimError>()("ShimError", {
   message: Schema.String,
   cause: Schema.Unknown,
 }) {}
@@ -238,7 +238,7 @@ const isAbortError = (error: unknown): boolean =>
 
 const serve = Effect.scoped(
   Effect.gen(function* () {
-    // Effect v4 beta exports HttpServer/HttpRouter, but no Deno runtime server
+    // Effect v4 exports HttpServer/HttpRouter, but no Deno runtime server
     // layer fits this repo's current convention. The listener uses Deno.serve;
     // the outbound hop remains Effect HttpClient + FetchHttpClient + mTLS fetch.
     const running = yield* Effect.acquireRelease(
@@ -282,7 +282,7 @@ if (import.meta.main) {
   });
 
   const { NodeRuntime } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   serve.pipe(NodeRuntime.runMain);
 }

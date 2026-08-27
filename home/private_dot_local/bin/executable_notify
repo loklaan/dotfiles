@@ -1,6 +1,6 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=terminal-notifier,osascript,notify-send --allow-env --allow-read --allow-net=api.pushbullet.com --allow-ffi
 
-// notify (Deno + Effect v4 beta). Two faces of one tool:
+// notify (Deno + Effect v4). Two faces of one tool:
 //
 //   notify [OPTIONS] <message>   Cross-platform desktop notification (default).
 //                                Preserves the original bash CLI surface:
@@ -22,7 +22,7 @@
 // @effect/platform-node (NodeRuntime/NodeStdio) is imported lazily inside the
 // `mcp` branch: it transitively loads msgpackr, which reads process.env at module
 // load and throws NotCapable without --allow-env, breaking flag-free `deno test`.
-// Effect v4 beta import paths verified against effect@4.0.0-beta.93.
+// Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import {
   Config,
@@ -33,7 +33,7 @@ import {
   Redacted,
   Runtime,
   Schema,
-} from "npm:effect@4.0.0-beta.93";
+} from "npm:effect@4.0.0-rc.112";
 // NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
 // `mcp` branch and the env-gated annotation test — it transitively loads
 // msgpackr, which reads process.env at module load and throws NotCapable
@@ -43,7 +43,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-beta.93/unstable/http";
+} from "npm:effect@4.0.0-rc.112/unstable/http";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -103,10 +103,9 @@ Exit codes:
   0   Notification dispatched
   1   Underlying notifier missing or failed`;
 
-class NotifyError
-  extends Schema.TaggedErrorClass<NotifyError>()("NotifyError", {
-    message: Schema.String,
-  }) {}
+class NotifyError extends Schema.TaggedError<NotifyError>()("NotifyError", {
+  message: Schema.String,
+}) {}
 
 interface NotifyOptions {
   readonly title: string;
@@ -381,7 +380,7 @@ const dispatchNotification = (
 // ===========================================================================
 
 class PushbulletError
-  extends Schema.TaggedErrorClass<PushbulletError>()("PushbulletError", {
+  extends Schema.TaggedError<PushbulletError>()("PushbulletError", {
     message: Schema.String,
     cause: Schema.Unknown,
   }) {}
@@ -521,8 +520,8 @@ class Pushbullet extends Context.Service<Pushbullet, {
 // inside this async builder keeps flag-free `deno test` clean; the builder is
 // only called from the `mcp` branch (and the env-gated annotation test).
 const buildMcp = async () => {
-  const { McpServer, Tool, Toolkit } = await import(
-    "npm:effect@4.0.0-beta.93/unstable/ai"
+  const { McpProtocol, McpServer, Tool, Toolkit } = await import(
+    "npm:effect@4.0.0-rc.112/unstable/ai"
   );
 
   const SendNotification = Tool.make("send_notification", {
@@ -577,7 +576,12 @@ const buildMcp = async () => {
       "which devices are available. Returns each device's iden, which can be " +
       "passed as device_iden to send_notification to reach a single device. " +
       "Read-only: it does not send any notification.",
-    parameters: Schema.Struct({}),
+    // This tool takes no arguments, so it omits `parameters` and inherits
+    // Tool.make's EmptyParams default. Do NOT write `parameters:
+    // Schema.Struct({})` — an empty struct derives the degenerate JSON Schema
+    // `{"anyOf":[{"type":"object"},{"type":"array"}]}`, which is not a valid MCP
+    // inputSchema and kills the server at startup with
+    // `SchemaError: Missing key at ["type"]`.
     success: Schema.Array(
       Schema.Struct({
         iden: Schema.String,
@@ -640,6 +644,15 @@ const buildMcp = async () => {
       McpServer.layerStdio({
         name: "Pushbullet MCP",
         version: "1.0.0",
+        // The server declares which dated MCP protocols it implements. Newest
+        // first is the negotiation preference order; registering every published
+        // adapter lets any client negotiate a version it speaks.
+        protocols: [
+          McpProtocol.v2025_11_25,
+          McpProtocol.v2025_06_18,
+          McpProtocol.v2025_03_26,
+          McpProtocol.v2024_11_05,
+        ],
       }),
     ),
   );
@@ -681,14 +694,24 @@ if (import.meta.main) {
     // means flag-free `deno test` never triggers it. buildMcp() lazily imports
     // `unstable/ai` (also msgpackr-tainted) for the same reason.
     const { NodeRuntime, NodeStdio } = await import(
-      "npm:@effect/platform-node@4.0.0-beta.93"
+      "npm:@effect/platform-node@4.0.0-rc.112"
     );
     const { ServerLayer } = await buildMcp();
 
     const ServerLayerWithStdio = ServerLayer.pipe(
       Layer.provide(NodeStdio.layer),
-      // stdout is the JSON-RPC channel, so logs must go to stderr.
-      Layer.provide(Logger.layer([Logger.consolePretty({ stderr: true })])),
+      // stdout is the JSON-RPC channel, so logs MUST go to stderr.
+      // `consolePretty({ stderr: true })` does NOT achieve that: the option only
+      // applies to the TTY rendering path, and an MCP server's stdout is a pipe,
+      // never a TTY — logs land on stdout and corrupt the protocol stream. The
+      // `Logger.LogToStderr` reference is what actually switches the logger over
+      // to console.error.
+      Layer.provide(
+        Layer.mergeAll(
+          Logger.layer([Logger.consolePretty()]),
+          Layer.succeed(Logger.LogToStderr, true),
+        ),
+      ),
     );
 
     // The stdio RPC protocol interrupts the main fiber when the client closes

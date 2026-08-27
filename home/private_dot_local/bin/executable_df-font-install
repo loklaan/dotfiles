@@ -1,10 +1,10 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=fc-cache --allow-env --allow-read --allow-ffi
 
-// df-font-install (Deno + Effect v4 beta). Behavioral twin of the bash
-// original: refresh the OS font cache after fonts are dropped into
-// ~/.local/share/fonts. Linux updates the cache with `fc-cache -f`; macOS is a
-// no-op (Core Text reads the directory directly); windows/android are
-// explicitly unsupported; anything else is an unknown-OS fatal.
+// df-font-install (Deno + Effect v4). Refreshes the OS font cache after fonts
+// are dropped into ~/.local/share/fonts. Linux updates the cache with
+// `fc-cache -f`; macOS is a no-op (Core Text reads the directory directly);
+// windows/android are explicitly unsupported; anything else is an unknown-OS
+// fatal.
 //
 // SUPERVISE (deno-effect-tools.md §9): the fc-cache child inherits stdout/stderr
 // so its progress streams straight to the terminal, and the parent captures the
@@ -35,13 +35,13 @@
 // Logging: `info`/`warning` use Effect's native logger (`Effect.logInfo`/
 // `Effect.logWarning`) inside the Effect programs; the entrypoint's fatal paths
 // use a small local `fatal` helper that prints "fatal <msg>" to stderr and exits
-// 1. Effect v4 beta import paths verified against effect@4.0.0-beta.93.
+// 1. Effect v4 import paths verified against effect@4.0.0-rc.112.
 
-import { Config, Data, Effect, Layer, Stream } from "npm:effect@4.0.0-beta.93";
+import { Config, Data, Effect, Layer, Stream } from "npm:effect@4.0.0-rc.112";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-beta.93/unstable/process";
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -329,7 +329,7 @@ if (import.meta.main) {
   // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
   // handlers SUPERVISE relies on for graceful child teardown.
   const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-beta.93"
+    "npm:@effect/platform-node@4.0.0-rc.112"
   );
   const loggerLayer = await makeLoggerLayer();
   program.pipe(

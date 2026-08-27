@@ -1,7 +1,7 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=zsh,ssh --allow-env --allow-read --allow-ffi
 
 // df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
-// Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0-beta.93
+// Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0-rc.112
 // (repo-wide canonical version; the frozen deno.lock projected into ~/.local/bin
 // resolves it — no --minimum-dependency-age needed, unlike a standalone script).
 //
@@ -11,8 +11,8 @@
 // into their parent repo, folds devbox ~/work/<repo> into ~/dev/canva/<repo>,
 // and renders a heatmap table with per-host + per-worktree granularity.
 
-import { Console, Effect, Result, Schema } from "npm:effect@4.0.0-beta.93";
-import { Command, Flag } from "npm:effect@4.0.0-beta.93/unstable/cli";
+import { Console, Effect, Result, Schema } from "npm:effect@4.0.0-rc.112";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 // @effect/platform-node imported dynamically in import.meta.main only (msgpackr
 // reads process.env at load, needing --allow-env; keeps `deno test` hermetic).
 
@@ -22,7 +22,7 @@ const CONFIGURED_HOSTS = "{{ dig "openCodeCostHosts" "" . }}"
   .split(",").map((h) => h.trim()).filter((h) => h.length > 0);
 
 // --- Domain --------------------------------------------------------------
-class BoxFailure extends Schema.TaggedErrorClass<BoxFailure>()("BoxFailure", {
+class BoxFailure extends Schema.TaggedError<BoxFailure>()("BoxFailure", {
   host: Schema.String,
   detail: Schema.String,
 }) {}
@@ -323,7 +323,7 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const { NodeRuntime, NodeServices } = await import("npm:@effect/platform-node@4.0.0-beta.93");
+  const { NodeRuntime, NodeServices } = await import("npm:@effect/platform-node@4.0.0-rc.112");
   Command.run(costCommand, { version: "1.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
