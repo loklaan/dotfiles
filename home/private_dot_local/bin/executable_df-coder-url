@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-env=CODER_WORKSPACE_NAME --allow-read=/run/coder/agent.conf
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-env --allow-read=/run/coder/agent.conf --allow-ffi
 
 // df-coder-url (Deno + Effect v4). Rewrites a loopback URL into one a
 // macbook can open across Coder Connect: the host becomes <workspace>.coder and
@@ -25,53 +25,35 @@
 // contexts where it was never exported into the environment. Same invariant as
 // home/private_dot_config/pitchfork/config.toml.tmpl — do not "simplify" it.
 //
-// IMPORTANT — why this tool does NOT use @effect/platform-node:
-// same reason as df-json-escape. platform-node transitively loads `msgpackr`,
-// which reads env at module-evaluation time and needs blanket --allow-env plus
-// --allow-ffi, which would both widen this tool's two narrow grants AND force
-// the in-file tests to run with permission flags. So it keeps the `effect` core
-// for control flow and error modelling, reads env/FS through Deno primitives
-// injected as parameters (so tests stay hermetic and zero-flag), and runs via
-// Effect.runPromiseExit + Deno.exit instead of NodeRuntime.runMain.
+// WHY THE BLANKET --allow-env AND --allow-ffi: argument parsing is the
+// effect/unstable/cli Command/Argument surface, whose runtime needs
+// @effect/platform-node's NodeServices. platform-node transitively loads
+// `msgpackr`, which enumerates process.env at module-evaluation time, so no env
+// allowlist satisfies it; --allow-ffi covers msgpackr's native-addon probe so
+// Deno never stops to prompt. The import stays dynamic and inside
+// import.meta.main, and env/FS reads stay injected as parameters, so the in-file
+// tests remain hermetic and run with zero permission flags.
 
 import { Console, Effect, Option } from "npm:effect@4.0.0-rc.112";
+import { Argument, Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
-const USAGE = `Usage:
-  df-coder-url [OPTIONS] URL...
-
-Description:
-  Rewrites loopback URLs so they are reachable from a macbook over Coder
+const DESCRIPTION =
+  `Rewrites loopback URLs so they are reachable from a macbook over Coder
   Connect: the host becomes <workspace>.coder, with protocol, port, path,
   query, fragment and userinfo preserved.
 
   Safe to call anywhere. Off a Coder box, or for a host that is not
   loopback, the URL is echoed back unchanged.
 
-Notes:
   Coder Connect must be running on the macbook for <workspace>.coder to
   resolve. The tunnel dials 127.0.0.1 on the box, so a loopback-bound
   server is already reachable — never rebind one to 0.0.0.0 to "expose" it.
 
   A *.localhost vhost (app.localhost) passes through untouched: nothing
   resolves beneath <workspace>.coder, so the label cannot be preserved and
-  rewriting would send the reader to the wrong vhost.
-
-Examples:
-  df-coder-url http://localhost:5173/
-  df-coder-url ws://127.0.0.1:4096 http://0.0.0.0:3000/health
-
-Options:
-  --help:    Display this help message
-`;
+  rewriting would send the reader to the wrong vhost.`;
 
 // One cause per error.
-class HelpRequested {
-  readonly _tag = "HelpRequested";
-}
-class UnknownOption {
-  readonly _tag = "UnknownOption";
-  constructor(readonly option: string) {}
-}
 class NoUrls {
   readonly _tag = "NoUrls";
 }
@@ -182,62 +164,54 @@ export const translate = (
     return spliceHost(normalised, `${workspace.value}.coder`);
   });
 
-interface Args {
-  readonly urls: ReadonlyArray<string>;
-}
-
-const parseArgs = (
-  argv: ReadonlyArray<string>,
-): Effect.Effect<Args, HelpRequested | UnknownOption | NoUrls> =>
-  Effect.gen(function* () {
-    const urls: string[] = [];
-    for (const arg of argv) {
-      if (arg === "--help") return yield* Effect.fail(new HelpRequested());
-      if (arg.startsWith("-")) {
-        return yield* Effect.fail(new UnknownOption(arg));
-      }
-      urls.push(arg);
-    }
-    if (urls.length === 0) return yield* Effect.fail(new NoUrls());
-    return { urls };
-  });
-
-const program = (
-  argv: ReadonlyArray<string>,
+// Translate every URL in order, printing each as it is resolved. An unparseable
+// URL stops the run, so anything already printed stays printed.
+const emit = (
+  urls: ReadonlyArray<string>,
   env: EnvReader,
   readFile: FileReader,
-): Effect.Effect<
-  void,
-  HelpRequested | UnknownOption | NoUrls | InvalidUrl
-> =>
+): Effect.Effect<void, NoUrls | InvalidUrl> =>
   Effect.gen(function* () {
-    const { urls } = yield* parseArgs(argv);
+    if (urls.length === 0) return yield* Effect.fail(new NoUrls());
     const workspace = resolveWorkspace(env, readFile);
     for (const raw of urls) {
       yield* Console.log(yield* translate(raw, workspace));
     }
   });
 
-const main = (
-  argv: ReadonlyArray<string>,
-): Effect.Effect<void, UnknownOption | NoUrls | InvalidUrl> =>
-  program(argv, denoEnv, denoReadFile).pipe(
-    Effect.catchTags({
-      HelpRequested: () => Console.log(USAGE.trimEnd()),
-      UnknownOption: (e) =>
-        Console.error(`df-coder-url: unknown option: ${e.option}`).pipe(
-          Effect.andThen(Effect.fail(e)),
-        ),
-      NoUrls: (e) =>
-        Console.error(
-          "df-coder-url: no URL given — pass one or more URLs as arguments",
-        ).pipe(Effect.andThen(Effect.fail(e))),
-      InvalidUrl: (e) =>
-        Console.error(`df-coder-url: not a parseable URL: ${e.raw}`).pipe(
-          Effect.andThen(Effect.fail(e)),
-        ),
-    }),
+// One specific stderr line, then exit 1.
+const abort = (message: string): Effect.Effect<void> =>
+  Console.error(`df-coder-url: ${message}`).pipe(
+    Effect.andThen(Effect.sync(() => {
+      Deno.exit(1);
+    })),
   );
+
+const urlsArg = Argument.string("url").pipe(
+  Argument.withDescription("loopback URL to rewrite"),
+  // No minimum, so an empty invocation reaches the handler and gets this tool's
+  // own "no URL given" line rather than a generic parse error.
+  Argument.variadic(),
+);
+
+const command = Command.make(
+  "df-coder-url",
+  { urls: urlsArg },
+  ({ urls }) =>
+    emit(urls, denoEnv, denoReadFile).pipe(
+      Effect.catchTags({
+        NoUrls: () =>
+          abort("no URL given — pass one or more URLs as arguments"),
+        InvalidUrl: (e) => abort(`not a parseable URL: ${e.raw}`),
+      }),
+    ),
+).pipe(
+  Command.withDescription(DESCRIPTION),
+  Command.withExamples([
+    { command: "df-coder-url http://localhost:5173/" },
+    { command: "df-coder-url ws://127.0.0.1:4096 http://0.0.0.0:3000/health" },
+  ]),
+);
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
@@ -255,8 +229,14 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const exit = await Effect.runPromiseExit(main(Deno.args));
-  Deno.exit(exit._tag === "Success" ? 0 : 1);
+  // Dynamic so `deno test` never loads msgpackr's env-reading module graph.
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112"
+  );
+  Command.run(command, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // ===========================================================================

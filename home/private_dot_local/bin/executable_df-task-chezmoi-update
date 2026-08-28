@@ -58,6 +58,7 @@
 // exits 1). Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import { Config, Effect } from "npm:effect@4.0.0-rc.112";
+import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
@@ -70,14 +71,13 @@ const fatal = (msg: string): never => {
 };
 
 // --------------------------------------------------------------------------
-// Usage (mirrors the bash `#/`-comment header rendered by `usage()`).
+// Command description, rendered by the CLI framework under `--help`. The
+// framework indents the first line only, so continuation lines carry their own
+// two spaces to keep the DESCRIPTION block aligned.
 // --------------------------------------------------------------------------
 
-const USAGE = `Usage:
-  df-task-chezmoi-update
-
-Description:
-  Fast-forwards the chezmoi source repo to origin and applies it: fetch
+const DESCRIPTION =
+  `Fast-forwards the chezmoi source repo to origin and applies it: fetch
   origin, then \`git merge --ff-only origin/<branch>\`, then \`chezmoi apply\`.
   Owns the git step explicitly so the pull can NEVER silently create a merge
   commit or diverge from origin (chezmoi's built-in pull has no ff-only knob).
@@ -92,14 +92,11 @@ Description:
   prompt with "could not open a new TTY". In interactive shells (stdin a TTY)
   prompts still surface for the human at the keyboard.
 
-Environment:
-  CHEZMOI_VERBOSE       When set to "1", invokes chezmoi apply with -v.
-  CHEZMOI_INTERACTIVE   When set to "1", keeps prompts even without a TTY.
-                        When "0", forces non-interactive even with a TTY.
-                        Unset: auto-detect from stdin.
-
-Options:
-  --help    Display this help message`;
+  Environment:
+    CHEZMOI_VERBOSE       When set to "1", invokes chezmoi apply with -v.
+    CHEZMOI_INTERACTIVE   When set to "1", keeps prompts even without a TTY.
+                          When "0", forces non-interactive even with a TTY.
+                          Unset: auto-detect from stdin.`;
 
 // --------------------------------------------------------------------------
 // Pure resolvers (mirror bash resolve_mode_flags + the verbose append, plus the
@@ -304,6 +301,25 @@ const program: Effect.Effect<
 });
 
 // --------------------------------------------------------------------------
+// CLI command. Takes no flags or arguments; the framework owns `--help`, and
+// the two knobs stay environment-driven (read via Config inside `program`).
+// Top-level safe: defining the command pulls no platform-node code.
+// --------------------------------------------------------------------------
+
+const command = Command.make(
+  "df-task-chezmoi-update",
+  {},
+  () =>
+    program.pipe(
+      // Config read failure (env vars) -> fatal.
+      Effect.catchTag(
+        "ConfigError",
+        (error) => Effect.sync(() => fatal(String(error))),
+      ),
+    ),
+).pipe(Command.withDescription(DESCRIPTION));
+
+// --------------------------------------------------------------------------
 // Entry point
 // --------------------------------------------------------------------------
 
@@ -323,30 +339,13 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Argument handling mirrors the bash parse_args, which inspects only $1:
-  // `--help` -> usage on stdout + exit 0; any other first arg -> usage + fatal.
-  const first = Deno.args[0];
-  if (first === "--help") {
-    console.log(USAGE);
-    Deno.exit(0);
-  }
-  if (first !== undefined) {
-    console.log(USAGE);
-    fatal(`Unknown argument: ${first}`);
-  }
-
   // Dynamic import keeps `deno test` permission-free (see header). NodeServices
-  // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
-  // handlers SUPERVISE relies on for graceful child teardown.
+  // supplies the ChildProcessSpawner and the Stdio argv source; NodeRuntime.runMain
+  // installs the signal handlers SUPERVISE relies on for graceful child teardown.
   const { NodeRuntime, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-rc.112"
   );
-  program.pipe(
-    // Config read failure (env vars) -> fatal.
-    Effect.catchTag(
-      "ConfigError",
-      (error) => Effect.sync(() => fatal(String(error))),
-    ),
+  Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );

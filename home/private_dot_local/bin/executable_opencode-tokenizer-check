@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-net=raw.githubusercontent.com,api.github.com,github.com --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-net=raw.githubusercontent.com,api.github.com,github.com --allow-env --allow-ffi --allow-run=chezmoi,git
 
 // opencode-tokenizer-check — local drift guard for the patched OpenCode
 // context-usage tokenizer resolver. This intentionally does NOT couple to the
@@ -7,7 +7,16 @@
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
-import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.112/unstable/process";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import { resolveRepoRoot } from "../lib/df-source.ts";
+
+type Deps = FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
+
+// Subcommand bodies return a process exit code; the CLI turns it into an exit.
+const exitWith = (code: number): Effect.Effect<never> =>
+  Effect.sync(() => Deno.exit(code)) as Effect.Effect<never>;
 // @effect/platform-node is imported dynamically in import.meta.main only.
 // It transitively loads msgpackr, which reads process.env at module load and
 // throws NotCapable without --allow-env. Dynamic import keeps deno test
@@ -607,48 +616,52 @@ const driftJsonCommand = (
     return 0;
   }).pipe(Effect.catch(() => Console.log("[]").pipe(Effect.as(0))));
 
-const USAGE = `Usage:
-  opencode-tokenizer-check check [--repo-root PATH]
-  opencode-tokenizer-check drift-json [--repo-root PATH] [--refresh-upstream]
-  opencode-tokenizer-check --help`;
+// Repo files resolve against the repo root, never the process cwd, so the
+// deployed tool works from any directory.
+const repoRootFlag = Flag.string("repo-root").pipe(
+  Flag.withDescription(
+    "dotfiles repo root (default: derived from chezmoi source-path)",
+  ),
+  Flag.withDefault(""),
+);
 
-function parseArgs(argv: readonly string[]): {
-  readonly command: "check" | "drift-json" | "help";
-  readonly repoRoot: string;
-  readonly refreshUpstream: boolean;
-} {
-  const [command = "check", ...rest] = argv;
-  if (command === "--help" || command === "-h") {
-    return { command: "help", repoRoot: Deno.cwd(), refreshUpstream: false };
-  }
-  if (command !== "check" && command !== "drift-json") {
-    return { command: "help", repoRoot: Deno.cwd(), refreshUpstream: false };
-  }
-  let repoRoot = Deno.cwd();
-  let refreshUpstream = false;
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (arg === "--repo-root") {
-      repoRoot = rest[i + 1] ?? repoRoot;
-      i += 1;
-      continue;
-    }
-    if (arg === "--refresh-upstream") {
-      refreshUpstream = true;
-      continue;
-    }
-  }
-  return { command, repoRoot, refreshUpstream };
-}
+const refreshUpstreamFlag = Flag.boolean("refresh-upstream").pipe(
+  Flag.withDescription("re-fetch upstream guidance instead of using the cache"),
+  Flag.withDefault(false),
+);
 
-const tokenizerCommand = Command.make("opencode-tokenizer-check", {}, () => {
-  const args = parseArgs(Deno.args);
-  if (args.command === "help") return Console.error(USAGE).pipe(Effect.as(0));
-  if (args.command === "drift-json") {
-    return driftJsonCommand(args.repoRoot, args.refreshUpstream);
-  }
-  return checkCommand(args.repoRoot);
-});
+const withRepoRoot = <A>(
+  override: string,
+  use: (repoRoot: string) => Effect.Effect<A>,
+): Effect.Effect<A | number, never, Deps> =>
+  resolveRepoRoot(override).pipe(
+    Effect.flatMap(use),
+    Effect.catchTag("SourceRootError", (e) =>
+      Console.error(`error ${e.message}`).pipe(Effect.as(1))),
+  );
+
+const checkCli = Command.make(
+  "check",
+  { repoRoot: repoRootFlag },
+  ({ repoRoot }) =>
+    withRepoRoot(repoRoot, checkCommand).pipe(Effect.flatMap(exitWith)),
+);
+
+const driftJsonCli = Command.make(
+  "drift-json",
+  { repoRoot: repoRootFlag, refreshUpstream: refreshUpstreamFlag },
+  ({ refreshUpstream, repoRoot }) =>
+    withRepoRoot(repoRoot, (root) => driftJsonCommand(root, refreshUpstream))
+      .pipe(Effect.flatMap(exitWith)),
+);
+
+// `check` is the default when no subcommand is given.
+const tokenizerCommand = Command.make(
+  "opencode-tokenizer-check",
+  { repoRoot: repoRootFlag },
+  ({ repoRoot }) =>
+    withRepoRoot(repoRoot, checkCommand).pipe(Effect.flatMap(exitWith)),
+).pipe(Command.withSubcommands([checkCli, driftJsonCli]));
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime

@@ -10,16 +10,24 @@ import {
   Data,
   Effect,
   Layer,
+  Option,
   Schema,
   Sink,
+  Stdio,
   Stream,
+  Terminal,
 } from "npm:effect@4.0.0-rc.112";
 import {
   FileSystem,
   layerNoop as fileSystemLayerNoop,
 } from "npm:effect@4.0.0-rc.112/FileSystem";
 import { layer as pathLayer, Path } from "npm:effect@4.0.0-rc.112/Path";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import {
+  Argument,
+  CliConfig,
+  Command,
+  Flag,
+} from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
@@ -270,6 +278,7 @@ interface RunOptions {
   readonly stderr?: StdioOption;
   readonly input?: string;
   readonly cwd?: string;
+  readonly detached?: boolean;
 }
 
 const text = new TextEncoder();
@@ -310,6 +319,7 @@ const runCommand = (
     const handle = yield* spawner.spawn(
       ChildProcess.make(cmd, args, {
         cwd: options.cwd,
+        detached: options.detached,
         stdin: stdinOption(options),
         stdout: outputOption(options.stdout),
         stderr: outputOption(options.stderr),
@@ -352,6 +362,9 @@ const writeStdout = (value: string): Effect.Effect<void> =>
 
 const writeStderr = (value: string): Effect.Effect<void> =>
   Console.error(consoleValue(value));
+
+const exitWith = (code: number): Effect.Effect<never> =>
+  Effect.sync(() => Deno.exit(code)) as Effect.Effect<never>;
 
 const logInfo = (value: string): Effect.Effect<void> =>
   Effect.sync(() => info(value));
@@ -764,6 +777,7 @@ const connectCommand = (
           host,
           remote,
         ], {
+          detached: true,
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
@@ -778,6 +792,7 @@ const connectCommand = (
           `Opening VS Code: ${ws}${directory ? ` at ${directory}` : ""}`,
         );
         const res = yield* runChild("coder", vscodeArgs, {
+          detached: true,
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
@@ -800,6 +815,7 @@ const connectCommand = (
           "-lc",
           cmd,
         ], {
+          detached: true,
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
@@ -810,6 +826,7 @@ const connectCommand = (
       default: {
         yield* logInfo(`Opening ${mode}: ${ws}`);
         const res = yield* runChild("coder", ["open", "app", ws, mode], {
+          detached: true,
           stdin: "inherit",
           stdout: "inherit",
           stderr: "inherit",
@@ -835,13 +852,6 @@ interface FleetOptions {
   readonly taskAndArgs: ReadonlyArray<string>;
 }
 
-type FleetParseResult = Data.TaggedEnum<{
-  Ok: { readonly options: FleetOptions };
-  Help: Record<never, never>;
-  Error: { readonly message: string };
-}>;
-const FleetParseResult = Data.taggedEnum<FleetParseResult>();
-
 // An omitted `Flag.boolean` fails as a missing required flag rather than
 // resolving to `false`, so every boolean flag needs an explicit fallback.
 const fleetIncludeLocalFlag = Flag.boolean("include-local").pipe(
@@ -855,104 +865,24 @@ const fleetFilterFlag = Flag.string("filter").pipe(
 );
 const fleetParallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
 const fleetDryRunFlag = Flag.boolean("dry-run").pipe(Flag.withDefault(false));
-const fleetTaskArgs = Argument.string("mise-task").pipe(Argument.variadic);
-const fleetCli = Command.make("fleet", {
-  includeLocal: fleetIncludeLocalFlag,
-  localOnly: fleetLocalOnlyFlag,
-  filter: fleetFilterFlag,
-  parallel: fleetParallelFlag,
-  dryRun: fleetDryRunFlag,
-  taskAndArgs: fleetTaskArgs,
-});
+const fleetHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const fleetTaskArgs = Argument.string("mise-task").pipe(Argument.variadic());
 
-const parseFleetArgs = (args: ReadonlyArray<string>): FleetParseResult => {
-  void fleetCli;
-  let includeLocal = false;
-  let localOnly = false;
-  let filter = DEFAULT_FLEET_FILTER;
-  let parallel = 4;
-  let dryRun = false;
-  let i = 0;
-  while (i < args.length) {
-    const arg = args[i];
-    switch (arg) {
-      case "--help":
-        return FleetParseResult.Help();
-      case "--include-local":
-        includeLocal = true;
-        i++;
-        break;
-      case "--local-only":
-        localOnly = true;
-        i++;
-        break;
-      case "--filter":
-        if (args[i + 1] === undefined) {
-          return FleetParseResult.Error({
-            message: "--filter requires an expression",
-          });
-        }
-        filter = args[i + 1];
-        i += 2;
-        break;
-      case "--parallel": {
-        if (args[i + 1] === undefined) {
-          return FleetParseResult.Error({
-            message: "--parallel requires a number",
-          });
-        }
-        const parsed = Number.parseInt(args[i + 1], 10);
-        if (!Number.isFinite(parsed) || parsed < 1) {
-          return FleetParseResult.Error({
-            message: "--parallel must be a positive integer",
-          });
-        }
-        parallel = parsed;
-        i += 2;
-        break;
-      }
-      case "--dry-run":
-        dryRun = true;
-        i++;
-        break;
-      case "--":
-        return FleetParseResult.Ok({
-          options: {
-            includeLocal,
-            localOnly,
-            filter,
-            parallel,
-            dryRun,
-            taskAndArgs: args.slice(i + 1),
-          },
-        });
-      default:
-        if (arg.startsWith("-")) {
-          return FleetParseResult.Error({ message: `Unknown option: ${arg}` });
-        }
-        return FleetParseResult.Ok({
-          options: {
-            includeLocal,
-            localOnly,
-            filter,
-            parallel,
-            dryRun,
-            taskAndArgs: args.slice(i),
-          },
-        });
-    }
-  }
-  return FleetParseResult.Ok({
-    options: {
-      includeLocal,
-      localOnly,
-      filter,
-      parallel,
-      dryRun,
-      taskAndArgs: [],
-    },
-  });
-};
+const makeFleetCli = <A, E, R>(
+  handler: (options: FleetOptions) => Effect.Effect<A, E, R>,
+) =>
+  Command.make("fleet", {
+    includeLocal: fleetIncludeLocalFlag,
+    localOnly: fleetLocalOnlyFlag,
+    filter: fleetFilterFlag,
+    parallel: fleetParallelFlag,
+    dryRun: fleetDryRunFlag,
+    help: fleetHelpFlag,
+    taskAndArgs: fleetTaskArgs,
+  }, ({ help, ...options }) =>
+    help
+      ? writeStdout(FLEET_USAGE).pipe(Effect.andThen(exitWith(0)))
+      : handler(options));
 
 interface FleetEnv {
   readonly checkCommands: boolean;
@@ -1086,20 +1016,14 @@ const fleetResultCode = (results: ReadonlyArray<HostEither>): number =>
   );
 
 const fleetCommand = (
-  args: ReadonlyArray<string>,
+  options: FleetOptions,
   env: FleetEnv = { checkCommands: true },
 ) =>
   Effect.gen(function* () {
-    const parsed = parseFleetArgs(args);
-    if (parsed._tag === "Help") {
-      yield* writeStdout(FLEET_USAGE);
-      return 0;
-    }
-    if (parsed._tag === "Error") {
+    if (options.parallel < 1) {
       yield* writeStderr(FLEET_USAGE);
-      return fatal(parsed.message);
+      return fatal("--parallel must be a positive integer");
     }
-    const options = parsed.options;
     if (options.taskAndArgs.length === 0) {
       yield* writeStderr(FLEET_USAGE);
       fatal("no mise task specified");
@@ -1202,45 +1126,11 @@ const defaultManifestPath = home.pipe(
   Effect.map((homeDir) => `${homeDir}/.config/cw-migrate/manifest`),
 );
 
-type MigrateParseResult = Data.TaggedEnum<{
-  Ok: { readonly manifestPath: string };
-  Help: Record<never, never>;
-  Error: { readonly message: string };
-}>;
-const MigrateParseResult = Data.taggedEnum<MigrateParseResult>();
-
 const migrateManifestFlag = Flag.string("manifest").pipe(
   Flag.withDescription("Custom manifest file"),
+  Flag.withDefault(""),
 );
-const migrateCli = Command.make("migrate", { manifest: migrateManifestFlag });
-
-const parseMigrateArgs = (
-  args: ReadonlyArray<string>,
-): Effect.Effect<MigrateParseResult> =>
-  Effect.gen(function* () {
-    void migrateCli;
-    let manifest = yield* defaultManifestPath;
-    for (let i = 0; i < args.length; i++) {
-      switch (args[i]) {
-        case "--manifest":
-          if (args[i + 1] === undefined) {
-            return MigrateParseResult.Error({
-              message: "--manifest requires a path argument",
-            });
-          }
-          manifest = args[i + 1];
-          i++;
-          break;
-        case "--help":
-          return MigrateParseResult.Help();
-        default:
-          return MigrateParseResult.Error({
-            message: `Unknown argument: ${args[i]}`,
-          });
-      }
-    }
-    return MigrateParseResult.Ok({ manifestPath: manifest });
-  });
+const migrateHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
 
 const parseManifest = (content: string): MigrateManifest => {
   let section = "";
@@ -1582,19 +1472,12 @@ const doChecklist = (state: MigrateState) =>
   });
 
 const migrateCommand = (
-  args: ReadonlyArray<string>,
+  manifestOverride: string,
 ) =>
   Effect.gen(function* () {
-    const parsed = yield* parseMigrateArgs(args);
-    if (parsed._tag === "Help") {
-      yield* writeStdout(MIGRATE_USAGE);
-      return 0;
-    }
-    if (parsed._tag === "Error") {
-      yield* writeStderr(MIGRATE_USAGE);
-      return fatal(parsed.message);
-    }
-    const manifestPath = parsed.manifestPath;
+    const manifestPath = manifestOverride === ""
+      ? yield* defaultManifestPath
+      : manifestOverride;
     yield* writeStdout("\nDevbox Migration\n\n");
     const manifest = yield* loadMigrateManifest(manifestPath);
     const sourceConnection: MigrateSourceConnection =
@@ -1636,43 +1519,106 @@ const migrateCommand = (
   });
 
 // ============================================================================
-// main
+// CLI
 // ============================================================================
 
-const main = (args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    if (args.length < 1) {
-      yield* writeStdout(TOP_USAGE);
-      return 1;
+const connectHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const connectArgs = Argument.string("connect-arg").pipe(Argument.variadic());
+const connectCli = Command.make(
+  "connect",
+  { help: connectHelpFlag, args: connectArgs },
+  ({ help, args }) =>
+    help
+      ? writeStdout(CONNECT_USAGE).pipe(Effect.andThen(exitWith(0)))
+      : connectCommand(args).pipe(Effect.flatMap(exitWith)),
+);
+
+const fleetCli = makeFleetCli((options) =>
+  fleetCommand(options).pipe(Effect.flatMap(exitWith))
+);
+
+const migrateCli = Command.make(
+  "migrate",
+  { manifest: migrateManifestFlag, help: migrateHelpFlag },
+  ({ manifest, help }) =>
+    help
+      ? writeStdout(MIGRATE_USAGE).pipe(Effect.andThen(exitWith(0)))
+      : migrateCommand(manifest).pipe(Effect.flatMap(exitWith)),
+);
+
+const completionShell = Argument.string("shell").pipe(Argument.withDefault(""));
+const completionCli = Command.make(
+  "completion",
+  { shell: completionShell },
+  ({ shell }) =>
+    Effect.gen(function* () {
+      if (shell === "zsh") {
+        yield* writeStdout(ZSH_COMPLETION);
+        return yield* exitWith(0);
+      }
+      yield* writeStderr(TOP_USAGE);
+      return fatal(`Unknown completion shell: ${shell}. Supported: zsh`);
+    }),
+);
+
+const rootHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const rootWorkspace = Argument.string("workspace").pipe(Argument.optional);
+const rootConnectArgs = Argument.string("connect-arg").pipe(
+  Argument.variadic(),
+);
+const cwCli = Command.make(
+  "cw",
+  {
+    help: rootHelpFlag,
+    workspace: rootWorkspace,
+    connectArgs: rootConnectArgs,
+  },
+  ({ help, workspace, connectArgs }) => {
+    const workspaceName = Option.getOrElse(workspace, () => "");
+    if (help || workspaceName === "help") {
+      return writeStdout(TOP_USAGE).pipe(Effect.andThen(exitWith(0)));
     }
-    const [command, ...rest] = args;
-    switch (command) {
-      case "--help":
-      case "help":
-        yield* writeStdout(TOP_USAGE);
-        return 0;
-      case "completion":
-        if (rest[0] === "zsh") {
-          yield* writeStdout(ZSH_COMPLETION);
-          return 0;
-        }
-        yield* writeStderr(TOP_USAGE);
-        fatal(`Unknown completion shell: ${rest[0] ?? ""}. Supported: zsh`);
-        return 1;
-      case "connect":
-        return yield* connectCommand(rest);
-      case "fleet":
-        return yield* fleetCommand(rest);
-      case "migrate":
-        return yield* migrateCommand(rest);
-      default:
-        if (command.startsWith("-")) {
-          yield* writeStderr(TOP_USAGE);
-          fatal(`Unknown option: ${command}`);
-        }
-        return yield* connectCommand(args);
+    if (workspaceName === "") {
+      return writeStdout(TOP_USAGE).pipe(Effect.andThen(exitWith(1)));
     }
-  });
+    return connectCommand([workspaceName, ...connectArgs]).pipe(
+      Effect.flatMap(exitWith),
+    );
+  },
+).pipe(Command.withSubcommands([
+  connectCli,
+  fleetCli,
+  migrateCli,
+  completionCli,
+]));
+
+const cliConfig = CliConfig.make({ builtIns: [] });
+const cliTerminalLayer = Layer.succeed(
+  Terminal.Terminal,
+  Terminal.make({
+    columns: Effect.succeed(80),
+    rows: Effect.succeed(24),
+    readInput: Effect.die("terminal input unavailable"),
+    readLine: Effect.die("terminal input unavailable"),
+    display: () => Effect.void,
+  }),
+);
+const cliSupportLayer = (args: ReadonlyArray<string>) =>
+  Layer.mergeAll(
+    Stdio.layerTest({ args: Effect.succeed(args) }),
+    cliTerminalLayer,
+  );
+const unavailableChildProcessLayer = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() => Effect.die("child process unavailable")),
+);
+const cliNoopLayer = (args: ReadonlyArray<string>) =>
+  Layer.mergeAll(
+    cliSupportLayer(args),
+    fileSystemLayerNoop({}),
+    pathLayer,
+    unavailableChildProcessLayer,
+  );
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
@@ -1696,8 +1642,15 @@ if (import.meta.main) {
     (command === "connect" && Deno.args[1] === "--help") ||
     (command === "fleet" && Deno.args[1] === "--help") ||
     (command === "migrate" && Deno.args[1] === "--help") ||
-    (command === "completion" && Deno.args[1] === "zsh");
-  const program = serviceFree ? main(Deno.args) : Effect.promise(async () => {
+    command === "completion";
+  const commandProgram = Command.run(cwCli, {
+    version: "0.0.0",
+    renderErrors: false,
+  }).pipe(Effect.provideService(CliConfig.CliConfig, cliConfig));
+  const serviceFreeProgram = commandProgram.pipe(
+    Effect.provide(cliNoopLayer(Deno.args)),
+  );
+  const runtimeLayer = Effect.promise(async () => {
     const childProcess = await import("node:child_process");
     const fs = await import("node:fs/promises");
     const nodeFileSystemLayer = fileSystemLayerNoop({
@@ -1756,21 +1709,28 @@ if (import.meta.main) {
               ? "ignore"
               : "pipe",
           ];
-          const child = childProcess.spawn(command.command, [...command.args], {
-            cwd: command.options.cwd,
-            detached: command.options.detached,
-            env: command.options.extendEnv === false
-              ? command.options.env as NodeJS.ProcessEnv | undefined
-              : { ...process.env, ...command.options.env },
-            shell: command.options.shell,
-            stdio: stdio as never,
-          }) as unknown as {
+          const child = childProcess.spawn(
+            command.command,
+            [...command.args],
+            {
+              cwd: command.options.cwd,
+              detached: command.options.detached,
+              env: command.options.extendEnv === false
+                ? command.options.env as NodeJS.ProcessEnv | undefined
+                : { ...process.env, ...command.options.env },
+              shell: command.options.shell,
+              stdio: stdio as never,
+            },
+          ) as unknown as {
             readonly pid?: number;
             readonly exitCode: number | null;
             readonly stdin: NodeJS.WritableStream | null;
             readonly stdout: NodeJS.ReadableStream | null;
             readonly stderr: NodeJS.ReadableStream | null;
-            once(event: "exit", listener: (code: number | null) => void): void;
+            once(
+              event: "exit",
+              listener: (code: number | null) => void,
+            ): void;
             once(event: "error", listener: () => void): void;
             kill(signal?: NodeJS.Signals): boolean;
             unref(): void;
@@ -1856,16 +1816,17 @@ if (import.meta.main) {
       nodeChildProcessLayer,
       nodeFileSystemLayer,
       pathLayer,
+      cliSupportLayer(Deno.args),
     );
-  })
-    .pipe(
-      Effect.flatMap((runtimeLayer) =>
-        main(Deno.args).pipe(Effect.provide(runtimeLayer))
-      ),
-    );
-  Effect.runPromiseExit(program as Effect.Effect<number, Error>).then(
+  });
+  const program = serviceFree ? serviceFreeProgram : runtimeLayer.pipe(
+    Effect.flatMap((runtimeLayer) =>
+      commandProgram.pipe(Effect.provide(runtimeLayer))
+    ),
+  );
+  Effect.runPromiseExit(program).then(
     (exit) => {
-      if (exit._tag === "Success") Deno.exit(exit.value);
+      if (exit._tag === "Success") Deno.exit(0);
       console.error(exit.cause);
       Deno.exit(1);
     },
@@ -1908,6 +1869,7 @@ class MockChildProcessSpawner {
       args: command.args,
       options: {
         cwd: options.cwd,
+        detached: options.detached,
         stdin: options.stdin === "inherit"
           ? "inherit"
           : options.stdin === "ignore"
@@ -1953,19 +1915,33 @@ class MockChildProcessSpawner {
 }
 
 if (!import.meta.main) {
-  Deno.test("fleet parser preserves options and task args", () => {
-    const parsed = parseFleetArgs([
-      "--include-local",
-      "--parallel",
-      "2",
-      "--",
-      "update",
-      "--fast",
-    ]);
-    if (parsed._tag !== "Ok") throw new Error("expected ok parse");
-    assertEq(parsed.options.includeLocal, true);
-    assertEq(parsed.options.parallel, 2);
-    assertEq(parsed.options.taskAndArgs.join("\0"), "update\0--fast");
+  Deno.test("fleet CLI preserves options and task args", async () => {
+    let parsed: FleetOptions | undefined;
+    const testCli = makeFleetCli((options) =>
+      Effect.sync(() => {
+        parsed = options;
+      })
+    );
+    await Effect.runPromise(
+      Command.runWith(testCli, {
+        version: "0.0.0",
+        renderErrors: false,
+      })([
+        "--include-local",
+        "--parallel",
+        "2",
+        "--",
+        "update",
+        "--fast",
+      ]).pipe(
+        Effect.provideService(CliConfig.CliConfig, cliConfig),
+        Effect.provide(cliNoopLayer([])),
+      ),
+    );
+    if (parsed === undefined) throw new Error("expected CLI handler to run");
+    assertEq(parsed.includeLocal, true);
+    assertEq(parsed.parallel, 2);
+    assertEq(parsed.taskAndArgs.join("\0"), "update\0--fast");
   });
 
   Deno.test("fleet default filter selects running workspace names", () => {
@@ -2025,6 +2001,7 @@ if (!import.meta.main) {
     assertEq(ssh.options?.stdin, "inherit");
     assertEq(ssh.options?.stdout, "inherit");
     assertEq(ssh.options?.stderr, "inherit");
+    assertEq(ssh.options?.detached, true);
   });
 
   Deno.test("dead-datapath hint fires only when split confirmed", () => {

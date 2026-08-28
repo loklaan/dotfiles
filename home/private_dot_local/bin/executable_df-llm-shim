@@ -19,6 +19,7 @@ import {
   HttpClient,
   HttpClientRequest,
 } from "npm:effect@4.0.0-rc.112/unstable/http";
+import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
 const UPSTREAM_ORIGIN =
   "https://ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com";
@@ -265,6 +266,10 @@ const serve = Effect.scoped(
   }),
 );
 
+// The shim takes no arguments; the command exists so `--help` and `--version`
+// come from the CLI rather than being absent.
+const shimCommand = Command.make("df-llm-shim", {}, () => serve);
+
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
   // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
@@ -281,10 +286,15 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const { NodeRuntime } = await import(
+  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-rc.112"
   );
-  serve.pipe(NodeRuntime.runMain);
+  Command.run(shimCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // === Tests =================================================================

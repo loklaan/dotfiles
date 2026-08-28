@@ -56,6 +56,7 @@ import {
   Option,
   Schema,
 } from "npm:effect@4.0.0-rc.112";
+import { Argument, Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
@@ -71,35 +72,35 @@ import {
 const SIDECAR_REL = ".config/opencode/.omo-profile.json";
 const OMO_CONFIG_REL = ".omo/omo.jsonc";
 
+// Printed alongside a fatal argument error so the caller sees the shape it
+// should have used. `--help` renders the generated CLI help instead.
 const USAGE = `Usage:
   df-omo-profile            Show the active profile and its resolved models
   df-omo-profile list       List available profiles
   df-omo-profile <name>     Switch to <name> and re-render the omo config
-  df-omo-profile --help     Display this help message
+  df-omo-profile --help     Display this help message`;
 
-Description:
-  Switches the oh-my-openagent (omo) cost profile without a full
-  \`chezmoi apply\`. Profiles trade model quality for token cost while
-  preserving each agent's personality family (Claude-likes stay
-  Claude-likes, GPT stays GPT, Gemini stays Gemini).
+// Rendered in the DESCRIPTION block of `df-omo-profile --help`.
+const DESCRIPTION =
+  `Switches the oh-my-openagent (omo) cost profile without a full
+\`chezmoi apply\`. Profiles trade model quality for token cost while
+preserving each agent's personality family (Claude-likes stay
+Claude-likes, GPT stays GPT, Gemini stays Gemini).
 
-  Single source of truth: a dotfiles-owned sidecar
-  (~/.config/opencode/.omo-profile.json) holds \`profile\` (the active tier)
-  and \`availableTiers\` (the valid names). Tier state lives outside OMO's
-  config, whose strict schema rejects unknown keys. This tool reads and
-  writes the sidecar directly.
+Single source of truth: a dotfiles-owned sidecar
+(~/.config/opencode/.omo-profile.json) holds \`profile\` (the active tier)
+and \`availableTiers\` (the valid names). Tier state lives outside OMO's
+config, whose strict schema rejects unknown keys. This tool reads and
+writes the sidecar directly.
 
-  Mechanism: this tool writes \`profile\` in the sidecar, then runs a
-  TARGETED \`chezmoi apply\` on just ~/.omo/omo.jsonc so the new models
-  land immediately. The profile table is the source of truth in the chezmoi
-  template; a later full \`chezmoi apply\` re-derives the same result — the
-  switch survives.
+Mechanism: this tool writes \`profile\` in the sidecar, then runs a
+TARGETED \`chezmoi apply\` on just ~/.omo/omo.jsonc so the new models
+land immediately. The profile table is the source of truth in the chezmoi
+template; a later full \`chezmoi apply\` re-derives the same result — the
+switch survives.
 
-  omo reads its config once per session, so START A NEW opencode SESSION
-  for the switch to take effect.
-
-Options:
-  --help    Display this help message`;
+omo reads its config once per session, so START A NEW opencode SESSION
+for the switch to take effect.`;
 
 // --------------------------------------------------------------------------
 // Errors — one cause per error, structured, never information-hiding.
@@ -498,48 +499,51 @@ class Profiles extends Context.Service<Profiles, {
 type ProfilesRequirements = ChildProcessSpawner.ChildProcessSpawner;
 
 // --------------------------------------------------------------------------
-// CLI dispatch
+// CLI
 // --------------------------------------------------------------------------
 
-const program = (
-  args: ReadonlyArray<string>,
-): Effect.Effect<void, FatalCliError, Profiles> =>
-  Effect.gen(function* () {
-    const profiles = yield* Profiles;
-
-    if (args.length === 0) {
-      yield* profiles.showStatus;
-      return;
-    }
-
-    const first = args[0];
-    if (first === "--help" || first === "-h") {
-      yield* Console.log(USAGE);
-      return;
-    }
-    if (first === "list") {
-      yield* profiles.listProfiles;
-      return;
-    }
-    if (args.length > 1) {
-      yield* Console.error(USAGE);
-      yield* Console.error("");
-      return yield* Effect.fail(new TooManyArgumentsError({ args }));
-    }
-    yield* profiles.switchProfile(first);
-  });
-
-const runnable = (
-  args: ReadonlyArray<string>,
-  platform: Layer.Layer<ProfilesRequirements>,
-) =>
-  program(args).pipe(
-    // Surface the fatal message exactly like bash `fatal`, then re-fail so the
-    // runtime maps it to a non-zero exit.
+// Surface the fatal message exactly like bash `fatal`, then re-fail so the
+// runtime maps it to a non-zero exit.
+const withProfiles = <A>(
+  body: Effect.Effect<A, FatalCliError, Profiles>,
+): Effect.Effect<A, FatalCliError, ProfilesRequirements> =>
+  body.pipe(
     Effect.tapError((error) => Console.error(`fatal ${error.displayMessage}`)),
     Effect.provide(Profiles.layer),
-    Effect.provide(platform),
   );
+
+const listCli = Command.make(
+  "list",
+  {},
+  () =>
+    withProfiles(Effect.gen(function* () {
+      const profiles = yield* Profiles;
+      yield* profiles.listProfiles;
+    })),
+).pipe(Command.withDescription("List available profiles"));
+
+// A bare positional keeps the documented `df-omo-profile <name>` form. The
+// parser rejects a second positional with exit 1, so arity needs no guard here.
+const profileArg = Argument.string("profile").pipe(
+  Argument.withDescription("profile to switch to"),
+  Argument.optional,
+);
+
+const profileCommand = Command.make(
+  "df-omo-profile",
+  { profile: profileArg },
+  ({ profile }) =>
+    withProfiles(Effect.gen(function* () {
+      const profiles = yield* Profiles;
+      yield* Option.match(profile, {
+        onNone: () => profiles.showStatus,
+        onSome: (name) => profiles.switchProfile(name),
+      });
+    })),
+).pipe(
+  Command.withDescription(DESCRIPTION),
+  Command.withSubcommands([listCli]),
+);
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
@@ -563,7 +567,10 @@ if (import.meta.main) {
   const { NodeRuntime, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-rc.112"
   );
-  runnable(Deno.args, NodeServices.layer).pipe(NodeRuntime.runMain);
+  Command.run(profileCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // ===========================================================================

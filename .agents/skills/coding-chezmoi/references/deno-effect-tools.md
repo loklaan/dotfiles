@@ -1,8 +1,15 @@
 # Deno + Effect Tools
 
 Single-file Deno + Effect v4 tools for this dotfiles repo. Every tool follows
-the pattern established in `executable_pushbullet-mcp` — the canonical
-reference.
+the pattern established in `executable_notify` — the canonical reference. It is
+the one tool that exercises the whole stack in one file: an
+`effect/unstable/cli` command with a subcommand, a `Context.Service`, `Config`
+with `Redacted`, a `Schema.TaggedError`, an MCP stdio server, subprocess
+dispatch, and the in-file test suite.
+
+(`executable_pushbullet-mcp` is NOT the reference — it is a 14-line bash stub
+that `exec notify mcp "$@"` so mcpproxy can inject the token via its own env
+block.)
 
 For the copy-paste starting point, see:
 [deno-effect-tool.template.ts](deno-effect-tool.template.ts)
@@ -286,7 +293,7 @@ class MyService extends Context.Service<MyService, {
 
 Key points:
 
-- Tag string convention: `"tool-name/ServiceName"` (matches pushbullet-mcp)
+- Tag string convention: `"tool-name/ServiceName"` (e.g. `"notify/Pushbullet"`)
 - `Effect.fn("Name.op")` wraps operations for named tracing
 - `Config.redacted()` for secrets — value is `<redacted>` in logs
 - Layer composition: `Layer.provide(FetchHttpClient.layer)` to inject HTTP
@@ -367,6 +374,28 @@ invocation** — the common case — and `deno check` will NOT catch it, since t
 types are identical either way. Only running the tool reveals it, so run every
 CLI with no arguments after an Effect bump.
 
+**The permission cost of `Command.run`.** `Command.run` requires the CLI
+`Environment` — `Stdio`, `Terminal` and `ChildProcessSpawner` — and the ONLY
+production source of those is `NodeServices.layer` from `@effect/platform-node`,
+which pulls `msgpackr`. So every tool using the CLI needs blanket `--allow-env`
+plus `--allow-ffi`, even a pure string transformer. `effect` core ships only
+`Stdio.layerTest` (test-only) and no `ChildProcessSpawner` layer, so there is no
+narrower production path. An `--allow-env=<VAR>` allowlist does NOT work:
+`msgpackr` enumerates `process.env`, so Deno reports `NotCapable` naming no
+variable. This is the one place §1's "minimal grants" rule yields — take the
+grants, and keep `--allow-read`/`--allow-net`/`--allow-run` as tight as ever.
+
+**Exemption — transparent passthrough wrappers.** `df-orca-serve` does
+NOTdeclare its arguments, and must not be "fixed" to. Its whole job is to
+forward whatever it is given verbatim to `orca serve`, inspecting the args only
+for `--help` (which it forwards, so the user sees orca's own serve help).
+Declaring `Flag`s here would mean enumerating another program's entire flag
+surface and re-breaking every time orca adds one, and a strict parse would
+reject the `--pairing-address <addr> --json` that the `df-orca-server` Pitchfork
+daemon passes. A wrapper whose surface IS another binary's surface is the one
+shape this section does not fit. Any NEW tool claiming this exemption needs the
+same property: it consumes nothing and forwards everything.
+
 ---
 
 ## 4a. FileSystem + Path
@@ -404,6 +433,57 @@ Permission notes:
 **Do NOT** use `npm:@effect/platform@4.0.0-rc.112` — that package is
 unresolvable at this pin. The `effect` package itself exports `FileSystem` and
 `Path` directly.
+
+---
+
+## 4a-bis. Repo files: anchor on the repo root, NEVER the cwd
+
+Every tool deploys to `~/.local/bin/` and can be invoked from any directory, so
+**a repo-relative path resolved against the process cwd is a bug**. It works
+only while the caller happens to be standing in the source tree, and fails
+everywhere else with a bare `PlatformError: NotFound`.
+
+**Rule: a tool that reads repo files MUST resolve the repo root explicitly.**
+Use the shared resolver — do not re-derive this per tool:
+
+```typescript
+import { resolveRepoRoot } from "../lib/df-source.ts";
+
+const repoRootFlag = Flag.string("repo-root").pipe(
+  Flag.withDescription(
+    "dotfiles repo root (default: derived from chezmoi source-path)",
+  ),
+  Flag.withDefault(""),
+);
+
+const myCommand = Command.make("my-tool", { repoRoot: repoRootFlag }, (
+  { repoRoot },
+) =>
+  resolveRepoRoot(repoRoot).pipe(
+    Effect.flatMap((root) => doWork(root)),
+    Effect.catchTag("SourceRootError", (e) =>
+      Console.error(`error ${e.message}`).pipe(Effect.as(1))),
+  ));
+```
+
+- Precedence: `--repo-root` flag > `CHEZMOI_SOURCE_DIR` (chezmoi exports it for
+  its own scripts) > `chezmoi source-path`.
+- Flag name is **`--repo-root`** everywhere, for one vocabulary across tools.
+- Shebang needs `--allow-run=chezmoi,git` (the resolver shells out to both).
+- Failure is a typed `SourceRootError`, never a silent cwd fallback.
+
+**`chezmoi source-path` is NOT the repo root.** `.chezmoiroot` sets the chezmoi
+source dir to `<repo>/home`, so `source-path` returns the `home/` subdirectory.
+Repo-relative paths in these tools are written from the repo root
+(`home/.chezmoidata/runtime-tiers.yaml`), which is why the resolver asks git for
+the work-tree top level of the source dir. Do NOT "simplify" it back to
+`chezmoi source-path` — every path would gain a phantom `home/`.
+
+Verify with the only test that matters:
+
+```bash
+cd /tmp && <tool>    # must behave identically to running it from the repo root
+```
 
 ---
 
@@ -545,8 +625,8 @@ Annotations:
 
 **A tool that takes no arguments must OMIT `parameters`**, inheriting
 `Tool.make`'s `EmptyParams` default. `parameters: Schema.Struct({})` derives the
-degenerate JSON Schema `{"anyOf":[{"type":"object"},{"type":"array"}]}`, which is
-not a valid MCP `inputSchema` and kills the server at startup with
+degenerate JSON Schema `{"anyOf":[{"type":"object"},{"type":"array"}]}`, which
+is not a valid MCP `inputSchema` and kills the server at startup with
 `SchemaError: Missing key at ["type"]`.
 
 **`protocols` is required.** When the server is started with
@@ -573,8 +653,9 @@ be held to an older protocol — dropping a version a client offers makes its
 
 **Logs must be forced to stderr with `Logger.LogToStderr`.** stdout is the
 JSON-RPC channel; a log line written there corrupts the protocol stream.
-`Logger.consolePretty({ stderr: true })` does NOT do the job, because that option
-only applies to the TTY rendering path and an MCP server's stdout is a pipe:
+`Logger.consolePretty({ stderr: true })` does NOT do the job, because that
+option only applies to the TTY rendering path and an MCP server's stdout is a
+pipe:
 
 ```typescript
 Layer.provide(

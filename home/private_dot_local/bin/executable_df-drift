@@ -26,6 +26,7 @@
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import {
+  Console,
   Context,
   Effect,
   Layer,
@@ -36,12 +37,13 @@ import {
   FetchHttpClient,
   HttpClient,
 } from "npm:effect@4.0.0-rc.112/unstable/http";
-import { NodeRuntime as _NodeRuntime } from "npm:@effect/platform-node@4.0.0-rc.112";
-// NOTE: @effect/platform-node (NodeServices) is imported DYNAMICALLY in the
-// import.meta.main block below, never statically. It transitively loads
-// msgpackr, which reads process.env at module load and throws NotCapable under
-// `deno test` (zero-flag). Dynamic import keeps the offline suite hermetic —
-// same pattern as df-task-chezmoi-update and opencode-tokenizer-check.
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+// NOTE: @effect/platform-node (NodeRuntime, NodeServices) is imported
+// DYNAMICALLY in the import.meta.main block below, never statically. It
+// transitively loads msgpackr, which reads process.env at module load and throws
+// NotCapable under `deno test` (zero-flag). Dynamic import keeps the offline
+// suite hermetic — same pattern as df-task-chezmoi-update and
+// opencode-tokenizer-check.
 
 // Soft-failing scan→cache primitives, shared with df-prewarm. See
 // ~/.local/lib/df-cache.ts (chezmoi: home/private_dot_local/lib/df-cache.ts).
@@ -488,7 +490,9 @@ class OmoChecker extends Context.Service<OmoChecker, {
           // config unification; the file is JSONC (comment header).
           const cfgRaw = parseJsonc(yield* readTextFile(omoConfig()));
           if (cfgRaw === null || typeof cfgRaw !== "object") return [];
-          const block = asRecord((cfgRaw as Record<string, unknown>)["[opencode]"]);
+          const block = asRecord(
+            (cfgRaw as Record<string, unknown>)["[opencode]"],
+          );
 
           const out: DriftTool[] = [];
 
@@ -734,45 +738,74 @@ const extractTools = (report: unknown): ReadonlyArray<{ name: string }> => {
 };
 
 // ===========================================================================
-// CLI dispatch
+// CLI
 // ===========================================================================
 
+// Printed on a bare invocation, which exits 1 because there is nothing to do
+// without a subcommand. `--help` renders the generated CLI help instead.
 const USAGE = `Usage:
-  drift check            Aggregate version drift into ~/.cache/dotfiles/drift.json
-  drift notify [--force] Surface drift via macOS notification (debounced 24h)
-  drift --help           Display this help message`;
+  df-drift check            Aggregate version drift into ~/.cache/dotfiles/drift.json
+  df-drift notify [--force] Surface drift via macOS notification (debounced 24h)
+  df-drift --help           Display this help message`;
+
+const DESCRIPTION =
+  `Version-drift detection for the dotfiles fleet. Aggregates mise outdated,
+Homebrew casks, this repo against origin/main, oh-my-openagent model pins and
+the OpenCode tokenizer resolver into one report.
+
+Each sub-checker soft-fails to an empty list, so a broken checker drops its
+own source and the others still report.`;
 
 const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
 
-const main = (
-  argv: readonly string[],
-  servicesLayer: Layer.Layer<CheckerEnv>,
-): Effect.Effect<number> => {
-  const [command, ...rest] = argv;
-  if (command === "--help" || command === "-h" || command === undefined) {
-    console.error(USAGE);
-    return Effect.succeed(command === undefined ? 1 : 0);
-  }
-  if (command === "check") {
-    return runCheck.pipe(
-      Effect.provide(loggerLayer),
-      Effect.provide(servicesLayer),
-      Effect.as(0),
-      Effect.orElseSucceed(() => 1),
-    );
-  }
-  if (command === "notify") {
-    const force = rest.includes("--force");
-    return runNotify(force).pipe(
-      Effect.provide(loggerLayer),
-      Effect.provide(servicesLayer),
-      Effect.as(0),
-      Effect.orElseSucceed(() => 1),
-    );
-  }
-  console.error(`drift: unknown command: ${command}\n\n${USAGE}`);
-  return Effect.succeed(1);
-};
+// An omitted `Flag.boolean` fails as a missing required flag rather than
+// resolving to `false`, so every boolean flag needs an explicit fallback. The
+// daily cron job runs a bare `df-drift notify`, which depends on that fallback.
+const forceFlag = Flag.boolean("force").pipe(
+  Flag.withDescription("ignore the 24h debounce"),
+  Flag.withDefault(false),
+);
+
+// Subcommand bodies map to a process exit code. Every checker already soft-fails
+// to [] and the cache write is soft too, so the fallback only guards a failure
+// the soft primitives did not absorb.
+const exitAfter = (
+  body: Effect.Effect<void, never, CheckerEnv>,
+): Effect.Effect<never, never, CheckerEnv> =>
+  body.pipe(
+    Effect.provide(loggerLayer),
+    Effect.as(0),
+    Effect.orElseSucceed(() => 1),
+    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+  ) as Effect.Effect<never, never, CheckerEnv>;
+
+const checkCli = Command.make("check", {}, () => exitAfter(runCheck)).pipe(
+  Command.withDescription(
+    "Aggregate version drift into ~/.cache/dotfiles/drift.json",
+  ),
+);
+
+const notifyCli = Command.make(
+  "notify",
+  { force: forceFlag },
+  ({ force }) => exitAfter(runNotify(force)),
+).pipe(
+  Command.withDescription(
+    "Surface drift via macOS notification (debounced 24h)",
+  ),
+);
+
+const driftCommand = Command.make(
+  "df-drift",
+  {},
+  () =>
+    Console.error(USAGE).pipe(
+      Effect.flatMap(() => Effect.sync(() => Deno.exit(1))),
+    ),
+).pipe(
+  Command.withDescription(DESCRIPTION),
+  Command.withSubcommands([checkCli, notifyCli]),
+);
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
@@ -793,23 +826,13 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free: @effect/platform-node
   // transitively loads msgpackr, which reads process.env at module load. Only
   // the live CLI path pays that cost; the offline suite never imports it.
-  (async () => {
-    const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112"
-    );
-    const exit = await Effect.runPromiseExit(
-      main(Deno.args, NodeServices.layer),
-    );
-    if (exit._tag === "Success") {
-      Deno.exit(exit.value);
-    } else {
-      console.error(exit.cause);
-      Deno.exit(1);
-    }
-  })().catch((err) => {
-    console.error(err);
-    Deno.exit(1);
-  });
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112"
+  );
+  Command.run(driftCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // ===========================================================================

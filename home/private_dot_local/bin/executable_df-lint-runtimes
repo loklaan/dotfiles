@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git
 
 // df-lint-runtimes — enforce the runtime-tier manifest contract.
 //
@@ -16,8 +16,18 @@ import {
 } from "npm:effect@4.0.0-rc.112";
 import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
 import { Path } from "npm:effect@4.0.0-rc.112/Path";
-import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import { parse as parseYaml } from "jsr:@std/yaml@^1";
+import { resolveRepoRoot } from "../lib/df-source.ts";
+
+// Repo files resolve against the repo root, never the process cwd, so the
+// deployed tool works from any directory.
+const repoRootFlag = Flag.string("repo-root").pipe(
+  Flag.withDescription(
+    "dotfiles repo root (default: derived from chezmoi source-path)",
+  ),
+  Flag.withDefault(""),
+);
 
 // ============================================================================
 // Manifest schema
@@ -286,9 +296,12 @@ const lintRuntimes = (
 
 const lintCommand = Command.make(
   "df-lint-runtimes",
-  {},
-  () =>
-    lintRuntimes(Deno.cwd()).pipe(
+  { repoRoot: repoRootFlag },
+  ({ repoRoot }) =>
+    resolveRepoRoot(repoRoot).pipe(
+      Effect.flatMap(lintRuntimes),
+      Effect.catchTag("SourceRootError", (e) =>
+        Console.error(`error ${e.message}`).pipe(Effect.as(1))),
       Effect.flatMap((code) =>
         Effect.sync(() => {
           Deno.exit(code);
