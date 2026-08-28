@@ -17,16 +17,26 @@
 // msgpackr, which reads process.env at module-load time. Without --allow-env the
 // real upgrade path dies with NotCapable (verified empirically). This matches
 // the sibling df-task-chezmoi-update, which grants --allow-env for the same
-// reason. `--help` and argument parsing run BEFORE the dynamic platform-node
-// import, so they still succeed under a bare `deno run --allow-run=mise`
-// invocation (the lint/verify gate). The platform-node import is dynamic
+// reason. Argument parsing and `--help` are owned by effect/unstable/cli, which
+// reads argv through the Stdio service in NodeServices.layer, so they need the
+// same grants as the real upgrade path. The platform-node import is dynamic
 // (import.meta.main path only) to keep `deno test` hermetic and permission-free.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1); progress is reported via Effect.logInfo from inside the gen block.
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
-import { Data, Effect, Layer, Stream } from "npm:effect@4.0.0-rc.112";
+import {
+  Data,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Stdio,
+  Stream,
+  Terminal,
+} from "npm:effect@4.0.0-rc.112";
+import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
@@ -39,48 +49,20 @@ const fatal = (msg: string): never => {
 };
 
 // --------------------------------------------------------------------------
-// Usage (mirrors the bash `#/`-comment header rendered by `usage()`).
+// Command description, rendered by the CLI framework under `--help`. The
+// framework indents the first line only, so continuation lines carry their own
+// two spaces to keep the DESCRIPTION block aligned.
 // --------------------------------------------------------------------------
 
-const USAGE = `Usage:
-  df-task-mise-upgrade
-
-Description:
-  Runs \`mise upgrade\` to refresh tools whose pin is \`latest\`.
-  Tools with explicit version pins (e.g. orca via .orcaVersion in
-  chezmoi data, paseo via .paseoVersion) are unaffected — bump those
-  in home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their
-  upgrade lifecycle.
+const DESCRIPTION =
+  `Runs \`mise upgrade\` to refresh tools whose pin is \`latest\`.
+  Tools with explicit version pins (e.g. orca via .orcaVersion in chezmoi
+  data, paseo via .paseoVersion) are unaffected — bump those in
+  home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their upgrade
+  lifecycle.
 
   Hoisted out of mise.toml so the task body lives next to other
-  dotfiles-task-* scripts and is debuggable in isolation.
-
-Options:
-  --help    Display this help message`;
-
-// --------------------------------------------------------------------------
-// Pure argument classification (mirrors bash parse_args, which inspects only
-// $1). Kept free of any side effects so the in-file tests pin the contract with
-// ZERO permission flags.
-// --------------------------------------------------------------------------
-
-export type ArgAction =
-  | { readonly kind: "help" }
-  | { readonly kind: "run" }
-  | { readonly kind: "unknown"; readonly arg: string };
-
-/**
- * Classify argv exactly like the bash `case "$1"`:
- *   no args        -> run
- *   `--help`       -> help (usage on stdout + exit 0)
- *   any other arg  -> unknown (usage + fatal)
- */
-export const classifyArgs = (args: ReadonlyArray<string>): ArgAction => {
-  const first = args[0];
-  if (first === undefined) return { kind: "run" };
-  if (first === "--help") return { kind: "help" };
-  return { kind: "unknown", arg: first };
-};
+  dotfiles-task-* scripts and is debuggable in isolation.`;
 
 // --------------------------------------------------------------------------
 // Errors — one cause per error, structured. The "mise absent" decision is a
@@ -138,6 +120,26 @@ const program: Effect.Effect<
 });
 
 // --------------------------------------------------------------------------
+// CLI command. Takes no flags or arguments; the framework owns `--help`.
+// Top-level safe: defining the command pulls no platform-node code.
+// --------------------------------------------------------------------------
+
+const command = Command.make(
+  "df-task-mise-upgrade",
+  {},
+  () =>
+    program.pipe(
+      // mise absent -> "fatal mise not on PATH" + exit 1.
+      Effect.catchTag(
+        "MiseNotOnPathError",
+        () => Effect.sync(() => fatal("mise not on PATH")),
+      ),
+      // Propagate mise's exit code verbatim.
+      Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+    ),
+).pipe(Command.withDescription(DESCRIPTION));
+
+// --------------------------------------------------------------------------
 // Entry point
 // --------------------------------------------------------------------------
 
@@ -157,31 +159,13 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const action = classifyArgs(Deno.args);
-  if (action.kind === "help") {
-    console.log(USAGE);
-    Deno.exit(0);
-  }
-  if (action.kind === "unknown") {
-    console.log(USAGE);
-    // fatal prints "fatal Unknown argument: <arg>" then exits 1.
-    fatal(`Unknown argument: ${action.arg}`);
-  }
-
   // Dynamic import keeps `deno test` permission-free (see header). NodeServices
-  // supplies the ChildProcessSpawner; NodeRuntime.runMain installs the signal
-  // handlers SUPERVISE relies on for graceful child teardown.
+  // supplies the ChildProcessSpawner and the Stdio argv source; NodeRuntime.runMain
+  // installs the signal handlers SUPERVISE relies on for graceful child teardown.
   const { NodeRuntime, NodeServices } = await import(
     "npm:@effect/platform-node@4.0.0-rc.112"
   );
-  program.pipe(
-    // mise absent -> "fatal mise not on PATH" + exit 1.
-    Effect.catchTag(
-      "MiseNotOnPathError",
-      () => Effect.sync(() => fatal("mise not on PATH")),
-    ),
-    // Propagate mise's exit code verbatim.
-    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+  Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
@@ -191,8 +175,9 @@ if (import.meta.main) {
 // Run offline with ZERO permission flags:
 //   deno test home/private_dot_local/bin/executable_df-task-mise-upgrade
 // The import.meta.main guard keeps the CLI (and the Node platform import) from
-// firing under test. These cover the pure arg classifier (which drives "--help
-// exits 0") and the SUPERVISE program against a mock spawner (mise-absent ->
+// firing under test. These cover argument handling through the real CLI parser
+// (`--help` is handled without reaching the handler; an unrecognised flag is
+// rejected) and the SUPERVISE program against a mock spawner (mise-absent ->
 // fatal mapping, and exit-code propagation) — all without spawning real mise.
 
 const assertEq = <T>(actual: T, expected: T, msg: string): void => {
@@ -224,20 +209,48 @@ const mockSpawnerLayer = (
     }),
   );
 
-Deno.test("classifyArgs: no args -> run", () => {
-  assertEq(classifyArgs([]), { kind: "run" }, "empty argv");
-});
+// Environment the CLI parser needs (FileSystem | Path | Terminal | Stdio |
+// ChildProcessSpawner), assembled from in-memory test implementations so the
+// parser runs offline. The spawner dies if reached: the parse-only cases below
+// never invoke the handler.
+const cliTestLayer = Layer.mergeAll(
+  FileSystem.layerNoop({}),
+  Path.layer,
+  Stdio.layerTest({}),
+  Layer.succeed(
+    Terminal.Terminal,
+    Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.die("cli test: readInput unused"),
+      readLine: Effect.die("cli test: readLine unused"),
+      display: () => Effect.void,
+    }),
+  ),
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => Effect.die("cli test: spawn unused")),
+  ),
+);
 
-Deno.test("classifyArgs: --help -> help (entry maps to usage + exit 0)", () => {
-  assertEq(classifyArgs(["--help"]), { kind: "help" }, "--help");
-});
-
-Deno.test("classifyArgs: unknown first arg -> unknown (entry maps to fatal)", () => {
-  assertEq(
-    classifyArgs(["--bogus"]),
-    { kind: "unknown", arg: "--bogus" },
-    "unknown arg",
+const parseArgv = (argv: ReadonlyArray<string>) =>
+  Effect.runPromise(
+    Command.runWith(command, { version: "0.0.0" })(argv).pipe(
+      Effect.provide(cliTestLayer),
+      Effect.exit,
+    ),
   );
+
+Deno.test("cli: --help is handled by the framework, handler never runs", async () => {
+  // A spawner call would die; reaching Success proves the help path
+  // short-circuits before the handler.
+  const exit = await parseArgv(["--help"]);
+  assertEq(exit._tag, "Success", "help exit");
+});
+
+Deno.test("cli: an unrecognised flag is rejected", async () => {
+  const exit = await parseArgv(["--bogus"]);
+  assertEq(exit._tag, "Failure", "unknown flag exit");
 });
 
 Deno.test(

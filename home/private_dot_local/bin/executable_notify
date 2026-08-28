@@ -44,6 +44,7 @@ import {
   HttpClientRequest,
   HttpClientResponse,
 } from "npm:effect@4.0.0-rc.112/unstable/http";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -120,102 +121,61 @@ interface NotifyOptions {
   readonly ignoreDnd: boolean; // deliver even while Do Not Disturb is active
 }
 
-// Mirror the bash arg parser: option/value pairs, `--` terminator, first
-// positional is the message. Unknown `-*` flags are an error (bash printed
-// usage to stderr and exited). Returns either parsed options, or a directive
-// to print help (and the exit code to use).
+// Either parsed options, or a directive to print help (and the exit code to
+// use). An absent or empty message asks for help and exits 0, mirroring the
+// bash original.
 type ParseResult =
   | { readonly kind: "help"; readonly code: number }
   | { readonly kind: "options"; readonly options: NotifyOptions };
 
-const parseArgs = (argv: readonly string[]): ParseResult => {
-  let title = "Notification";
-  let subtitle = "";
-  let icon = "";
-  let sender = "";
-  let execute = "";
-  let open = "";
-  let group = "";
-  let ignoreDnd = false;
-  let i = 0;
-  let message: string | undefined;
+// Everything the CLI collects except the message. Kept as its own type so the
+// pure resolver below is testable without constructing a CLI parse.
+type NotifyFlags = Omit<NotifyOptions, "message">;
 
-  while (i < argv.length) {
-    const arg = argv[i];
-    if (arg === "--help") return { kind: "help", code: 0 };
-    if (arg === "--title") {
-      title = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--subtitle") {
-      subtitle = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--icon") {
-      icon = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--sender") {
-      sender = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--execute") {
-      execute = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--open") {
-      open = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    if (arg === "--group") {
-      group = argv[i + 1] ?? "";
-      i += 2;
-      continue;
-    }
-    // Boolean flag: no value consumed.
-    if (arg === "--ignore-dnd") {
-      ignoreDnd = true;
-      i += 1;
-      continue;
-    }
-    if (arg === "--") {
-      message = argv[i + 1];
-      break;
-    }
-    if (arg.startsWith("-")) {
-      // unknown option — bash printed an error then usage and exited 0
-      return { kind: "help", code: 0 };
-    }
-    message = arg;
-    break;
-  }
+export const resolveNotifyAction = (
+  flags: NotifyFlags,
+  message: string,
+): ParseResult =>
+  message === ""
+    ? { kind: "help", code: 0 }
+    : { kind: "options", options: { ...flags, message } };
 
-  if (message === undefined || message === "") {
-    // bash: empty message => usage (exit 0)
-    return { kind: "help", code: 0 };
-  }
-
-  return {
-    kind: "options",
-    options: {
-      title,
-      subtitle,
-      icon,
-      sender,
-      message,
-      execute,
-      open,
-      group,
-      ignoreDnd,
-    },
-  };
-};
+const titleFlag = Flag.string("title").pipe(
+  Flag.withDescription('Notification title (default: "Notification")'),
+  Flag.withDefault("Notification"),
+);
+const subtitleFlag = Flag.string("subtitle").pipe(
+  Flag.withDescription("Subtitle (macOS / terminal-notifier only)"),
+  Flag.withDefault(""),
+);
+const iconFlag = Flag.string("icon").pipe(
+  Flag.withDescription("Absolute path to icon image (.png / .icns)"),
+  Flag.withDefault(""),
+);
+const senderFlag = Flag.string("sender").pipe(
+  Flag.withDescription("Bundle id to send as (macOS)"),
+  Flag.withDefault(""),
+);
+const executeFlag = Flag.string("execute").pipe(
+  Flag.withDescription("Shell command run when the banner is clicked (macOS)"),
+  Flag.withDefault(""),
+);
+const openFlag = Flag.string("open").pipe(
+  Flag.withDescription("URL opened when the banner is clicked (macOS)"),
+  Flag.withDefault(""),
+);
+const groupFlag = Flag.string("group").pipe(
+  Flag.withDescription("Coalescing id: a new notify replaces the prior one"),
+  Flag.withDefault(""),
+);
+const ignoreDndFlag = Flag.boolean("ignore-dnd").pipe(
+  Flag.withDescription("Deliver even while Do Not Disturb is active"),
+  Flag.withDefault(false),
+);
+const messageArg = Argument.string("message").pipe(
+  Argument.withDescription("Notification body"),
+  Argument.optional,
+);
 
 // Run an external notifier. Resolves to the child's exit code; 127 when the
 // binary cannot be spawned (missing / not on PATH), matching shell semantics.
@@ -647,6 +607,10 @@ const buildMcp = async () => {
         // The server declares which dated MCP protocols it implements. Newest
         // first is the negotiation preference order; registering every published
         // adapter lets any client negotiate a version it speaks.
+        //
+        // Revisit when McpProtocol exports a newer adapter — this list is
+        // hand-maintained, so a new dated protocol is NOT picked up by bumping
+        // effect alone. Check `McpProtocol` for `v*` exports missing here.
         protocols: [
           McpProtocol.v2025_11_25,
           McpProtocol.v2025_06_18,
@@ -670,6 +634,77 @@ const buildMcp = async () => {
 // Entry point
 // ===========================================================================
 
+// The `mcp` subcommand and the default notification surface are separate
+// commands so the CLI owns dispatch. Both keep their platform-node import lazy:
+// it loads msgpackr, which reads process.env at module load and throws
+// NotCapable without --allow-env, and keeping it out of the module graph is what
+// lets flag-free `deno test` pass. buildMcp() lazily imports `unstable/ai` for
+// the same reason.
+const runMcpServer = Effect.gen(function* () {
+  const { NodeStdio } = yield* Effect.promise(() =>
+    import("npm:@effect/platform-node@4.0.0-rc.112")
+  );
+  const { ServerLayer } = yield* Effect.promise(() => buildMcp());
+
+  const ServerLayerWithStdio = ServerLayer.pipe(
+    Layer.provide(NodeStdio.layer),
+    // stdout is the JSON-RPC channel, so logs MUST go to stderr.
+    // `consolePretty({ stderr: true })` does NOT achieve that: the option only
+    // applies to the TTY rendering path, and an MCP server's stdout is a pipe,
+    // never a TTY — logs land on stdout and corrupt the protocol stream. The
+    // `Logger.LogToStderr` reference is what actually switches the logger over
+    // to console.error.
+    Layer.provide(
+      Layer.mergeAll(
+        Logger.layer([Logger.consolePretty()]),
+        Layer.succeed(Logger.LogToStderr, true),
+      ),
+    ),
+  );
+
+  // Returned, not run with its own runMain: the server must execute under the
+  // runtime that Command.run is already running on, otherwise the launch
+  // resolves immediately and the process exits before serving anything.
+  return yield* Layer.launch(ServerLayerWithStdio);
+});
+
+const mcpCli = Command.make("mcp", {}, () => runMcpServer);
+
+const notifyCli = Command.make(
+  "notify",
+  {
+    title: titleFlag,
+    subtitle: subtitleFlag,
+    icon: iconFlag,
+    sender: senderFlag,
+    execute: executeFlag,
+    open: openFlag,
+    group: groupFlag,
+    ignoreDnd: ignoreDndFlag,
+    message: messageArg,
+  },
+  ({ message, ...flags }) =>
+    Effect.promise(async () => {
+      const action = resolveNotifyAction(
+        flags,
+        message._tag === "Some" ? message.value : "",
+      );
+      if (action.kind === "help") {
+        console.log(HELP);
+        Deno.exit(action.code);
+      }
+      const exit = await Effect.runPromiseExit(
+        dispatchNotification(action.options),
+      );
+      if (exit._tag === "Failure") {
+        // Surface the message on stderr like the bash original, exit 1.
+        console.error(`notify: ${JSON.stringify(exit.cause)}`);
+        Deno.exit(1);
+      }
+      Deno.exit(0);
+    }),
+).pipe(Command.withSubcommands([mcpCli]));
+
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
   // (raw node-stream callbacks, forked-fiber defects, unhandled rejections).
@@ -686,66 +721,25 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const command = Deno.args[0];
+  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112"
+  );
 
-  if (command === "mcp") {
-    // Lazy import: @effect/platform-node loads msgpackr, which reads process.env
-    // at module load and throws NotCapable without --allow-env. Keeping it here
-    // means flag-free `deno test` never triggers it. buildMcp() lazily imports
-    // `unstable/ai` (also msgpackr-tainted) for the same reason.
-    const { NodeRuntime, NodeStdio } = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112"
-    );
-    const { ServerLayer } = await buildMcp();
+  // The stdio RPC protocol interrupts the main fiber when the client closes
+  // stdin (see RpcServer.makeProtocolStdio). That clean shutdown surfaces as an
+  // interrupts-only Cause, which the default teardown maps to exit 130. For an
+  // MCP stdio server, stdin EOF (and SIGINT) are graceful shutdowns, so remap
+  // that 130 to 0; genuine failures keep their non-zero codes. The notification
+  // surface exits explicitly, so this only ever applies to `notify mcp`.
+  const teardown: Runtime.Teardown = (exit, onExit) =>
+    Runtime.defaultTeardown(exit, (code) => onExit(code === 130 ? 0 : code));
 
-    const ServerLayerWithStdio = ServerLayer.pipe(
-      Layer.provide(NodeStdio.layer),
-      // stdout is the JSON-RPC channel, so logs MUST go to stderr.
-      // `consolePretty({ stderr: true })` does NOT achieve that: the option only
-      // applies to the TTY rendering path, and an MCP server's stdout is a pipe,
-      // never a TTY — logs land on stdout and corrupt the protocol stream. The
-      // `Logger.LogToStderr` reference is what actually switches the logger over
-      // to console.error.
-      Layer.provide(
-        Layer.mergeAll(
-          Logger.layer([Logger.consolePretty()]),
-          Layer.succeed(Logger.LogToStderr, true),
-        ),
-      ),
-    );
-
-    // The stdio RPC protocol interrupts the main fiber when the client closes
-    // stdin (see RpcServer.makeProtocolStdio). That clean shutdown surfaces as
-    // an interrupts-only Cause, which the default teardown maps to exit 130.
-    // For an MCP stdio server, stdin EOF (and SIGINT) are graceful shutdowns,
-    // so remap that 130 to 0; genuine failures keep their non-zero codes.
-    const teardown: Runtime.Teardown = (exit, onExit) =>
-      Runtime.defaultTeardown(exit, (code) => onExit(code === 130 ? 0 : code));
-
-    Layer.launch(ServerLayerWithStdio).pipe(
-      NodeRuntime.runMain({ teardown }),
-    );
-  } else {
-    const parsed = parseArgs(Deno.args);
-    if (parsed.kind === "help") {
-      console.log(HELP);
-      Deno.exit(parsed.code);
-    } else {
-      Effect.runPromiseExit(dispatchNotification(parsed.options)).then(
-        (exit) => {
-          if (exit._tag === "Failure") {
-            // Surface the message on stderr like the bash original, exit 1.
-            const err = exit.cause;
-            console.error(
-              `notify: ${JSON.stringify(err)}`,
-            );
-            Deno.exit(1);
-          }
-          Deno.exit(0);
-        },
-      );
-    }
-  }
+  Command.run(notifyCli, { version: "1.0.0" }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain({ teardown }),
+  );
 }
 
 // ===========================================================================
@@ -813,23 +807,41 @@ const opts = (o: Partial<NotifyOptions>): NotifyOptions => ({
   ...o,
 });
 
-Deno.test("parseArgs: bare message keeps defaults", () => {
-  const r = parseArgs(["Build complete"]);
+// The CLI framework owns tokenisation (option/value pairing, the `--`
+// terminator, rejecting unknown flags), so these pin what remains ours: the flag
+// defaults carried into NotifyOptions, and the empty-message-asks-for-help rule.
+const flags = (over: Partial<NotifyFlags> = {}): NotifyFlags => ({
+  title: "Notification",
+  subtitle: "",
+  icon: "",
+  sender: "",
+  execute: "",
+  open: "",
+  group: "",
+  ignoreDnd: false,
+  ...over,
+});
+
+Deno.test("resolveNotifyAction: bare message keeps defaults", () => {
+  const r = resolveNotifyAction(flags(), "Build complete");
   if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.title, "Notification", "default title");
   eq(r.options.message, "Build complete", "message");
+  eq(r.options.execute, "", "execute defaults empty");
+  eq(r.options.open, "", "open defaults empty");
+  eq(r.options.group, "", "group defaults empty");
+  eq(r.options.ignoreDnd, false, "ignoreDnd defaults false");
 });
 
-Deno.test("parseArgs: drift callsite shape", () => {
-  const r = parseArgs([
-    "--title",
-    "dotfiles",
-    "--subtitle",
-    "3 tools behind",
-    "--icon",
-    "/x/icon.png",
+Deno.test("resolveNotifyAction: drift callsite shape", () => {
+  const r = resolveNotifyAction(
+    flags({
+      title: "dotfiles",
+      subtitle: "3 tools behind",
+      icon: "/x/icon.png",
+    }),
     "mise, deno",
-  ]);
+  );
   if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.title, "dotfiles", "title");
   eq(r.options.subtitle, "3 tools behind", "subtitle");
@@ -837,60 +849,37 @@ Deno.test("parseArgs: drift callsite shape", () => {
   eq(r.options.message, "mise, deno", "message");
 });
 
-Deno.test("parseArgs: --sender is captured", () => {
-  const r = parseArgs(["--sender", "com.apple.Terminal", "hi"]);
+Deno.test("resolveNotifyAction: action flags carry through", () => {
+  const r = resolveNotifyAction(
+    flags({
+      sender: "com.apple.Terminal",
+      execute: "df-drift-update",
+      open: "https://example.com",
+      group: "dotfiles-drift",
+      ignoreDnd: true,
+    }),
+    "click me",
+  );
   if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.sender, "com.apple.Terminal", "sender");
-});
-
-Deno.test("parseArgs: --execute / --open / --group captured, defaults empty", () => {
-  const r = parseArgs([
-    "--execute",
-    "df-drift-update",
-    "--open",
-    "https://example.com",
-    "--group",
-    "dotfiles-drift",
-    "click me",
-  ]);
-  if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.execute, "df-drift-update", "execute");
   eq(r.options.open, "https://example.com", "open");
   eq(r.options.group, "dotfiles-drift", "group");
+  eq(r.options.ignoreDnd, true, "ignoreDnd");
   eq(r.options.message, "click me", "message");
-
-  const bare = parseArgs(["hi"]);
-  if (bare.kind !== "options") throw new Error("expected options");
-  eq(bare.options.execute, "", "execute defaults empty");
-  eq(bare.options.open, "", "open defaults empty");
-  eq(bare.options.group, "", "group defaults empty");
 });
 
-Deno.test("parseArgs: --ignore-dnd is a boolean flag (no value consumed)", () => {
-  const r = parseArgs(["--ignore-dnd", "--title", "T", "the message"]);
+Deno.test("resolveNotifyAction: a message that looks like a flag is kept", () => {
+  const r = resolveNotifyAction(flags({ title: "t" }), "--looks-like-a-flag");
   if (r.kind !== "options") throw new Error("expected options");
-  eq(r.options.ignoreDnd, true, "ignoreDnd set");
-  eq(r.options.title, "T", "title still parsed after boolean flag");
-  eq(r.options.message, "the message", "message still parsed");
-
-  const off = parseArgs(["hi"]);
-  if (off.kind !== "options") throw new Error("expected options");
-  eq(off.options.ignoreDnd, false, "ignoreDnd defaults false");
+  eq(r.options.message, "--looks-like-a-flag", "message preserved verbatim");
 });
 
-Deno.test("parseArgs: -- terminator passes the message through", () => {
-  const r = parseArgs(["--title", "t", "--", "--looks-like-a-flag"]);
-  if (r.kind !== "options") throw new Error("expected options");
-  eq(r.options.message, "--looks-like-a-flag", "message after --");
-});
-
-Deno.test("parseArgs: empty / missing message asks for help", () => {
-  eq(parseArgs([]).kind, "help", "no args");
-  eq(parseArgs([""]).kind, "help", "empty message");
-});
-
-Deno.test("parseArgs: --help requests help", () => {
-  eq(parseArgs(["--help"]).kind, "help", "--help");
+Deno.test("resolveNotifyAction: empty message asks for help", () => {
+  const r = resolveNotifyAction(flags(), "");
+  eq(r.kind, "help", "empty message");
+  if (r.kind !== "help") throw new Error("expected help");
+  eq(r.code, 0, "help exits 0");
 });
 
 Deno.test("terminalNotifierArgs: includes only set options", () => {

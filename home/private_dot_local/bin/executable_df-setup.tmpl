@@ -7,6 +7,7 @@
 // depends on these exit codes, so keep them and the output/prose stable.
 
 import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.112";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
@@ -58,10 +59,6 @@ type ProbeResult =
     readonly state: "invalid-auth" | "invalid-unknown";
     readonly exitCode: 2;
   };
-
-type ParseResult =
-  | { readonly kind: "run"; readonly probeOnly: boolean }
-  | { readonly kind: "help" };
 
 interface RunResult {
   readonly ok: boolean;
@@ -115,19 +112,12 @@ const printPlain = (text = ""): void => {
   console.log(text);
 };
 
-const parseArgs = (argv: readonly string[]): ParseResult => {
-  let probeOnly = false;
-  for (const arg of argv) {
-    if (arg === "--help") return { kind: "help" };
-    if (arg === "--probe-bws") {
-      probeOnly = true;
-      continue;
-    }
-    printPlain(HELP);
-    fatal(`Unknown argument: ${arg}`);
-  }
-  return { kind: "run", probeOnly };
-};
+const probeBwsFlag = Flag.boolean("probe-bws").pipe(
+  Flag.withDescription(
+    "Probe BWS token validity and exit 0=ok, 1=missing, 2=invalid",
+  ),
+  Flag.withDefault(false),
+);
 
 const run = (
   cmd: string,
@@ -699,16 +689,10 @@ const printInstructions = (
     printPlain();
   });
 
-const main: Effect.Effect<number> = Effect.gen(function* () {
-  const args = parseArgs(Deno.args);
-
-  if (args.kind === "help") {
-    printPlain(HELP);
-    return 0;
-  }
-
+const main = (probeOnly: boolean): Effect.Effect<number> =>
+  Effect.gen(function* () {
   const bws = yield* checkBwsToken;
-  if (args.probeOnly) {
+  if (probeOnly) {
     return bws.exitCode;
   }
 {{- if eq .machineProfile "work" }}
@@ -725,7 +709,16 @@ const main: Effect.Effect<number> = Effect.gen(function* () {
   yield* printInstructions(bws.state, tokenPath);
 {{- end }}
   return 0;
-});
+  });
+
+const setupCommand = Command.make(
+  "df-setup",
+  { probeBws: probeBwsFlag },
+  ({ probeBws }) =>
+    main(probeBws).pipe(
+      Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+    ),
+);
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
@@ -743,9 +736,21 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  Effect.runPromiseExit(main).then((exit) => {
+  // Dynamic import: @effect/platform-node loads msgpackr, which reads
+  // process.env at module load and throws NotCapable without --allow-env.
+  const { NodeFileSystem, NodePath, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112"
+  );
+
+  Effect.runPromiseExit(
+    Command.run(setupCommand, { version: "0.0.0" }).pipe(
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(NodeServices.layer),
+    ),
+  ).then((exit) => {
     if (exit._tag === "Success") {
-      Deno.exit(exit.value);
+      Deno.exit(0);
     }
     console.error(exit.cause);
     Deno.exit(1);

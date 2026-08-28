@@ -30,7 +30,8 @@
 //
 // Effect v4 import path verified against effect@4.0.0-rc.112.
 
-import { Effect, Layer, Logger, Schema } from "npm:effect@4.0.0-rc.112";
+import { Console, Effect, Logger, Schema } from "npm:effect@4.0.0-rc.112";
+import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
 import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
@@ -210,44 +211,65 @@ export const isLoggedInViaKeyring = (statusOutput: string): boolean => {
 };
 
 // ===========================================================================
-// CLI dispatch
+// CLI
 // ===========================================================================
 
+// Printed on a bare invocation, which exits 1 because there is nothing to do
+// without a subcommand. `--help` renders the generated CLI help instead.
 const USAGE = `Usage:
   df-prewarm aws-region   Resolve EC2 region from IMDS into prewarm.json (Coder/Linux)
   df-prewarm gh-auth      Cache gh auth liveness into prewarm.json (macOS work)
   df-prewarm --help       Display this help message`;
 
+const DESCRIPTION =
+  `Resolve slow-but-static shell-init values once and cache them in
+~/.cache/dotfiles/prewarm.json, so interactive shells read a file instead
+of forking a probe on every startup.
+
+Each subcommand owns its own field of the merged cache, so a writer never
+clobbers the other's value.`;
+
 const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
 
-const main = (
-  argv: readonly string[],
-  servicesLayer: Layer.Layer<PrewarmEnv>,
-): Effect.Effect<number> => {
-  const [command] = argv;
-  if (command === "--help" || command === "-h" || command === undefined) {
-    console.error(USAGE);
-    return Effect.succeed(command === undefined ? 1 : 0);
-  }
-  if (command === "aws-region") {
-    return runAwsRegion.pipe(
-      Effect.provide(loggerLayer),
-      Effect.provide(servicesLayer),
-      Effect.as(0),
-      Effect.orElseSucceed(() => 1),
-    );
-  }
-  if (command === "gh-auth") {
-    return runGhAuth.pipe(
-      Effect.provide(loggerLayer),
-      Effect.provide(servicesLayer),
-      Effect.as(0),
-      Effect.orElseSucceed(() => 1),
-    );
-  }
-  console.error(`df-prewarm: unknown command: ${command}\n\n${USAGE}`);
-  return Effect.succeed(1);
-};
+// Subcommand bodies map to a process exit code; every failure path is already
+// soft, so the fallback only guards an unexpected defect-free failure.
+const exitAfter = (
+  body: Effect.Effect<void, never, PrewarmEnv>,
+): Effect.Effect<never, never, PrewarmEnv> =>
+  body.pipe(
+    Effect.provide(loggerLayer),
+    Effect.as(0),
+    Effect.orElseSucceed(() => 1),
+    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+  ) as Effect.Effect<never, never, PrewarmEnv>;
+
+const awsRegionCli = Command.make(
+  "aws-region",
+  {},
+  () => exitAfter(runAwsRegion),
+).pipe(
+  Command.withDescription(
+    "Resolve EC2 region from IMDS into prewarm.json (Coder/Linux)",
+  ),
+);
+
+const ghAuthCli = Command.make("gh-auth", {}, () => exitAfter(runGhAuth)).pipe(
+  Command.withDescription(
+    "Cache gh auth liveness into prewarm.json (macOS work)",
+  ),
+);
+
+const prewarmCommand = Command.make(
+  "df-prewarm",
+  {},
+  () =>
+    Console.error(USAGE).pipe(
+      Effect.flatMap(() => Effect.sync(() => Deno.exit(1))),
+    ),
+).pipe(
+  Command.withDescription(DESCRIPTION),
+  Command.withSubcommands([awsRegionCli, ghAuthCli]),
+);
 
 if (import.meta.main) {
   globalThis.addEventListener("unhandledrejection", (event) => {
@@ -264,23 +286,13 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free: @effect/platform-node
   // transitively loads msgpackr, which reads process.env at module load. Only
   // the live CLI path pays that cost; the offline suite never imports it.
-  (async () => {
-    const { NodeServices } = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112"
-    );
-    const exit = await Effect.runPromiseExit(
-      main(Deno.args, NodeServices.layer),
-    );
-    if (exit._tag === "Success") {
-      Deno.exit(exit.value);
-    } else {
-      console.error(exit.cause);
-      Deno.exit(1);
-    }
-  })().catch((err) => {
-    console.error(err);
-    Deno.exit(1);
-  });
+  const { NodeRuntime, NodeServices } = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112"
+  );
+  Command.run(prewarmCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
 }
 
 // ===========================================================================
