@@ -2,7 +2,7 @@
 
 [tasks."lint:runtimes"]
 description = "Check every runnable is in the runtime-tier manifest with matching lang"
-run = "deno run --allow-read --allow-env home/private_dot_local/bin/executable_df-lint-runtimes"
+run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes"
 
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
