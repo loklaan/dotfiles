@@ -6,6 +6,46 @@
 {{- if hasKey $base "hooks" -}}
 {{-   $existingHooks = get $base "hooks" -}}
 {{- end -}}
+
+{{- /* Paths chezmoi once installed and has since removed. The merge below is
+       additive, and Claude Code persists hook entries across sessions, so a
+       removed command lingers here and keeps being invoked after its file is
+       gone. Mirrors the same list in home/dot_claude/modify_settings.json —
+       keep the two in step. Match on the FILE, never the directory:
+       sync-credentials.sh still lives in tmux-resurrect-code-agents/. */ -}}
+{{- $deadPathSubstrings := list
+      "/tmux-resurrect-code-agents/track.sh"
+      "/tmux-resurrect-code-agents/cleanup.sh"
+-}}
+{{- $cleanedHooks := dict -}}
+{{- range $event, $entries := $existingHooks -}}
+{{-   $cleanedEntries := list -}}
+{{-   range $entry := $entries -}}
+{{-     $keptHooks := list -}}
+{{-     range $hook := $entry.hooks -}}
+{{-       $command := toString (default "" $hook.command) -}}
+{{-       $dead := false -}}
+{{-       range $dead_path := $deadPathSubstrings -}}
+{{-         if contains $dead_path $command -}}
+{{-           $dead = true -}}
+{{-         end -}}
+{{-       end -}}
+{{-       if not $dead -}}
+{{-         $keptHooks = append $keptHooks $hook -}}
+{{-       end -}}
+{{-     end -}}
+{{-     if gt (len $keptHooks) 0 -}}
+{{-       $newEntry := dict "hooks" $keptHooks -}}
+{{-       if hasKey $entry "matcher" -}}
+{{-         $newEntry = set $newEntry "matcher" $entry.matcher -}}
+{{-       end -}}
+{{-       $cleanedEntries = append $cleanedEntries $newEntry -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $cleanedHooks = set $cleanedHooks $event $cleanedEntries -}}
+{{- end -}}
+{{- $existingHooks = $cleanedHooks -}}
+
 {{- $ourHooks := includeTemplate "hooks-json-tmpl" . | fromJson -}}
 {{- $merged := merge (dict) $existingHooks -}}
 {{- range $event, $ourEntries := $ourHooks -}}

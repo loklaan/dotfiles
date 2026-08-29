@@ -1,0 +1,786 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=ps,tmux,sqlite3 --allow-read --allow-write --allow-env --allow-sys=uid
+
+// df-agent-state — survey and (gated) reap per-pane code-agent session state.
+//
+//   df-agent-state survey [--json]   Classify every state file. Read-only.
+//   df-agent-state reap --confirm <checksum> [--delete] [--keep a,b] [--dry-run]
+//
+// WHY this exists: the state dir holds one file per tmux pane, each a CLAIM that
+// "pane %N is hosting session X". Claims written before the liveness contract
+// carry no proof, so they outlived their agents and — because tmux reassigns
+// pane ids from %0 in every new server — were re-attributed to unrelated panes.
+// This is the repair tool for that backlog. The normative definition of a claim
+// lives in ~/.local/lib/tmux-resurrect-code-agents/state-dir.sh (LIVENESS
+// CONTRACT); the `classify` function below MUST agree with tcsa_claim_is_live.
+//
+// AGE IS NEVER A REAP CRITERION. Writers only rewrite a file when the tracked
+// session CHANGES, so a session held open for weeks has a weeks-old mtime and is
+// perfectly live. `ageDays` is reporting metadata for the human reviewer only.
+//
+// THE GATE: `reap` re-surveys, recomputes the checksum, and refuses unless it
+// matches --confirm. A report reviewed an hour ago must not authorise deleting
+// state that changed since. The checksum deliberately excludes mtime/timestamps
+// so it is stable across time and sensitive only to what a reviewer judged.
+//
+// Effect v4 import paths verified against effect@4.0.0-rc.112.
+
+import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
+import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import { createHash } from "node:crypto";
+// NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only.
+// It transitively loads msgpackr, which reads process.env at module load and
+// throws NotCapable under zero-flag `deno test`. Same pattern as df-drift.
+import {
+  ensureDir,
+  fileExists,
+  hasCommand,
+  parseJson,
+  readTextFile,
+  run,
+} from "../lib/df-cache.ts";
+import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
+
+type ToolEnv =
+  | FileSystem.FileSystem
+  | Process.ChildProcessSpawner.ChildProcessSpawner;
+
+const DESCRIPTION =
+  "Survey and gated-reap per-pane code-agent session state files";
+
+const USAGE = `df-agent-state — ${DESCRIPTION}
+
+  df-agent-state survey [--json]
+      Classify every state file. Read-only; changes nothing.
+
+  df-agent-state reap --confirm <checksum> [--delete] [--keep <pane>,...] [--dry-run]
+      Reap everything the survey did not classify 'live'.
+      Refuses unless --confirm matches the CURRENT survey checksum, so a stale
+      report can never authorise reaping state that changed since review.
+      Archives to <stateDir>/archive/<timestamp>/ unless --delete is given.
+
+Statuses:
+  live       claim's pid is alive, start time matches, pane matches  (never reaped)
+  dead       claim present but its process is gone or was replaced
+  legacy     written before the liveness contract; carries no claim
+  malformed  unparseable, or missing a session id
+`;
+
+// ===========================================================================
+// Schema
+// ===========================================================================
+
+const Status = Schema.Literals(["malformed", "legacy", "dead", "live"]);
+
+const Entry = Schema.Struct({
+  pane: Schema.String,
+  agent: Schema.NullOr(Schema.String),
+  sessionId: Schema.NullOr(Schema.String),
+  status: Status,
+  claimPid: Schema.NullOr(Schema.Number),
+  claimStart: Schema.NullOr(Schema.String),
+  paneOrphaned: Schema.NullOr(Schema.Boolean),
+  isSubagent: Schema.NullOr(Schema.Boolean),
+  title: Schema.NullOr(Schema.String),
+  mtime: Schema.String,
+  ageDays: Schema.Number,
+});
+type Entry = typeof Entry.Type;
+
+// ===========================================================================
+// Pure logic — everything below takes its world as arguments so the offline
+// suite can exercise it with zero permissions and zero subprocesses.
+// ===========================================================================
+
+// The ONE normal form for claim.start, mirroring tcsa_normalise_ws in
+// state-dir.sh. `ps -o lstart=` pads differently across platforms, so writer and
+// reader agree on a normal form rather than on raw bytes.
+export const normaliseWhitespace = (text: string): string =>
+  text.replace(/\s+/g, " ").trim();
+
+// Session ids reach SQL by interpolation, so anything outside the known shape is
+// refused rather than escaped. A file is attacker-writable in principle and this
+// is the only place its contents would reach a query.
+const SESSION_ID = /^ses_[A-Za-z0-9]+$/;
+export const isQueryableSessionId = (id: string): boolean =>
+  SESSION_ID.test(id);
+
+export interface RawFile {
+  readonly pane: string;
+  readonly text: string | null;
+  readonly mtimeMs: number;
+}
+
+export interface World {
+  /** pid -> normalised start time, for every process visible on this host. */
+  readonly processStarts: ReadonlyMap<number, string>;
+  /** Live pane ids, or null when no tmux server is running (unknowable). */
+  readonly livePanes: ReadonlySet<string> | null;
+  /** session id -> row, or null when OpenCode's db could not be read. */
+  readonly sessions:
+    | ReadonlyMap<string, {
+      readonly parentId: string | null;
+      readonly title: string | null;
+    }>
+    | null;
+  readonly nowMs: number;
+}
+
+export const classify = (raw: RawFile, world: World): Entry => {
+  const mtime = new Date(raw.mtimeMs).toISOString();
+  const ageDays = Math.max(
+    0,
+    Math.round(((world.nowMs - raw.mtimeMs) / 86_400_000) * 10) / 10,
+  );
+  const paneOrphaned = world.livePanes === null
+    ? null
+    : !world.livePanes.has(raw.pane);
+
+  const base = {
+    pane: raw.pane,
+    agent: null,
+    sessionId: null,
+    claimPid: null,
+    claimStart: null,
+    paneOrphaned,
+    isSubagent: null,
+    title: null,
+    mtime,
+    ageDays,
+  } satisfies Omit<Entry, "status">;
+
+  const parsed = raw.text === null ? null : parseJson(raw.text);
+  if (parsed === null || typeof parsed !== "object") {
+    return { ...base, status: "malformed" };
+  }
+  const record = parsed as Record<string, unknown>;
+
+  const sessionId = typeof record.session_id === "string" && record.session_id
+    ? record.session_id
+    : null;
+  const agent = typeof record.agent === "string" ? record.agent : null;
+  if (sessionId === null) return { ...base, agent, status: "malformed" };
+
+  const row = world.sessions === null
+    ? undefined
+    : world.sessions.get(sessionId);
+  const isSubagent = world.sessions === null
+    ? null
+    : row === undefined
+    ? null
+    : Boolean(row.parentId && row.parentId.length > 0);
+  const title = row?.title ?? null;
+
+  const identified = { ...base, agent, sessionId, isSubagent, title };
+
+  const claim = record.claim as Record<string, unknown> | undefined;
+  const pid = typeof claim?.pid === "number" && Number.isInteger(claim.pid)
+    ? claim.pid
+    : null;
+  const start = typeof claim?.start === "string" && claim.start
+    ? claim.start
+    : null;
+  const claimPane = typeof claim?.pane === "string" && claim.pane
+    ? claim.pane
+    : null;
+
+  // Hard cut: an incomplete claim cannot prove liveness and is never aged out.
+  if (pid === null || start === null || claimPane === null) {
+    return { ...identified, status: "legacy" };
+  }
+
+  const withClaim = { ...identified, claimPid: pid, claimStart: start };
+
+  if (claimPane !== raw.pane) return { ...withClaim, status: "dead" };
+  const liveStart = world.processStarts.get(pid);
+  // pids are recycled, so pid-alive alone is not identity — the start time is
+  // what distinguishes our agent from an unrelated process reusing its pid.
+  if (liveStart === undefined || liveStart !== start) {
+    return { ...withClaim, status: "dead" };
+  }
+  return { ...withClaim, status: "live" };
+};
+
+// Reduced to exactly the fields a reviewer's decision rests on, so the checksum
+// is stable across time yet changes whenever a verdict could change.
+export const reportChecksum = (entries: readonly Entry[]): string => {
+  const reduced = [...entries]
+    .sort((a, b) => (a.pane < b.pane ? -1 : a.pane > b.pane ? 1 : 0))
+    .map((e) => [e.pane, e.sessionId, e.status, e.claimPid, e.claimStart]);
+  return createHash("sha256").update(JSON.stringify(reduced)).digest("hex");
+};
+
+export const reapable = (
+  entries: readonly Entry[],
+  keep: ReadonlySet<string>,
+): readonly Entry[] =>
+  entries.filter((e) => e.status !== "live" && !keep.has(e.pane));
+
+export const parsePsTable = (stdout: string): Map<number, string> => {
+  const out = new Map<number, string>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const match = trimmed.match(/^(\d+)\s+(.*)$/);
+    if (match === null) continue;
+    out.set(Number(match[1]), normaliseWhitespace(match[2]));
+  }
+  return out;
+};
+
+export const parseSessionRows = (
+  stdout: string,
+): Map<string, { parentId: string | null; title: string | null }> => {
+  const out = new Map<
+    string,
+    { parentId: string | null; title: string | null }
+  >();
+  for (const line of stdout.split("\n")) {
+    if (line.trim().length === 0) continue;
+    // -separator $'\x1f' keeps titles containing pipes or tabs intact.
+    const [id, parentId, title] = line.split("\x1f");
+    if (!id) continue;
+    out.set(id, {
+      parentId: parentId && parentId.length > 0 ? parentId : null,
+      title: title ?? null,
+    });
+  }
+  return out;
+};
+
+export const formatTable = (entries: readonly Entry[]): string => {
+  if (entries.length === 0) return "  (no state files)";
+  const rows = entries.map((e) => [
+    e.pane,
+    e.status,
+    `${e.ageDays}d`,
+    e.isSubagent === true
+      ? "subagent"
+      : e.paneOrphaned === true
+      ? "no-pane"
+      : "",
+    e.title ?? e.sessionId ?? "",
+  ]);
+  const headers = ["PANE", "STATUS", "AGE", "FLAGS", "SESSION"];
+  const widths = headers.map((h, i) =>
+    Math.max(h.length, ...rows.map((r) => r[i].length))
+  );
+  const line = (cells: readonly string[]) =>
+    "  " + cells.map((c, i) => c.padEnd(widths[i])).join("  ").trimEnd();
+  return [line(headers), ...rows.map(line)].join("\n");
+};
+
+export const summarise = (entries: readonly Entry[]): string => {
+  const counts = new Map<string, number>();
+  for (const e of entries) {
+    counts.set(e.status, (counts.get(e.status) ?? 0) + 1);
+  }
+  const order = ["live", "dead", "legacy", "malformed"];
+  return order
+    .filter((s) => counts.has(s))
+    .map((s) => `${counts.get(s)} ${s}`)
+    .join(", ");
+};
+
+// ===========================================================================
+// Effectful edges
+// ===========================================================================
+
+const stateDirPath = Effect.gen(function* () {
+  const xdg = yield* Effect.sync(() => Deno.env.get("XDG_STATE_HOME"));
+  const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
+  const raw = xdg && xdg.length > 0 ? xdg : `${home}/.local/state`;
+  const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  return `${base}/tmux-code-agents`;
+});
+
+const opencodeDbPath = Effect.gen(function* () {
+  const xdg = yield* Effect.sync(() => Deno.env.get("XDG_DATA_HOME"));
+  const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
+  const raw = xdg && xdg.length > 0 ? xdg : `${home}/.local/share`;
+  const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  return `${base}/opencode/opencode.db`;
+});
+
+const readStateFiles = (
+  stateDir: string,
+): Effect.Effect<readonly RawFile[], never, ToolEnv> =>
+  Effect.gen(function* () {
+    const present = yield* fileExists(stateDir);
+    if (!present) return [];
+    const names = yield* Effect.try(() =>
+      [...Deno.readDirSync(stateDir)]
+        .filter((e) => e.isFile && e.name.startsWith("%"))
+        .map((e) => e.name)
+    ).pipe(Effect.orElseSucceed(() => [] as string[]));
+
+    const files: RawFile[] = [];
+    for (const pane of names.sort()) {
+      const path = `${stateDir}/${pane}`;
+      const text = yield* readTextFile(path);
+      const mtimeMs = yield* Effect.try(() =>
+        Deno.statSync(path).mtime?.getTime() ?? 0
+      ).pipe(Effect.orElseSucceed(() => 0));
+      files.push({ pane, text, mtimeMs });
+    }
+    return files;
+  });
+
+const observeWorld = (
+  sessionIds: readonly string[],
+): Effect.Effect<World, never, ToolEnv> =>
+  Effect.gen(function* () {
+    // One `ps` for the whole host rather than one per file: 49 files would
+    // otherwise mean ~150 subprocesses via the shared `run` primitive.
+    const ps = yield* run("ps", ["-Ao", "pid=,lstart="]);
+    const processStarts = ps.ok
+      ? parsePsTable(ps.stdout)
+      : new Map<number, string>();
+
+    let livePanes: ReadonlySet<string> | null = null;
+    if (yield* hasCommand("tmux")) {
+      const panes = yield* run("tmux", [
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id}",
+      ]);
+      // A failed call means no server is running, which makes orphanhood
+      // unknowable — reporting every pane as orphaned would be a lie.
+      if (panes.ok) {
+        livePanes = new Set(
+          panes.stdout.split("\n").map((l) => l.trim()).filter((l) =>
+            l.length > 0
+          ),
+        );
+      }
+    }
+
+    let sessions: World["sessions"] = null;
+    const db = yield* opencodeDbPath;
+    const queryable = sessionIds.filter(isQueryableSessionId);
+    if (
+      queryable.length > 0 && (yield* hasCommand("sqlite3")) &&
+      (yield* fileExists(db))
+    ) {
+      const inList = queryable.map((id) => `'${id}'`).join(",");
+      const query =
+        `select id, coalesce(parent_id,''), coalesce(title,'') from session where id in (${inList})`;
+      const rows = yield* run("sqlite3", [
+        "-readonly",
+        "-separator",
+        "\x1f",
+        db,
+        query,
+      ]);
+      if (rows.ok) sessions = parseSessionRows(rows.stdout);
+    }
+
+    const nowMs = yield* Effect.sync(() => Date.now());
+    return { processStarts, livePanes, sessions, nowMs };
+  });
+
+const survey = Effect.gen(function* () {
+  const stateDir = yield* stateDirPath;
+  const files = yield* readStateFiles(stateDir);
+
+  const ids: string[] = [];
+  for (const f of files) {
+    const parsed = f.text === null ? null : parseJson(f.text);
+    const id = (parsed as Record<string, unknown> | null)?.session_id;
+    if (typeof id === "string" && id.length > 0) ids.push(id);
+  }
+
+  const world = yield* observeWorld(ids);
+  const entries = files.map((f) => classify(f, world));
+  return { stateDir, entries, checksum: reportChecksum(entries) };
+});
+
+const runSurvey = (asJson: boolean) =>
+  Effect.gen(function* () {
+    const { stateDir, entries, checksum } = yield* survey;
+    if (asJson) {
+      yield* Console.log(JSON.stringify(
+        {
+          stateDir,
+          generatedAt: new Date().toISOString(),
+          reportChecksum: checksum,
+          entries,
+        },
+        null,
+        2,
+      ));
+      return;
+    }
+    yield* Console.log(`\n  ${stateDir}\n`);
+    yield* Console.log(formatTable(entries));
+    yield* Console.log(
+      `\n  ${entries.length} file(s): ${summarise(entries) || "none"}`,
+    );
+    yield* Console.log(`  checksum ${checksum}\n`);
+    if (entries.some((e) => e.status !== "live")) {
+      yield* Console.log(
+        `  Review the table, then reap with:\n    df-agent-state reap --confirm ${checksum} --dry-run\n`,
+      );
+    }
+  });
+
+const runReap = (
+  confirm: string,
+  keepRaw: string,
+  destructive: boolean,
+  dryRun: boolean,
+) =>
+  Effect.gen(function* () {
+    if (confirm.length === 0) {
+      yield* Console.error(
+        "error --confirm is required. Run `df-agent-state survey` and pass the checksum it prints.",
+      );
+      return 1;
+    }
+    const { stateDir, entries, checksum } = yield* survey;
+    if (confirm !== checksum) {
+      yield* Console.error(
+        `error the state has changed since that survey (expected checksum ${checksum}, got ${confirm}). Re-run \`df-agent-state survey\` and review the new report before reaping.`,
+      );
+      return 1;
+    }
+
+    const keep = new Set(
+      keepRaw.split(",").map((s) => s.trim()).filter((s) => s.length > 0),
+    );
+    const targets = reapable(entries, keep);
+    if (targets.length === 0) {
+      yield* Console.log("  Nothing to reap.");
+      return 0;
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    // Archived claims live beside the live ones, under the same subsystem that
+    // owns them, and deliberately NOT as a hidden directory — a reap you cannot
+    // see is a reap you will not remember you can undo. `readStateFiles` only
+    // ever reads regular files whose name starts with "%", so a subdirectory
+    // here can never be mistaken for a claim.
+    const archiveDir = `${stateDir}/archive/${stamp}`;
+    const verb = destructive ? "delete" : "archive";
+
+    if (dryRun) {
+      yield* Console.log(`\n  Would ${verb} ${targets.length} file(s):`);
+      for (const t of targets) {
+        yield* Console.log(
+          `    ${t.pane}  (${t.status})  ${t.title ?? t.sessionId ?? ""}`,
+        );
+      }
+      if (!destructive) yield* Console.log(`  into ${archiveDir}`);
+      yield* Console.log("");
+      return 0;
+    }
+
+    if (!destructive) yield* ensureDir(archiveDir);
+    let done = 0;
+    for (const t of targets) {
+      const from = `${stateDir}/${t.pane}`;
+      const outcome = yield* Effect.try(() => {
+        if (destructive) Deno.removeSync(from);
+        else Deno.renameSync(from, `${archiveDir}/${t.pane}`);
+      }).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
+      if (outcome) {
+        done++;
+        yield* Console.log(
+          `  ${destructive ? "deleted" : "archived"} ${t.pane}`,
+        );
+      } else {
+        yield* Console.error(`error could not ${verb} ${from}`);
+      }
+    }
+    yield* Console.log(
+      destructive
+        ? `\n  Deleted ${done} file(s).\n`
+        : `\n  Archived ${done} file(s) into ${archiveDir}\n`,
+    );
+    return 0;
+  });
+
+// ===========================================================================
+// CLI
+// ===========================================================================
+
+const exitAfter = <E>(
+  effect: Effect.Effect<number, E, ToolEnv>,
+): Effect.Effect<never, never, ToolEnv> =>
+  effect.pipe(
+    Effect.orElseSucceed(() => 1),
+    Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+  ) as Effect.Effect<never, never, ToolEnv>;
+
+const jsonFlag = Flag.boolean("json").pipe(
+  Flag.withDescription("emit machine-readable JSON including the checksum"),
+  Flag.withDefault(false),
+);
+const confirmFlag = Flag.string("confirm").pipe(
+  Flag.withDescription("checksum from the survey being acted on"),
+  Flag.withDefault(""),
+);
+const keepFlag = Flag.string("keep").pipe(
+  Flag.withDescription("comma-separated pane ids to spare"),
+  Flag.withDefault(""),
+);
+const deleteFlag = Flag.boolean("delete").pipe(
+  Flag.withDescription("unlink instead of archiving"),
+  Flag.withDefault(false),
+);
+const dryRunFlag = Flag.boolean("dry-run").pipe(
+  Flag.withDescription("print what would happen and change nothing"),
+  Flag.withDefault(false),
+);
+
+const surveyCli = Command.make(
+  "survey",
+  { json: jsonFlag },
+  ({ json }) => exitAfter(runSurvey(json).pipe(Effect.as(0))),
+).pipe(Command.withDescription("Classify every state file (read-only)"));
+
+const reapCli = Command.make(
+  "reap",
+  {
+    confirm: confirmFlag,
+    keep: keepFlag,
+    delete: deleteFlag,
+    "dry-run": dryRunFlag,
+  },
+  (args) =>
+    exitAfter(
+      runReap(args.confirm, args.keep, args.delete, args["dry-run"]),
+    ),
+).pipe(
+  Command.withDescription("Reap non-live state files behind a checksum gate"),
+);
+
+const agentStateCommand = Command.make(
+  "df-agent-state",
+  {},
+  () =>
+    Console.error(USAGE).pipe(
+      Effect.flatMap(() => Effect.sync(() => Deno.exit(1))),
+    ),
+).pipe(
+  Command.withDescription(DESCRIPTION),
+  Command.withSubcommands([surveyCli, reapCli]),
+);
+
+if (import.meta.main) {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught rejection: ${event.reason}`);
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(`error uncaught: ${event.message}`);
+    Deno.exit(1);
+  });
+
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+  );
+  Command.run(agentStateCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// ===========================================================================
+// Tests — pure logic only. Must pass OFFLINE with ZERO permission flags:
+//   deno test home/private_dot_local/bin/executable_df-agent-state
+// ===========================================================================
+
+const LIVE_START = "Sat Aug 29 10:00:00 2026";
+const NOW = Date.UTC(2026, 7, 29, 12, 0, 0);
+
+const world = (over: Partial<World> = {}): World => ({
+  processStarts: new Map([[4242, LIVE_START]]),
+  livePanes: new Set(["%1"]),
+  sessions: new Map([
+    ["ses_root", { parentId: null, title: "A root session" }],
+    ["ses_kid", { parentId: "ses_root", title: "A subagent" }],
+  ]),
+  nowMs: NOW,
+  ...over,
+});
+
+const file = (pane: string, body: unknown, mtimeMs = NOW): RawFile => ({
+  pane,
+  text: typeof body === "string" ? body : JSON.stringify(body),
+  mtimeMs,
+});
+
+const claimed = (pane: string, over: Record<string, unknown> = {}) => ({
+  agent: "opencode",
+  session_id: "ses_root",
+  claim: { pid: 4242, start: LIVE_START, pane, ...over },
+});
+
+const expect = (cond: boolean, msg: string) => {
+  if (!cond) throw new Error(msg);
+};
+
+Deno.test("unit: a claim backed by a live process is live", () => {
+  const e = classify(file("%1", claimed("%1")), world());
+  expect(e.status === "live", `got ${e.status}`);
+  expect(e.claimPid === 4242, "pid not surfaced");
+});
+
+Deno.test("unit: a pre-contract file is legacy, never aged out", () => {
+  const old = classify(
+    file(
+      "%1",
+      { agent: "opencode", session_id: "ses_root" },
+      NOW - 90 * 86_400_000,
+    ),
+    world(),
+  );
+  expect(old.status === "legacy", `got ${old.status}`);
+  expect(old.ageDays > 89, "age should still be reported");
+});
+
+Deno.test("unit: a dead pid, a replaced pid, and a pane mismatch are all dead", () => {
+  expect(
+    classify(file("%9", claimed("%9", { pid: 9999 })), world()).status ===
+      "dead",
+    "gone pid",
+  );
+  expect(
+    classify(
+      file("%1", claimed("%1", { start: "Mon Jan 01 00:00:00 2001" })),
+      world(),
+    )
+      .status === "dead",
+    "recycled pid",
+  );
+  expect(
+    classify(file("%1", claimed("%42")), world()).status === "dead",
+    "pane mismatch",
+  );
+});
+
+Deno.test("unit: status precedence is malformed > legacy > dead > live", () => {
+  expect(
+    classify(file("%1", "{not json"), world()).status === "malformed",
+    "bad json",
+  );
+  expect(
+    classify(file("%1", { agent: "opencode" }), world()).status === "malformed",
+    "missing session id outranks legacy",
+  );
+  expect(
+    classify(
+      file("%1", { session_id: "ses_root", claim: { pid: 4242 } }),
+      world(),
+    )
+      .status === "legacy",
+    "partial claim outranks dead",
+  );
+});
+
+Deno.test("unit: subagent and orphan-pane are reported as flags, not statuses", () => {
+  const kid = classify(
+    file("%1", { ...claimed("%1"), session_id: "ses_kid" }),
+    world(),
+  );
+  expect(kid.isSubagent === true, "subagent not flagged");
+  expect(kid.status === "live", "flagging must not change status");
+
+  const orphan = classify(file("%7", claimed("%7", { pid: 9999 })), world());
+  expect(orphan.paneOrphaned === true, "orphan pane not flagged");
+});
+
+Deno.test("unit: orphanhood is unknown, not true, when tmux is not running", () => {
+  const e = classify(file("%1", claimed("%1")), world({ livePanes: null }));
+  expect(
+    e.paneOrphaned === null,
+    "must not claim orphaned with no tmux server",
+  );
+});
+
+Deno.test("unit: subagent status is unknown when the db is unreadable", () => {
+  const e = classify(file("%1", claimed("%1")), world({ sessions: null }));
+  expect(e.isSubagent === null, "must not guess subagent without the db");
+  expect(e.title === null, "no title without the db");
+});
+
+Deno.test("unit: checksum is stable across time but tracks verdicts", () => {
+  const a = classify(file("%1", claimed("%1"), NOW - 5_000), world());
+  const later = classify(
+    file("%1", claimed("%1"), NOW - 900_000),
+    world({ nowMs: NOW + 7 * 86_400_000 }),
+  );
+  expect(
+    reportChecksum([a]) === reportChecksum([later]),
+    "checksum must not drift with mtime or clock",
+  );
+
+  const died = classify(file("%1", claimed("%1", { pid: 9999 })), world());
+  expect(
+    reportChecksum([a]) !== reportChecksum([died]),
+    "checksum must change when a status changes",
+  );
+});
+
+Deno.test("unit: checksum ignores file ordering", () => {
+  const a = classify(file("%1", claimed("%1")), world());
+  const b = classify(file("%9", claimed("%9", { pid: 9999 })), world());
+  expect(
+    reportChecksum([a, b]) === reportChecksum([b, a]),
+    "order must not matter",
+  );
+});
+
+Deno.test("unit: live entries are never reapable, even if not kept", () => {
+  const live = classify(file("%1", claimed("%1")), world());
+  const dead = classify(file("%9", claimed("%9", { pid: 9999 })), world());
+  const picked = reapable([live, dead], new Set());
+  expect(
+    picked.length === 1 && picked[0].pane === "%9",
+    "live must be excluded",
+  );
+});
+
+Deno.test("unit: --keep spares a non-live entry", () => {
+  const dead = classify(file("%9", claimed("%9", { pid: 9999 })), world());
+  expect(reapable([dead], new Set(["%9"])).length === 0, "keep not honoured");
+});
+
+Deno.test("unit: ps output parses into pid -> normalised start", () => {
+  const table = parsePsTable(
+    "  4242   Sat Aug 29 10:00:00 2026\n 17   Fri Jul  3 09:00:00 2026\n\n",
+  );
+  expect(table.get(4242) === LIVE_START, `got ${table.get(4242)}`);
+  expect(
+    table.get(17) === "Fri Jul 3 09:00:00 2026",
+    `inner padding not collapsed: ${table.get(17)}`,
+  );
+});
+
+Deno.test("unit: session rows survive titles containing pipes and tabs", () => {
+  const rows = parseSessionRows("ses_a\x1f\x1fa|b\tc\nses_b\x1fses_a\x1fkid\n");
+  expect(rows.get("ses_a")?.parentId === null, "empty parent must be null");
+  expect(rows.get("ses_a")?.title === "a|b\tc", "title mangled");
+  expect(rows.get("ses_b")?.parentId === "ses_a", "parent lost");
+});
+
+Deno.test("unit: only well-formed session ids may reach SQL", () => {
+  expect(isQueryableSessionId("ses_abc123") === true, "valid id rejected");
+  expect(
+    isQueryableSessionId("ses_a' or 1=1--") === false,
+    "injection admitted",
+  );
+  expect(isQueryableSessionId("nope") === false, "foreign shape admitted");
+});
+
+Deno.test("unit: an empty survey renders without throwing", () => {
+  expect(formatTable([]).includes("no state files"), "empty table");
+  expect(summarise([]) === "", "empty summary");
+});
