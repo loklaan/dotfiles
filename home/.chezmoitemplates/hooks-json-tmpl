@@ -44,22 +44,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "bash {{ $lib }}/track.sh claude"
-        },
-        {
-          "type": "command",
           "command": "bash {{ $lib }}/sync-credentials.sh"
-        }
-      ]
-    }
-  ],
-  "SessionEnd": [
-    {
-      "matcher": "",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash {{ $lib }}/cleanup.sh"
         }
       ]
     }

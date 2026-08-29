@@ -3,9 +3,8 @@
 #|----------------------------------------------------------------------------|
 #| Resurrect Post-Restore Hook                                                 |
 #|                                                                            |
-#| Resumes saved code agent sessions in their original tmux panes after       |
-#| a tmux-resurrect restore. Supports Claude Code and OpenCode.               |
-#| Called via @resurrect-hook-post-restore-all.                               |
+#| Resumes saved OpenCode sessions in their original tmux panes after a        |
+#| tmux-resurrect restore. Called via @resurrect-hook-post-restore-all.        |
 #|                                                                            |
 #| Rather than racing zsh startup with tmux send-keys (which collides with    |
 #| the Zsh Line Editor, completion widgets, and partial .zshrc loading),     |
@@ -25,14 +24,11 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/state-dir.sh"
 # shellcheck source=resurrect-dir.sh
 source "$DIR/resurrect-dir.sh"
-# shellcheck source=agents/claude.sh
-source "$DIR/agents/claude.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
 
 RESURRECT_DIR="$(tcsa_resurrect_dir)" || exit 0
 INPUT="$RESURRECT_DIR/code-agent-sessions.json"
-LEGACY_INPUT="$RESURRECT_DIR/claude-sessions.json"
 
 # Drop files now live in the per-uid guarded dir, not world-shared ${TMPDIR:-/tmp}
 # (finding #1). exit 0 on guard refusal: never fall back to an unsafe location.
@@ -46,14 +42,19 @@ posix_quote() {
 
 # Sweep drop files older than STALE_MINUTES so a previously failed restore
 # doesn't leak commands into future shells.
-find "$DROP_DIR" -maxdepth 1 -name "${DROP_PREFIX}*.zsh" \
+#
+# The trailing * after .zsh is load-bearing: _tmux_resume_claim renames the drop
+# file to "<name>.zsh.claim.<pid>" to claim it atomically, and a shell killed
+# between that rename and its `rm` leaves an orphan that a "*.zsh" glob does not
+# match — so those accumulated forever.
+#
+# Age IS a sound criterion here, unlike for the per-pane claim files in
+# STATE_DIR: a drop file is written once by this hook and consumed within
+# seconds, so an old one is definitionally abandoned. A claim file, by contrast,
+# is only rewritten when its session CHANGES, so age says nothing about whether
+# its agent is alive (see the LIVENESS CONTRACT in state-dir.sh).
+find "$DROP_DIR" -maxdepth 1 -name "${DROP_PREFIX}*.zsh*" \
     -mmin "+${STALE_MINUTES}" -delete 2>/dev/null || true
-
-# Legacy migration: if only old sidecar exists, treat entries as claude
-if [[ ! -f "$INPUT" && -f "$LEGACY_INPUT" ]]; then
-    jq '[.[] | . + {agent: "claude", meta: {model: (.model // ""), flags: (.flags // "")}}]' \
-        "$LEGACY_INPUT" > "$INPUT" 2>/dev/null || true
-fi
 
 [[ -f "$INPUT" ]] || exit 0
 
@@ -61,7 +62,7 @@ count=$(jq length "$INPUT")
 for ((i = 0; i < count; i++)); do
     entry=$(jq -c ".[$i]" "$INPUT")
     coordinate=$(jq -r '.pane' <<< "$entry")
-    agent=$(jq -r '.agent // "claude"' <<< "$entry")
+    agent=$(jq -r '.agent // empty' <<< "$entry")
     cwd=$(jq -r '.cwd' <<< "$entry")
 
     # Resolve the saved coordinate (session:window.pane) to the current
@@ -78,7 +79,6 @@ for ((i = 0; i < count; i++)); do
 
     cmd=""
     case "$agent" in
-        claude)   cmd=$(restore_cmd_claude "$entry") ;;
         opencode) cmd=$(restore_cmd_opencode "$entry") ;;
         *) continue ;;
     esac

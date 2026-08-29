@@ -26,29 +26,23 @@ mkdir -p "$RESURRECT_DIR"
 OUTPUT="$RESURRECT_DIR/code-agent-sessions.json"
 
 # Source agent modules
-# shellcheck source=agents/claude.sh
-source "$DIR/agents/claude.sh"
 # shellcheck source=agents/opencode.sh
 source "$DIR/agents/opencode.sh"
 
 entries='[]'
 
-while IFS='|' read -r pane_id coordinate cwd pane_cmd; do
+while IFS='|' read -r pane_id coordinate cwd; do
     entry=""
 
-    # Try hook-tracked state first (works for claude, opencode)
+    # A state file alone is not evidence: it is a claim that must still be
+    # backed by a live process (LIVENESS CONTRACT in state-dir.sh). Without this
+    # gate a claim left behind by a quit agent is re-attributed to whatever
+    # unrelated pane later inherits that pane id, because tmux reassigns ids
+    # from %0 in every new server.
     state_file="$STATE_DIR/$pane_id"
-    if [[ -f "$state_file" ]]; then
+    if tcsa_claim_is_live "$state_file" "$pane_id"; then
         agent=$(jq -r '.agent // empty' "$state_file" 2>/dev/null) || agent=""
         case "$agent" in
-            claude)   entry=$(detect_claude "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
-            opencode) entry=$(detect_opencode "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
-        esac
-    fi
-
-    # Fallback: detect by running process name
-    if [[ -z "$entry" ]]; then
-        case "$pane_cmd" in
             opencode) entry=$(detect_opencode "$pane_id" "$cwd" 2>/dev/null) || entry="" ;;
         esac
     fi
@@ -57,6 +51,6 @@ while IFS='|' read -r pane_id coordinate cwd pane_cmd; do
         entry=$(jq --arg pane "$coordinate" '.pane = $pane' <<< "$entry")
         entries=$(jq --argjson e "$entry" '. + [$e]' <<< "$entries")
     fi
-done < <(tmux list-panes -a -F '#{pane_id}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_path}|#{pane_current_command}')
+done < <(tmux list-panes -a -F '#{pane_id}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_path}')
 
 jq '.' <<< "$entries" > "$OUTPUT"

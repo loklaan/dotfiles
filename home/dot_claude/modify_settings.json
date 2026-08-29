@@ -13,6 +13,8 @@
        scrubbed. */ -}}
 {{- $deadPathSubstrings := list
       "/.local/lib/tmux-resurrect-claude/"
+      "/tmux-resurrect-code-agents/track.sh"
+      "/tmux-resurrect-code-agents/cleanup.sh"
 -}}
 
 {{- $existingHooks := dict -}}

@@ -8,40 +8,27 @@
 #|----------------------------------------------------------------------------|
 
 # detect_opencode PANE_ID CWD
-#   Check hook-tracked state first, then fall back to SQLite query.
+#   Read the hook-tracked state written by the OpenCode plugin.
 #   Prints JSON entry on success, returns 1 if no session found.
+#
+#   Callers MUST have already accepted the claim via tcsa_claim_is_live. There is
+#   deliberately no secondary detection path: a session id recovered by querying
+#   OpenCode's database would prove the session EXISTS, never that this pane is
+#   still hosting it, and an unverifiable claim is exactly the defect the
+#   LIVENESS CONTRACT exists to prevent.
 detect_opencode() {
     local pane_id="$1" cwd="$2"
     local state_file="${STATE_DIR:-}/$pane_id"
 
-    # Primary: hook-tracked state from OpenCode plugin
-    if [[ -n "${STATE_DIR:-}" && -f "$state_file" ]]; then
-        local agent
-        agent=$(jq -r '.agent // empty' "$state_file" 2>/dev/null) || true
-        if [[ "$agent" == "opencode" ]]; then
-            local session_id
-            session_id=$(jq -r '.session_id // empty' "$state_file")
-            if [[ -n "$session_id" ]]; then
-                jq -n \
-                    --arg pane "$pane_id" \
-                    --arg agent "opencode" \
-                    --arg sid "$session_id" \
-                    --arg cwd "$cwd" \
-                    '{pane: $pane, agent: $agent, session_id: $sid, cwd: $cwd, meta: {}}'
-                return 0
-            fi
-        fi
-    fi
+    [[ -n "${STATE_DIR:-}" ]] || return 1
+    [[ -f "$state_file" ]] || return 1
 
-    # Fallback: query SQLite for most recent session in cwd
-    local db="$cwd/.opencode/opencode.db"
-    [[ -f "$db" ]] || return 1
-    command -v sqlite3 >/dev/null 2>&1 || return 1
+    local agent
+    agent=$(jq -r '.agent // empty' "$state_file" 2>/dev/null) || return 1
+    [[ "$agent" == "opencode" ]] || return 1
 
     local session_id
-    session_id=$(sqlite3 "$db" \
-        "SELECT id FROM sessions WHERE parent_session_id IS NULL OR parent_session_id = '' ORDER BY updated_at DESC LIMIT 1" \
-        2>/dev/null) || return 1
+    session_id=$(jq -r '.session_id // empty' "$state_file")
     [[ -n "$session_id" ]] || return 1
 
     jq -n \
