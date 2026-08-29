@@ -1,0 +1,11 @@
+{{/* Targets chezmoi installed and no longer manages. Deleting a file from the
+     source stops chezmoi managing it; it does NOT remove the copy already on
+     disk, so a removed script lingers in $HOME on every machine forever.
+
+     Claude Code session tracking was removed along with its hooks (see
+     $deadPathSubstrings in home/dot_claude/modify_settings.json, which prunes
+     the matching hook entries). Keep these lines for one release cycle after
+     every machine has applied, then delete them. */}}
+.local/lib/tmux-resurrect-code-agents/track.sh
+.local/lib/tmux-resurrect-code-agents/cleanup.sh
+.local/lib/tmux-resurrect-code-agents/agents/claude.sh
