@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=ps,tmux,sqlite3 --allow-read --allow-write --allow-env --allow-sys=uid
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=ps,tmux --allow-read --allow-write --allow-env --allow-sys=uid
 
 // df-agent-state — survey and (gated) reap per-pane code-agent session state.
 //
@@ -27,6 +27,7 @@
 import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 // NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only.
 // It transitively loads msgpackr, which reads process.env at module load and
 // throws NotCapable under zero-flag `deno test`. Same pattern as df-drift.
@@ -228,26 +229,6 @@ export const parsePsTable = (stdout: string): Map<number, string> => {
   return out;
 };
 
-export const parseSessionRows = (
-  stdout: string,
-): Map<string, { parentId: string | null; title: string | null }> => {
-  const out = new Map<
-    string,
-    { parentId: string | null; title: string | null }
-  >();
-  for (const line of stdout.split("\n")) {
-    if (line.trim().length === 0) continue;
-    // -separator $'\x1f' keeps titles containing pipes or tabs intact.
-    const [id, parentId, title] = line.split("\x1f");
-    if (!id) continue;
-    out.set(id, {
-      parentId: parentId && parentId.length > 0 ? parentId : null,
-      title: title ?? null,
-    });
-  }
-  return out;
-};
-
 export const formatTable = (entries: readonly Entry[]): string => {
   if (entries.length === 0) return "  (no state files)";
   const rows = entries.map((e) => [
@@ -301,6 +282,52 @@ const opencodeDbPath = Effect.gen(function* () {
   const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
   return `${base}/opencode/opencode.db`;
 });
+
+// Reads OpenCode's session table through node:sqlite rather than shelling out to
+// the sqlite3 CLI. The CLI is a mise shim that has no version pinned on most
+// Coder boxes, so it resolves on PATH — `command -v` succeeds — and then fails
+// at runtime, which silently cost every box its session titles. In-process also
+// means no --allow-run=sqlite3 in the shebang.
+//
+// The busy timeout is load-bearing, not defensive: the database is multi-GB WAL
+// and a live OpenCode is writing it, so a bare open intermittently loses the
+// lock and returns nothing. That failure is invisible in the output — titles
+// just quietly go missing, and titles are what make the reap review possible.
+//
+// Ids are bound as parameters, so their content can never be interpreted as
+// SQL; isQueryableSessionId remains only to avoid querying obvious junk.
+const readSessions = (
+  db: string,
+  ids: readonly string[],
+): Effect.Effect<World["sessions"], never, never> =>
+  Effect.try(() => {
+    const conn = new DatabaseSync(db, { readOnly: true });
+    try {
+      conn.exec("PRAGMA busy_timeout = 10000");
+      const marks = ids.map(() => "?").join(",");
+      const rows = conn.prepare(
+        `select id,
+                coalesce(nullif(parent_id,''), '') as parentId,
+                coalesce(title,'') as title
+           from session where id in (${marks})`,
+      ).all(...ids) as Array<
+        { id: string; parentId: string; title: string }
+      >;
+      const out = new Map<
+        string,
+        { parentId: string | null; title: string | null }
+      >();
+      for (const row of rows) {
+        out.set(row.id, {
+          parentId: row.parentId.length > 0 ? row.parentId : null,
+          title: row.title.length > 0 ? row.title : null,
+        });
+      }
+      return out as World["sessions"];
+    } finally {
+      conn.close();
+    }
+  }).pipe(Effect.orElseSucceed(() => null));
 
 const readStateFiles = (
   stateDir: string,
@@ -359,21 +386,8 @@ const observeWorld = (
     let sessions: World["sessions"] = null;
     const db = yield* opencodeDbPath;
     const queryable = sessionIds.filter(isQueryableSessionId);
-    if (
-      queryable.length > 0 && (yield* hasCommand("sqlite3")) &&
-      (yield* fileExists(db))
-    ) {
-      const inList = queryable.map((id) => `'${id}'`).join(",");
-      const query =
-        `select id, coalesce(parent_id,''), coalesce(title,'') from session where id in (${inList})`;
-      const rows = yield* run("sqlite3", [
-        "-readonly",
-        "-separator",
-        "\x1f",
-        db,
-        query,
-      ]);
-      if (rows.ok) sessions = parseSessionRows(rows.stdout);
+    if (queryable.length > 0 && (yield* fileExists(db))) {
+      sessions = yield* readSessions(db, queryable);
     }
 
     const nowMs = yield* Effect.sync(() => Date.now());
@@ -762,13 +776,6 @@ Deno.test("unit: ps output parses into pid -> normalised start", () => {
     table.get(17) === "Fri Jul 3 09:00:00 2026",
     `inner padding not collapsed: ${table.get(17)}`,
   );
-});
-
-Deno.test("unit: session rows survive titles containing pipes and tabs", () => {
-  const rows = parseSessionRows("ses_a\x1f\x1fa|b\tc\nses_b\x1fses_a\x1fkid\n");
-  expect(rows.get("ses_a")?.parentId === null, "empty parent must be null");
-  expect(rows.get("ses_a")?.title === "a|b\tc", "title mangled");
-  expect(rows.get("ses_b")?.parentId === "ses_a", "parent lost");
 });
 
 Deno.test("unit: only well-formed session ids may reach SQL", () => {
