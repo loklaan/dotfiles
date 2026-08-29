@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-run=chezmoi,git
 
 // df-lint-runtimes — enforce the runtime-tier manifest contract.
 //
@@ -294,21 +294,50 @@ const lintRuntimes = (
 // CLI command definition (top-level safe — no platform-node import)
 // ============================================================================
 
+// Space-separated deno runnable paths, for the lint task's file list. Emitting
+// it here keeps the manifest's only parser in one place — the task would
+// otherwise need a second YAML implementation in another language.
+const listDeno = (
+  repoRoot: string,
+): Effect.Effect<number, Error, FileSystem | Path> =>
+  readManifest(repoRoot).pipe(
+    Effect.flatMap((manifest) =>
+      Console.log(
+        manifest.runtimeTiers.runnables
+          .filter((entry) => entry.lang === "deno")
+          .map((entry) => entry.path)
+          .join(" "),
+      )
+    ),
+    Effect.as(0),
+  );
+
+const withRoot = (
+  override: string,
+  use: (repoRoot: string) => Effect.Effect<number, Error, FileSystem | Path>,
+) =>
+  resolveRepoRoot(override).pipe(
+    Effect.flatMap(use),
+    Effect.catchTag("SourceRootError", (e) =>
+      Console.error(`error ${e.message}`).pipe(Effect.as(1))),
+    Effect.flatMap((code) =>
+      Effect.sync(() => {
+        Deno.exit(code);
+      })
+    ),
+  );
+
+const listDenoCommand = Command.make(
+  "list-deno",
+  { repoRoot: repoRootFlag },
+  ({ repoRoot }) => withRoot(repoRoot, listDeno),
+);
+
 const lintCommand = Command.make(
   "df-lint-runtimes",
   { repoRoot: repoRootFlag },
-  ({ repoRoot }) =>
-    resolveRepoRoot(repoRoot).pipe(
-      Effect.flatMap(lintRuntimes),
-      Effect.catchTag("SourceRootError", (e) =>
-        Console.error(`error ${e.message}`).pipe(Effect.as(1))),
-      Effect.flatMap((code) =>
-        Effect.sync(() => {
-          Deno.exit(code);
-        })
-      ),
-    ),
-);
+  ({ repoRoot }) => withRoot(repoRoot, lintRuntimes),
+).pipe(Command.withSubcommands([listDenoCommand]));
 
 // ============================================================================
 // Entry point

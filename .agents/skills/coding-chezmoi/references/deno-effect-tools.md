@@ -445,6 +445,19 @@ of failing. Not adopted; noted as the option if the grants ever matter more than
 that risk. The spawner enumeration has no fix short of abandoning
 `ChildProcessSpawner` for raw `Deno.Command`, which §9 mandates against.
 
+> **TODO — drop `MSGPACKR_NATIVE_ACCELERATION_DISABLED` once
+> `effect@4.0.0-rc.113` ships.** `msgpackr` is already gone from
+> `packages/effect/package.json` on `Effect-TS/effect` `main`, but the newest
+> published RC (`4.0.0-rc.112`) still depends on it. When a release without it
+> lands, that variable is dead weight in every narrow allowlist:
+>
+> ```bash
+> grep -rln MSGPACKR_NATIVE_ACCELERATION_DISABLED home/   # every shebang to edit
+> ```
+>
+> Then run each narrowed tool and confirm no `NotCapable`. The companion
+> `--allow-ffi` grant is ALREADY gone — see §4e.
+
 Diagnosing: `NotCapable: Requires env access to "X"` names the variable — add
 `X`. An UNNAMED `NotCapable: Requires env access` means something enumerated;
 find and remove that import instead of widening the grant.
@@ -622,19 +635,28 @@ const program = Effect.scoped(
 
 ---
 
-## 4e. --allow-ffi
+## 4e. --allow-ffi — do NOT grant it
 
-Add `--allow-ffi` to every tool that dynamically imports
-`@effect/platform-node`. `msgpackr` (a transitive dependency) attempts to load a
-native `.node` addon via FFI. Without `--allow-ffi`, Deno prompts interactively
-at runtime — breaking non-TTY execution and CI.
+No tool here needs `--allow-ffi`, and none carries it except `transcribe`.
+
+`msgpackr` would load a native `.node` addon via FFI, but that addon is built by
+`msgpackr-extract`'s lifecycle script, and Deno only runs lifecycle scripts when
+a `node_modules` directory exists. This repo deliberately has none (§2: never
+add `nodeModulesDir`), so the addon is never built, the FFI path is never taken,
+and the grant is dead weight. Verified with every tool — including
+`notify mcp`'s stdio server and `df-drift check`'s subprocess fan-out — running
+identically with the flag removed.
+
+`transcribe` is the one exception: `@huggingface/transformers` pulls
+`onnxruntime-node`, which is genuinely native.
 
 ```bash
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-read --allow-env
 ```
 
-This applies to all SUPERVISE / FAN-OUT / HAND-OVER tools (anything that calls
-`NodeRuntime.runMain` or `NodeServices.layer` at runtime).
+If a tool ever DOES need it, that is a signal a native addon got built — check
+whether a `node_modules` dir appeared before granting FFI, because arbitrary
+native code is the most dangerous grant Deno has.
 
 ---
 
@@ -892,10 +914,10 @@ import {
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
-**Permissions**: all SUPERVISE / FAN-OUT / HAND-OVER tools dynamically import
-`@effect/platform-node`, so they require `--allow-env` (msgpackr baseline) and
-`--allow-ffi` (msgpackr native addon probe) in addition to any
-`--allow-run=<cmd>` grants. Add both to the shebang.
+**Permissions**: every spawn goes through `ChildProcessSpawner`, which
+enumerates the environment (see §4's env rule), so these tools take a blanket
+`--allow-env` alongside their `--allow-run=<cmd>` grants. They do NOT need
+`--allow-ffi` (§4e).
 
 `ChildProcess.make` takes a template (`` `git status` ``), `({opts})`-tag, or
 `(bin, args, opts)`. Spawner methods: `.string(cmd)` (stdout, fails on nonzero),

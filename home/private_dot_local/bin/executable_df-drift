@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid
 
 // drift — version-drift detection for the dotfiles fleet (Deno + Effect v4).
 //
@@ -114,12 +114,10 @@ const DEBOUNCE_SECONDS = 86400; // 24h
 
 // Notification delivery knobs (macOS `drift notify`). See runNotify for why
 // each flag is load-bearing.
-//   - GHOSTTY_BUNDLE_ID: borrowed --sender identity (real icon + trusted sender).
 //   - NOTIFY_GROUP_ID:   --group coalescing id (daily nag replaces, not stacks).
 //   - UPDATE_COMMAND:    --execute click action; the self-managing updater that
 //                        opens a terminal and runs the fleet update. Resolved by
 //                        name off PATH by terminal-notifier at click time.
-const GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty";
 const NOTIFY_GROUP_ID = "dotfiles-drift";
 const UPDATE_COMMAND = "df-drift-update";
 
@@ -585,9 +583,6 @@ class OpencodeTokenizerChecker
 const asRecord = (v: unknown): Record<string, unknown> =>
   typeof v === "object" && v !== null ? v as Record<string, unknown> : {};
 
-const asStringArray = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-
 // ===========================================================================
 // `drift check`
 // ===========================================================================
@@ -682,15 +677,15 @@ const runNotify = (force: boolean) =>
     const subtitle = `${count} tool${plural} behind — click to update`;
 
     // The banner is delivered by `notify` (terminal-notifier under the hood).
-    // Four flags turn it from an invisible no-op into a clickable, DND-piercing
-    // alert:
+    // Three flags turn it from an invisible no-op into a clickable, DND-piercing
+    // alert. There is deliberately no `--sender`: terminal-notifier rejects it
+    // ("-sender is no longer supported and will be ignored") because the
+    // UserNotifications framework no longer allows overriding the bundle
+    // identifier, so the banner carries terminal-notifier's own identity.
     //   --ignore-dnd  Deliver even during the default Focus/DND schedule, which
     //                 otherwise blanket-suppresses low-trust CLI senders. This
     //                 is THE reason the notification was never seen: it fired
     //                 daily but macOS silently dropped it under a scheduled DND.
-    //   --sender      Borrow Ghostty's identity so the banner shows a real app
-    //                 icon and a trusted sender (bundle id below), rather than
-    //                 terminal-notifier's default identity.
     //   --group       Coalesce: a new daily nag replaces the previous banner
     //                 instead of stacking one per day.
     //   --execute     Click action. Runs the self-managing updater, which opens
@@ -704,8 +699,6 @@ const runNotify = (force: boolean) =>
       "--subtitle",
       subtitle,
       "--ignore-dnd",
-      "--sender",
-      GHOSTTY_BUNDLE_ID,
       "--group",
       NOTIFY_GROUP_ID,
       "--execute",

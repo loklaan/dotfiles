@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com,127.0.0.1:8899 --allow-read=/home/coder/.pki/canva --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-net=ai-developer-tooling-llm-proxy-mtls.platform.canva-internal.com,127.0.0.1:8899 --allow-read=/home/coder/.pki/canva --allow-env
 
 // df-llm-shim — local OpenAI-compatible HTTP shim for Canva's mTLS LLM proxy.
 //
