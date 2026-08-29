@@ -12,9 +12,43 @@ description = "Print the manifest's deno runnables (space-separated)"
 hide = true
 run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes list-deno"
 
+# `deno fmt`/`deno lint` SILENTLY SKIP .tmpl files, so the templated deno tools
+# were never checked by the task below. This renders them through chezmoi into a
+# mirror of the deployed layout (so their ../lib/*.ts imports resolve) and
+# type-checks and lints them there.
+#
+# fmt is deliberately NOT checked here. Formatting depends on the rendered text,
+# and rendered text depends on machine data: df-opencode-cost's host list decides
+# whether `deno fmt` wants an assignment joined or split, so no single source form
+# is clean on every machine. check and lint are width-independent, so they gate
+# cleanly. Keep .tmpl formatting tidy by rendering and inspecting by hand.
+[tasks."lint:tmpl"]
+description = "Type-check and lint the templated deno tools via a chezmoi render"
+run = """
+set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin" "$tmp/lib"
+cp home/private_dot_local/lib/*.ts "$tmp/lib/"
+cp deno.json deno.lock "$tmp/"
+for src in $(mise run lint:list-deno); do
+  case "$src" in
+    *.tmpl) ;;
+    *) continue ;;
+  esac
+  name=$(basename "$src" .tmpl)
+  name=${name#executable_}
+  chezmoi cat "$HOME/.local/bin/$name" > "$tmp/bin/$name"
+done
+deno lint --rules-exclude=no-import-prefix --ext=ts "$tmp"/bin/*
+for f in "$tmp"/bin/*; do
+  deno check --config "$tmp/deno.json" "$f"
+done
+"""
+
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
-depends = ["lint:runtimes"]
+depends = ["lint:runtimes", "lint:tmpl"]
 run = [
   "deno fmt --ext=ts --check $(mise run lint:list-deno)",
   "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",

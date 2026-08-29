@@ -9,23 +9,8 @@
 import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.112";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 
-const fatal = (msg: string): never => {
-  console.error(`fatal ${msg}`);
-  Deno.exit(1);
-};
-
-const HELP = `Usage:
-  dotfiles-setup [OPTIONS]
-
-Description:
-  Checks dotfiles configuration status and provides instructions for
-  completing setup. Run this after initial dotfiles installation.
-
-Options:
-  --help:      Display this help message
-  --probe-bws: Probe BWS token validity and exit with status:
-                 0 = valid, 1 = missing/unconfigured, 2 = invalid
-               Used by chezmoi-preflight.sh as a cheap liveness check.`;
+const DESCRIPTION = `Checks dotfiles configuration status and prints instructions for
+  completing setup. Run it after an initial dotfiles installation.`;
 
 const bwsTokenPath: Effect.Effect<string> = Effect.gen(function* () {
   const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
@@ -718,7 +703,7 @@ const setupCommand = Command.make(
     main(probeBws).pipe(
       Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
     ),
-);
+).pipe(Command.withDescription(DESCRIPTION));
 
 if (import.meta.main) {
   // Last-resort backstop: catch anything that escapes the Effect runtime
