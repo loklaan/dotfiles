@@ -641,8 +641,8 @@ const buildMcp = async () => {
 // lets flag-free `deno test` pass. buildMcp() lazily imports `unstable/ai` for
 // the same reason.
 const runMcpServer = Effect.gen(function* () {
-  const { NodeStdio } = yield* Effect.promise(() =>
-    import("npm:@effect/platform-node@4.0.0-rc.112")
+  const NodeStdio = yield* Effect.promise(() =>
+    import("npm:@effect/platform-node@4.0.0-rc.112/NodeStdio")
   );
   const { ServerLayer } = yield* Effect.promise(() => buildMcp());
 
@@ -721,8 +721,11 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
 
   // The stdio RPC protocol interrupts the main fiber when the client closes
@@ -735,8 +738,6 @@ if (import.meta.main) {
     Runtime.defaultTeardown(exit, (code) => onExit(code === 130 ? 0 : code));
 
   Command.run(notifyCli, { version: "1.0.0" }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain({ teardown }),
   );

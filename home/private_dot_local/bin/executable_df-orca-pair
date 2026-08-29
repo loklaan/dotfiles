@@ -961,8 +961,15 @@ if (import.meta.main) {
     Deno.exit(0);
   }
 
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Submodule paths, never the bare package: the package index re-exports
+  // unstable/cluster/ShardingConfig, whose ConfigProvider.fromEnv call ENUMERATES
+  // process.env, and Deno cannot scope an enumeration — loading it would force a
+  // blanket --allow-env in place of the shebang's three named variables.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(command, { version: "0.1.0" }).pipe(
     Effect.provide(NodeServices.layer),

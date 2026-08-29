@@ -330,17 +330,27 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // @effect/platform-node must be dynamically imported to avoid --allow-env
-  // requirement during `deno test` (msgpackr reads process.env at load time).
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // @effect/platform-node is imported dynamically so `deno test` needs no
+  // permission flags (msgpackr reads process.env at load time). The imports are
+  // SUBMODULE paths, never the bare package: the package index re-exports
+  // unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
+  // module-evaluation time and so ENUMERATES process.env — an enumeration Deno
+  // cannot scope, forcing a blanket --allow-env. The submodules never reach that
+  // module, leaving only msgpackr's read of the single named
+  // MSGPACKR_NATIVE_ACCELERATION_DISABLED, which the shebang's allowlist covers.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
 
+  // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,
+  // NodeCrypto, NodePath, NodeStdio and NodeTerminal, so it is the only layer the
+  // FileSystem and Path requirements need.
   Command.run(lintCommand, {
     version: "0.0.0",
   }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );

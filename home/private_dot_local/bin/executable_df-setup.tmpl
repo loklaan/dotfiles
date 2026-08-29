@@ -738,14 +738,12 @@ if (import.meta.main) {
 
   // Dynamic import: @effect/platform-node loads msgpackr, which reads
   // process.env at module load and throws NotCapable without --allow-env.
-  const { NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
 
   Effect.runPromiseExit(
     Command.run(setupCommand, { version: "0.0.0" }).pipe(
-      Effect.provide(NodeFileSystem.layer),
-      Effect.provide(NodePath.layer),
       Effect.provide(NodeServices.layer),
     ),
   ).then((exit) => {

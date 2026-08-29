@@ -49,10 +49,15 @@
 // is the narrowest available grant that fixes it without rewriting the tool off
 // Effect's process API. Revisit if Deno ships scoped signal permissions.
 //
-// @effect/platform-node is imported DYNAMICALLY inside import.meta.main: its
-// static graph reads process.env at load (via msgpackr), which would force
-// --allow-env onto `deno test`. Deferring it keeps the in-file tests runnable
-// with ZERO permission flags — they only exercise the pure resolvers.
+// @effect/platform-node is imported DYNAMICALLY inside import.meta.main, and as
+// the NodeRuntime and NodeServices SUBMODULE paths rather than the bare package.
+// Its graph reads MSGPACKR_NATIVE_ACCELERATION_DISABLED at load (via msgpackr),
+// which would force --allow-env onto `deno test`, and the package index re-exports
+// unstable/cluster/ShardingConfig, whose ConfigProvider.fromEnv call ENUMERATES
+// process.env — an enumeration Deno cannot scope, so loading it would demand a
+// blanket --allow-env instead of the shebang's three named variables. Deferring
+// the import keeps the in-file tests runnable with ZERO permission flags — they
+// only exercise the pure resolvers.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1). Effect v4 import paths verified against effect@4.0.0-rc.112.
@@ -342,8 +347,13 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free (see header). NodeServices
   // supplies the ChildProcessSpawner and the Stdio argv source; NodeRuntime.runMain
   // installs the signal handlers SUPERVISE relies on for graceful child teardown.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Submodule paths, not the bare package index — see the header note on
+  // --allow-env.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

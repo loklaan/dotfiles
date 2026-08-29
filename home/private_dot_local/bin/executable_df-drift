@@ -826,8 +826,11 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free: @effect/platform-node
   // transitively loads msgpackr, which reads process.env at module load. Only
   // the live CLI path pays that cost; the offline suite never imports it.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(driftCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

@@ -34,11 +34,15 @@
 // ChildProcessSpawner used for the targeted apply. Effect v4 import paths.
 //
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
-// `import.meta.main` block, never at module top level. Its static import graph
-// pulls in ioredis -> msgpackr, which reads `process.env` at module-load time
-// and so demands `--allow-env`. Deferring the import keeps `deno test` runnable
-// with ZERO permission flags: the tests only touch the pure surfaces below and
-// never construct the Node layer. The runtime entrypoint loads it on demand.
+// `import.meta.main` block, never at module top level, and as the NodeRuntime and
+// NodeServices SUBMODULE paths rather than the bare package. Its graph pulls in
+// msgpackr, which reads `MSGPACKR_NATIVE_ACCELERATION_DISABLED` at module-load
+// time, and the package index re-exports unstable/cluster/ShardingConfig, whose
+// `ConfigProvider.fromEnv` call ENUMERATES `process.env` — an enumeration Deno
+// cannot scope, so loading it demands a blanket `--allow-env`. Deferring the
+// import keeps `deno test` runnable with ZERO permission flags: the tests only
+// touch the pure surfaces below and never construct the Node layer. The runtime
+// entrypoint loads it on demand.
 //
 // FILESYSTEM: file reads/writes go through Deno's native APIs (Deno.readTextFile
 // / Deno.mkdir / Deno.writeTextFile) wrapped in Effect, NOT through the platform
@@ -561,11 +565,15 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Dynamic import: @effect/platform-node's static graph reads process.env at
-  // load time (via ioredis -> msgpackr), which would force --allow-env onto
-  // `deno test`. Loading it only here keeps the test surface permission-free.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Dynamic import: @effect/platform-node's graph reads process.env at load time
+  // (via msgpackr), which would force --allow-env onto `deno test`. Loading it
+  // only here keeps the test surface permission-free. Submodule paths, not the
+  // bare package index — see the IMPORTANT note in the header.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(profileCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
