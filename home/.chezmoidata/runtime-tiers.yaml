@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (23) ---
+    # --- home/private_dot_local/bin (26) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -42,6 +42,9 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_df-drift
       tier: runtime
       lang: deno
+    - path: home/private_dot_local/bin/executable_df-drift-update
+      tier: runtime
+      lang: bash
     - path: home/private_dot_local/bin/executable_df-font-install
       tier: runtime
       lang: deno
@@ -55,6 +58,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-omo-profile
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-opencode-cost.tmpl
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-orca-pair
@@ -93,6 +99,9 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_opencode-tokenizer-check
       tier: runtime
       lang: deno
+    - path: home/private_dot_local/bin/executable_pushbullet-mcp
+      tier: runtime
+      lang: bash
     - path: home/private_dot_local/bin/executable_safe-rm
       tier: bootstrap
       lang: bash
@@ -100,7 +109,7 @@ runtimeTiers:
       tier: runtime
       lang: deno
 
-    # --- home/.chezmoiscripts (19) ---
+    # --- home/.chezmoiscripts (27) ---
     #
     # POLICY: The post-050 chezmoiscripts (056 and above) are INTENTIONALLY
     # tier:runtime / lang:bash — this is deliberate policy, NOT a conversion backlog.
@@ -163,6 +172,31 @@ runtimeTiers:
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-100-canva-misc.sh.tmpl
+      tier: runtime
+      lang: bash
+
+    - path: home/.chezmoiscripts/run_after_install-054-tmux-continuum-boot.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-064-code-server.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-065-opencode-auth.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-068-rtk-opencode-plugin.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_once_after_install-069-cleanup-legacy-omo-config.sh
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-066-nginx-sites.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-068-reload-hex-settings.sh.tmpl
       tier: runtime
       lang: bash
 

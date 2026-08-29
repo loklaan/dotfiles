@@ -1,14 +1,22 @@
 [tools]
 
+# The linter is the manifest's only parser: `list-deno` emits the deno file list
+# for the lint task below, so there is no second YAML implementation to keep in
+# step (and no PyYAML dependency).
 [tasks."lint:runtimes"]
 description = "Check every runnable is in the runtime-tier manifest with matching lang"
 run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes"
+
+[tasks."lint:list-deno"]
+description = "Print the manifest's deno runnables (space-separated)"
+hide = true
+run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes list-deno"
 
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
 depends = ["lint:runtimes"]
 run = [
-  """deno fmt --ext=ts --check $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno fmt --ext=ts --check $(mise run lint:list-deno)",
   "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",
-  """deno lint --rules-exclude=no-import-prefix --ext=ts $(python3 -c "import yaml,sys; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno lint --rules-exclude=no-import-prefix --ext=ts $(mise run lint:list-deno)",
 ]

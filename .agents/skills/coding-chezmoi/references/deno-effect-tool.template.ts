@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-read --allow-ffi
+#!/usr/bin/env -S deno run --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-read
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
@@ -19,9 +19,9 @@ import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 // keep --allow-env scopeable, because the bare package index re-exports
 // unstable/cluster/ShardingConfig, which enumerates process.env at load.
 //
-// TODO: drop MSGPACKR_NATIVE_ACCELERATION_DISABLED from the shebang, and re-test
-// whether --allow-ffi is still needed, once a release after effect@4.0.0-rc.112
-// ships without msgpackr (already removed on Effect-TS/effect main).
+// TODO: drop MSGPACKR_NATIVE_ACCELERATION_DISABLED from the shebang once a
+// release after effect@4.0.0-rc.112 ships without msgpackr (already removed on
+// Effect-TS/effect main).
 
 // --- Domain types --------------------------------------------------------
 class MyServiceError

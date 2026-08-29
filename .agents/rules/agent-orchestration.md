@@ -364,11 +364,12 @@ cw fleet --include-local update
 
 The `df-drift-notify` Pitchfork cron daemon runs `mise run drift:notify` daily at 09:30. Coder boxes have NO scheduled notifier — they're non-interactive, so notifications would be lost. To check drift on a Coder box: SSH in and run `df-setup` (which calls `drift:check` on demand) or `mise run drift:check`.
 
-**Notification delivery (the load-bearing bit).** The daily banner is dispatched by `df-drift`'s `notify` path through the `notify` tool (terminal-notifier under the hood) with four flags that turn it from an invisible no-op into a usable alert:
+**Notification delivery (the load-bearing bit).** The daily banner is dispatched by `df-drift`'s `notify` path through the `notify` tool (terminal-notifier under the hood) with three flags that turn it from an invisible no-op into a usable alert:
 - `--ignore-dnd` — deliver even during a Focus/Do Not Disturb *schedule*. This is the actual fix for "the notification never appeared": it fired daily but a scheduled DND blanket-suppressed the low-trust CLI sender, silently routing it to Notification Center with no banner. The launchd→cron switch alone does NOT fix visibility — this flag does.
-- `--sender com.mitchellh.ghostty` — borrow Ghostty's identity for a real icon + trusted sender.
 - `--group dotfiles-drift` — coalesce, so the daily nag replaces the prior banner instead of stacking.
 - `--execute df-drift-update` — click action. `df-drift-update` opens a Ghostty window running the fleet update, so the user converges without touching a terminal.
+
+There is deliberately **no `--sender`**. terminal-notifier rejects it — `-sender is no longer supported and will be ignored` — because the UserNotifications framework no longer permits overriding the bundle identifier. The banner therefore carries terminal-notifier's own identity, not Ghostty's. Restoring a custom icon and trusted sender needs a signed sender app, not a flag.
 
 Because `--execute` keeps terminal-notifier alive until clicked, dispatch is **detached** end-to-end: `notify` spawns terminal-notifier with `unref()`, and `df-drift` spawns `notify` with null stdio (NOT the shared `run()` helper, which captures stdout and would block on the pipe the detached grandchild inherits — a real hang, verified). Neither the daily cron job nor an interactive run blocks waiting for a click. Caveat inherited from launchd: a fire while the mac is asleep is missed, not queued.
 

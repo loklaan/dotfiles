@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi,coder,jq,ssh,orca,scutil --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi,coder,jq,ssh,orca,scutil --allow-read --allow-env
 
 // df-orca-pair — discover hosts running our headless Orca server (the
 // `df-orca-server` Pitchfork daemon) and register each as a "Remote Orca Server"

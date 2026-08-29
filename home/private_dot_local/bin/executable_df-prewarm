@@ -37,7 +37,6 @@ import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
 import {
   ensureDir,
-  fileExists,
   hasCommand,
   parseJson,
   readTextFile,

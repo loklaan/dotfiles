@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi --allow-read --allow-write --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi --allow-read --allow-write --allow-env
 
 // df-omo-profile (Deno + Effect v4). Switches the oh-my-openagent (omo) cost
 // profile without a full `chezmoi apply`. Profiles trade model quality for token
@@ -122,15 +122,6 @@ class UnknownProfileError extends Schema.TaggedError<UnknownProfileError>()(
   }
 }
 
-class TooManyArgumentsError extends Schema.TaggedError<TooManyArgumentsError>()(
-  "TooManyArgumentsError",
-  { args: Schema.Array(Schema.String) },
-) {
-  get displayMessage(): string {
-    return "Too many arguments";
-  }
-}
-
 class ChezmoiMissingError extends Schema.TaggedError<ChezmoiMissingError>()(
   "ChezmoiMissingError",
   {},
@@ -155,7 +146,6 @@ class ChezmoiApplyError
 // each tag. Exit code is always 1 for these, matching the original bash.
 type FatalCliError =
   | UnknownProfileError
-  | TooManyArgumentsError
   | ChezmoiMissingError
   | ChezmoiApplyError;
 
@@ -719,11 +709,6 @@ Deno.test("error messages preserve the CLI wording", () => {
       available: ["a", "b"],
     }).displayMessage === "Unknown profile: x (known: a b)",
     "UnknownProfileError wording drifted",
-  );
-  assert(
-    new TooManyArgumentsError({ args: ["a", "b"] }).displayMessage ===
-      "Too many arguments",
-    "TooManyArgumentsError wording drifted",
   );
   assert(
     new ChezmoiMissingError().displayMessage ===
