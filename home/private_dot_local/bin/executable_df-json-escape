@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env --allow-ffi
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-read --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-ffi
 
 // json-escape (Deno + Effect v4). Escapes a JSON value for embedding in a
 // quoted key=value field string: validates the input parses as JSON, then emits
@@ -21,14 +21,18 @@
 // goes through Deno.stdout.writeSync rather than Console.log, so the value is
 // emitted byte for byte with nothing appended.
 //
-// WHY --allow-env AND --allow-ffi: argument parsing is the effect/unstable/cli
-// Command/Argument surface, whose runtime needs @effect/platform-node's
-// NodeServices. platform-node transitively loads `msgpackr`, which enumerates
-// process.env at module-evaluation time, so no env allowlist satisfies it;
-// --allow-ffi covers msgpackr's native-addon probe so Deno never stops to
-// prompt. The import stays dynamic and inside import.meta.main, and stdin/stdout
-// go through Deno's own primitives wrapped in Effect, so the in-file tests
-// remain hermetic and run with zero permission flags.
+// WHY --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED AND --allow-ffi: argument
+// parsing is the effect/unstable/cli Command/Argument surface, whose runtime needs
+// @effect/platform-node's NodeServices. NodeRuntime and NodeServices are imported
+// as SUBMODULE paths, never as the bare package: the package index re-exports
+// unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
+// module-evaluation time and so ENUMERATES process.env. Deno cannot scope an
+// enumeration, so any code path that loads it demands a blanket --allow-env. The
+// submodules never reach that module, leaving only msgpackr's read of the single
+// named variable above. --allow-ffi covers msgpackr's native-addon probe so Deno
+// never stops to prompt. The import stays dynamic and inside import.meta.main, and
+// stdin/stdout go through Deno's own primitives wrapped in Effect, so the in-file
+// tests remain hermetic and run with zero permission flags.
 //
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
@@ -238,8 +242,13 @@ if (import.meta.main) {
   });
 
   // Dynamic so `deno test` never loads msgpackr's env-reading module graph.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Submodule paths, not the bare package index — see the --allow-env note in the
+  // header.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

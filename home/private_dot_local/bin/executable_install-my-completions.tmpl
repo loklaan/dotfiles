@@ -542,8 +542,11 @@ if (import.meta.main) {
   // supplies FileSystem / Path / ChildProcessSpawner (the CLI Environment too);
   // NodeRuntime.runMain installs the signal handlers the parallel child-process
   // fan-out relies on for graceful teardown.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   const loggerLayer = await makeLoggerLayer();
   command.pipe(

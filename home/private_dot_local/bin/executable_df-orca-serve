@@ -719,8 +719,9 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const [{ NodeRuntime, NodeServices }] = await Promise.all([
-    import("npm:@effect/platform-node@4.0.0-rc.112"),
+  const [NodeRuntime, NodeServices] = await Promise.all([
+    import("npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"),
+    import("npm:@effect/platform-node@4.0.0-rc.112/NodeServices"),
   ]);
   let interruptedStatus: ProcessStatus | null = null;
   const main = Effect.gen(function* () {

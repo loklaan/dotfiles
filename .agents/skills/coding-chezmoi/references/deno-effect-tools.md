@@ -374,27 +374,91 @@ invocation** — the common case — and `deno check` will NOT catch it, since t
 types are identical either way. Only running the tool reveals it, so run every
 CLI with no arguments after an Effect bump.
 
-**The permission cost of `Command.run`.** `Command.run` requires the CLI
-`Environment` — `Stdio`, `Terminal` and `ChildProcessSpawner` — and the ONLY
-production source of those is `NodeServices.layer` from `@effect/platform-node`,
-which pulls `msgpackr`. So every tool using the CLI needs blanket `--allow-env`
-plus `--allow-ffi`, even a pure string transformer. `effect` core ships only
-`Stdio.layerTest` (test-only) and no `ChildProcessSpawner` layer, so there is no
-narrower production path. An `--allow-env=<VAR>` allowlist does NOT work:
-`msgpackr` enumerates `process.env`, so Deno reports `NotCapable` naming no
-variable. This is the one place §1's "minimal grants" rule yields — take the
-grants, and keep `--allow-read`/`--allow-net`/`--allow-run` as tight as ever.
+**Import platform-node SUBMODULES, never the bare package.** This is what keeps
+`--allow-env` scopeable:
 
-**Exemption — transparent passthrough wrappers.** `df-orca-serve` does
-NOTdeclare its arguments, and must not be "fixed" to. Its whole job is to
-forward whatever it is given verbatim to `orca serve`, inspecting the args only
-for `--help` (which it forwards, so the user sees orca's own serve help).
-Declaring `Flag`s here would mean enumerating another program's entire flag
-surface and re-breaking every time orca adds one, and a strict parse would
-reject the `--pairing-address <addr> --json` that the `df-orca-server` Pitchfork
-daemon passes. A wrapper whose surface IS another binary's surface is the one
-shape this section does not fit. Any NEW tool claiming this exemption needs the
-same property: it consumes nothing and forwards everything.
+```typescript
+// WRONG — loads the package index, which re-exports unstable/cluster/ShardingConfig.
+// That calls ConfigProvider.fromEnv at module load, which ENUMERATES process.env
+// (Object.ownKeys -> Deno.env.toObject). Deno cannot scope an enumeration, so the
+// tool is forced onto a blanket --allow-env.
+const { NodeRuntime, NodeServices } = await import(
+  "npm:@effect/platform-node@4.0.0-rc.112"
+);
+
+// RIGHT — the cluster module is never loaded.
+const NodeRuntime = await import(
+  "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+);
+const NodeServices = await import(
+  "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+);
+```
+
+Call sites are unchanged: a namespace import exposes the same
+`NodeRuntime.runMain` and `NodeServices.layer`. `NodeServices.layer` already
+merges `NodeChildProcessSpawner`, `NodeFileSystem`, `NodeCrypto`, `NodePath`,
+`NodeStdio` and `NodeTerminal`, so providing it alone is enough — do NOT also
+provide `NodeFileSystem.layer` / `NodePath.layer`.
+
+**`--allow-env` is blanket for most tools, and that is not laziness.** THREE
+separate things enumerate `process.env`, and Deno cannot scope an enumeration.
+The submodule rule above only removes the first:
+
+1. **The platform-node package index** — fixed by the submodule imports above.
+2. **Any `Config.*` read.** `ConfigProvider` is a `Context.Reference` whose
+   default is `fromEnv()`, and `fromEnv()` snapshots the whole environment
+   (`{ ...process.env }` → `Object.ownKeys` → `Deno.env.toObject()`). Naming the
+   key in `--allow-env` does NOT help: a tool with
+   `--allow-env=PUSHBULLET_ACCESS_TOKEN` still dies on
+   `Config.redacted("PUSHBULLET_ACCESS_TOKEN")`.
+3. **Every `ChildProcessSpawner` spawn.** Deno's node `child_process.spawn` shim
+   builds the child env with `Deno.env.toObject()` in `normalizeSpawnArguments`.
+   Passing `env` explicitly does not avoid it — `resolveEnvironment` spreads
+   `process.env` one line earlier. Raw `Deno.Command` does NOT enumerate.
+
+**The rule:** narrow `--allow-env` ONLY when a tool reads no Effect `Config`,
+never spawns through `ChildProcessSpawner`, and never calls
+`Deno.env.toObject()` itself. Everything else takes a blanket `--allow-env` — it
+is a description of what the tool genuinely does, not a shortcut.
+
+Today the narrow set is exactly `df-coder-url`, `df-json-escape` (its only
+`ChildProcessSpawner` use is a dying test layer) and `df-opencode-cost` (raw
+`Deno.Command`). Both remaining `Deno.env.toObject()` callers — `df-setup` and
+`df-orca-serve` — are blanket by their own code.
+
+Check a tool against the rule before narrowing:
+
+```bash
+grep -nE 'Config\.(string|redacted|integer|option)\(|ChildProcessSpawner|Deno\.env\.toObject' <file>
+```
+
+An empty result means it can be narrow. A hit on ANY of the three means blanket.
+Beware the latent case: `--help` often returns before the first `Config` read or
+spawn, so a narrowed tool can look fine and fail on its real path — exercise the
+work path, not just `--help`.
+
+Scoping the `Config` reads IS possible via `ConfigProvider.fromEnvRecord` (built
+from named `Deno.env.get` calls) layered at the entry point, but it silently
+hides any key not in the record, so a future `Config` read returns empty instead
+of failing. Not adopted; noted as the option if the grants ever matter more than
+that risk. The spawner enumeration has no fix short of abandoning
+`ChildProcessSpawner` for raw `Deno.Command`, which §9 mandates against.
+
+Diagnosing: `NotCapable: Requires env access to "X"` names the variable — add
+`X`. An UNNAMED `NotCapable: Requires env access` means something enumerated;
+find and remove that import instead of widening the grant.
+
+**Exemption — transparent passthrough wrappers.** `df-orca-serve` does NOT
+declare its arguments, and must not be "fixed" to. Its whole job is to forward
+whatever it is given verbatim to `orca serve`, inspecting the args only for
+`--help` (which it forwards, so the user sees orca's own serve help). Declaring
+`Flag`s here would mean enumerating another program's entire flag surface and
+re-breaking every time orca adds one, and a strict parse would reject the
+`--pairing-address <addr> --json` that the `df-orca-server` Pitchfork daemon
+passes. A wrapper whose surface IS another binary's surface is the one shape
+this section does not fit. Any NEW tool claiming this exemption needs the same
+property: it consumes nothing and forwards everything.
 
 ---
 

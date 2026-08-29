@@ -18,13 +18,18 @@
 //
 // PERMISSIONS (minimal):
 //   --allow-run=fc-cache  spawn fc-cache (presence probe + the real run)
-//   --allow-env           HOME (font dir) + the env @effect/platform-node's
-//                         msgpackr reads at module load (NotCapable otherwise)
+//   --allow-env           HOME (font dir) + the single
+//                         MSGPACKR_NATIVE_ACCELERATION_DISABLED that
+//                         @effect/platform-node's msgpackr reads at module load
 //   --allow-read          stat the font directory
 // Argument parsing and `--help` are owned by effect/unstable/cli, which reads
 // argv through the Stdio service in NodeServices.layer, so they need the same
 // grants as the real run. The platform-node import is dynamic (import.meta.main
-// path only) to keep `deno test` hermetic and permission-free.
+// path only) to keep `deno test` hermetic and permission-free, and names the
+// NodeRuntime and NodeServices SUBMODULES rather than the bare package: the
+// package index re-exports unstable/cluster/ShardingConfig, whose
+// ConfigProvider.fromEnv call ENUMERATES process.env, and Deno cannot scope an
+// enumeration — loading it would force a blanket --allow-env.
 //
 // Session logging is intentionally NOT set up here (unlike the bash original's
 // setup_session_logging): the only caller, run_after_install-100-install-fonts,
@@ -323,8 +328,13 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free (see header). NodeServices
   // supplies the ChildProcessSpawner and the Stdio argv source; NodeRuntime.runMain
   // installs the signal handlers SUPERVISE relies on for graceful child teardown.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Submodule paths, not the bare package index — see the header note on
+  // --allow-env.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   const loggerLayer = await makeLoggerLayer();
   Command.run(command, { version: "0.0.0" }).pipe(

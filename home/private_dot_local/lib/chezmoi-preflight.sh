@@ -23,10 +23,64 @@
 # that wires it into chezmoi apply.
 
 chezmoi_preflight() {
+  _chezmoi_preflight_path_sanity
   _chezmoi_preflight_sync_mise
   _chezmoi_preflight_prune_unmanaged
   _chezmoi_preflight_tools
   _chezmoi_preflight_bws_token
+}
+
+# ABORT an apply whose PATH is too short to render templates correctly.
+#
+# Templates branch on `lookPath` (e.g. tmux's default-shell, every tool
+# allowlist in a Deno shebang). A truncated PATH therefore does not fail — it
+# silently renders DIFFERENT, wrong files and writes them to $HOME. That makes it
+# the one preflight condition worth aborting on rather than warning about.
+#
+# The trap that motivates this: invoking deno (or any tool) through a mise shim
+# re-injects mise's full tool PATH into the child, so a harness that sets
+# PATH=/usr/bin:/bin still resolves chezmoi and git and can run a REAL apply with
+# a degraded PATH.
+#
+# The check self-disables during bootstrap: it only fires once one of the
+# expected dirs exists under $HOME, and install.sh exports both ~/.local/bin and
+# the mise shims onto PATH before it applies. The signal is deliberately
+# HOME-scoped — a system-wide dir like /opt/homebrew/bin exists regardless of
+# which HOME is in play, so including it would misread a fresh HOME as
+# provisioned.
+#
+# Escape hatch: CHEZMOI_ALLOW_DEGRADED_PATH=1 for a deliberate minimal-PATH run.
+_chezmoi_preflight_path_sanity() {
+  [ "${CHEZMOI_ALLOW_DEGRADED_PATH:-}" = "1" ] && return 0
+
+  local expected=(
+    "${HOME}/.local/share/mise/shims"
+    "${HOME}/.local/bin"
+  )
+
+  local dir any_exists=0 any_on_path=0
+  for dir in "${expected[@]}"; do
+    [ -d "$dir" ] || continue
+    any_exists=1
+    case ":${PATH}:" in
+      *":${dir}:"*) any_on_path=1 ;;
+    esac
+  done
+
+  # Nothing provisioned yet: a fresh machine mid-bootstrap. Nothing to compare.
+  [ "$any_exists" = "1" ] || return 0
+  [ "$any_on_path" = "1" ] && return 0
+
+  printf '\033[31m✗ preflight: refusing to apply with a degraded PATH\033[0m\n' >&2
+  printf '\033[2;37m  PATH=%s\033[0m\n' "$PATH" >&2
+  printf '\033[2;37m  None of these provisioned dirs is on PATH:\033[0m\n' >&2
+  for dir in "${expected[@]}"; do
+    [ -d "$dir" ] && printf '\033[2;37m    %s\033[0m\n' "$dir" >&2
+  done
+  printf '\033[2;37m  Templates resolve binaries with lookPath, so this apply would\033[0m\n' >&2
+  printf '\033[2;37m  render and write WRONG files. Restore PATH, or set\033[0m\n' >&2
+  printf '\033[2;37m  CHEZMOI_ALLOW_DEGRADED_PATH=1 if you truly mean it.\033[0m\n' >&2
+  exit 1
 }
 
 # Remove files that were once managed but have since been deleted from the

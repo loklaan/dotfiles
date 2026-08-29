@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env --allow-read --allow-ffi
+#!/usr/bin/env -S deno run --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-read --allow-ffi
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
@@ -14,10 +14,14 @@ import {
 import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
 import { Path } from "npm:effect@4.0.0-rc.112/Path";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
-// @effect/platform-node is imported dynamically in import.meta.main only.
-// It transitively loads msgpackr, which reads process.env at module load and
-// throws NotCapable without --allow-env. Dynamic import keeps deno test
-// zero-flag offline.
+// @effect/platform-node is imported dynamically in import.meta.main only, and
+// via SUBMODULE paths. Dynamic keeps `deno test` zero-flag offline; submodules
+// keep --allow-env scopeable, because the bare package index re-exports
+// unstable/cluster/ShardingConfig, which enumerates process.env at load.
+//
+// TODO: drop MSGPACKR_NATIVE_ACCELERATION_DISABLED from the shebang, and re-test
+// whether --allow-ffi is still needed, once a release after effect@4.0.0-rc.112
+// ships without msgpackr (already removed on Effect-TS/effect main).
 
 // --- Domain types --------------------------------------------------------
 class MyServiceError
@@ -70,17 +74,18 @@ const myCommand = Command.make("my-tool", { verbose }, ({ verbose: _v }) =>
 
 // --- Entry point ---------------------------------------------------------
 if (import.meta.main) {
-  // Dynamic import keeps @effect/platform-node out of the module graph during
-  // `deno test`. NodeFileSystem + NodePath provide FileSystem and Path services.
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // NodeServices.layer already merges FileSystem, Path, Stdio, Terminal,
+  // Crypto and ChildProcessSpawner, so it is the only layer to provide.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
 
   Command.run(myCommand, {
     version: "0.0.0",
   }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );

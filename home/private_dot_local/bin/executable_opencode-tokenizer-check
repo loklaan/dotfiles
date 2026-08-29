@@ -17,10 +17,13 @@ type Deps = FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
 // Subcommand bodies return a process exit code; the CLI turns it into an exit.
 const exitWith = (code: number): Effect.Effect<never> =>
   Effect.sync(() => Deno.exit(code)) as Effect.Effect<never>;
-// @effect/platform-node is imported dynamically in import.meta.main only.
-// It transitively loads msgpackr, which reads process.env at module load and
-// throws NotCapable without --allow-env. Dynamic import keeps deno test
-// zero-flag offline.
+// @effect/platform-node is imported dynamically in import.meta.main only, as
+// SUBMODULE paths rather than the bare package. It transitively loads msgpackr,
+// which reads MSGPACKR_NATIVE_ACCELERATION_DISABLED at module load, and the
+// package index re-exports unstable/cluster/ShardingConfig, whose
+// ConfigProvider.fromEnv call ENUMERATES process.env — an enumeration Deno cannot
+// scope, forcing a blanket --allow-env. Submodules avoid that module, and the
+// dynamic import keeps deno test zero-flag offline.
 
 // ============================================================================
 // Constants locked to the reviewed local patch and upstream archive.
@@ -679,12 +682,15 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
   );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+  );
+  // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,
+  // NodeCrypto, NodePath, NodeStdio and NodeTerminal.
   Command.run(tokenizerCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );

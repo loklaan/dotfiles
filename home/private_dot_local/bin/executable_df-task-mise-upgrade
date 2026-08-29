@@ -11,16 +11,19 @@
 // exit code to mirror it. Run under NodeRuntime.runMain so a Ctrl-C gracefully
 // tears the child down (SIGTERM -> SIGKILL).
 //
-// PERMISSIONS: --allow-run=mise (spawn mise) + --allow-env. The --allow-env is
-// load-bearing: the SUPERVISE ChildProcessSpawner is supplied by
-// @effect/platform-node's NodeServices.layer, whose dependency chain pulls in
-// msgpackr, which reads process.env at module-load time. Without --allow-env the
-// real upgrade path dies with NotCapable (verified empirically). This matches
-// the sibling df-task-chezmoi-update, which grants --allow-env for the same
-// reason. Argument parsing and `--help` are owned by effect/unstable/cli, which
-// reads argv through the Stdio service in NodeServices.layer, so they need the
-// same grants as the real upgrade path. The platform-node import is dynamic
-// (import.meta.main path only) to keep `deno test` hermetic and permission-free.
+// PERMISSIONS: --allow-run=mise (spawn mise) plus a one-name
+// --allow-env. That grant is load-bearing:
+// the SUPERVISE ChildProcessSpawner comes from @effect/platform-node's
+// NodeServices.layer, whose dependency chain pulls in msgpackr, which reads that
+// single named variable at module-load time. NodeRuntime and NodeServices are
+// imported as SUBMODULE paths, never as the bare package, because the package
+// index re-exports unstable/cluster/ShardingConfig, which calls
+// ConfigProvider.fromEnv at module-evaluation time and so ENUMERATES process.env —
+// an enumeration Deno cannot scope, forcing a blanket --allow-env. Argument
+// parsing and `--help` are owned by effect/unstable/cli, which reads argv through
+// the Stdio service in NodeServices.layer, so they need the same grants as the
+// real upgrade path. The platform-node import is dynamic (import.meta.main path
+// only) to keep `deno test` hermetic and permission-free.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1); progress is reported via Effect.logInfo from inside the gen block.
@@ -162,8 +165,13 @@ if (import.meta.main) {
   // Dynamic import keeps `deno test` permission-free (see header). NodeServices
   // supplies the ChildProcessSpawner and the Stdio argv source; NodeRuntime.runMain
   // installs the signal handlers SUPERVISE relies on for graceful child teardown.
-  const { NodeRuntime, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112"
+  // Submodule paths, not the bare package index — see the header note on
+  // --allow-env.
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
