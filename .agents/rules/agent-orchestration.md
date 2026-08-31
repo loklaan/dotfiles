@@ -148,6 +148,21 @@ If new patterns ever require a static inventory, prefer:
 2. Bitwarden Secrets storing JSON, parsed via `fromJson` in templates
 3. Keep dynamic discovery wherever possible
 
+## OpenCode 1 and OpenCode 2
+
+Both `opencode` (V1) and `opencode2` (V2 beta) are installed. V2 reads V1's
+config locations by default, so its isolation is deliberate and easy to break:
+
+- NEVER export `OPENCODE_CONFIG_DIR` or `OPENCODE_DB` from the shell
+  environment. V1 reads them too, so exporting redirects `opencode` as well.
+  They are set per-invocation by the `~/.local/bin/opencode2` wrapper.
+- NEVER isolate V2 with `XDG_*` overrides. opencode's child processes inherit
+  them, which breaks mise, gh, git and chezmoi inside the agent's bash tool.
+- Every `opencode2` invocation must go through the wrapper. V2's background
+  service inherits the env of whichever client started it and is then reused.
+
+See [OpenCode 1 / OpenCode 2 Coexistence](../resources/opencode-v1-v2-coexistence.md).
+
 ## Plugin Versioning
 
 opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux), managed by an embedded bun runtime compiled into the opencode binary. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. Without a bridge, plugins freeze at first-install version indefinitely.
