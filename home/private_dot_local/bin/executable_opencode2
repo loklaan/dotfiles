@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Sourced for `fatal`/`warning` only. setup_session_logging is deliberately NOT
+# called: this is a transparent wrapper around an interactive TUI and must not
+# write a session log on every launch.
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   opencode2 [<opencode2 args>...]
+#/
+#/ Description:
+#/   Transparent wrapper around the OpenCode 2 beta CLI that keeps its state
+#/   fully separate from OpenCode 1. All arguments are forwarded untouched.
+#/
+#/   Separation is required because OpenCode 2 deliberately reads OpenCode 1's
+#/   config locations (https://opencode.ai/v2/docs/migrate-v1). Without the env
+#/   vars below, `opencode2` would load ~/.config/opencode/opencode.json — a V1
+#/   config carrying V1-plugin-API plugins that V2 cannot load — and would share
+#/   OpenCode 1's session database.
+#/
+#/   In packages/core/src/global.ts the app directory name is hard-coded
+#/   ("opencode") and data/state/cache derive from the XDG base dirs, so only
+#/   these two paths have dedicated overrides:
+#/
+#/     OPENCODE_CONFIG_DIR  whole global config dir (config, global agents,
+#/                          commands, skills, plugins, and service.json)
+#/     OPENCODE_DB          the SQLite database holding projects and sessions
+#/
+#/   The remaining XDG-derived paths (auth.json, logs, snapshots, package cache)
+#/   stay SHARED with OpenCode 1 on purpose. Isolating them would mean
+#/   overriding XDG_CONFIG_HOME/XDG_DATA_HOME, which every child process
+#/   OpenCode spawns inherits — that breaks mise, gh, git and chezmoi inside the
+#/   agent's own shell, which is a far worse outcome than a shared log file.
+#/
+#/   Note: OPENCODE_CONFIG_DIR and OPENCODE_DB are read by OpenCode 1 as well,
+#/   so they must be set per-invocation here and never exported globally from
+#/   the shell environment.
+#/
+#/ Environment Variables:
+#/   OPENCODE_CONFIG_DIR: Set by this wrapper; any inherited value is replaced.
+#/   OPENCODE_DB:         Set by this wrapper; any inherited value is replaced.
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+readonly BINARY="${HOME}/.local/share/opencode2/bin/opencode2"
+
+main() {
+  if [ ! -x "$BINARY" ]; then
+    usage
+    echo "" >&2
+    fatal "OpenCode 2 is not installed at ${BINARY}. Run \`chezmoi apply\` to install it."
+  fi
+
+  export OPENCODE_CONFIG_DIR="${HOME}/.config/opencode2"
+  export OPENCODE_DB="${HOME}/.local/share/opencode/opencode2.db"
+
+  # OpenCode 2 discovers-or-starts a shared background service that outlives the
+  # client and inherits the env of whichever client started it. Because that
+  # service is reused by later invocations, the isolation above only holds while
+  # every client goes through this wrapper.
+  exec "$BINARY" "$@"
+}
+
+main "$@"

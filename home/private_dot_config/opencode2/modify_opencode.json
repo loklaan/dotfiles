@@ -1,0 +1,159 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+
+{{- /* OpenCode 2 (`opencode2`) global config — DELIBERATELY SEPARATE from
+     OpenCode 1's ~/.config/opencode/opencode.json.
+
+     V2 reads V1's config locations by default
+     (https://opencode.ai/v2/docs/migrate-v1). The ~/.local/bin/opencode2
+     wrapper sets OPENCODE_CONFIG_DIR=~/.config/opencode2 so this file is what
+     V2 loads instead. Verified with `opencode2 debug config`.
+
+     This file uses NATIVE V2 field names, which differ from V1: `plugins` not
+     `plugin`, `agents` not `agent`, `providers` not `provider`, `snapshots` not
+     `snapshot`, `mcp.servers` not `mcp`, `settings` not `options`, and an
+     ordered `permissions` array instead of a per-tool `permission` map.
+
+     Kept minimal on purpose. Notably absent:
+
+     - plugins. V2 uses a new plugin API and does not load V1 plugins. Both of
+       the V1 plugins (oh-my-openagent, and the work LLM-proxy plugin, which
+       peer-depends on @opencode-ai/plugin ^1.1.14 with no V2 entry point) are
+       V1-only, so there is nothing to port yet.
+     - instructions. V2 accepts the field but does not load it; it natively
+       discovers ~/.agents and ~/.claude instead, which `opencode2 debug config`
+       reports as config sources. The shared rules/skills tree therefore works
+       with no configuration at all.
+*/ -}}
+
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
+{{- $config := $base -}}
+
+{{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
+
+{{- /* Chezmoi owns the installed version (run_after_install-071 tracks the
+     `beta` dist-tag). V2 auto-installs compatible non-major updates by default,
+     which would fight that, so keep it off. */ -}}
+{{- $config = $config | setValueAtPath "autoupdate" false -}}
+
+{{- /* Snapshots: mirror the V1 behaviour of disabling them on Coder boxes when
+     the profile opts out. V1's field is `snapshot`; V2's is `snapshots`. */ -}}
+{{- if and (ne "" (env "CODER")) (not (dig "snapshot" true $p)) -}}
+{{-   $config = $config | setValueAtPath "snapshots" false -}}
+{{- end -}}
+
+{{- /* MCP servers, translated from the same shared template V1 consumes so the
+     endpoint stays single-sourced. V2 nests servers under `mcp.servers` and
+     replaces `enabled` with the inverse `disabled`. */ -}}
+{{- $v1Mcp := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
+{{- $servers := dict -}}
+{{- range $name, $entry := $v1Mcp -}}
+{{-   $server := dict "type" (dig "type" "remote" $entry) -}}
+{{-   if hasKey $entry "url" -}}
+{{-     $server = set $server "url" (get $entry "url") -}}
+{{-   end -}}
+{{-   if hasKey $entry "command" -}}
+{{-     $server = set $server "command" (get $entry "command") -}}
+{{-   end -}}
+{{-   $server = set $server "disabled" (not (dig "enabled" true $entry)) -}}
+{{-   $servers = set $servers $name $server -}}
+{{- end -}}
+{{- if gt (len $servers) 0 -}}
+{{-   $config = $config | setValueAtPath "mcp.servers" $servers -}}
+{{- end -}}
+
+{{- /* Providers. Only the opencode-family providers (`opencode` Zen and
+     `opencode-go`) are portable to V2 today: they are built into V2's registry
+     and authenticate with a single SKU-agnostic account key from BWS, so no
+     plugin is involved.
+
+     The work profile's proxied providers (amazon-bedrock and friends) are
+     NOT portable. Their endpoint and credentials come entirely from the work
+     LLM-proxy plugin — a rotating bearer token on VPN, SigV4 over IMDS on
+     Coder — and that plugin is V1-API-only. There is no config-only equivalent,
+     and a static apiKey would expire. So on a work-profile machine opencode2
+     starts with free-tier models until that plugin ships a V2 entry point;
+     `/connect` inside the TUI is the escape hatch.
+
+     Key is embedded literally rather than via {env:OPENCODE_API_KEY} for the
+     same reason as V1: that env var is only exported by zsh, so any
+     bash-launched or service-spawned V2 process would see it empty. */ -}}
+{{- $v1Providers := dig "provider_block" (dict) $p -}}
+{{- $opencodeFamily := list "opencode-go" "opencode" -}}
+{{- $portable := dict -}}
+{{- range $id, $entry := $v1Providers -}}
+{{-   if has $id $opencodeFamily -}}
+{{-     $provider := dict -}}
+{{-     if hasKey $entry "name" -}}
+{{-       $provider = set $provider "name" (get $entry "name") -}}
+{{-     end -}}
+{{-     $portable = set $portable $id $provider -}}
+{{-   end -}}
+{{- end -}}
+
+{{- if gt (len $portable) 0 -}}
+{{-   $bwsToken := "" -}}
+{{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-     $bwsToken = include .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{-   $apiKey := "" -}}
+{{-   $bwsIdOpencodeApiKey := dig "bwsIdOpencodeApiKey" "" . -}}
+{{-   if and (ne "" $bwsToken) (ne "" $bwsIdOpencodeApiKey) (stat $bwsGet) -}}
+{{-     $apiKey = output $bwsGet $bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   if ne "" $apiKey -}}
+{{-     $withKeys := dict -}}
+{{-     range $id, $provider := $portable -}}
+{{-       $withKeys = set $withKeys $id (set $provider "settings" (dict "apiKey" $apiKey)) -}}
+{{-     end -}}
+{{-     $portable = $withKeys -}}
+{{-   end -}}
+{{-   $config = $config | setValueAtPath "providers" $portable -}}
+{{- else -}}
+{{-   $config = unset $config "providers" -}}
+{{- end -}}
+
+{{- /* enabled_providers is LOAD-BEARING, not decoration. V2 treats it as a
+     deny-by-default allowlist (the V1 syntax is normalized into V2's internal
+     provider policy without warning), and it is the only lever that stops V2
+     activating providers it inherits from V1.
+
+     auth.json is SHARED with V1 — it lives in the XDG data dir, and V2 exposes
+     no env var to move it (verified against the beta binary: there is no
+     OPENCODE_AUTH_CONTENT). Isolating it would require overriding
+     XDG_DATA_HOME, which every child process inherits and which breaks mise
+     inside the agent's own shell.
+
+     So V2 starts life holding V1's provider credentials. For the proxied
+     providers those credentials are a placeholder key that only the V1 plugin
+     can swap for a real bearer token, so V2 presents e.g. a Bedrock model and
+     then fails every request with HTTP 403 — observed before this allowlist was
+     added. Restricting enabled_providers renders the inherited credentials
+     inert, which is what makes the separation real rather than nominal.
+
+     When nothing portable exists (work profile today), fall back to the
+     built-in `opencode` provider: its free tier needs no proxy and no key, so
+     V2 is evaluable instead of broken. */ -}}
+{{- $enabled := list -}}
+{{- range $id, $_ := $portable -}}
+{{-   $enabled = append $enabled $id -}}
+{{- end -}}
+{{- if eq 0 (len $enabled) -}}
+{{-   $enabled = list "opencode" -}}
+{{- end -}}
+{{- $enabled = $enabled | sortAlpha -}}
+{{- $config = $config | setValueAtPath "enabled_providers" $enabled -}}
+
+{{- /* Only carry the profile's default model when its provider is enabled here;
+     otherwise leave it unset so V2 picks a default from an enabled provider
+     rather than resurrecting V1's last-used proxied model from the shared
+     state dir (~/.local/state/opencode/model.json, also not isolatable). */ -}}
+{{- $model := dig "model" "" $p -}}
+{{- if and (ne "" $model) (has (index (splitList "/" $model) 0) $enabled) -}}
+{{-   $config = $config | setValueAtPath "model" $model -}}
+{{- else -}}
+{{-   $config = unset $config "model" -}}
+{{- end -}}
+
+{{ $config | toPrettyJson }}
