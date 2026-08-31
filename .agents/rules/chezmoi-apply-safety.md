@@ -18,6 +18,13 @@ the tools missing from its `--allow-run=` allowlist.
   tool `PATH` into the child, so `PATH=/usr/bin:/bin deno ...` still resolves
   `chezmoi`, `git` and `mise`. Use the install path
   (`~/.local/share/mise/installs/<tool>/<version>/bin/<tool>`) instead.
+- **NEVER try to sandbox `chezmoi init` with `HOME`.** It resolves its config
+  path independently, so `HOME=/tmp/x chezmoi init` still rewrites the REAL
+  `~/.config/chezmoi/chezmoi.toml` — seeding new prompts with test values and
+  repointing every `homeDir`-derived key (e.g. `bwsTokenPath`) at the sandbox,
+  which silently disables secret resolution. To verify prompt seeding, add the
+  `--promptString`/`--promptBool` pair and inspect the rendered value; do not
+  re-run `init`.
 - **Apply to explicit targets when repairing**: `chezmoi apply ~/.config/x`
   converges those paths and runs no scripts.
 
