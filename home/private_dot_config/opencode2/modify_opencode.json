@@ -132,9 +132,16 @@
      added. Restricting enabled_providers renders the inherited credentials
      inert, which is what makes the separation real rather than nominal.
 
-     When nothing portable exists (work profile today), fall back to the
-     built-in `opencode` provider: its free tier needs no proxy and no key, so
-     V2 is evaluable instead of broken. */ -}}
+     The allowlist is DERIVED from the profile and never invented. An empty list
+     is deny-all (verified: `enabled_providers: []` yields zero models), which is
+     the correct state for a work machine before the plugin exists — V2 is
+     installed and isolated but has no model until the plugin lands or the user
+     runs `/connect` deliberately.
+
+     Do NOT reintroduce a fallback to the built-in `opencode` provider here. The
+     work profile deliberately enables only the proxied providers, so defaulting
+     to OpenCode Zen would route work prompts to an external provider outside the
+     org's proxy — a governance problem, not a convenience. */ -}}
 {{- $enabled := list -}}
 {{- range $id, $_ := $portable -}}
 {{-   $enabled = append $enabled $id -}}
@@ -165,9 +172,6 @@
 {{-   end -}}
 {{- else -}}
 {{-   $config = unset $config "plugins" -}}
-{{- end -}}
-{{- if eq 0 (len $enabled) -}}
-{{-   $enabled = list "opencode" -}}
 {{- end -}}
 {{- $enabled = $enabled | sortAlpha -}}
 {{- $config = $config | setValueAtPath "enabled_providers" $enabled -}}
