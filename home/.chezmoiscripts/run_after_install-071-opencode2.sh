@@ -86,6 +86,35 @@ select_platform_binary() {
   fi
 }
 
+# Upgrading the binary does NOT replace OpenCode 2's shared background service:
+# it outlives every client, so clients keep talking to the old version
+# indefinitely (observed: service.json pinned 18707 while the binary was 18721).
+# Stopping it is the fix — the next client launch starts a fresh one.
+#
+# Bounded and best-effort because this runs inside `chezmoi apply`. The pkill
+# pattern is the full install path so a V1 `opencode` process can never match.
+stop_stale_service() {
+  local pattern="${PREFIX}/lib/node_modules/@opencode-ai/cli/bin/opencode2.exe"
+
+  pgrep -f "$pattern" >/dev/null 2>&1 || return 0
+
+  local binary="${PREFIX}/bin/opencode2"
+  if [ -x "$binary" ]; then
+    OPENCODE_CONFIG_DIR="${HOME}/.config/opencode2" \
+      timeout 30 "$binary" service stop >/dev/null 2>&1 || true
+    sleep 1
+  fi
+
+  # An unhealthy service (e.g. one whose database moved) cannot stop itself.
+  if pgrep -f "$pattern" >/dev/null 2>&1; then
+    pkill -f "$pattern" >/dev/null 2>&1 || true
+    sleep 1
+    pkill -9 -f "$pattern" >/dev/null 2>&1 || true
+  fi
+
+  log_detail "Stopped previous background service"
+}
+
 main() {
   parse_args "$@"
 
@@ -126,6 +155,7 @@ main() {
   fi
 
   select_platform_binary
+  stop_stale_service
 
   log_detail "Wrapper: ~/.local/bin/opencode2 (config: ~/.config/opencode2)"
 }
