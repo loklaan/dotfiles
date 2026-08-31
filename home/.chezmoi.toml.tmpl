@@ -5,6 +5,7 @@
 {{- $npmWorkRegistry := promptStringOnce . "npmWorkRegistry" "Work npm registry (or empty)" -}}
 {{- $openCodeWorkPlugin := promptStringOnce . "openCodeWorkPlugin" "OpenCode work plugin (or empty)" -}}
 {{- $openCodeWorkPluginLocalPath := promptStringOnce . "openCodeWorkPluginLocalPath" "OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)" -}}
+{{- $openCodeWorkPluginV2 := promptStringOnce . "openCodeWorkPluginV2" "OpenCode 2 work plugin entry — absolute bundle path or package spec (or empty to leave opencode2 without proxied providers)" -}}
 {{- $jetbrainsLicenseServer := promptStringOnce . "jetbrainsLicenseServer" "JetBrains license server (or empty)" -}}
 {{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
 {{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
@@ -32,6 +33,7 @@
   npmWorkRegistry = {{ $npmWorkRegistry | quote }}
   openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
   openCodeWorkPluginLocalPath = {{ $openCodeWorkPluginLocalPath | quote }}
+  openCodeWorkPluginV2 = {{ $openCodeWorkPluginV2 | quote }}
   jetbrainsLicenseServer = {{ $jetbrainsLicenseServer | quote }}
   workForkRemote = {{ $workForkRemote | quote }}
   openCodeCostHosts = {{ $openCodeCostHosts | quote }}

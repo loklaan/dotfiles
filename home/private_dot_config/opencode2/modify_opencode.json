@@ -139,6 +139,33 @@
 {{- range $id, $_ := $portable -}}
 {{-   $enabled = append $enabled $id -}}
 {{- end -}}
+
+{{- /* The V2 work plugin, when one exists. `openCodeWorkPluginV2` is passed
+     through verbatim so it accepts either form V2 can load: an ABSOLUTE bundle
+     path (which bypasses resolution entirely — `isAbsolute(target)` short
+     circuits to a file URL, the local-dev case) or a package spec (resolved by
+     probing `exports` subpaths `["server", ""]`, so a published package must
+     expose its V2 entry at `./server` — `./opencode2` is never probed).
+
+     Loading the plugin and admitting the proxied providers are deliberately ONE
+     lever. Widening the allowlist without the plugin resurrects the HTTP 403
+     (inherited placeholder credentials, nothing to swap them); loading the
+     plugin without widening leaves its injected models denied and invisible.
+     Coupling them makes both failure modes unreachable.
+
+     Empty by default, so this is inert until the plugin ships a V2 entry
+     point. */ -}}
+{{- $workPluginV2 := dig "openCodeWorkPluginV2" "" . | trim -}}
+{{- if ne "" $workPluginV2 -}}
+{{-   $config = $config | setValueAtPath "plugins" (list $workPluginV2) -}}
+{{-   range $id := (dig "enabled_providers" (list) $p) -}}
+{{-     if not (has $id $enabled) -}}
+{{-       $enabled = append $enabled $id -}}
+{{-     end -}}
+{{-   end -}}
+{{- else -}}
+{{-   $config = unset $config "plugins" -}}
+{{- end -}}
 {{- if eq 0 (len $enabled) -}}
 {{-   $enabled = list "opencode" -}}
 {{- end -}}

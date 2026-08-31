@@ -139,6 +139,7 @@ main() {
   config_npm_work_registry="$(chezmoi execute-template "{{ .npmWorkRegistry }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin="$(chezmoi execute-template "{{ .openCodeWorkPlugin }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin_local_path="$(chezmoi execute-template "{{ .openCodeWorkPluginLocalPath }}" 2>/dev/null || echo "")"
+  config_opencode_work_plugin_v2="$(chezmoi execute-template "{{ .openCodeWorkPluginV2 }}" 2>/dev/null || echo "")"
   config_jetbrains_license_server="$(chezmoi execute-template "{{ .jetbrainsLicenseServer }}" 2>/dev/null || echo "")"
   config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
   config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
@@ -189,6 +190,7 @@ main() {
     --promptString="Work npm registry (or empty)=${config_npm_work_registry}" \
     --promptString="OpenCode work plugin (or empty)=${config_opencode_work_plugin}" \
     --promptString="OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)=${config_opencode_work_plugin_local_path}" \
+    --promptString="OpenCode 2 work plugin entry — absolute bundle path or package spec (or empty to leave opencode2 without proxied providers)=${config_opencode_work_plugin_v2}" \
     --promptString="JetBrains license server (or empty)=${config_jetbrains_license_server}" \
     --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
     --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
