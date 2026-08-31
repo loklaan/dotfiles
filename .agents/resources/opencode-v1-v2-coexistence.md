@@ -143,9 +143,17 @@ token on VPN, SigV4 over IMDS on Coder — and that plugin peer-depends on
 `@opencode-ai/plugin@^1.1.14` with no V2 entry point. There is no config-only
 equivalent; a static `settings.apiKey` would expire.
 
-So on a work-profile machine `opencode2` starts with free-tier models until that
-plugin ships a V2 build. `/connect` in the TUI is the escape hatch. Do not
-attempt to fake this with a templated token.
+So on a work-profile machine `opencode2` renders `enabled_providers: []` — every
+provider denied, no model available — until that plugin ships a V2 build.
+`/connect` in the TUI is the escape hatch. Do not attempt to fake this with a
+templated token.
+
+The allowlist is derived from the profile and never invented. In particular, do
+NOT fall back to the built-in `opencode` (Zen) provider to make V2 "evaluable" on
+a work machine: the work profile deliberately enables only the proxied providers,
+so that fallback silently routes work prompts to an external provider outside the
+org's proxy. An empty allowlist is deny-all (verified — zero models), which is the
+honest state.
 
 Meanwhile V2's `enabled_providers` deliberately excludes the proxied providers,
 so the credentials it inherits from the shared `auth.json` stay inert instead of
