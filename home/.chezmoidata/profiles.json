@@ -254,7 +254,7 @@
                     "model": "opencode-go/glm-5.3-flash"
                 },
                 "sisyphus-junior": {
-                    "model": "opencode-go/deepseek-v4-flash"
+                    "model": "opencode-go/glm-5.3-flash"
                 }
             },
             "categories": {
@@ -277,7 +277,7 @@
                     "model": "opencode-go/gpt-5.6-luna"
                 },
                 "unspecified-high": {
-                    "model": "opencode-go/glm-5.3"
+                    "model": "opencode-go/glm-5.3-flash"
                 },
                 "writing": {
                     "model": "opencode-go/gpt-5.6-luna"
