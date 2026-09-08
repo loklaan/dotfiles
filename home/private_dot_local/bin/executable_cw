@@ -1,8 +1,8 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env --allow-sys=networkInterfaces
 
-// cw — Coder Workspaces CLI (Deno + Effect v4). Public surface: the three
-// subcommands (`connect`, `fleet`, `migrate`), the bare workspace shorthand,
-// and the zsh completion output.
+// cw — Coder Workspaces CLI (Deno + Effect v4). Public surface: the
+// subcommands (`connect`, `tmux`, `fleet`, `migrate`), the bare workspace
+// shorthand, and the zsh completion output.
 
 import {
   Config,
@@ -42,6 +42,11 @@ const fatal = (msg: string): never => {
   Deno.exit(1);
 };
 
+// The one tmux session per box, matching the local convention so
+// tmux-resurrect snapshots restore into the same name. Shared by the usage
+// text and the remote attach command.
+const TMUX_DEFAULT_SESSION = "main-session";
+
 // ============================================================================
 // Usage text
 // ============================================================================
@@ -55,7 +60,8 @@ Description:
   mise task across the whole fleet, or migrate working state between boxes.
 
 Subcommands:
-  connect <ws> [mode] [dir]   Attach to a workspace (ssh/vscode/claude/app)
+  connect <ws> [mode] [dir]   Attach to a workspace (ssh/tmux/vscode/claude/app)
+  tmux <ws> [dir]             Attach to a persistent tmux session on a workspace
   fleet [opts] <mise-task>    Run a mise task across running workspaces
   migrate [opts]              Pull working state from an old devbox to a new one
   completion zsh              Output zsh completion script
@@ -64,6 +70,7 @@ Subcommands:
 
 Examples:
   cw for-tasks                # SSH into for-tasks
+  cw tmux for-tasks           # Attach to for-tasks' persistent tmux session
   cw connect for-tasks-2 vscode
   cw fleet --include-local update
   cw migrate
@@ -77,23 +84,50 @@ const CONNECT_USAGE = `Usage:
 
 Description:
   Connect to a Coder workspace in various modes. Built-in modes handle
-  SSH, VSCode, and Claude Code sessions. Any other mode is passed through
-  to \`coder open app\` as a workspace app slug (so like: intellij, cursor).
+  SSH, tmux, VSCode, and Claude Code sessions. Any other mode is passed
+  through to \`coder open app\` as a workspace app slug (so like: intellij,
+  cursor).
 
 Arguments:
   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
-  mode         ssh (default), vscode, claude, ccyolo, or any app slug
+  mode         ssh (default), tmux, vscode, claude, ccyolo, or any app slug
                available on the coder box (cursor, intellij, code-server)
-  directory    Project path on the remote (~/dev/me/<project>)
+  directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
 Examples:
   cw connect for-tasks                # SSH into for-tasks
+  cw connect for-tasks tmux           # Attach to the persistent tmux session
   cw connect for-tasks-2 vscode       # Open in VS Code
   cw connect for-tasks-2 cursor       # Open Cursor via coder
   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
   cw connect for-tasks code-server    # Open code-server in browser
   cw connect for-tasks claude         # SSH + Claude Code
   cw connect for-prs ccyolo           # YOLO mode
+`;
+
+const TMUX_USAGE = `Usage:
+  cw tmux <workspace> [directory]
+
+Description:
+  Attach to the persistent \`${TMUX_DEFAULT_SESSION}\` tmux session on a Coder
+  workspace, creating it if it does not exist yet. Shorthand for
+  \`cw connect <workspace> tmux [directory]\`.
+
+  The session is started from a login zsh, so its server captures the
+  repo-managed environment — mise shims included — and every later attach
+  inherits that. A directory seeds the initial pane when the session is
+  created; an existing session retains its active pane and directory.
+
+Arguments:
+  workspace    Workspace name (e.g. for-tasks, for-tasks-2)
+  directory    Absolute project path on the remote (/home/coder/dev/<project>)
+
+Options:
+  --help       Display this message
+
+Examples:
+  cw tmux for-tasks
+  cw tmux for-tasks-2 /home/coder/dev/me/dotfiles
 `;
 
 const FLEET_USAGE = `Usage:
@@ -172,7 +206,8 @@ const ZSH_COMPLETION = String.raw`#compdef cw
 _cw() {
   local -a subcommands
   subcommands=(
-    'connect:Attach to a workspace (ssh/vscode/claude/app)'
+    'connect:Attach to a workspace (ssh/tmux/vscode/claude/app)'
+    'tmux:Attach to a persistent tmux session on a workspace'
     'fleet:Run a mise task across running workspaces'
     'migrate:Pull working state from an old devbox to a new one'
     'completion:Output shell completion script'
@@ -190,6 +225,7 @@ _cw() {
     local ws="$1"
     local -a modes=(
       'ssh:SSH into workspace'
+      'tmux:Attach or create a persistent tmux session'
       'vscode:Open in VS Code'
       'claude:SSH + Claude Code'
       'ccyolo:SSH + Claude Code YOLO mode'
@@ -222,6 +258,12 @@ _cw() {
         3) _cw_workspaces ;;
         4) _cw_modes "$words[3]" ;;
         5) _message 'remote directory path (optional)' ;;
+      esac
+      ;;
+    tmux)
+      case $CURRENT in
+        3) _cw_workspaces ;;
+        4) _message 'remote directory path (optional)' ;;
       esac
       ;;
     fleet)
@@ -392,6 +434,16 @@ const timestamp = (): string => {
 
 const shellQuote = (value: string): string =>
   value === "" ? "''" : `'${value.replaceAll("'", `'\\''`)}'`;
+
+// Wrap a remote command in a login zsh. Bare `ssh <host> <cmd>` runs the
+// account's shell non-interactively and non-login — and not necessarily zsh at
+// all — so it can miss the repo-managed environment and its mise shims.
+// Naming /usr/bin/zsh guarantees zsh, which sources .zshenv on every
+// invocation; `-l` additionally supplies the login-shell startup contract
+// (.zprofile/.zlogin). That matters most for anything long-lived: a tmux
+// server captures its environment once, and every later attach inherits it.
+const remoteZshCommand = (cmd: string): string =>
+  `/usr/bin/zsh -lc ${shellQuote(cmd)}`;
 
 const maxCode = (codes: ReadonlyArray<number>): number =>
   codes.reduce((max, code) => Math.max(max, code), 0);
@@ -579,6 +631,22 @@ const diagnoseConnectFailure = (
 // connect — HAND-OVER terminal attach
 // ============================================================================
 
+// `new-session -A` attaches when the session exists and creates it otherwise.
+// The directory is applied with a `cd` rather than tmux's own `-c`, because
+// `-c` is only honoured on the create path — on an attach it is silently
+// ignored, so a directory argument would do nothing whenever the session is
+// already up.
+const tmuxRemoteCommand = (directory: string): string => {
+  const attach = `tmux new-session -A -s ${shellQuote(TMUX_DEFAULT_SESSION)}`;
+  return directory === "" ? attach : `cd ${shellQuote(directory)} && ${attach}`;
+};
+
+// Modes that hand the local terminal to a remote interactive SSH session.
+// These are the modes that need the GPG/terminfo/pubkey preflight, and the
+// ones whose non-zero exit is worth running the dead-datapath diagnostic over.
+const usesSshTerminal = (mode: string): boolean =>
+  ["ssh", "claude", "ccyolo", "tmux"].includes(mode);
+
 interface ConnectEnv {
   readonly log: boolean;
   readonly preflight: boolean;
@@ -762,7 +830,7 @@ const connectCommand = (
     }
 
     const host = `coder.${ws}`;
-    const sshOpts = ["ssh", "claude", "ccyolo"].includes(mode)
+    const sshOpts = usesSshTerminal(mode)
       ? yield* coderPreflight(env, host)
       : [];
 
@@ -776,6 +844,25 @@ const connectCommand = (
           ...sshOpts,
           host,
           remote,
+        ], {
+          detached: true,
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
+        return res.code;
+      }
+      case "tmux": {
+        // The whole point of the tmux mode is a session that outlives the
+        // connection, so the environment its server captures on first launch
+        // has to be the login-shell one — hence remoteZshCommand, never a bare
+        // remote `tmux`.
+        const res = yield* runChild("ssh", [
+          "-tt",
+          ...sshOpts,
+          host,
+          remoteZshCommand(tmuxRemoteCommand(directory)),
         ], {
           detached: true,
           stdin: "inherit",
@@ -940,9 +1027,6 @@ const fleetCommandString = (
       args.map(shellQuote).join(" ")
     }`.trimEnd(),
   ].join("; ");
-
-const remoteZshCommand = (cmd: string): string =>
-  `/usr/bin/zsh -lc ${shellQuote(cmd)}`;
 
 const runFleetLocal = (
   _env: FleetEnv,
@@ -1537,6 +1621,41 @@ const fleetCli = makeFleetCli((options) =>
   fleetCommand(options).pipe(Effect.flatMap(exitWith))
 );
 
+const tmuxHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+// Declared as two named positionals rather than a variadic, so a third
+// argument is a parse error instead of being silently dropped. `workspace` is
+// optional at the parser so `cw tmux --help` still reaches the help branch;
+// its absence is then reported here.
+const tmuxWorkspace = Argument.string("workspace").pipe(Argument.optional);
+const tmuxDirectory = Argument.string("directory").pipe(
+  Argument.withDefault(""),
+);
+
+const makeTmuxCli = <A, E, R>(
+  handler: (workspace: string, directory: string) => Effect.Effect<A, E, R>,
+) =>
+  Command.make("tmux", {
+    help: tmuxHelpFlag,
+    workspace: tmuxWorkspace,
+    directory: tmuxDirectory,
+  }, ({ help, workspace, directory }) => {
+    if (help) return writeStdout(TMUX_USAGE).pipe(Effect.andThen(exitWith(0)));
+    const name = Option.getOrElse(workspace, () => "");
+    if (name === "") {
+      return writeStderr(TMUX_USAGE).pipe(
+        Effect.andThen(logError("tmux requires a workspace name")),
+        Effect.andThen(exitWith(1)),
+      );
+    }
+    return handler(name, directory);
+  });
+
+const tmuxCli = makeTmuxCli((workspace, directory) =>
+  connectCommand([workspace, "tmux", directory]).pipe(
+    Effect.flatMap(exitWith),
+  )
+);
+
 const migrateCli = Command.make(
   "migrate",
   { manifest: migrateManifestFlag, help: migrateHelpFlag },
@@ -1587,6 +1706,7 @@ const cwCli = Command.make(
   },
 ).pipe(Command.withSubcommands([
   connectCli,
+  tmuxCli,
   fleetCli,
   migrateCli,
   completionCli,
@@ -1640,6 +1760,7 @@ if (import.meta.main) {
   const serviceFree = command === undefined || command === "--help" ||
     command === "help" ||
     (command === "connect" && Deno.args[1] === "--help") ||
+    (command === "tmux" && Deno.args[1] === "--help") ||
     (command === "fleet" && Deno.args[1] === "--help") ||
     (command === "migrate" && Deno.args[1] === "--help") ||
     command === "completion";
@@ -1851,6 +1972,37 @@ const assertEq = <T>(actual: T, expected: T): void => {
   }
 };
 
+// Connect env for offline tests: no logging, no preflight ssh round-trip, no
+// PATH probing, no failure diagnostics — so only the calls under test are made.
+const offlineConnectEnv: ConnectEnv = {
+  log: false,
+  preflight: false,
+  checkCommands: false,
+  diagnostics: false,
+};
+
+// Parse an argv through the real `cw tmux` argument declarations, with the
+// handler swapped for a capture so nothing connects or exits. Returns
+// "<workspace>\0<directory>", or null when the parser rejected the argv.
+const parseTmuxCli = async (
+  argv: ReadonlyArray<string>,
+): Promise<string | null> => {
+  let parsed: string | null = null;
+  const testCli = makeTmuxCli((workspace, directory) =>
+    Effect.sync(() => {
+      parsed = `${workspace}\u0000${directory}`;
+    })
+  );
+  const exit = await Effect.runPromiseExit(
+    Command.runWith(testCli, { version: "0.0.0", renderErrors: false })(argv)
+      .pipe(
+        Effect.provideService(CliConfig.CliConfig, cliConfig),
+        Effect.provide(cliNoopLayer([])),
+      ),
+  );
+  return exit._tag === "Success" ? parsed : null;
+};
+
 class MockChildProcessSpawner {
   readonly calls: Array<
     { cmd: string; args: ReadonlyArray<string>; options?: RunOptions }
@@ -2002,6 +2154,110 @@ if (!import.meta.main) {
     assertEq(ssh.options?.stdout, "inherit");
     assertEq(ssh.options?.stderr, "inherit");
     assertEq(ssh.options?.detached, true);
+  });
+
+  Deno.test("connect tmux mode attaches through a remote login zsh", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 4, stdout: "", stderr: "" },
+    ]);
+    const code = await Effect.runPromise(
+      connectCommand(["box", "tmux"], offlineConnectEnv).pipe(
+        Effect.provide(spawner.layer),
+      ) as Effect.Effect<number>,
+    );
+    assertEq(code, 4);
+    const ssh = spawner.calls[1];
+    assertEq(ssh.cmd, "ssh");
+    assertEq(
+      ssh.args.join("\u0000"),
+      [
+        "-tt",
+        "coder.box",
+        "/usr/bin/zsh -lc 'tmux new-session -A -s '\\''main-session'\\'''",
+      ].join("\u0000"),
+    );
+    assertEq(ssh.options?.detached, true);
+    assertEq(ssh.options?.stdin, "inherit");
+    assertEq(ssh.options?.stdout, "inherit");
+    assertEq(ssh.options?.stderr, "inherit");
+  });
+
+  Deno.test("connect tmux mode cds into the requested directory", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    await Effect.runPromise(
+      connectCommand(
+        ["box", "tmux", "/home/coder/dev/me/dotfiles"],
+        offlineConnectEnv,
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    const ssh = spawner.calls[1];
+    assertEq(ssh.cmd, "ssh");
+    assertEq(
+      ssh.args.join("\u0000"),
+      [
+        "-tt",
+        "coder.box",
+        "/usr/bin/zsh -lc 'cd '\\''/home/coder/dev/me/dotfiles'\\'' && tmux new-session -A -s '\\''main-session'\\'''",
+      ].join("\u0000"),
+    );
+  });
+
+  Deno.test("tmux remote command attaches or creates the one session", () => {
+    assertEq(
+      tmuxRemoteCommand(""),
+      "tmux new-session -A -s 'main-session'",
+    );
+  });
+
+  Deno.test("tmux remote command cds rather than passing tmux -c", () => {
+    const cmd = tmuxRemoteCommand("/home/coder/dev/o'brien");
+    assertEq(
+      cmd,
+      "cd '/home/coder/dev/o'\\''brien' && tmux new-session -A -s 'main-session'",
+    );
+    // `-c` is honoured only when tmux creates the session, so an attach to an
+    // existing session would silently ignore the requested directory.
+    assertEq(cmd.includes(" -c "), false);
+  });
+
+  Deno.test("tmux is an ssh-terminal mode, so it gets preflight + diagnostics", () => {
+    assertEq(usesSshTerminal("tmux"), true);
+    assertEq(usesSshTerminal("vscode"), false);
+  });
+
+  Deno.test("tmux CLI maps its positionals to workspace and directory", async () => {
+    assertEq(await parseTmuxCli(["box"]), "box\u0000");
+    assertEq(
+      await parseTmuxCli(["box", "/srv/app"]),
+      "box\u0000/srv/app",
+    );
+  });
+
+  Deno.test("tmux CLI rejects a third positional instead of dropping it", async () => {
+    assertEq(await parseTmuxCli(["box", "/srv/app", "extra"]), null);
+  });
+
+  Deno.test("zsh completion offers tmux as a subcommand and a mode", () => {
+    assertEq(ZSH_COMPLETION.includes("'tmux:"), true);
+    assertEq(/^\s*tmux\)$/m.test(ZSH_COMPLETION), true);
   });
 
   Deno.test("dead-datapath hint fires only when split confirmed", () => {
