@@ -23,9 +23,7 @@ labels: [label-one, label-two]
 priority: Must have | Should have | Nice to have | Someday
 ---
 
-[Context — situation, relevance, scope boundaries, key dependencies if any. One line.]
-
-NOTE: [Origin — retro action item, roadmap, incident, ad-hoc request. Any ticket reference is a full browse URL, never a bare key.]
+[Context: the concrete situation and why this work follows from it, with only essential qualifications. One short paragraph on one physical line; see Context below.]
 
 ### 🚀 Action Items
 
@@ -106,16 +104,16 @@ Examples:
 
 ### Context
 
-- Situate the reader — assume they have no prior knowledge of the backstory
-- State what changed or what's true now that makes this work relevant
-- Keep it to 1-2 sentences; link out for deeper background
-- Weave scope boundaries into the prose naturally — what's included and what's explicitly not. This prevents scope creep without needing a separate section
-- If there are key dependencies (people, teams, systems), mention them naturally as the last sentence of the context paragraph — they don't need their own section
+Write an orientation, not a condensed version of the whole ticket. Explain what the reader needs to understand before the Actions section makes sense. Aim for predictable information, not identical prose.
 
-### Origin
+- **Lead with the concrete situation:** the failure, unmet need, change, or unresolved question. Name the affected thing; don't start with "This ticket covers...".
+- **Connect that situation to the work.** Make clear why this task follows from it, without restating the title or enumerating the actions.
+- **Keep one narrative thread.** Include background only if removing it would change someone's understanding of the problem, the intended work, or an important constraint. Omit request provenance and administrative unknowns (such as an unassigned owner) unless they change that understanding; don't weave them into another sentence just to retain them.
+- **Preserve consequential detail and uncertainty.** Don't invent urgency, blockers, ownership, dependencies, or exclusions to complete a template.
+- **Leave execution detail in Actions.** Mention scope boundaries or dependencies in the introduction only when they prevent a likely misunderstanding. Keep source links attached to the claims they support; link deeper history rather than retelling it.
+- **Use the shortest complete explanation.** Usually one short paragraph of 2-3 sentences; one is fine for a simple issue. Keep it on one physical line for Jira. Do not append a `NOTE:` or a routine provenance sentence, or force a "Scope is..." ending.
 
-- Where did this ticket come from? Retro action item, roadmap milestone, incident follow-up, stakeholder request
-- Helps the reader understand urgency and accountability
+Before sharing the draft, check: could a teammate explain why this work exists and what it addresses after reading only the introduction? If not, improve the explanation rather than padding the background.
 
 ### Action Items
 
@@ -134,7 +132,7 @@ Examples:
 
 - Every ticket reference is a **full browse URL** — `https://<instance>.atlassian.net/browse/PROJ-123`, never a bare `PROJ-123`
 - Bare keys render as plain text; URLs render as rich smart links
-- Applies to prose, `NOTE:` lines, checklist items, and outcome notes
+- Applies to prose, checklist items, and outcome notes
 - Where a paragraph mentions the same ticket repeatedly, the first mention takes the URL and later ones may stay bare for readability
 
 ### Success Criteria
@@ -168,12 +166,7 @@ labels: [retro-action-item]
 priority: Nice to have
 ---
 
-Now that the team branding has been finalised we can start looking
-at getting some team merch — one round tied to the new branding,
-not an ongoing merch programme. Will need input from @Alex (merch
-process) and @Jordan (design).
-
-NOTE: This ticket is an action item from the sprint retro.
+The team branding is finalised, and we want to mark the milestone with team merch. This is a one-off order, not an ongoing merch programme.
 
 🚀 Action Items
 
@@ -218,7 +211,7 @@ The ticket content splits across Jira fields from two sources — the frontmatte
 | Template Section | Jira Field | Notes |
 |---|---|---|
 | Title (from title convention) | Summary | Standard field |
-| Everything | Description | Context, Origin, Action Items, Impact, Success Criteria, Engineering actions taken |
+| Everything | Description | Context, Action Items, Impact, Success Criteria, Engineering actions taken |
 
 Success Criteria stays **in the description** as its own `### ✅ Success Criteria` section. The Acceptance Criteria custom field is also writable (via escaped ADF — see [using-jira.md](using-jira.md)), but keeping criteria in the description means one artefact, visible in every export and view. Use the field as well only if something downstream reads it.
 

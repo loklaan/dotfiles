@@ -90,9 +90,7 @@ Detection is case-insensitive and needs both the emoji and the keyword present a
 ### Practical formatting template
 
 ```markdown
-Context paragraph on ONE line, however long. Second sentence with **bold** and a [link](https://example.com).
-
-NOTE: Origin note here.
+[Context paragraph on one physical line, with **bold** and a [source link](https://example.com) where useful.]
 
 ### 🚀 Action Items
 
@@ -114,6 +112,8 @@ Impact statement on one line.
 ```
 
 Use `###` (h3) for section headers; h1/h2 render oversized in a description. Keep every paragraph unwrapped.
+
+For introduction content and length, follow [Writing a Jira Task: Context](writing-a-jira-task.md#context); this template demonstrates formatting, not a sentence formula.
 
 ## Field Value Handling
 
