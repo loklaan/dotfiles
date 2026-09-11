@@ -161,6 +161,25 @@ memory.
 `dot_omo/modify_omo.jsonc` (or any other opencode config) that isn't in
 that whitelist will silently fail to surface. The two files must agree.
 
+**Judging a swap — not just freshness.** A newer model ID can still be the wrong
+slot. Before bumping, check:
+
+- **Family anchor.** Every omo category/agent is anchored to a model *lineage*
+  that carries the role's character; changing lineage is a behaviour change, not
+  a version bump. `writing`/`artistry` voice and `visual-engineering` taste are
+  family-critical — and effectively unbenchmarkable, since no eval measures prose
+  voice or design taste. `ultrabrain`/`deep`/`unspecified-high` are
+  family-agnostic: give them the strongest reasoner.
+- **Cost vs taste is a per-profile preference.** E.g. personal-profile
+  `visual-engineering` trades taste for cost — the user supplies their own taste.
+- **Scrutinise benchmarks.** Vendor tables swing wildly by harness (same model
+  and benchmark: 90.6 vendor scaffold vs 74.5 on Vals.ai). Prefer independent
+  sources (Artificial Analysis, Vals.ai); treat vendor cards as directional.
+- **Check capability gates, not just score.** Input modalities (image vs
+  video/PDF), output-token price, and max output length can veto an otherwise
+  superior model. Measure latency separately — one "flash" tier can be ~2×
+  faster than another even at higher reasoning effort.
+
 ## Output
 
 Present a single markdown table grouped by source:
