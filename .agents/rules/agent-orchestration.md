@@ -2,10 +2,6 @@
 
 How AI coding agent sessions are managed across macbooks and Coder dev boxes.
 
-# Agent Orchestration Architecture
-
-How AI coding agent sessions are managed across macbooks and Coder dev boxes.
-
 ## Model
 
 Two orchestration tools span machines.
@@ -66,72 +62,57 @@ No tool aggregates session state across machines. State lives where each session
 
 | Process | Where | Manager | Lifecycle |
 |---|---|---|---|
-| `Orca.app` | MacBook | macOS (user-launched) | Per-user-session |
-| `Paseo.app` | MacBook | macOS (user-launched) | Per-user-session |
+| `Orca.app` | MacBook | macOS (user-launched) | Quit and discovered autostart disabled on `orcaServer=false` apply |
+| `Paseo.app` | MacBook | macOS (user-launched) | Quit and discovered autostart disabled on `paseoDaemon=false` apply |
 | `paseo daemon` | Coder box | systemd-user via chezmoi | Long-running, auto-restart on failure |
+| `df-orca-server` (`orca serve`) | Coder box | Pitchfork when `orcaServer` | Long-running, opt-in |
 | `opencode serve` | Anywhere | Pitchfork when `openCodeServer`; otherwise per-session/manual | Long-running opt-in or per-session |
 
 ## Server Model
 
 - **opencode** is the only one with an HTTP+SSE server. Default `:4096`, configurable via `--hostname`/`--port`. Each opencode is its own server with its own SQLite. No federation between opencodes.
 - **paseo daemon** is HTTP+WebSocket on `:6767`. Manages local agent processes. Each daemon is independent; clients aggregate them via per-client `HostProfile` registry (browser localStorage on the desktop).
-- **orca** has no server. The desktop app is the client; the relay binary it deploys to remote hosts via SSH is a thin process-launcher, not a server.
+- **orca** has no server in its default SSH-attached mode — the desktop app is the client, and the relay binary it deploys to remote hosts via SSH is a thin process-launcher, not a server. The "Remote Orca Servers" beta adds a real one: a headless `orca serve` WebSocket process (supervised by `df-orca-server`), opt-in per Coder box via `orcaServer`. Both modes coexist; see the Model section above.
 
 ## Configuration & Opt-In
 
-Driven by a single chezmoi data variable: `paseoDaemon` (bool, default `false`).
+`paseoDaemon` and `orcaServer` are independent booleans, default `false`, cached
+by `chezmoi init` in `~/.config/chezmoi/chezmoi.toml`. Change with
+`chezmoi edit-config`, then `chezmoi apply`.
 
-```
-.chezmoi.toml.tmpl
-  └─ promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine?" false
-                                    │
-                                    └─ cached per-machine in ~/.config/chezmoi/chezmoi.toml
-```
+- **Migration 054:** once per machine, atomically resets historical opt-ins
+  (formerly default true on Coder) to false. Prerequisite/transform/validation
+  failure exits nonzero and preserves the original config. Later explicit opt-ins remain possible.
+- **Lifecycle 057/059:** `read_enabled` reads persisted flags through `yq` at
+  execution time, so 054 cannot be undone by stale rendered values. Missing
+  `yq`/config → warning and disabled; parse/read error → nonzero before service
+  commands, without printing config contents.
 
-When `paseoDaemon = true` AND `chezmoi.os = "linux"`:
+| Platform / flag | Reconciliation |
+|---|---|
+| Linux / `paseoDaemon=true` | mise installs CLI; systemd reloads/enables/(re)starts `paseo-daemon.service`; HTTP probe on `:6767` |
+| Linux / `orcaServer=true` | Retire legacy unit; verify mise AppImage/FUSE; clear stale Electron lock; start `df-orca-server` via Pitchfork. Start failure warns |
+| Linux / false | Stop/disable service; verify unit/daemon, process and socket state. Failed operations or observed residue → warning + nonzero exit |
+| macOS / false | `desktop-app-lifecycle.sh:dal_disable_app` quits/verifies app exit, removes matching Login Items, boots out/disables case-insensitive `*<slug>*.plist` LaunchAgents. Retains app, data and plists |
+| macOS / true | Stops enforcing disablement only. Reopen app and restore login items/LaunchAgents manually |
 
-- `mise/config.toml.tmpl` installs `npm:@getpaseo/cli` (provides the `paseo` binary)
-- `systemd/user/paseo-daemon.service.tmpl` renders a real unit file
-- `run_after_install-057-paseo-daemon.sh.tmpl` runs `daemon-reload`, `enable`, `start`, then health-checks `:6767`
-
-When `paseoDaemon = false` on Linux (real opt-out):
-
-- Run script actively `systemctl --user disable` + `stop` any running unit
-- Service file renders empty; chezmoi removes it from disk
-
-When `chezmoi.os = "darwin"`:
-
-- All Linux blocks render empty. Run script returns silently. macbooks use Paseo.app from the Homebrew cask, not a daemon.
+**Verification limits:**
+- Paseo's `:6767` check detects any listener. Missing `systemctl`/`lsof` skips
+  corresponding checks. Orca checks legacy retirement, `pf_is_running`, residual
+  `df-orca-serve` and sockets; unresolved Pitchfork fails opt-out. Shared `pf_stop`
+  remains best-effort. Orca's `lsof` lacks `-a`: reported sockets need attribution.
+- macOS discovery is name/slug-based; non-matches remain untouched. Failed quit,
+  residual app, login-item removal, label read or disable accumulates nonzero
+  exit. `launchctl bootout` is best-effort; disabled autostart does not prove a
+  running helper exited.
 
 ## Bootstrap
 
-```
-chezmoi apply
-  ├─ first run: prompts paseoDaemon (default false)
-  ├─ caches answer in ~/.config/chezmoi/chezmoi.toml
-  ├─ renders mise config (Linux + opt-in: includes paseo CLI)
-  ├─ renders systemd unit (Linux + opt-in: real unit; otherwise empty)
-  ├─ run_after_install-057 enables + starts unit (Linux + opt-in)
-  └─ df-setup health check shows daemon status (Linux + opt-in only)
-
-install-my-packages --gui
-  ├─ installs Paseo.app cask (macOS)
-  └─ installs Orca.app cask via stablyai/orca tap (macOS)
-```
-
-Opt-in flip later:
-
-```
-chezmoi edit-config           # toggle paseoDaemon = true
-chezmoi apply                 # run script enables + starts daemon
-```
-
-Opt-out flip:
-
-```
-chezmoi edit-config           # toggle paseoDaemon = false
-chezmoi apply                 # run script stops + disables daemon
-```
+`chezmoi init` caches flags → apply renders mise/unit config → migration 054 →
+lifecycle 057/059 read current flags. The Linux Paseo unit renders empty when
+not opted in; `df-setup` reports daemon health only for opted-in Linux machines.
+On macOS, `install-my-packages --gui` installs Paseo.app and Orca.app casks
+(Orca via `stablyai/orca`).
 
 ## Discovery
 
@@ -226,12 +207,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 
 | Path | Purpose |
 |---|---|
-| `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` prompt and data variable |
+| `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` and `orcaServer` prompts and data variables |
 | `home/.chezmoiscripts/run_once_after_install-054-disable-paseo-orca.sh` | One-time TOML-safe migration of historical true flags to false |
 | `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; opencode itself is mise-managed, opencode plugins are not |
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |
-| `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Lifecycle: enable/start on opt-in, stop/disable on opt-out |
+| `home/.chezmoiscripts/run_after_install-057-paseo-daemon.sh.tmpl` | Linux service lifecycle; macOS retained-app opt-out |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Bridge: clears opencode-owned plugin cache dirs on every apply |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Reusable bridge helpers (bun, cache discovery, sync) |
 | `home/private_dot_local/bin/executable_df-setup.tmpl` | Health check: reports daemon status on opt-in Linux |
@@ -239,9 +220,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | `home/private_dot_local/bin/executable_df-orca-pair` | macOS: discover running Coder boxes hosting `df-orca-server`, pull each `orca://pair` offer, register them as Remote Orca Servers via `orca environment add` (`--dry-run`/`--replace`) |
 | `home/private_dot_local/bin/executable_df-orca-serve` | Linux: headless `orca serve` wrapper the `df-orca-server` Pitchfork daemon launches (resolves AppImage, injects headless Electron flags, emits the `orca://pair` offer) |
 | `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines Pitchfork daemons: `df-opencode-serve` on any OS when `openCodeServer`, `df-drift-notify` cron daemon on macOS (daily 09:30), plus Linux/Coder daemons (`df-orca-server`, `df-code-server`, `df-mcpproxy`) behind their opt-ins |
-| `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` | Lifecycle: start `df-orca-server` on opt-in, stop on opt-out (Linux) |
+| `home/.chezmoiscripts/run_after_install-059-orca-server.sh.tmpl` | Linux server lifecycle; macOS retained-app opt-out |
 
 ## Operating Runbook
+
+**Moving working state to a new devbox:** use the
+[`cw migrate` runbook](../resources/cw-migration.md); archives may contain credentials.
 
 **Daily use from a macbook:**
 - Open Orca.app → Coder hosts already in the SSH-target list. Click in.
@@ -332,7 +316,7 @@ So a stopped box is never left stale: it does not receive the manual fan-out, bu
 
 ### Orca / paseo on Linux are installed via mise
 
-Both opt-in tools that run on Coder boxes are installed by mise as a normal `[tools]` entry and supervised by Pitchfork:
+Both opt-in tools that run on Coder boxes are installed by mise as a normal `[tools]` entry, but they are supervised differently: paseo's daemon is a systemd-user unit (`paseo-daemon.service`, managed by `057`), NOT Pitchfork; orca's headless server is the one actually supervised by Pitchfork (`df-orca-server`, managed by `059`).
 
 - **paseo**: `npm:@getpaseo/cli` — pinned to `0.1.101`
 - **orca**: `http:orca` — pinned to `1.4.176`, downloads `orca-linux.AppImage` from GitHub releases

@@ -141,7 +141,8 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 ├── hooks-json-tmpl                        ← No .tmpl suffix
 ├── mcp-servers-claude-json-tmpl           ← No .tmpl suffix
 ├── mcp-servers-codex-toml-tmpl            ← No .tmpl suffix
-└── mcp-servers-opencode-mcpproxy-json-tmpl ← No .tmpl suffix
+├── mcp-servers-opencode-mcpproxy-json-tmpl ← No .tmpl suffix
+└── mcpproxy-api-key-tmpl                 ← Shared machine-local key lookup
 ```
 
 Usage:
@@ -149,6 +150,13 @@ Usage:
 ```go
 {{- $data := includeTemplate "hooks-json-tmpl" . | fromJson -}}
 ```
+
+The MCP client partials share `mcpproxy-api-key-tmpl`. The before-script seeds a
+missing key before target rendering; the proxy config modifier preserves it.
+Codex's `home/dot_codex/modify_private_config.toml` includes its TOML partial
+inside a marked section, preserving other settings but normalising surrounding
+whitespace and moving that section to the beginning. It does not install Codex.
+See [MCP Authentication](../../../resources/mcp-authentication.md).
 
 ### `.chezmoiroot`
 

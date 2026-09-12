@@ -2,5 +2,6 @@
 {{- if ne "" $apiKey -}}
 Authorization: Bearer {{ $apiKey }}
 {{- else -}}
-# MCPProxy has not generated its API key yet. Re-run chezmoi after first start.
+# MCPProxy has no API key yet. Ensure jq is available and run a full chezmoi apply
+# so the before-script seeds the key before client configs render.
 {{- end }}

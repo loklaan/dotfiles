@@ -1,6 +1,7 @@
-{{- /* Read MCPProxy's own machine-local credential. On a first install the
-     config does not exist yet, so callers deliberately receive an empty value
-     and fail closed until MCPProxy generates its key and chezmoi is re-run. */ -}}
+{{- /* The run_before key-seed script provisions a missing key before targets
+     render. Missing file/key still returns empty (e.g. skipped seeding or a
+     targeted apply); malformed config can fail parsing rather than return
+     empty. See .agents/resources/mcp-authentication.md. */ -}}
 {{- $apiKey := "" -}}
 {{- $configPath := joinPath .chezmoi.homeDir ".mcpproxy/mcp_config.json" -}}
 {{- if stat $configPath -}}

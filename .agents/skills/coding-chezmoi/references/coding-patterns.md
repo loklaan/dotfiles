@@ -8,6 +8,18 @@ Generic shell scripting patterns are covered by the `lochy:coding:shell` skill. 
 
 ALL executable bash scripts (standalone, lifecycle, bin utilities) MUST include these elements in order. Sourced library files (e.g., `bash-logging.sh`) follow their own conventions.
 
+**Secret-output exception:** utilities such as `github-token` whose stdout is a
+credential API must omit `setup_session_logging`; it tees stdout into a log.
+They may still source the library for help and error reporting. Credential
+writers must suspend `xtrace` before reading or generating secret values, restore
+its previous state afterward, and hand secrets to subprocesses through private
+files or environment variables, never argv. See
+[Secrets Architecture](../../../rules/secrets-architecture.md).
+
+**Before-script exception:** a `run_before_` script needing current helpers
+sources `{{ .chezmoi.sourceDir }}/private_dot_local/lib/bash-logging.sh` instead
+of the installed library, which still belongs to the previous apply.
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -145,6 +157,12 @@ BWS configured.
 See `.agents/rules/secrets-architecture.md` for the full secrets model.
 
 ## Common Template Patterns
+
+### New Machine Data
+
+Ship new prompts, exact-text `install.sh` `--promptString`/`--promptBool` seeds
+and `dig`-guarded reads together. Existing machine caches are not seeded by
+`chezmoi apply`; a bare read of a new key can abort fleet updates.
 
 ### OS-Specific Configuration
 
