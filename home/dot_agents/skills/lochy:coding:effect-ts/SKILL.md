@@ -1,92 +1,92 @@
 ---
 name: lochy:coding:effect-ts
 description: >-
-  Write TypeScript with the Effect libraries (v3 and v4). Covers Effect.gen,
-  Effect.fn, Effect.Service, Schema, Layer composition, error handling,
-  observability, and testing with @effect/vitest. Use when writing Effect
-  code, using pipe/gen patterns, defining services or schemas, or working
-  with @effect/platform, @effect/sql, or @effect/ai.
+  Write and review TypeScript with Effect v3 and v4. Use when building
+  Effect-first software, enforcing Effect capability ownership, reviewing
+  newly added Effect code, or working with Effect services, Layers, Schema,
+  concurrency, resource lifetimes, platform modules, SQL, AI, or testing.
 ---
 
 # Coding in TypeScript with the Effect libraries
 
-## Version detection
+## Choose what to load
 
-Before writing Effect code, determine the project's Effect version from
-`package.json`:
+Load references by the work being done, not everything this skill contains.
 
-- **v3** (`effect@^3.x`): Use v3 patterns from `references/v3-patterns.md`
-- **v4** (`effect@^4.x`): Use v4 patterns from `references/v4-patterns.md`
+| Work | Reference |
+|---|---|
+| Design or implement non-trivial software intended to be Effect-first | [Effect enforcement](references/effect-enforcement.md), before choosing capability implementations |
+| Review newly added or substantially changed Effect code for architectural compliance | [Effect enforcement](references/effect-enforcement.md), using its review mode |
+| Write or change v3 code | [v3 patterns](references/v3-patterns.md), relevant sections |
+| Write or change v4 code | [v4 patterns](references/v4-patterns.md), then the relevant linked module documentation |
+| Write or review fan-out, retries, periodic loops, or state that grows with input/request rate | [Concurrency bounds](references/concurrency-bounds.md) |
 
-If the version is ambiguous, check `node_modules/effect/package.json`.
+For enforcement, non-trivial means the work owns I/O, resource lifetimes,
+concurrency, long-lived state, or runtime integration. It is not a line-count
+threshold.
 
-**IMPORTANT**: The Effect docs MCP tools (`effect_docs_search`, `get_effect_doc`)
-serve **v3 content only**. For v4 work, **do NOT use them** — they will suggest
-wrong patterns. Read `references/v4-patterns.md` instead.
+The enforcement spoke applies to the declared Effect-first application or
+subsystem. Merely finding Effect in a dependency list does not authorise a
+whole-repository migration. Small syntax questions and isolated pure
+transformations do not require that spoke.
 
-## Effect docs MCP tools (v3 only)
+## Establish the Effect version
 
-Two MCP tools are available for accessing Effect v3 documentation:
+Before selecting APIs, determine the consuming package's Effect version:
 
-### `effect_docs_search`
+1. Inspect its dependency declarations, including workspace catalogs or overrides.
+2. Check the lockfile or installed package for the resolved version.
+3. For prereleases, retain the exact prerelease version when checking APIs.
 
-Search the Effect documentation for relevant information.
+Use [v3 patterns](references/v3-patterns.md) for v3 and
+[v4 patterns](references/v4-patterns.md) for v4. Do not mix their service
+definitions, package layouts, or runtime APIs.
 
-```
+If resolution is unavailable, state which declared version you are targeting.
+Do not describe uncompiled imports as verified.
+
+**The Effect docs MCP tools serve v3 content only.** Do not use them for v4
+work. Use the v4 reference and documentation matching the resolved release.
+Vendored documentation may track a newer commit than the consuming project;
+the installed declarations and implementation settle API compatibility and
+behaviour questions.
+
+## Effect docs MCP tools: v3 only
+
+Use these when the v3 reference does not answer the specific question.
+
+### Search
+
+```text
 effect_docs_search(query: string)
 ```
 
-Returns a list of matching documents with their `documentId` values. Use
-descriptive queries like "Schema validation", "Layer composition", or
-"HttpClient usage".
+Returns matching documents and their `documentId` values. Search for the
+capability or operation, such as "Schema validation", "Layer composition",
+or "HttpClient scoped response".
 
-### `get_effect_doc`
+### Read
 
-Retrieve the full content of a specific document by its ID.
-
-```
+```text
 get_effect_doc(documentId: number, page?: number)
 ```
 
-The content may be paginated. If so, use the `page` parameter to retrieve
-additional pages.
+Read the relevant document. If it is paginated, request subsequent pages
+needed to answer the question.
 
-### Workflow
-
-1. Search for documentation using `effect_docs_search` with your query
-2. Review the returned document summaries and IDs
-3. Use `get_effect_doc` with the relevant `documentId` to read the full content
-4. If the document is paginated, call `get_effect_doc` again with incrementing
-   `page` values
+Documentation establishes intended usage, not proof that a particular
+application owns cancellation, cleanup, or failure handling correctly.
 
 ## Effect Solutions CLI
 
-The Effect Solutions CLI provides curated best practices and patterns. Check
-for relevant topics before working on Effect code.
+The Effect Solutions CLI provides curated practices and patterns. Check
+for a relevant topic when choosing an implementation pattern:
 
+```sh
+npx -y effect-solutions list
+npx -y effect-solutions search <term>
+npx -y effect-solutions show <slug>
 ```
-npx -y effect-solutions list          # list all available topics
-npx -y effect-solutions show <slug>   # read one or more topics
-npx -y effect-solutions search <term> # search topics by keyword
-```
 
-## v3 patterns
-
-Read `references/v3-patterns.md` for the full v3 reference covering:
-`Effect.gen`, `Effect.fn`, `Effect.try`, error handling (`Effect.catchAll`,
-`Effect.catchTag`), services (`Effect.Service`, `Context.Tag`), Schema,
-`@effect/sql` Model, observability, and testing with `@effect/vitest`.
-
-For v3 projects, combine this reference with the MCP docs tools above.
-
-## v4 patterns
-
-Read `references/v4-patterns.md` for the full v4 reference, including
-annotated examples, module deep dives, and v3 migration guides.
-
-## Concurrency bounds
-
-Read `references/concurrency-bounds.md` — version-agnostic heuristic for
-fan-out, retries, periodic loops, and growable state. Apply when writing or
-reviewing any `Effect.all`, `Effect.forEach`, `Effect.retry`, `Effect.repeat`,
-or in-memory state that grows with request rate.
+Treat its examples as version-dependent guidance. Verify suggested APIs
+against the consuming project's resolved Effect version before adopting them.
