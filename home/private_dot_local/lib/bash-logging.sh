@@ -32,9 +32,9 @@
 #|     of that same action; verify silently and warn only on failure.          |
 #|                                                                            |
 #| Logging behavior:                                                          |
-#|   - Via chezmoi (marker at ~/.cache/dotfiles/chezmoi-session-current):    |
-#|     uses session log shared across all chezmoi scripts                    |
-#|   - Standalone: creates /tmp/<script>.<timestamp>.log                     |
+#|   - Via chezmoi (marker at ~/.cache/dotfiles/chezmoi-session-current):     |
+#|     uses the session log shared across all chezmoi scripts                 |
+#|   - Standalone: creates a private ~/.cache/dotfiles/logs/<script> log      |
 #|   - The terminal gets colour; the log file gets the same text with ANSI    |
 #|     escapes stripped, so session logs stay greppable.                      |
 #|                                                                            |
@@ -142,117 +142,172 @@ bl_strip_ansi() { awk '{ gsub(/\033\[[0-9;]*m/, ""); print; fflush() }'; }
 
 _read_session_marker() {
   local marker_file="$1"
+  local log_dir="$2"
   local session_log
 
-  [ -f "$marker_file" ] || return 1
+  if [ ! -e "$marker_file" ] && [ ! -L "$marker_file" ]; then
+    return 1
+  fi
 
-  session_log=$(cat "$marker_file" 2>/dev/null | head -n 1 | tr -d '\n')
-  if [ -z "$session_log" ] || [ ! -w "$(dirname "$session_log")" ]; then
-    warning "Invalid log path in marker file: $session_log"
+  if ! _bl_owned_regular_file "$marker_file"; then
+    log_warn_cont "Ignoring session log marker at ${marker_file}; restore a regular file owned by the current user"
+    return 1
+  fi
+
+  IFS= read -r session_log < "$marker_file" || true
+  if ! _bl_trusted_log_file "$session_log" "$log_dir"; then
+    log_warn_cont "Ignoring log destination from ${marker_file}; selecting a trusted log instead"
     return 1
   fi
 
   printf '%s\n' "$session_log"
 }
 
-_latest_session_log() {
-  local dir="$1"
-  local newest=""
-  local candidate
-  local nullglob_was_set=0
+_bl_path_uid() {
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
 
-  [ -d "$dir" ] || return 1
-
-  if shopt -q nullglob; then
-    nullglob_was_set=1
+_bl_owned_regular_file() {
+  local path="$1"
+  local owner
+  # Do not print the untrusted path: marker contents may contain credentials.
+  if [ -L "$path" ]; then
+    warning "Logging file rejected: symbolic links are not accepted"
+    return 1
   fi
-  shopt -s nullglob
-
-  for candidate in "$dir"/chezmoi-session.*.log; do
-    if [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; then
-      newest="$candidate"
-    fi
-  done
-
-  if [ "$nullglob_was_set" -eq 0 ]; then
-    shopt -u nullglob
+  if [ ! -f "$path" ]; then
+    warning "Logging file rejected: expected an existing regular file"
+    return 1
   fi
+  if ! owner=$(_bl_path_uid "$path"); then
+    warning "Logging file rejected: stat could not determine its owner"
+    return 1
+  fi
+  if [ "$owner" != "$(id -u)" ]; then
+    warning "Logging file rejected: owner UID ${owner} differs from current UID $(id -u)"
+    return 1
+  fi
+}
 
-  [ -n "$newest" ] && [ -w "$newest" ] || return 1
-  printf '%s\n' "$newest"
+_bl_owned_directory() {
+  local path="$1"
+  local owner
+  if [ -L "$path" ]; then
+    warning "Logging directory ${path} is a symbolic link; restore a user-owned directory"
+    return 1
+  fi
+  if [ ! -d "$path" ]; then
+    warning "Logging directory ${path} is not a directory; inspect it with ls -ld"
+    return 1
+  fi
+  if ! owner=$(_bl_path_uid "$path"); then
+    warning "Cannot determine owner of logging directory ${path}; inspect it with stat"
+    return 1
+  fi
+  if [ "$owner" != "$(id -u)" ]; then
+    warning "Logging directory ${path} belongs to UID ${owner}, not current UID $(id -u); restore current-user ownership"
+    return 1
+  fi
+}
+
+_bl_prepare_private_directory() {
+  local path="$1"
+  local old_umask
+
+  old_umask=$(umask)
+  umask 077
+  if ! mkdir -p "$path"; then
+    umask "$old_umask"
+    return 1
+  fi
+  umask "$old_umask"
+
+  _bl_owned_directory "$path" || return 1
+  chmod 0700 "$path"
+}
+
+_bl_trusted_log_file() {
+  local path="$1"
+  local log_dir="$2"
+
+  case "$path" in
+    "$log_dir"/*) ;;
+    *) warning "Logging destination rejected: expected a file under ${log_dir}"; return 1 ;;
+  esac
+  _bl_owned_regular_file "$path" || return 1
+  if [ ! -w "$path" ]; then
+    warning "Logging destination rejected: current user cannot write to the file; restore owner write permission"
+    return 1
+  fi
+  chmod 0600 "$path"
+}
+
+_bl_create_private_log() {
+  local log_dir="$1"
+  local name="$2"
+  local timestamp="$3"
+  local old_umask
+  local session_log
+
+  name="${name##*/}"
+  name="${name//[^[:alnum:]._-]/_}"
+  old_umask=$(umask)
+  umask 077
+  session_log=$(mktemp "${log_dir}/${name}.${timestamp}.log.XXXXXX") || {
+    umask "$old_umask"
+    return 1
+  }
+  umask "$old_umask"
+  _bl_trusted_log_file "$session_log" "$log_dir" || return 1
+  printf '%s\n' "$session_log"
 }
 
 setup_session_logging() {
   local script_name="${1:-unknown}"
   local timestamp
+  local state_dir="${HOME}/.cache/dotfiles"
+  local log_dir="${HOME}/.cache/dotfiles/logs"
   local marker_file="${HOME}/.cache/dotfiles/chezmoi-session-current"
-  local tmp_marker_file
-  local tmpdir_marker_file="/tmp/.chezmoi-session-current"
-  local darwin_tmpdir
-  local darwin_marker_file
   local session_log=""
 
   timestamp=$(date +"%Y%m%d_%H%M%S")
 
-  # Normalize TMPDIR
-  local tmpdir="${TMPDIR:-/tmp}"
-  tmpdir="${tmpdir%/}"
-  tmp_marker_file="${tmpdir}/.chezmoi-session-current"
-
   # Print startup message
   color_print magenta dim "Script: $script_name" >&2
 
+  _bl_prepare_private_directory "$state_dir" || return 1
+  _bl_prepare_private_directory "$log_dir" || return 1
+
   if [ "${BASH_LOGGING_ACTIVE:-0}" = "1" ] && [ -n "${BASH_LOGGING_FILE:-}" ]; then
-    session_log="$BASH_LOGGING_FILE"
-    echo "" >> "$session_log"
-    echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
-    if [ "${DEBUG:-0}" = "1" ]; then
-      set -x
-      info "DEBUG mode enabled - command tracing active"
-    fi
-    return 0
-  fi
-
-  # Determine log file location (in priority order)
-  session_log=$(_read_session_marker "$marker_file" || true)
-
-  if [ -z "$session_log" ]; then
-    session_log=$(_read_session_marker "$tmp_marker_file" || true)
-  fi
-
-  if [ -z "$session_log" ]; then
-    session_log=$(_read_session_marker "$tmpdir_marker_file" || true)
-  fi
-
-  if [ -z "$session_log" ]; then
-    session_log=$(_latest_session_log "$tmpdir" || true)
-  fi
-
-  if [ -z "$session_log" ] && command -v getconf >/dev/null 2>&1; then
-    darwin_tmpdir=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)
-    darwin_tmpdir="${darwin_tmpdir%/}"
-    if [ -n "$darwin_tmpdir" ]; then
-      darwin_marker_file="${darwin_tmpdir}/.chezmoi-session-current"
-      session_log=$(_read_session_marker "$darwin_marker_file" || true)
-      if [ -z "$session_log" ]; then
-        session_log=$(_latest_session_log "$darwin_tmpdir" || true)
+    if _bl_trusted_log_file "$BASH_LOGGING_FILE" "$log_dir"; then
+      session_log="$BASH_LOGGING_FILE"
+      printf '\n[%s] ===== %s =====\n' "$(date '+%H:%M:%S')" "$script_name" >> "$session_log"
+      if [ "${DEBUG:-0}" = "1" ]; then
+        set -x
+        info "DEBUG mode enabled - command tracing active"
       fi
+      return 0
     fi
+    log_warn_cont "Ignoring BASH_LOGGING_FILE; a trusted session log will be selected instead"
+    unset BASH_LOGGING_FILE BASH_LOGGING_ACTIVE
   fi
+
+  session_log=$(_read_session_marker "$marker_file" "$log_dir" || true)
 
   if [ -z "$session_log" ] && [ -n "${CHEZMOI_SESSION_LOG:-}" ]; then
-    # Fallback to environment variable (legacy)
-    session_log="$CHEZMOI_SESSION_LOG"
+    if _bl_trusted_log_file "$CHEZMOI_SESSION_LOG" "$log_dir"; then
+      session_log="$CHEZMOI_SESSION_LOG"
+    else
+      log_warn_cont "Ignoring CHEZMOI_SESSION_LOG; a private standalone log will be used"
+    fi
   fi
 
   if [ -z "$session_log" ]; then
-    # Standalone mode - create own log file
-    session_log="${tmpdir}/${script_name}.${timestamp}.log"
+    session_log=$(_bl_create_private_log "$log_dir" "$script_name" "$timestamp") || return 1
   fi
 
   # Log script boundary marker
-  echo "" >> "$session_log"
-  echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
+  printf '\n[%s] ===== %s =====\n' "$(date '+%H:%M:%S')" "$script_name" >> "$session_log"
 
   # Terminal keeps colour; the log copy has escapes stripped.
   exec > >(tee >(bl_strip_ansi >> "$session_log"))

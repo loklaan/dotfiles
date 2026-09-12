@@ -118,7 +118,12 @@ and an ordered `permissions` array instead of a per-tool `permission` map.
 
 The MCP endpoint is translated from the same
 `mcp-servers-opencode-mcpproxy-json-tmpl` shared template V1 consumes, so the
-URL stays single-sourced.
+URL and bearer header stay single-sourced. V1 uses
+`mcp.mcpproxy.headers.Authorization`; V2 preserves that header under
+`mcp.servers.mcpproxy.headers.Authorization`, translating `enabled` to the
+inverse `disabled`. Omitting headers during translation breaks authenticated
+MCP access even when the URL is correct. See
+[MCP Authentication](mcp-authentication.md) for key seeding and safe probes.
 
 Two deliberate omissions:
 

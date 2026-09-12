@@ -1,6 +1,4 @@
-{
-  "mcpproxy": {
-    "command": "npx",
-    "args": ["-y", "mcp-remote", "http://127.0.0.1:18321/mcp/"]
-  }
-}
+{{- $headerFile := joinPath .chezmoi.homeDir ".mcpproxy/mcp-client-headers" -}}
+{{- $args := list "-y" "mcp-remote@latest" "http://127.0.0.1:18321/mcp/" "--header-file" $headerFile -}}
+{{- $server := dict "command" "npx" "args" $args -}}
+{{ dict "mcpproxy" $server | toPrettyJson }}

@@ -44,11 +44,14 @@ merge_auth_json() {
   local auth_file="$1"
   local api_key="$2"
 
-  local tmp_file
-  tmp_file=$(mktemp "${TMPDIR}/opencode-auth-XXXXXX.json")
+  local auth_dir tmp_file merged_file
+  auth_dir=$(dirname "$auth_file")
+  tmp_file=$(umask 077; mktemp "${auth_dir}/.opencode-auth.XXXXXX")
+  merged_file=$(umask 077; mktemp "${auth_dir}/.opencode-auth-merged.XXXXXX")
+  chmod 0600 "$tmp_file" "$merged_file"
 
   # Cleanup function
-  cleanup() { rm -f "$tmp_file" "${tmp_file}.merged"; }
+  cleanup() { rm -f "$tmp_file" "$merged_file"; }
   trap cleanup EXIT
 
   # Read existing auth.json or create empty object
@@ -66,13 +69,16 @@ merge_auth_json() {
   # *resolution* for actual API calls does not read this file — it uses
   # options.apiKey in config (see modify_opencode.json). auth.json is kept
   # well-formed for `opencode auth list` and other providers regardless.
-  jq --arg key "$api_key" \
-    '."opencode" = { type: "api", key: $key } | ."opencode-go" = { type: "api", key: $key }' \
-    "$tmp_file" > "${tmp_file}.merged" \
-    && mv "${tmp_file}.merged" "$tmp_file"
+  OPENCODE_API_KEY="$api_key" jq \
+    '."opencode" = { type: "api", key: $ENV.OPENCODE_API_KEY } | ."opencode-go" = { type: "api", key: $ENV.OPENCODE_API_KEY }' \
+    "$tmp_file" > "$merged_file"
+  chmod 0600 "$merged_file"
+  mv "$merged_file" "$tmp_file"
+  chmod 0600 "$tmp_file"
 
   # Atomic write
   mv "$tmp_file" "$auth_file"
+  chmod 0600 "$auth_file"
   trap - EXIT
 
   log_detail "updated ${auth_file} with opencode key"
@@ -83,13 +89,14 @@ main() {
 
   # Verify bws-get-or-empty is available
   if [ ! -x "$BWS_GET" ]; then
-    log_warn "bws-get-or-empty not found at ${BWS_GET} — skipping auth sync"
+    log_warn "Cannot execute ${BWS_GET}; auth sync skipped and existing credentials unchanged"
+    log_warn_cont "Restore the managed helper with: chezmoi apply \"${BWS_GET}\""
     return 0
   fi
 
   # Verify jq is available
   if ! command -v jq >/dev/null 2>&1; then
-    log_warn "jq not on PATH — skipping auth sync"
+    log_warn "Cannot sync opencode credentials because jq is not on PATH; install jq and re-run chezmoi"
     return 0
   fi
 
@@ -98,12 +105,20 @@ main() {
 
   log_step "opencode auth sync (Linux)"
 
+  local auth_xtrace_was_enabled=0
+  case "$-" in
+    *x*) auth_xtrace_was_enabled=1; set +x ;;
+  esac
+
   local api_key
   api_key=$(fetch_bws_secret "$bws_secret_id" "$bws_token_path")
 
   if [ -z "$api_key" ]; then
-    log_warn "opencode API key is empty (BWS token missing, expired, or no access)"
-    log_warn "skipping auth sync — run df-setup for guidance"
+    if [ "$auth_xtrace_was_enabled" -eq 1 ]; then
+      set -x
+    fi
+    log_warn "BWS lookup returned no opencode API key; auth sync skipped and existing credentials unchanged"
+    log_warn_cont "Run df-setup to diagnose BWS access; the soft-fail lookup does not report a failure reason"
     return 0
   fi
 
@@ -111,6 +126,9 @@ main() {
   mkdir -p "$(dirname "$AUTH_FILE")"
 
   merge_auth_json "$AUTH_FILE" "$api_key"
+  if [ "$auth_xtrace_was_enabled" -eq 1 ]; then
+    set -x
+  fi
   log_detail "opencode auth updated"
 }
 

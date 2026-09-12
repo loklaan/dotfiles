@@ -15,10 +15,9 @@ The skill lives at `.agents/skills/coding-chezmoi/` with reference files in
 **Source:** `references/codebase-structure.md`, "Custom Data Variables" section.
 
 **Procedure:**
-1. Read `home/.chezmoi.toml.tmpl` and extract all keys under `[data]`.
-2. Read the code block in the "Custom Data Variables" section.
-3. Report any variables present in the toml but missing from the docs, or
-   listed in the docs but no longer in the toml.
+1. Verify the section points to existing configuration/data sources.
+2. Check any explicitly named variable against those sources. Do not require
+   an exhaustive inventory: this document is a structural map, not a schema.
 
 **Rule ID:** `data-variables-synced`
 

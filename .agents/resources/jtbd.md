@@ -106,7 +106,7 @@ path for the environment, and a real model call returns a response.
 **Why it matters:** Versions and config can all look right while auth silently
 fails. The only true test is a round-trip model call.
 
-**Background (see `home/private_dot_local/share/opencode/auth.json.tmpl`):** auth
+**Background (see `home/private_dot_local/share/opencode/private_auth.json.tmpl`):** auth
 routes through `@canva/opencode-plugin-llmproxy`, with two modes:
 - **Coder box** (`CODER=true`): AWS IMDS credentials + SigV4 signing. The
   `amazon-bedrock` auth.json entry is **omitted** on Coder (a placeholder key
@@ -180,6 +180,95 @@ agent silently runs without its guardrails or tooling.
 4. **Skills are present in the OMO/opencode skill surface:** the skill dirs under
    `~/.agents/skills/` (e.g. `lochy:*`) appear and are not empty.
    - PASS: the same skill set is reachable from each vendor path.
+
+---
+
+## JTBD 5 — Use authenticated MCP tools
+
+**Job:** My configured agents can reach MCPProxy, while requests without the
+correct credential are rejected.
+
+**Why it matters:** A listening proxy is not proof of either authentication or
+working client credentials.
+
+**Background:** See [MCP Authentication](mcp-authentication.md). Its ingress key
+is machine-local, not an upstream API token. If the machine deliberately opts
+out via `mcpproxyGate`, report this live-connection job as not applicable.
+Codex configuration does not make Codex an expected installed binary.
+
+**Validation:**
+1. Run the three read-only POST probes in the resource's
+   [authentication check](mcp-authentication.md#check-authentication). PASS:
+   missing and incorrect credentials return 401; the managed header returns
+   200. Never print the key or use a verbose authenticated curl trace.
+2. Confirm protected credential-file permissions without reading values:
+   - macOS: `stat -f '%Lp %N' ~/.mcpproxy/mcp_config.json ~/.mcpproxy/mcp-client-headers`
+   - Linux: `stat -c '%a %n' ~/.mcpproxy/mcp_config.json ~/.mcpproxy/mcp-client-headers`
+   - PASS: both files are 600. For OpenCode, also verify restricted access to
+     its containing config directory; a private parent does not imply a 600 file.
+3. Through each already-configured agent's MCP surface, list available tools.
+   PASS: tools are returned without an ingress-authentication error. A server
+   requiring upstream credentials or quarantine approval is a separate failure.
+   Do not approve tools or alter credentials during validation.
+
+---
+
+## JTBD 6 — Keep opted-out integrations stopped
+
+**Job:** Disabling Paseo or Orca stops its managed activity without deleting
+the application or its data.
+
+**Why it matters:** A false config flag alone is not evidence that a process
+stopped or its autostart was disabled.
+
+**Background:** See [Configuration & Opt-In](../rules/agent-orchestration.md#configuration--opt-in).
+Validate current intent only; do not flip flags or run lifecycle scripts on a
+live machine. Opted-in integrations are not failures of this job.
+
+**Validation:**
+1. Read only the relevant persisted flags:
+   `yq -p=toml -r '.data.paseoDaemon // false' ~/.config/chezmoi/chezmoi.toml`
+   and the equivalent `.data.orcaServer` expression. Evaluate steps below for
+   false flags; missing tools or unreadable config must be reported, not guessed.
+2. Linux Paseo: inspect `systemctl --user is-active paseo-daemon.service`,
+   `systemctl --user is-enabled paseo-daemon.service` and
+   `lsof -nP -iTCP:6767 -sTCP:LISTEN`. PASS: unit absent/inactive, not enabled,
+   and no port listener. A missing inspection binary is not evidence of no listener.
+3. Linux Orca: inspect `pitchfork list --status running --hide-header`,
+   `pgrep -af df-orca-serve`, and `lsof -nP -a -iTCP -sTCP:LISTEN -c orca`.
+   PASS: no managed daemon/process/socket; any legacy `orca-server.service`
+   must also be inactive and not enabled. This explicit `lsof -a` check uses
+   intersected selectors rather than the lifecycle script's broader query.
+4. macOS: `pgrep -x Paseo` / `pgrep -x Orca` should find no corresponding app.
+   Inspect login items with
+   `osascript -e 'tell application "System Events" to get the name of every login item'`
+   and LaunchAgent disabled state with `launchctl print-disabled "gui/$(id -u)"`.
+   PASS: no matching login item, discovered app LaunchAgent labels are disabled,
+   and pre-existing application data remains. Report automation permission
+   failures as unverified, not a pass. Name/slug discovery is not exhaustive.
+
+---
+
+## JTBD 7 — Inspect migration safety before moving state
+
+**Job:** I can understand the selected migration data and its credential risk
+before authorising a transfer.
+
+**Why it matters:** Agent sessions and shell history may contain credentials;
+an unencrypted archive is sensitive even with private file permissions.
+
+**Background:** See the [migration runbook](cw-migration.md). Validation must
+not transfer real state or create an archive of the user's home.
+
+**Validation:**
+1. `cw migrate --help` succeeds and describes destination-side operation,
+   default migration/audit paths and the manifest option.
+2. From the repository root run
+   `deno test -A --filter migrate home/private_dot_local/bin/executable_cw`.
+   PASS: fixture tests demonstrate warning-before-choice, explicit tar consent,
+   private archive modes and cleanup/error handling. These temporary/injected
+   checks leave live configs, services and remote state unchanged; they are not
+   proof that a particular future SSH transfer will succeed.
 
 ---
 

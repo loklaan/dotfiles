@@ -1,0 +1,7 @@
+{{- $apiKey := includeTemplate "mcpproxy-api-key-tmpl" . | trim -}}
+{{- if ne "" $apiKey -}}
+Authorization: Bearer {{ $apiKey }}
+{{- else -}}
+# MCPProxy has no API key yet. Ensure jq is available and run a full chezmoi apply
+# so the before-script seeds the key before client configs render.
+{{- end }}

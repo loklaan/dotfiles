@@ -1,212 +1,36 @@
 # Codebase Structure
 
-## Source Path Mapping
-
-Chezmoi maps source paths in this repo to target paths under `~/` using [source state attributes](https://www.chezmoi.io/reference/source-state-attributes/) as filename prefixes.
-
-**Key rules:**
-- `~/.` (dotfiles) → `home/dot_`
-- `~/` (regular files) → `home/`
-- Private directories/files → prefix with `private_`
-- Executable files → prefix with `executable_`
-- Templates → suffix with `.tmpl`
-
-| Target path | Source path |
-|---|---|
-| `~/.local/lib/` | `home/private_dot_local/lib/` |
-| `~/.config/zsh/` | `home/private_dot_config/private_zsh/` |
-| `~/.bashrc` | `home/dot_bashrc` |
-| `~/.ssh/config` | `home/private_dot_ssh/config` |
-| `~/bin/script` | `home/bin/executable_script` |
-
-| Task | Create/edit in source |
-|---|---|
-| Add to `~/.local/lib/` | `home/private_dot_local/lib/` |
-| Create `~/.config/git/config` | `home/private_dot_config/git/config` |
-| Add script to `~/.local/bin/` | `home/private_dot_local/bin/executable_scriptname` |
-| Update `~/.zshrc` | `home/private_dot_zshrc` |
-| Create templated `~/.npmrc` | `home/private_dot_npmrc.tmpl` |
-
-To find the source path for any target: `chezmoi source-path <target-path>`
-
-## Custom Data Variables
-
-Defined in `.chezmoi.toml.tmpl` under `[data]`:
-
-```go
-.email                            // User's email
-.emailWork                        // Work email (gates all work-specific config)
-.signingKey                       // GPG/SSH signing key
-.brewprefix                       // Homebrew prefix path
-.bwsTokenPath                     // Absolute path to BWS access token file
-.bwsIdNpmAuthToken                // Bitwarden secret ID for npm auth
-.bwsIdGithubAuthToken             // Bitwarden secret ID for GitHub (personal)
-.privateSkillsRepo                // Git URL for private Claude skills repo
-.npmWorkRegistry                  // Scoped npm registry for work packages
-.openCodeWorkPlugin               // OpenCode plugin for work environments
-.jetbrainsLicenseServer           // JetBrains license server URL
-```
-
-### Adding a new data-variable key (fleet-poisoning hazard)
-
-A new `[data]` key only lands in a machine's cached config (`~/.config/chezmoi/chezmoi.toml`) when `chezmoi init` re-runs the `.chezmoi.toml.tmpl` prompts. `chezmoi apply` alone does NOT seed it. So on any box whose cache predates the key — every already-provisioned box in the fleet — a template that reads the key with a bare `{{ .newKey }}` **aborts the entire `chezmoi apply`** with `map has no entry for key "newKey"`.
-
-This is a fleet-poisoning change: because `chezmoi apply` runs upstream of the source-pull (`mise run update` does `mise:upgrade` → apply → then `chezmoi:update` pulls), a box that fails apply on the missing key can never reach a follow-up commit that would fix it. It deadlocks, and manual `git fetch + reset --hard origin/main` on each box is the only recovery.
-
-**Rule: any new template reference to a data key MUST guard against the key being absent, in the SAME commit that introduces the reference:**
-
-```go
-{{ dig "newKey" "" . }}          // renders "" on caches predating the key
-{{ dig "newKey" "default" . }}   // or a real default
-```
-
-Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it later" change. Add the prompt to `.chezmoi.toml.tmpl`, the exact-text `--promptString` seed to `install.sh`, AND the `dig` guard at every read site together.
+`.chezmoiroot` selects `home/` as the source for `~/`. Edit source, not deployed
+files; resolve a target with `chezmoi source-path <target-path>`.
 
 ## Key Files
 
-- `.chezmoiroot` — declares `home/` as the source root
-- `.chezmoi.toml.tmpl` — main config: data variables, prompts, session logging hooks
-- `install.sh` — standalone installer (downloads chezmoi and applies dotfiles)
-- `install.test.sh` — E2E Docker test for clean-environment validation
-- `home/` — all managed files and directories
-- `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
-- `home/private_dot_zshrc` — zsh entry point
-- `home/private_dot_config/private_zsh/init/*.zsh.tmpl` — zsh init modules
+Paths below are repository-relative.
 
-## Shared Logging Library
-
-All bash scripts use a shared logging library at `home/private_dot_local/lib/bash-logging.sh`:
-
-- Colored logging functions: `info`, `warning`, `error`, `fatal` (with no-newline variants `infof`, `warningf`, `errorf`, `fatalf`)
-- Low-level colored output: `_print` (with newline), `_printf` (without)
-- Session log file management (integrates with chezmoi hooks via marker file)
-- Automatic output redirection when running under a chezmoi session
-- `print_log_path` to emit the current log file path to stderr
-
-### Session Logging
-
-Session logging is driven by chezmoi hooks in `.chezmoi.toml.tmpl`:
-
-1. **Pre-apply/pre-update hook** creates a session log at `$TMPDIR/chezmoi-session.<timestamp>.log` and writes its path to `~/.cache/dotfiles/chezmoi-session-current`
-2. **`setup_session_logging`** in each script checks the same per-user marker file, reads the shared log path, and redirects output (stdout + stderr via `tee -a`) to both terminal and session log
-3. **Post-apply/post-update hook** removes the marker file
-
-Standalone execution (no marker file): output goes to terminal only.
-
-The library also respects a legacy `CHEZMOI_SESSION_LOG` env var as fallback. `DEBUG=1` enables `set -x` tracing.
-
-Do NOT manually create `LOG_FILE` variables or use `trap cleanup EXIT` — the library handles all logging setup.
-
-## Common Tasks
-
-### Adding a Bash Script
-
-1. Create: `home/private_dot_local/bin/executable_scriptname{.tmpl}`
-2. Use the bash boilerplate from [coding-patterns.md](coding-patterns.md)
-3. Implement logic in `main()`
-4. Test: `chezmoi apply --dry-run --verbose`
-
-### Adding a Zsh Module
-
-1. Create: `home/private_dot_config/private_zsh/init/name.zsh.tmpl`
-2. Use the file header style from [coding-patterns.md](coding-patterns.md)
-3. Source it in `private_dot_zshrc` or another init module
-
-### Adding a Lifecycle Script
-
-1. Create: `home/.chezmoiscripts/run_after_name-NNN-description.sh.tmpl`
-2. Use bash boilerplate
-3. Choose prefix: `run_`, `run_once_`, `run_onchange_`
-
-### Adding External Archives
-
-1. Create: `home/.chezmoiexternals/name.toml.tmpl`
-2. Define archives with target paths
-3. Use templating for OS-specific paths
-4. Test: `chezmoi apply --dry-run --verbose`
-
-### Sharing Template Logic
-
-1. Create: `home/.chezmoitemplates/name-tmpl` (NO `.tmpl` suffix)
-2. Use in templates: `{{ includeTemplate "name-tmpl" . }}`
-
-### Testing Changes
-
-```bash
-chezmoi apply --dry-run --verbose  # Dry run
-chezmoi diff                       # See changes
-chezmoi apply                      # Apply
-./install.test.sh                  # Clean Docker test
-```
-
-## Known Quirks
-
-### mise gix Panic
-
-Some enterprise provisioning tools write `^refs/heads/*` negative-glob fetch
-refspecs into `/opt/homebrew/etc/gitconfig`. Valid git syntax, but rejected
-by every Rust-based git implementation (gix, gitoxide, jj), which panics
-tools like mise:
-
-```
-Message: remote was just created and must be visible in config: Find(RefSpec { ... NegativeGlobPattern ... })
-```
-
-Permanent fix (applied on work machines automatically):
-`home/.chezmoiscripts/run_after_install-058-fix-system-gitconfig-refspec.sh.tmpl`
-strips the refspec and registers a `managedconfig.optout` entry — a
-convention some provisioning tools honour to skip re-managing specific keys.
-
-Fallback workaround for other Rust git consumers: disable gix in mise
-(`~/.config/mise/config.toml`):
-
-```toml
-[settings]
-gix = false
-```
-
-Last-resort override: `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null mise <command>`
-
-## Non-Interactive Execution
-
-Scripts may run in non-TTY environments (Docker, Devcontainers, Coder). Commands MUST be forced non-interactive.
-
-| Command | Non-Interactive Flag |
+| Path | Responsibility |
 |---|---|
-| `mise use` / `mise install` | `-y` or `--yes` |
-| `chezmoi init` / `chezmoi apply` | `--force` |
-| `apt-get install` | `-y` |
-| `yum install` | `-y` |
-| `apk add` | (default) |
-| `brew bundle` | (default) |
-| Homebrew install script | `NONINTERACTIVE=1` env var |
-| `chsh` | Cannot be forced — will prompt for password |
+| `install.sh`, `install.test.sh` | Bootstrap and clean-install test |
+| `home/.chezmoi.toml.tmpl` | Machine configuration, prompts and hooks |
+| `home/.chezmoidata/` | Shared configuration data and profiles |
+| `home/.chezmoitemplates/` | Reusable template partials |
+| `home/.chezmoiscripts/` | Ordered lifecycle scripts |
+| `home/.chezmoiexternals/` | External archives and repositories |
+| `home/private_dot_config/` | Tool and service configuration |
+| `home/private_dot_zshrc`, `home/private_dot_config/private_zsh/` | Shell entry point and modules |
+| `home/private_dot_local/bin/`, `home/private_dot_local/lib/` | Custom CLIs and shared libraries |
+| `home/dot_agents/` | Deployed shared agent assets |
+| `.agents/` | This repository's rules, skills and reference docs |
+| `tests/`, `support/` | Regression suites and architecture diagrams |
 
-When adding commands, check if they can prompt and add the appropriate flag.
+## Custom Data Variables
 
-## Maintaining the OpenCode Bedrock Whitelist
+Machine choices are cached by `chezmoi init` in `~/.config/chezmoi/chezmoi.toml`.
+Read definitions in `home/.chezmoi.toml.tmpl` and shared data in `home/.chezmoidata/`;
+this map intentionally does not duplicate the variable inventory.
 
-`modify_opencode.json` uses a `whitelist` on the `amazon-bedrock` provider to control which models appear in the model picker. Without it, every model variant from models.dev is shown (bare, `us.`, `eu.`, `global.`, `au.` — often 4+ entries per model).
+## Detailed guidance
 
-> For routine model ID bumps (across this file and `dot_omo/modify_omo.jsonc`), see `update-deps` § 7.
-
-### Principles
-
-- **Anthropic models:** use `global.` prefixed inference profile IDs only. The `global.` prefix routes to all regions. Bare IDs (no prefix) are invalid on Bedrock and will error.
-- **Third-party models:** use bare IDs (e.g. `moonshotai.kimi-k2.5`). These don't have inference profile prefixes.
-- **One per family:** only whitelist the latest generation of each model family. Don't include older versions alongside newer ones.
-- **Context limit overrides:** only needed when models.dev reports incorrect limits (e.g. 1M instead of Bedrock's 200K for Opus). Add entries to the `models` dict to override.
-
-### Evaluating new models
-
-When updating the whitelist for new model releases:
-
-1. Read `~/.cache/opencode/models.json` to see all available bedrock models
-2. Group by vendor prefix (e.g. `deepseek.`, `qwen.`, `minimax.`)
-3. For each vendor family, pick the latest model — compare version numbers, release dates, and parameter counts
-4. Prefer models with tool calling and reasoning support (required for agentic workflows)
-5. Check the model card page on AWS docs to confirm exact model IDs and available inference profile prefixes
-
-### oh-my-openagent model references
-
-`dot_omo/modify_omo.jsonc` (renders the `[opencode]` block of `~/.omo/omo.jsonc`) sets default models for agent categories. These must reference models that are either in the whitelist or from a non-bedrock provider. Keep these in sync when updating the whitelist.
+- [Chezmoi framework](chezmoi-framework.md): source attributes and templates.
+- [Coding patterns](coding-patterns.md), [Deno tools](deno-effect-tools.md): implementation conventions.
+- [System model](../../../resources/system-model.md), [Secrets](../../../rules/secrets-architecture.md), [Orchestration](../../../rules/agent-orchestration.md): ownership and lifecycle.
+- [Tests](../../../../tests/README.md), [Dependency updates](../../update-deps/SKILL.md): validation and maintenance.
