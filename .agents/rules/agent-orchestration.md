@@ -227,6 +227,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | Path | Purpose |
 |---|---|
 | `home/.chezmoi.toml.tmpl` | Defines `paseoDaemon` prompt and data variable |
+| `home/.chezmoiscripts/run_once_after_install-054-disable-paseo-orca.sh` | One-time TOML-safe migration of historical true flags to false |
 | `home/private_dot_config/mise/config.toml.tmpl` | Installs paseo CLI on Linux + opt-in; opencode itself is mise-managed, opencode plugins are not |
 | `home/private_dot_local/bin/executable_install-my-packages.tmpl` | Installs Paseo.app + Orca.app casks (macOS, --gui) |
 | `home/private_dot_config/systemd/user/paseo-daemon.service.tmpl` | systemd-user unit (Linux + opt-in only) |

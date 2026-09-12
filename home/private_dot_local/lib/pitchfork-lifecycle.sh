@@ -110,6 +110,11 @@ pf_is_registered() {
   "$PITCHFORK_BIN" list 2>/dev/null | grep -q "$daemon"
 }
 
+pf_is_running() {
+  local daemon="$1"
+  "$PITCHFORK_BIN" list --status running --hide-header 2>/dev/null | grep -q "$daemon"
+}
+
 # Ensure the supervisor is up, and boot-enabled so daemons survive a reboot
 # without depending on a `chezmoi apply` to restart them. Only reports the
 # transition — already-enabled is the steady state, not news.

@@ -1,0 +1,6 @@
+{{- $apiKey := includeTemplate "mcpproxy-api-key-tmpl" . | trim -}}
+{{- if ne "" $apiKey -}}
+Authorization: Bearer {{ $apiKey }}
+{{- else -}}
+# MCPProxy has not generated its API key yet. Re-run chezmoi after first start.
+{{- end }}
