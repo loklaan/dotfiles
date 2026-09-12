@@ -55,6 +55,9 @@
 {{-   if hasKey $entry "command" -}}
 {{-     $server = set $server "command" (get $entry "command") -}}
 {{-   end -}}
+{{-   if hasKey $entry "headers" -}}
+{{-     $server = set $server "headers" (get $entry "headers") -}}
+{{-   end -}}
 {{-   $server = set $server "disabled" (not (dig "enabled" true $entry)) -}}
 {{-   $servers = set $servers $name $server -}}
 {{- end -}}

@@ -18,30 +18,80 @@ setup_session_logging "$(basename "$0")"
 #/   Manages the paseo daemon on Linux machines (typically Coder workspaces).
 #/   When `paseoDaemon` data variable is true, enables and (re)starts the
 #/   systemd user unit. When false, disables and stops the unit so it does
-#/   not auto-start. macOS machines run paseo as a desktop app (Paseo.app)
-#/   and skip this script.
+#/   not auto-start. On macOS, false quits Paseo.app and disables discovered
+#/   login items and LaunchAgents without removing the app or its data.
 #/
 #/ Options:
 #/   --help:      Display this help message
+read_enabled() {
+  local config="${HOME}/.config/chezmoi/chezmoi.toml"
+  local enabled
+  if ! command -v yq >/dev/null 2>&1; then
+    log_warn "Treating paseoDaemon as disabled because yq is not on PATH"
+    log_warn_cont "Inspect: command -v yq"
+    printf 'false\n'
+    return 0
+  fi
+  if [ ! -f "$config" ]; then
+    log_warn "Treating paseoDaemon as disabled because ${config} does not exist"
+    log_warn_cont "Inspect: ls -ld \"$(dirname "$config")\""
+    printf 'false\n'
+    return 0
+  fi
+  if ! enabled=$(yq -p=toml -o=json -r '.data.paseoDaemon // false' "$config" 2>/dev/null); then
+    log_warn "Paseo lifecycle aborted because yq could not read data.paseoDaemon from ${config}; config is unchanged"
+    log_warn_cont "Inspect: yq -p=toml -o=json -r '.data.paseoDaemon // false' \"${config}\""
+    return 1
+  fi
+  printf '%s\n' "$enabled"
+}
+
 {{ if eq .chezmoi.os "linux" -}}
+paseo_listener_active() {
+  command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:6767 -sTCP:LISTEN >/dev/null 2>&1
+}
+
 manage_linux() {
-  local enabled={{ dig "paseoDaemon" false . }}
+  local enabled
+  local failed=0
+  local command_error
+  enabled=$(read_enabled)
 
   if [ "$enabled" != "true" ]; then
     log_step "paseo daemon (Linux, opt-out)"
 
-    # Stop and disable if it's running, so an explicit opt-out actually sticks.
-    if systemctl --user list-unit-files paseo-daemon.service >/dev/null 2>&1; then
-      if systemctl --user is-active --quiet paseo-daemon.service; then
-        systemctl --user stop paseo-daemon.service
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet paseo-daemon.service; then
+      if ! command_error=$(systemctl --user stop paseo-daemon.service 2>&1); then
+        log_warn "systemctl could not stop paseo-daemon.service: ${command_error:-no diagnostic output}"
+        log_warn_cont "Inspect: systemctl --user status paseo-daemon.service --no-pager"
+        failed=1
+      elif systemctl --user is-active --quiet paseo-daemon.service; then
+        log_warn "paseo-daemon.service remains active after systemctl reported a successful stop"
+        log_warn_cont "Inspect: systemctl --user status paseo-daemon.service --no-pager"
+        failed=1
+      else
         log_detail "Stopped paseo-daemon.service"
       fi
-      if systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
-        systemctl --user disable paseo-daemon.service >/dev/null
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
+      if ! command_error=$(systemctl --user disable paseo-daemon.service 2>&1); then
+        log_warn "systemctl could not disable paseo-daemon.service: ${command_error:-no diagnostic output}"
+        log_warn_cont "Inspect: systemctl --user is-enabled paseo-daemon.service"
+        failed=1
+      elif systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
+        log_warn "paseo-daemon.service remains enabled after systemctl reported a successful disable"
+        log_warn_cont "Inspect: systemctl --user is-enabled paseo-daemon.service"
+        failed=1
+      else
         log_detail "Disabled paseo-daemon.service"
       fi
     fi
-    return 0
+    if paseo_listener_active; then
+      log_warn "A process still has a listening socket on Paseo's TCP port 6767"
+      log_warn_cont "Inspect: lsof -nP -iTCP:6767 -sTCP:LISTEN"
+      failed=1
+    fi
+    return "$failed"
   fi
 
   log_step "paseo daemon (Linux, opt-in)"
@@ -73,6 +123,16 @@ manage_linux() {
   fi
 }
 {{- end }}
+{{ if eq .chezmoi.os "darwin" -}}
+manage_macos() {
+  local enabled
+  enabled=$(read_enabled)
+  [ "$enabled" != "true" ] || return 0
+  source "${HOME}/.local/lib/desktop-app-lifecycle.sh"
+  log_step "paseo desktop app (macOS, opt-out)"
+  dal_disable_app "Paseo" "paseo"
+}
+{{- end }}
 
 main() {
   bl_parse_help "$@"
@@ -82,8 +142,11 @@ main() {
     Linux)  manage_linux ;;
 {{- end }}
     Darwin)
-      # macOS uses the Paseo.app desktop client; no daemon managed by chezmoi.
+{{ if eq .chezmoi.os "darwin" -}}
+      manage_macos
+{{ else -}}
       return 0
+{{- end }}
       ;;
     *)
       log_warn_step "paseo daemon"

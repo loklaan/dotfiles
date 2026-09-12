@@ -1,8 +1,4 @@
-{{- if eq .chezmoi.os "linux" -}}
 #!/usr/bin/env bash
-# Runs every chezmoi apply on Linux. Manages the df-orca-server Pitchfork daemon
-# lifecycle. Install is handled by mise (http: backend → AppImage); this script
-# only manages the daemon, it does not touch apt or download anything.
 set -euo pipefail
 
 IFS=$'\n\t'
@@ -11,7 +7,9 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
+{{ if eq .chezmoi.os "linux" -}}
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
+{{- end }}
 setup_session_logging "$(basename "$0")"
 
 
@@ -38,11 +36,35 @@ setup_session_logging "$(basename "$0")"
 #/   home/private_dot_config/mise/config.toml.tmpl). This script does NOT
 #/   download or apt-install anything.
 #/
-#/   macOS: orca runs as Orca.app from the Homebrew cask, not via this script
-#/   or Pitchfork. The script renders empty on macOS.
+#/   On macOS, false quits Orca.app and disables discovered login items and
+#/   LaunchAgents without removing the app, pairing data, or session history.
 #/
 #/ Options:
 #/   --help:      Display this help message
+read_enabled() {
+  local config="${HOME}/.config/chezmoi/chezmoi.toml"
+  local enabled
+  if ! command -v yq >/dev/null 2>&1; then
+    log_warn "Treating orcaServer as disabled because yq is not on PATH"
+    log_warn_cont "Inspect: command -v yq"
+    printf 'false\n'
+    return 0
+  fi
+  if [ ! -f "$config" ]; then
+    log_warn "Treating orcaServer as disabled because ${config} does not exist"
+    log_warn_cont "Inspect: ls -ld \"$(dirname "$config")\""
+    printf 'false\n'
+    return 0
+  fi
+  if ! enabled=$(yq -p=toml -o=json -r '.data.orcaServer // false' "$config" 2>/dev/null); then
+    log_warn "Orca lifecycle aborted because yq could not read data.orcaServer from ${config}; config is unchanged"
+    log_warn_cont "Inspect: yq -p=toml -o=json -r '.data.orcaServer // false' \"${config}\""
+    return 1
+  fi
+  printf '%s\n' "$enabled"
+}
+
+{{ if eq .chezmoi.os "linux" -}}
 verify_orca_installed() {
   if ! command -v mise >/dev/null 2>&1; then
     log_warn "Cannot resolve orca install — mise not on PATH"
@@ -81,12 +103,36 @@ verify_fuse() {
 # Mirrors the same teardown 056 performs for mcpproxy's legacy unit.
 retire_legacy_orca_server() {
   local unit="orca-server.service"
+  local failed=0
+  local command_error
 
   if command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$unit" >/dev/null 2>&1; then
-    systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
-    rm -f "${HOME}/.config/systemd/user/${unit}"
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    log_detail "Disabled legacy systemd --user $unit"
+    if ! command_error=$(systemctl --user disable --now "$unit" 2>&1); then
+      log_warn "systemctl could not retire legacy ${unit}: ${command_error:-no diagnostic output}"
+      log_warn_cont "Inspect: systemctl --user status ${unit} --no-pager"
+      failed=1
+    else
+      if systemctl --user is-active --quiet "$unit"; then
+        log_warn "Legacy ${unit} remains active after systemctl reported successful retirement"
+        log_warn_cont "Inspect: systemctl --user status ${unit} --no-pager"
+        failed=1
+      fi
+      if systemctl --user is-enabled --quiet "$unit" 2>/dev/null; then
+        log_warn "Legacy ${unit} remains enabled after systemctl reported successful retirement"
+        log_warn_cont "Inspect: systemctl --user is-enabled ${unit}"
+        failed=1
+      fi
+      if [ "$failed" -eq 0 ]; then
+        rm -f "${HOME}/.config/systemd/user/${unit}"
+        if ! command_error=$(systemctl --user daemon-reload 2>&1); then
+          log_warn "systemctl could not reload user units after retiring ${unit}: ${command_error:-no diagnostic output}"
+          log_warn_cont "Inspect: systemctl --user status ${unit} --no-pager"
+          failed=1
+        else
+          log_detail "Disabled legacy systemd --user $unit"
+        fi
+      fi
+    fi
   fi
 
   # The wrapper is no longer in the chezmoi source, so chezmoi will never remove
@@ -95,6 +141,7 @@ retire_legacy_orca_server() {
     rm -f "${HOME}/.local/bin/orca-serve"
     log_detail "Removed legacy orca-serve wrapper"
   fi
+  return "$failed"
 }
 
 # Electron refuses to start when another instance owns the userData profile, and
@@ -123,25 +170,45 @@ reap_orca_lock() {
 }
 
 manage_linux() {
-  local enabled={{ dig "orcaServer" false . }}
+  local enabled
+  local failed=0
+  enabled=$(read_enabled)
 
   if [ "$enabled" != "true" ]; then
     log_step "orca server (Linux, opt-out)"
 
-    retire_legacy_orca_server
+    retire_legacy_orca_server || failed=1
 
     if pf_resolve; then
       pf_stop df-orca-server
-      log_detail "Stopped df-orca-server daemon"
+      if pf_is_running df-orca-server; then
+        log_warn "Pitchfork still reports df-orca-server running after the stop request"
+        log_warn_cont "Inspect: pitchfork list"
+        failed=1
+      else
+        log_detail "Stopped df-orca-server daemon"
+      fi
     else
-      log_detail "Pitchfork not installed; no daemon to stop"
+      log_warn "Cannot stop df-orca-server because the Pitchfork executable could not be resolved"
+      log_warn_cont "Inspect: mise which pitchfork"
+      failed=1
     fi
-    return 0
+    if pgrep -f '(^|[ /])df-orca-serve([[:space:]]|$)' >/dev/null 2>&1; then
+      log_warn "A df-orca-serve process remains after the daemon stop request"
+      log_warn_cont "Inspect: pgrep -af df-orca-serve"
+      failed=1
+    fi
+    if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP -sTCP:LISTEN -c orca >/dev/null 2>&1; then
+      log_warn "An orca process still has a listening TCP socket after opt-out"
+      log_warn_cont "Inspect: lsof -nP -iTCP -sTCP:LISTEN -c orca"
+      failed=1
+    fi
+    return "$failed"
   fi
 
   log_step "orca server (Linux, opt-in)"
 
-  retire_legacy_orca_server
+  retire_legacy_orca_server || return 1
 
   if ! verify_orca_installed; then
     log_warn "Skipping daemon lifecycle — orca not installed"
@@ -169,11 +236,30 @@ manage_linux() {
   # the box half-converged. pf_start already warns with the log command to run.
   pf_start df-orca-server || true
 }
+{{- end }}
+
+{{ if eq .chezmoi.os "darwin" -}}
+manage_macos() {
+  local enabled
+  enabled=$(read_enabled)
+  [ "$enabled" != "true" ] || return 0
+  source "${HOME}/.local/lib/desktop-app-lifecycle.sh"
+  log_step "orca desktop app (macOS, opt-out)"
+  dal_disable_app "Orca" "orca"
+}
+{{- end }}
 
 main() {
   bl_parse_help "$@"
-  manage_linux
+  case "$(uname -s)" in
+{{ if eq .chezmoi.os "linux" -}}
+    Linux) manage_linux ;;
+{{- end }}
+{{ if eq .chezmoi.os "darwin" -}}
+    Darwin) manage_macos ;;
+{{- end }}
+    *) return 0 ;;
+  esac
 }
 
 main "$@"
-{{- end }}

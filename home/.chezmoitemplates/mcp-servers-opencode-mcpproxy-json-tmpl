@@ -1,7 +1,10 @@
-{
-  "mcpproxy": {
-    "type": "remote",
-    "enabled": true,
-    "url": "http://127.0.0.1:18321/mcp/"
-  }
-}
+{{- $apiKey := includeTemplate "mcpproxy-api-key-tmpl" . | trim -}}
+{{- $server := dict
+      "type" "remote"
+      "enabled" true
+      "url" "http://127.0.0.1:18321/mcp/"
+    -}}
+{{- if ne "" $apiKey -}}
+{{-   $server = set $server "headers" (dict "Authorization" (printf "Bearer %s" $apiKey)) -}}
+{{- end -}}
+{{ dict "mcpproxy" $server | toPrettyJson }}

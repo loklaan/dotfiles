@@ -1,2 +1,6 @@
+{{- $apiKey := includeTemplate "mcpproxy-api-key-tmpl" . | trim -}}
 [mcp_servers.mcpproxy]
 url = "http://127.0.0.1:18321/mcp/"
+{{- if ne "" $apiKey }}
+http_headers = { Authorization = {{ printf "Bearer %s" $apiKey | quote }} }
+{{- end }}

@@ -1,0 +1,34 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $existing := default "" .chezmoi.stdin | trim -}}
+{{- $startMarker := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
+{{- $endMarker := "# --- END CHEZMOI MANAGED SECTION ---" -}}
+
+{{- /* Build the managed section with markers - mcpproxy MCP server only */ -}}
+{{- $content := includeTemplate "mcp-servers-codex-toml-tmpl" . | trim -}}
+{{- $ourSection := printf "%s\n%s\n\n%s\n%s" $startMarker "# This section is managed by chezmoi. Do not edit manually." $content $endMarker -}}
+
+{{- /* Check if our section already exists */ -}}
+{{- if contains $startMarker $existing -}}
+  {{- /* Section exists - replace it, preserve content before and after */ -}}
+  {{- $parts := splitList $startMarker $existing -}}
+  {{- $before := index $parts 0 | trim -}}
+  {{- $afterParts := splitList $endMarker (index $parts 1) -}}
+  {{- $after := "" -}}
+  {{- if gt (len $afterParts) 1 -}}
+    {{- $after = index $afterParts 1 | trim -}}
+  {{- end -}}
+
+  {{- /* Reconstruct: our section + before + after */ -}}
+{{ $ourSection }}
+
+{{ if ne "" $before -}}
+{{ $before }}
+
+{{ end -}}
+{{ $after }}
+{{- else -}}
+  {{- /* First time - prepend our section to existing config */ -}}
+{{ $ourSection }}
+
+{{ $existing }}
+{{- end }}

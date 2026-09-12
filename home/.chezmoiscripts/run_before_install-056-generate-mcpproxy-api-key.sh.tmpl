@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# run_before scripts execute BEFORE chezmoi materialises any target, so
+# ~/.local/lib holds the PREVIOUS apply's libs. Sourcing the installed copy
+# means a script here can only use lib API that already shipped to every
+# machine — and calling a newly added helper aborts the apply with exit 127
+# (verified: log_step not found). Source from the chezmoi source tree instead,
+# which is always the current version. bash-logging.sh is not a template, so
+# the source file and the target are byte-identical.
+source "{{ .chezmoi.sourceDir }}/private_dot_local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")"
+
+#/ Usage:
+#/   run_before_install-056-generate-mcpproxy-api-key.sh
+#/
+#/ Description:
+#/   Pre-seeds MCPProxy's api_key in ~/.mcpproxy/mcp_config.json BEFORE
+#/   chezmoi materialises any target.
+#/
+#/   Chezmoi applies targets in strict ASCII order of their target NAME.
+#/   Every MCP-client config that reads api_key via the mcpproxy-api-key-tmpl
+#/   partial (.claude.json, .codex/config.toml,
+#/   .config/opencode/opencode.json, .config/opencode2/opencode.json,
+#/   .mcpproxy/mcp-client-headers, Library/Application Support/Claude/
+#/   claude_desktop_config.json) sorts BEFORE .mcpproxy/mcp_config.json
+#/   itself. On a genuinely fresh machine that means every client renders
+#/   with an empty Authorization header on the FIRST apply — even though
+#/   require_mcp_auth correctly renders true (fail-closed). MCPProxy only
+#/   ever generates its own api_key when it first starts, which happens in
+#/   run_after_install-056-mcpproxy-daemon.sh.tmpl — a run_after_ script
+#/   that runs AFTER all file materialisation, too late to help that first
+#/   apply. A second apply was previously required to actually provision
+#/   clients.
+#/
+#/   run_before_ scripts are the one primitive that runs before ALL target
+#/   materialisation, regardless of ASCII position. Seeding the key here
+#/   closes the gap: every client config template reads a real key on the
+#/   very first apply.
+#/
+#/   Idempotent and NEVER rotates an existing key. If mcp_config.json
+#/   already has a non-empty api_key, this script is a silent no-op —
+#/   steady state prints nothing. modify_private_mcp_config.json (a
+#/   modify-template) reads whatever is on disk at ITS turn later in the
+#/   SAME apply pass and never sets/overwrites api_key, so the seeded (or
+#/   pre-existing) value survives untouched.
+#/
+#/ Options:
+#/   --help:      Display this help message
+
+MCPPROXY_DIR="${HOME}/.mcpproxy"
+MCPPROXY_CONFIG="${MCPPROXY_DIR}/mcp_config.json"
+
+generate_api_key() {
+  # Same 64-char lowercase-hex shape MCPProxy itself generates. /dev/urandom
+  # is a kernel device present on every Linux and macOS target this repo
+  # provisions; openssl CLI is not guaranteed present on minimal base images.
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+# Fresh machine: ~/.mcpproxy/mcp_config.json does not exist yet. Create the
+# private directory and a minimal seed file, both at their final mode from
+# creation (umask 077 + explicit chmod), never created-then-chmod'd-after.
+seed_fresh_config() {
+  local api_key="$1"
+  local tmp_file
+
+  (umask 077 && mkdir -p "$MCPPROXY_DIR")
+  chmod 0700 "$MCPPROXY_DIR"
+
+  tmp_file=$(umask 077; mktemp "${MCPPROXY_DIR}/.mcp_config.XXXXXX")
+  chmod 0600 "$tmp_file"
+  trap 'rm -f "$tmp_file"' EXIT
+
+  MCPPROXY_API_KEY="$api_key" jq -n '{api_key: $ENV.MCPPROXY_API_KEY}' > "$tmp_file"
+  chmod 0600 "$tmp_file"
+
+  mv "$tmp_file" "$MCPPROXY_CONFIG"
+  chmod 0600 "$MCPPROXY_CONFIG"
+  trap - EXIT
+}
+
+# Existing config present but api_key is missing/empty (e.g. a hand-created
+# or corrupted config). Atomic same-directory temp-file-then-rename, mirroring
+# merge_auth_json in run_after_install-065-opencode-auth.sh.tmpl exactly: the
+# secret reaches jq only through $ENV, never argv.
+merge_missing_key() {
+  local api_key="$1"
+  local tmp_file merged_file
+
+  tmp_file=$(umask 077; mktemp "${MCPPROXY_DIR}/.mcp_config.XXXXXX")
+  merged_file=$(umask 077; mktemp "${MCPPROXY_DIR}/.mcp_config-merged.XXXXXX")
+  chmod 0600 "$tmp_file" "$merged_file"
+
+  cleanup() { rm -f "$tmp_file" "$merged_file"; }
+  trap cleanup EXIT
+
+  cp "$MCPPROXY_CONFIG" "$tmp_file"
+
+  MCPPROXY_API_KEY="$api_key" jq \
+    '.api_key = $ENV.MCPPROXY_API_KEY' \
+    "$tmp_file" > "$merged_file"
+  chmod 0600 "$merged_file"
+  mv "$merged_file" "$tmp_file"
+  chmod 0600 "$tmp_file"
+
+  mv "$tmp_file" "$MCPPROXY_CONFIG"
+  chmod 0600 "$MCPPROXY_CONFIG"
+  trap - EXIT
+}
+
+main() {
+  bl_parse_help "$@"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    log_warn "Cannot seed the MCPProxy API key because jq is not on PATH; install jq and re-run chezmoi"
+    return 0
+  fi
+
+  local has_existing_key=false
+  if [ -f "$MCPPROXY_CONFIG" ]; then
+    # Only a boolean may enter command substitution while DEBUG tracing is on.
+    if ! has_existing_key=$(jq -r '(.api_key // "") != ""' "$MCPPROXY_CONFIG" 2>/dev/null); then
+      log_warn "Cannot read api_key from ${MCPPROXY_CONFIG}; key bootstrap skipped and config left unchanged"
+      log_warn_cont "Inspect locally with: jq -r '(.api_key // \"\") != \"\"' \"${MCPPROXY_CONFIG}\" >/dev/null; do not share the credential-bearing config"
+      return 0
+    fi
+  fi
+
+  if [ "$has_existing_key" = true ]; then
+    # Steady state: a key already exists. Never regenerate. Print nothing.
+    return 0
+  fi
+
+  # Suspend xtrace around key generation/handling so DEBUG=1 never echoes the
+  # secret to the log, mirroring the opencode-auth script's convention.
+  local xtrace_was_enabled=0
+  case "$-" in
+    *x*) xtrace_was_enabled=1; set +x ;;
+  esac
+
+  local api_key
+  api_key=$(generate_api_key)
+
+  if [ -f "$MCPPROXY_CONFIG" ]; then
+    merge_missing_key "$api_key"
+  else
+    seed_fresh_config "$api_key"
+  fi
+
+  if [ "$xtrace_was_enabled" -eq 1 ]; then
+    set -x
+  fi
+
+  log_detail "Generated mcpproxy api_key for first-run bootstrap"
+}
+
+main "$@"

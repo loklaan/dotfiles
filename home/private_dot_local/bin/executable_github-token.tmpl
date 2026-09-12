@@ -3,13 +3,9 @@ set -euo pipefail
 
 IFS=$'\n\t'
 
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-# Source shared logging library and setup session logging
+# Source shared logging for help and error paths. Session logging is omitted
+# because this command's stdout is its secret-bearing API.
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
 
 #/ Usage:
 #/   github-token

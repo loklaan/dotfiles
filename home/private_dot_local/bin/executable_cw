@@ -1493,48 +1493,252 @@ const doRsync = (state: MigrateState) =>
     return failed === 0 ? 0 : 1;
   });
 
-const doTar = (state: MigrateState) =>
-  Effect.gen(function* () {
-    const archiveName = `devbox-migration-${timestamp()}.tar.gz`;
-    const remoteArchive = `/tmp/${archiveName}`;
-    yield* writeStdout("\nCreating tar archive on source\n\n");
-    const script = `set -euo pipefail
+interface MigrationArchiveFileSystem {
+  readonly makeTempDir: (root: string, prefix: string) => Promise<string>;
+  readonly chmod: (path: string, mode: number) => Promise<void>;
+  readonly createNewFile: (path: string, mode: number) => Promise<void>;
+  readonly remove: (path: string) => Promise<void>;
+}
+
+interface LocalMigrationArchive {
+  readonly directory: string;
+  readonly path: string;
+}
+
+class MigrationArchiveError extends Data.TaggedError("MigrationArchiveError")<{
+  readonly operation: "create" | "remove" | "secure";
+  readonly path: string;
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    const action = {
+      create: "create a private archive under",
+      remove: "remove the sensitive archive directory",
+      secure: "set archive permissions to 0600 on",
+    }[this.operation];
+    const remedy = this.operation === "remove"
+      ? "Remove this sensitive archive directory manually once access is restored."
+      : "Check directory ownership and write permissions before retrying migration.";
+    return `Could not ${action} ${this.path}: ${String(this.cause)}. ${remedy}`;
+  }
+}
+
+const denoMigrationArchiveFileSystem: MigrationArchiveFileSystem = {
+  makeTempDir: (root, prefix) => Deno.makeTempDir({ dir: root, prefix }),
+  chmod: (path, mode) => Deno.chmod(path, mode),
+  createNewFile: async (path, mode) => {
+    const file = await Deno.open(path, { createNew: true, write: true, mode });
+    file.close();
+  },
+  remove: (path) => Deno.remove(path, { recursive: true }),
+};
+
+const createPrivateLocalArchive = (
+  root: string,
+  archiveName: string,
+  archiveFs: MigrationArchiveFileSystem,
+): Effect.Effect<LocalMigrationArchive, MigrationArchiveError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const directory = await archiveFs.makeTempDir(root, "cw-migrate-");
+      try {
+        await archiveFs.chmod(directory, 0o700);
+        const path = `${directory}/${archiveName}`;
+        await archiveFs.createNewFile(path, 0o600);
+        await archiveFs.chmod(path, 0o600);
+        return { directory, path };
+      } catch (cause) {
+        try {
+          await archiveFs.remove(directory);
+        } catch (cleanupCause) {
+          error(
+            new MigrationArchiveError({
+              operation: "remove",
+              path: directory,
+              cause: cleanupCause,
+            }).message,
+          );
+        }
+        throw cause;
+      }
+    },
+    catch: (cause) =>
+      new MigrationArchiveError({ operation: "create", path: root, cause }),
+  });
+
+const removeLocalArchive = (
+  archiveFs: MigrationArchiveFileSystem,
+  directory: string,
+): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () => archiveFs.remove(directory),
+    catch: (cause) =>
+      new MigrationArchiveError({
+        operation: "remove",
+        path: directory,
+        cause,
+      }),
+  }).pipe(
+    Effect.catch((cause: Error) => logError(cause.message)),
+  );
+
+const removeRemoteArchive = (sourceHost: string, remoteDirectory: string) =>
+  runChild("ssh", [sourceHost, "rm", "-rf", remoteDirectory], {
+    stderr: "inherit",
+  }).pipe(
+    Effect.flatMap((result) =>
+      result.code === 0 ? Effect.void : logError(
+        `Remote archive cleanup on ${sourceHost} exited ${result.code}; sensitive files may remain at ${remoteDirectory}. Inspect SSH access and remove that directory manually.`,
+      )
+    ),
+  );
+
+interface MigrationArchiveOptions {
+  readonly fileSystem: MigrationArchiveFileSystem;
+  readonly archiveName: string;
+  readonly temporaryRoot: Effect.Effect<string>;
+}
+
+const remoteMigrationArchiveScript = (
+  paths: ReadonlyArray<string>,
+  archiveName: string,
+): string =>
+  `set -euo pipefail
+remote_dir=""
+cleanup_failed_archive() {
+  status=$?
+  if [[ "\${status}" -ne 0 && -n "\${remote_dir}" ]]; then
+    rm -rf -- "\${remote_dir}"
+  fi
+}
+trap cleanup_failed_archive EXIT
+tmp_root="\${TMPDIR:-/tmp}"
+remote_dir=$(mktemp -d "\${tmp_root%/}/cw-migrate.XXXXXXXXXX")
+chmod 700 "\${remote_dir}"
+remote_archive="\${remote_dir}/${archiveName}"
+umask 077
+: > "\${remote_archive}"
+chmod 600 "\${remote_archive}"
 paths=()
 while IFS= read -r path; do
   [[ -z "\${path}" ]] && continue
   paths+=("\${path}")
-done <<< ${shellQuote(remoteHereDoc(state.existingPaths))}
-tar -czf ${shellQuote(remoteArchive)} -C "\${HOME}" "\${paths[@]}"
+done <<< ${shellQuote(remoteHereDoc(paths))}
+tar -czf "\${remote_archive}" -C "\${HOME}" "\${paths[@]}"
+chmod 600 "\${remote_archive}"
+printf '%s\n' "\${remote_archive}"
+trap - EXIT
 `;
+
+const doTar = (
+  state: MigrateState,
+  options: MigrationArchiveOptions = {
+    fileSystem: denoMigrationArchiveFileSystem,
+    archiveName: `devbox-migration-${timestamp()}.tar.gz`,
+    temporaryRoot: tmpdir,
+  },
+) =>
+  Effect.gen(function* () {
+    const archiveFs = options.fileSystem;
+    const archiveName = options.archiveName;
+    yield* writeStdout("\nCreating tar archive on source\n\n");
+    const script = remoteMigrationArchiveScript(
+      state.existingPaths,
+      archiveName,
+    );
     yield* logInfo(`▶ Creating archive on ${state.sourceHost}`);
     let res = yield* runChild("ssh", [state.sourceHost, "bash", "-s"], {
       input: script,
       stdin: "piped",
-      stdout: "inherit",
       stderr: "inherit",
     });
-    if (res.code !== 0) return res.code;
+    if (res.code !== 0) {
+      yield* logError(
+        `Archive creation over SSH on ${state.sourceHost} exited ${res.code}; inspect the SSH/tar diagnostic before retrying. If none appeared, verify ssh is installed and executable.`,
+      );
+      return res.code;
+    }
+    const remoteArchive = res.stdout.trim().split(/\r?\n/).at(-1) ?? "";
+    if (remoteArchive === "") {
+      yield* logError(
+        `Archive creation on ${state.sourceHost} returned no archive path; transfer skipped. Inspect the source's private cw-migrate temporary directories before retrying.`,
+      );
+      return 1;
+    }
+    if (!remoteArchive.startsWith("/")) {
+      yield* logError(
+        `Archive creation on ${state.sourceHost} returned a non-absolute path; transfer skipped. Check remote shell startup output for unexpected stdout.`,
+      );
+      return 1;
+    }
+    if (!remoteArchive.endsWith(`/${archiveName}`)) {
+      yield* logError(
+        `Archive creation on ${state.sourceHost} returned a path with an unexpected filename; expected ${archiveName}. Transfer skipped; check remote shell startup output.`,
+      );
+      return 1;
+    }
+    const remoteDirectory = parentOf(remoteArchive);
+    const tmp = yield* options.temporaryRoot;
+    const localResult = yield* createPrivateLocalArchive(
+      tmp,
+      archiveName,
+      archiveFs,
+    ).pipe(
+      Effect.map((archive) => ({ success: true, archive }) as const),
+      Effect.catch((cause: Error) =>
+        Effect.succeed({ success: false, cause } as const)
+      ),
+    );
+    if (!localResult.success) {
+      yield* logError(localResult.cause.message);
+      yield* removeRemoteArchive(state.sourceHost, remoteDirectory);
+      return 1;
+    }
+    const localArchive = localResult.archive;
     yield* logInfo("╍ Pulling archive");
     res = yield* runChild("scp", [
       `${state.sourceHost}:${remoteArchive}`,
-      `/tmp/${archiveName}`,
+      localArchive.path,
     ], {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
     });
-    if (res.code !== 0) return res.code;
-    const size = yield* runChild("du", ["-sh", `/tmp/${archiveName}`]);
+    yield* removeRemoteArchive(state.sourceHost, remoteDirectory);
+    if (res.code !== 0) {
+      yield* logError(
+        `scp from ${state.sourceHost} to ${localArchive.path} exited ${res.code}; removing the partial local archive. Inspect the transfer diagnostic before retrying. If none appeared, verify scp is installed and executable.`,
+      );
+      yield* removeLocalArchive(archiveFs, localArchive.directory);
+      return res.code;
+    }
+    const secured = yield* Effect.tryPromise({
+      try: () => archiveFs.chmod(localArchive.path, 0o600),
+      catch: (cause) =>
+        new MigrationArchiveError({
+          operation: "secure",
+          path: localArchive.path,
+          cause,
+        }),
+    }).pipe(
+      Effect.as(true),
+      Effect.catch((cause: Error) =>
+        logError(cause.message).pipe(Effect.as(false))
+      ),
+    );
+    if (!secured) {
+      yield* removeLocalArchive(archiveFs, localArchive.directory);
+      return 1;
+    }
+    const size = yield* runChild("du", ["-sh", localArchive.path]);
     yield* logInfo(
-      `╍ Archive saved: /tmp/${archiveName} (${
+      `╍ Archive saved: ${localArchive.path} (${
         size.stdout.split(/\s+/, 1)[0] ?? "?"
       })`,
     );
     yield* writeStdout(
-      "\nTo extract:\n  cd ~ && tar -xzf /tmp/${archiveName}\n\n",
+      `\nTo extract:\n  cd ~ && tar -xzf ${shellQuote(localArchive.path)}\n\n`,
     );
-    yield* logInfo("╍ Cleaning up remote archive");
-    yield* runChild("ssh", [state.sourceHost, "rm", "-f", remoteArchive]);
     return 0;
   });
 
@@ -1553,6 +1757,48 @@ const doChecklist = (state: MigrateState) =>
     yield* writeStdout("  [ ] Run chezmoi apply to restore dotfiles\n");
     yield* writeStdout("  [ ] Verify git repos have correct remotes\n\n");
     return 0;
+  });
+
+interface MigrateTransferEnvironment<E, R> {
+  readonly warn: (message: string) => Effect.Effect<void, E, R>;
+  readonly write: (message: string) => Effect.Effect<void, E, R>;
+  readonly info: (message: string) => Effect.Effect<void, E, R>;
+  readonly prompt: (label: string) => string;
+  readonly rsync: (state: MigrateState) => Effect.Effect<number, E, R>;
+  readonly tar: (state: MigrateState) => Effect.Effect<number, E, R>;
+  readonly checklist: (state: MigrateState) => Effect.Effect<number, E, R>;
+}
+
+const selectMigrateTransfer = <E, R>(
+  state: MigrateState,
+  env: MigrateTransferEnvironment<E, R>,
+): Effect.Effect<number, E, R> =>
+  Effect.gen(function* () {
+    yield* env.warn(
+      "Migration includes agent state/session history (~/.claude and ~/.claude.json) and shell history. These files may contain credentials or session tokens.",
+    );
+    yield* env.write("\nTransfer method\n\n");
+    yield* env.write("  1) rsync  — pull directly over SSH\n");
+    yield* env.write(
+      "  2) tar    — archive on source, pull here, extract manually\n",
+    );
+    yield* env.write("  3) list   — just show what to copy\n\n");
+    const choice = env.prompt("Choose [1/2/3]: ");
+    if (choice === "1") return yield* env.rsync(state);
+    if (choice === "2") {
+      const confirm = env.prompt(
+        "Create a persistent private archive containing this sensitive state? [y/N]: ",
+      );
+      if (confirm !== "y" && confirm !== "Y") {
+        yield* env.info("Aborted");
+        return 0;
+      }
+      return yield* env.tar(state);
+    }
+    if (choice === "3") return yield* env.checklist(state);
+    return fatal(
+      "Transfer method must be 1 (rsync), 2 (tar), or 3 (copy checklist); re-run cw migrate and choose one.",
+    );
   });
 
 const migrateCommand = (
@@ -1576,25 +1822,16 @@ const migrateCommand = (
     );
     yield* showMigrateSummary(sourceHost, existingPaths);
     const state: MigrateState = { ...manifest, sourceHost, existingPaths };
-    yield* writeStdout("Transfer method\n\n");
-    yield* writeStdout("  1) rsync  — pull directly over SSH\n");
-    yield* writeStdout(
-      "  2) tar    — archive on source, pull here, extract manually\n",
-    );
-    yield* writeStdout("  3) list   — just show what to copy\n\n");
-    const choice = promptRequired("Choose [1/2/3]: ");
-    const code = choice === "1"
-      ? yield* doRsync(state)
-      : choice === "2"
-      ? yield* doTar(state)
-      : choice === "3"
-      ? yield* doChecklist(state)
-      : (() => fatal(`Invalid choice: ${choice}`))();
+    const code = yield* selectMigrateTransfer(state, {
+      warn: logWarning,
+      write: writeStdout,
+      info: logInfo,
+      prompt: promptRequired,
+      rsync: doRsync,
+      tar: doTar,
+      checklist: doChecklist,
+    });
     yield* writeStdout("\n");
-    yield* logWarning(
-      "Credentials are NOT included — migrate these yourself:",
-    );
-    yield* writeStdout("  ~/.ssh/  ~/.aws/  ~/.gnupg/  ~/.npmrc\n\n");
     yield* logWarning(
       "Run chezmoi apply on this devbox to restore dotfiles.",
     );
@@ -2287,5 +2524,223 @@ if (!import.meta.main) {
       failed = true;
     }
     assertEq(failed, true);
+  });
+
+  Deno.test("migrate tar creates a private local archive under umask 022", async () => {
+    const calls: string[] = [];
+    const archiveFs = {
+      makeTempDir: (root: string, prefix: string) => {
+        calls.push(`make:${root}:${prefix}`);
+        return Promise.resolve("/tmp/cw-migrate-random");
+      },
+      chmod: (path: string, mode: number) => {
+        calls.push(`chmod:${path}:${mode.toString(8)}`);
+        return Promise.resolve();
+      },
+      createNewFile: (path: string, mode: number) => {
+        calls.push(`create:${path}:${mode.toString(8)}`);
+        return Promise.resolve();
+      },
+      remove: (path: string) => {
+        calls.push(`remove:${path}`);
+        return Promise.resolve();
+      },
+    };
+    let localArchive: LocalMigrationArchive | undefined;
+
+    try {
+      localArchive = await Effect.runPromise(
+        createPrivateLocalArchive(
+          "/tmp",
+          "devbox-migration-test.tar.gz",
+          archiveFs,
+        ),
+      );
+      assertEq(localArchive.directory, "/tmp/cw-migrate-random");
+      assertEq(
+        localArchive.path,
+        "/tmp/cw-migrate-random/devbox-migration-test.tar.gz",
+      );
+      assertEq(
+        calls.join("\n"),
+        [
+          "make:/tmp:cw-migrate-",
+          "chmod:/tmp/cw-migrate-random:700",
+          "create:/tmp/cw-migrate-random/devbox-migration-test.tar.gz:600",
+          "chmod:/tmp/cw-migrate-random/devbox-migration-test.tar.gz:600",
+        ].join("\n"),
+      );
+    } finally {
+      if (localArchive !== undefined) {
+        await archiveFs.remove(localArchive.directory);
+      }
+    }
+    assertEq(calls.at(-1), "remove:/tmp/cw-migrate-random");
+  });
+
+  Deno.test("migrate tar cleans a partially-created local directory", async () => {
+    const removed: string[] = [];
+    const exit = await Effect.runPromiseExit(createPrivateLocalArchive(
+      "/tmp",
+      "devbox-migration-test.tar.gz",
+      {
+        makeTempDir: () => Promise.resolve("/tmp/cw-migrate-random"),
+        chmod: () => Promise.reject(new Error("mode failure")),
+        createNewFile: () => Promise.resolve(),
+        remove: (path: string) => {
+          removed.push(path);
+          return Promise.resolve();
+        },
+      },
+    ));
+
+    assertEq(exit._tag, "Failure");
+    assertEq(removed.join("\n"), "/tmp/cw-migrate-random");
+  });
+
+  Deno.test("migrate tar remote script creates and cleans private state", () => {
+    const script = remoteMigrationArchiveScript(
+      [".claude", ".claude.json"],
+      "devbox-migration-test.tar.gz",
+    );
+
+    assertEq(
+      script.includes('mktemp -d "${tmp_root%/}/cw-migrate.XXXXXXXXXX"'),
+      true,
+    );
+    assertEq(script.includes('chmod 700 "${remote_dir}"'), true);
+    assertEq(script.match(/chmod 600 "\$\{remote_archive\}"/g)?.length, 2);
+    assertEq(script.includes('rm -rf -- "${remote_dir}"'), true);
+  });
+
+  Deno.test("migrate archive creation preserves its cause when cleanup also fails", async () => {
+    const creationCause = new Error("permission denied creating archive");
+    const failure = await Effect.runPromise(
+      createPrivateLocalArchive(
+        "/private/tmp",
+        "devbox-migration-test.tar.gz",
+        {
+          makeTempDir: () => Promise.resolve("/private/tmp/cw-migrate-test"),
+          chmod: () => Promise.reject(creationCause),
+          createNewFile: () => Promise.resolve(),
+          remove: () =>
+            Promise.reject(new Error("permission denied removing archive")),
+        },
+      ).pipe(Effect.flip),
+    );
+
+    assertEq(failure._tag, "MigrationArchiveError");
+    assertEq(failure.operation, "create");
+    assertEq(failure.path, "/private/tmp");
+    assertEq(failure.cause, creationCause);
+    assertEq(failure.message.includes(creationCause.message), true);
+  });
+
+  Deno.test("migrate tar failure removes local and remote temporary state", async () => {
+    const removed: string[] = [];
+    const archiveFs = {
+      makeTempDir: () => Promise.resolve("/tmp/cw-migrate-random"),
+      chmod: () => Promise.resolve(),
+      createNewFile: () => Promise.resolve(),
+      remove: (path: string) => {
+        removed.push(path);
+        return Promise.resolve();
+      },
+    };
+    const remoteArchive =
+      "/tmp/cw-migrate.remote-random/devbox-migration-test.tar.gz";
+    const spawner = new MockChildProcessSpawner([
+      { code: 0, stdout: `${remoteArchive}\n`, stderr: "" },
+      { code: 23, stdout: "", stderr: "pull failed" },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    const state: MigrateState = {
+      sourceHost: "source",
+      migrate: MIGRATE_DEFAULT_PATHS,
+      audit: MIGRATE_DEFAULT_AUDIT_PATHS,
+      existingPaths: [".claude"],
+    };
+
+    const code = await Effect.runPromise(
+      doTar(state, {
+        fileSystem: archiveFs,
+        archiveName: "devbox-migration-test.tar.gz",
+        temporaryRoot: Effect.succeed("/tmp"),
+      }).pipe(
+        Effect.provide(spawner.layer),
+      ) as Effect.Effect<number>,
+    );
+
+    assertEq(code, 23);
+    assertEq(removed.join("\n"), "/tmp/cw-migrate-random");
+    assertEq(spawner.calls[2]?.cmd, "ssh");
+    assertEq(
+      spawner.calls[2]?.args.join("\0"),
+      ["source", "rm", "-rf", "/tmp/cw-migrate.remote-random"].join("\0"),
+    );
+  });
+
+  Deno.test("migrate warns before transfer selection and confirms tar", async () => {
+    const events: string[] = [];
+    let promptCount = 0;
+    const state: MigrateState = {
+      sourceHost: "source",
+      migrate: MIGRATE_DEFAULT_PATHS,
+      audit: MIGRATE_DEFAULT_AUDIT_PATHS,
+      existingPaths: [".claude", ".claude.json"],
+    };
+
+    const code = await Effect.runPromise(selectMigrateTransfer(state, {
+      warn: () => Effect.sync(() => events.push("warning")),
+      write: () => Effect.void,
+      info: () => Effect.void,
+      prompt: () => {
+        promptCount++;
+        events.push(`prompt-${promptCount}`);
+        return promptCount === 1 ? "2" : "y";
+      },
+      rsync: () => Effect.sync(() => events.push("rsync")).pipe(Effect.as(0)),
+      tar: () => Effect.sync(() => events.push("tar")).pipe(Effect.as(0)),
+      checklist: () =>
+        Effect.sync(() => events.push("checklist")).pipe(Effect.as(0)),
+    }));
+
+    assertEq(code, 0);
+    assertEq(
+      events.join("\n"),
+      ["warning", "prompt-1", "prompt-2", "tar"].join("\n"),
+    );
+  });
+
+  Deno.test("migrate tar requires explicit confirmation before archiving", async () => {
+    const events: string[] = [];
+    let promptCount = 0;
+    const state: MigrateState = {
+      sourceHost: "source",
+      migrate: MIGRATE_DEFAULT_PATHS,
+      audit: MIGRATE_DEFAULT_AUDIT_PATHS,
+      existingPaths: [".claude"],
+    };
+
+    const code = await Effect.runPromise(selectMigrateTransfer(state, {
+      warn: () => Effect.sync(() => events.push("warning")),
+      write: () => Effect.void,
+      info: () => Effect.sync(() => events.push("aborted")),
+      prompt: () => {
+        promptCount++;
+        events.push(`prompt-${promptCount}`);
+        return promptCount === 1 ? "2" : "";
+      },
+      rsync: () => Effect.sync(() => events.push("rsync")).pipe(Effect.as(0)),
+      tar: () => Effect.sync(() => events.push("tar")).pipe(Effect.as(0)),
+      checklist: () =>
+        Effect.sync(() => events.push("checklist")).pipe(Effect.as(0)),
+    }));
+
+    assertEq(code, 0);
+    assertEq(
+      events.join("\n"),
+      ["warning", "prompt-1", "prompt-2", "aborted"].join("\n"),
+    );
   });
 }
