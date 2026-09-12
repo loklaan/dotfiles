@@ -111,9 +111,24 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 
 ## Secret Management
 
-Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates read the token and call `bitwardenSecrets` to resolve secret values during `chezmoi apply`.
+Secrets come from [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/)
+at render time. Each machine keeps its access token in
+`~/.config/chezmoi/secrets/bws-access-token.txt` (0600); `bws-get-or-empty` receives
+the file path, never the token in command arguments. Missing secrets don't block
+templates, and `df-setup` helps you work out what's missing.
 
-See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
+Logs stay private under `~/.cache/dotfiles/logs/` (0700 directory, 0600 files).
+Secret-output utilities skip logging, and credential writers suppress secret
+tracing even with `DEBUG=1`. The details live in
+[Secrets Architecture](.agents/rules/secrets-architecture.md).
+
+### MCP authentication
+
+MCPProxy requires its own machine-local bearer key, even on loopback. A full
+apply with `jq` available seeds a missing key and configures clients in one pass,
+leaving existing keys alone. See [MCP Authentication](.agents/resources/mcp-authentication.md)
+for client setup, safe checks and rotation. Codex config is supported without
+installing the Codex CLI.
 
 ## Per-machine MCP executables
 
@@ -168,9 +183,23 @@ Claude Code and OpenCode share a vendor-neutral set of rules and [Agent Skills](
 
 ## Agent Orchestration
 
-Agent sessions running across machines (macbooks + Coder dev boxes) are reached via two complementary tools: **orca** (desktop SSH client, auto-discovers Coder hosts from `~/.ssh/config`) and **paseo** (daemon-per-host on Coder boxes via systemd, desktop/mobile clients on macbooks). The paseo daemon is opt-in per machine via a chezmoi prompt — default off, real opt-out by reapplying with the flag flipped.
+Reach agents across machines with **orca** (SSH desktop client and a
+Pitchfork-managed paired-server beta) or **paseo** (systemd-user daemon with desktop/mobile
+clients). `orcaServer` and `paseoDaemon` default off; a one-time migration resets
+older opt-ins, after which you can opt back in.
 
-See `.agents/rules/agent-orchestration.md` for the network model, process model, server model, and operating runbook.
+Opting out stops Linux services or quits the macOS app and disables discovered
+autostart entries, keeping your app and data. On macOS, opting back in leaves
+reopening and restoring autostart to you. See the
+[orchestration runbook](.agents/rules/agent-orchestration.md).
+
+### Moving to a new devbox
+
+Run `cw migrate` on your new devbox to pull working state over SSH. Read the
+[migration runbook](.agents/resources/cw-migration.md) first: sessions and shell
+history may contain credentials, and tar mode leaves an **unencrypted** archive
+you must extract and delete yourself. Consent and cleanup checks are covered by
+the [security tests](tests/README.md).
 
 ## Code Projects
 
