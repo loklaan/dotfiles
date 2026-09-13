@@ -47,7 +47,19 @@ import * as Path from "npm:effect@4.0.0-rc.112/Path";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
-import { makeLoggerLayer } from "../lib/df-log.ts";
+import {
+  detail,
+  fail,
+  makeLoggerLayer,
+  ok,
+  setTopic,
+  skip,
+  slow,
+  step,
+  warn,
+} from "../lib/df-log.ts";
+
+setTopic("completions");
 
 const REL_COMPLETION_DIR = ".local/share/zsh-completions";
 const JOB_TIMEOUT_SECONDS = 15;
@@ -235,7 +247,7 @@ const ensureCompletionDir = (dir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     if (!(yield* fs.exists(dir))) {
-      yield* Effect.logInfo(`╍ Creating completion directory: ${dir}`);
+      yield* Effect.sync(() => detail(`Creating completion directory: ${dir}`));
       yield* fs.makeDirectory(dir, { recursive: true });
     }
   });
@@ -331,7 +343,7 @@ const checkMiseTool = (
     ["which", toolName],
   ).pipe(
     Effect.map((code) =>
-      code === 0 ? null : `Tool '${toolName}' not installed in mise`
+      code === 0 ? null : `not installed in mise`
     ),
   );
 
@@ -361,7 +373,7 @@ const writeCompletion = (
     if (output.length === 0) {
       return CompletionResult.failed({
         toolName: job.toolName,
-        message: `Generated empty completion output for ${job.toolName}`,
+        message: "Generated empty completion output",
       });
     }
     const fs = yield* FileSystem.FileSystem;
@@ -381,9 +393,7 @@ const writeCompletion = (
           Effect.as<CompletionResult>(
             CompletionResult.failed({
               toolName: job.toolName,
-              message: `Failed to install completion for ${job.toolName}: ${
-                String(cause)
-              }`,
+              message: `Could not write completion file: ${String(cause)}`,
             }),
           ),
         )
@@ -394,7 +404,7 @@ const writeCompletion = (
       Effect.succeed<CompletionResult>(
         CompletionResult.failed({
           toolName: job.toolName,
-          message: `Failed to install completion for ${job.toolName}`,
+          message: "Could not write completion file",
         }),
       )
     ),
@@ -436,7 +446,7 @@ const generateCompletion = (
       }
       return CompletionResult.failed({
         toolName: job.toolName,
-        message: `Tool '${job.toolName}' not found in PATH`,
+        message: `not found in PATH`,
       });
     }
 
@@ -448,8 +458,7 @@ const generateCompletion = (
     if (result._tag === "failed") {
       return CompletionResult.failed({
         toolName: job.toolName,
-        message:
-          `Failed to generate completion for ${job.toolName}: ${result.message}`,
+        message: result.message,
       });
     }
     return yield* writeCompletion(dir, job, result.output);
@@ -462,12 +471,12 @@ const installCompletions = Effect.gen(function* () {
 
   const path = yield* Path.Path;
   const dir = path.join(home, REL_COMPLETION_DIR);
-  yield* Effect.logInfo(`▶ Installing zsh completions to ${dir}`);
+  yield* Effect.sync(() => step(`Installing zsh completions to ${dir}`));
 
   yield* ensureCompletionDir(dir);
 
-  yield* Effect.logInfo(
-    `╍ Sourcing ${completionJobs.length} completions in parallel...`,
+  yield* Effect.sync(() =>
+    detail(`Generating ${completionJobs.length} completions`)
   );
   const results = yield* Effect.forEach(
     completionJobs,
@@ -480,27 +489,30 @@ const installCompletions = Effect.gen(function* () {
   const timedOut = results.filter(CompletionResult.$is("timeout"));
   const skipped = results.filter(CompletionResult.$is("skipped"));
 
-  yield* Effect.logInfo("▶ Completion installation summary:");
-  yield* Effect.logInfo(`  ✓ Installed: ${successCount}`);
+  yield* Effect.sync(() => ok(`Installed: ${successCount}`));
   if (skipped.length > 0) {
-    yield* Effect.logInfo(
-      `  ⊘ Skipped (not installed): ${
-        skipped.map((s) => s.toolName).join(", ")
-      }`,
+    yield* Effect.sync(() =>
+      skip(
+        `Skipped (not installed): ${
+          skipped.map((s) => s.toolName).join(", ")
+        }`,
+      )
     );
   }
   for (const f of failed) {
-    yield* Effect.logWarning(`  ✗ ${f.toolName}: ${f.message}`);
+    yield* Effect.sync(() => fail(`${f.toolName}: ${f.message}`));
   }
   for (const t of timedOut) {
-    yield* Effect.logWarning(
-      `  ⏱ ${t.toolName}: timed out after ${JOB_TIMEOUT_SECONDS}s`,
+    yield* Effect.sync(() =>
+      slow(`${t.toolName}: timed out after ${JOB_TIMEOUT_SECONDS}s`)
     );
   }
 
   if (successCount === 0) {
-    yield* Effect.logWarning(
-      "No completions were successfully installed. Check that mise and required tools are installed.",
+    yield* Effect.sync(() =>
+      warn(
+        "No completions were successfully installed — check that mise and required tools are installed",
+      )
     );
   }
 });

@@ -30,11 +30,12 @@
 //
 // Effect v4 import path verified against effect@4.0.0-rc.112.
 
-import { Console, Effect, Logger, Schema } from "npm:effect@4.0.0-rc.112";
+import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
 import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
 import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
+import { detail, setTopic, warn } from "../lib/df-log.ts";
 import {
   ensureDir,
   hasCommand,
@@ -124,7 +125,6 @@ const writeReport = (
       cacheFile(),
       JSON.stringify(encodeReport(merged), null, 2) + "\n",
     );
-    yield* Effect.logInfo(`prewarm cache written to ${cacheFile()}`);
   });
 
 // ===========================================================================
@@ -136,8 +136,12 @@ const writeReport = (
 // brief window before the cache is populated.
 
 const runAwsRegion = Effect.gen(function* () {
+  yield* Effect.sync(() => setTopic("aws"));
+
   if (!(yield* hasCommand("curl"))) {
-    yield* Effect.logInfo("curl not found; skipping aws-region");
+    yield* Effect.sync(() =>
+      warn("Skipping AWS region prewarm — curl not found")
+    );
     return;
   }
 
@@ -162,14 +166,14 @@ const runAwsRegion = Effect.gen(function* () {
 
   const region = regionRes.ok ? regionRes.stdout.trim() : "";
   if (region === "" || !isPlausibleRegion(region)) {
-    yield* Effect.logInfo(
-      "IMDS region unresolved; leaving aws_region unset (env.zsh falls back)",
+    yield* Effect.sync(() =>
+      detail("AWS region unresolved — env.zsh fallback remains")
     );
     return;
   }
 
   yield* writeReport({ aws_region: region });
-  yield* Effect.logInfo(`resolved aws_region=${region}`);
+  yield* Effect.sync(() => detail(`Resolved AWS region: ${region}`));
 });
 
 // Guard against IMDS returning an error body / HTML instead of a region. A
@@ -186,10 +190,12 @@ const isPlausibleRegion = (s: string): boolean => /^[a-z0-9-]{1,32}$/.test(s);
 // hence checking combined output.
 
 const runGhAuth = Effect.gen(function* () {
+  yield* Effect.sync(() => setTopic("github"));
+
   if (!(yield* hasCommand("gh"))) {
     // gh absent → not authed; record false so login.zsh shows the reminder.
     yield* writeReport({ gh_auth_ok: false });
-    yield* Effect.logInfo("gh not found; gh_auth_ok=false");
+    yield* Effect.sync(() => warn("Missing gh — recorded gh_auth_ok=false"));
     return;
   }
 
@@ -197,7 +203,7 @@ const runGhAuth = Effect.gen(function* () {
   const combined = `${res.stdout}\n${res.stderr}`;
   const ok = isLoggedInViaKeyring(combined);
   yield* writeReport({ gh_auth_ok: ok });
-  yield* Effect.logInfo(`gh_auth_ok=${ok}`);
+  yield* Effect.sync(() => detail(`gh_auth_ok=${ok}`));
 });
 
 // Reproduces `grep -q "Logged in.*keyring"`: a line with "Logged in" followed
@@ -228,15 +234,12 @@ of forking a probe on every startup.
 Each subcommand owns its own field of the merged cache, so a writer never
 clobbers the other's value.`;
 
-const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
-
 // Subcommand bodies map to a process exit code; every failure path is already
 // soft, so the fallback only guards an unexpected defect-free failure.
 const exitAfter = (
   body: Effect.Effect<void, never, PrewarmEnv>,
 ): Effect.Effect<never, never, PrewarmEnv> =>
   body.pipe(
-    Effect.provide(loggerLayer),
     Effect.as(0),
     Effect.orElseSucceed(() => 1),
     Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),

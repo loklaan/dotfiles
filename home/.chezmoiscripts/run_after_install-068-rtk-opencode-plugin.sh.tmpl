@@ -15,14 +15,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "rtk"
 
 main() {
   # Activate mise shims so rtk is found even when chezmoi apply is triggered
   # by mise's postinstall hook (which doesn't inherit the shell's mise env).
   eval "$(mise activate bash --quiet 2>/dev/null)" || true
 
-  log_step "rtk plugin for OpenCode"
+  log_step "Syncing rtk plugin for OpenCode"
 
   if ! command -v rtk >/dev/null 2>&1; then
     log_detail "Skipping — rtk is not on PATH"
@@ -35,7 +35,7 @@ main() {
 
   local plugin="${HOME}/.config/opencode/plugins/rtk.ts"
   if rtk init -g --opencode --no-patch </dev/null >/dev/null 2>&1; then
-    log_detail "Plugin up to date: ${plugin}"
+    log_detail "Unchanged: rtk plugin (${plugin})"
   else
     log_warn "Could not update the plugin — 'rtk init -g --opencode' failed"
     log_warn_cont "${plugin} may be stale (non-fatal)"

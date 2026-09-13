@@ -26,8 +26,8 @@
 // only) to keep `deno test` hermetic and permission-free.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
-// exits 1); progress is reported via Effect.logInfo from inside the gen block.
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// exits 1); progress goes through df-log so the format matches every other
+// dotfiles tool. Effect v4 import paths verified against effect@4.0.0-rc.112.
 
 import {
   Data,
@@ -44,6 +44,9 @@ import {
   ChildProcess,
   ChildProcessSpawner,
 } from "npm:effect@4.0.0-rc.112/unstable/process";
+import { setTopic, step } from "../lib/df-log.ts";
+
+setTopic("mise");
 
 // Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
 const fatal = (msg: string): never => {
@@ -107,7 +110,7 @@ const program: Effect.Effect<
     return yield* Effect.fail(new MiseNotOnPathError());
   }
 
-  yield* Effect.logInfo("running mise upgrade -y");
+  yield* Effect.sync(() => step("Upgrading mise tools"));
 
   // Inherit stdio so mise's progress/output goes straight to the terminal.
   // Propagate mise's exit code verbatim (bash `set -e` + tail invocation); a

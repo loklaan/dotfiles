@@ -9,7 +9,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "paseo"
 
 #/ Usage:
 #/   run_after_install-057-paseo-daemon.sh
@@ -28,10 +28,13 @@ manage_linux() {
   local enabled={{ dig "paseoDaemon" false . }}
 
   if [ "$enabled" != "true" ]; then
-    log_step "paseo daemon (Linux, opt-out)"
-
     # Stop and disable if it's running, so an explicit opt-out actually sticks.
+    # Steady state (unit absent, or inactive and disabled) prints nothing.
     if systemctl --user list-unit-files paseo-daemon.service >/dev/null 2>&1; then
+      if systemctl --user is-active --quiet paseo-daemon.service \
+        || systemctl --user is-enabled --quiet paseo-daemon.service 2>/dev/null; then
+        log_step "Stopping paseo daemon"
+      fi
       if systemctl --user is-active --quiet paseo-daemon.service; then
         systemctl --user stop paseo-daemon.service
         log_detail "Stopped paseo-daemon.service"
@@ -44,7 +47,7 @@ manage_linux() {
     return 0
   fi
 
-  log_step "paseo daemon (Linux, opt-in)"
+  log_step "Restarting paseo daemon"
 
   # Activate mise so the paseo shim is on PATH
   eval "$(mise activate bash --quiet)"
@@ -55,7 +58,7 @@ manage_linux() {
   fi
 
   systemctl --user daemon-reload
-  systemctl --user enable paseo-daemon.service
+  run_quiet systemctl --user enable paseo-daemon.service
 
   if systemctl --user is-active --quiet paseo-daemon.service; then
     systemctl --user restart paseo-daemon.service
@@ -66,11 +69,8 @@ manage_linux() {
   fi
 
   sleep 2
-  if curl -sf http://127.0.0.1:6767/ -o /dev/null 2>/dev/null; then
-    log_detail "Health probe OK — paseo daemon is responding"
-  else
-    log_warn "Health probe failed — paseo daemon not responding on port 6767"
-  fi
+  curl -sf http://127.0.0.1:6767/ -o /dev/null 2>/dev/null || \
+    log_warn "Health probe failed — paseo daemon not responding at http://127.0.0.1:6767/"
 }
 {{- end }}
 
@@ -86,8 +86,7 @@ main() {
       return 0
       ;;
     *)
-      log_warn_step "paseo daemon"
-      log_warn "Unsupported OS: $(uname -s), skipping"
+      log_warn "Skipping paseo daemon — unsupported OS: $(uname -s)"
       return 0
       ;;
   esac

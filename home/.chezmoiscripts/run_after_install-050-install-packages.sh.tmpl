@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "packages"
 
 #/ Usage:
 #/   run_after_install-050-install-packages.sh
@@ -24,8 +24,7 @@ main() {
   if [ -x "$install_script" ]; then
     "$install_script"
   else
-    warning "install-my-packages not found or not executable"
-    warning "Expected location: $install_script"
+    log_warn "Missing install-my-packages (expected at ${install_script})"
   fi
 }
 

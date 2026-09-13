@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "completions"
 
 #/ Usage:
 #/   run_after_install-100-install-zsh-completions.sh
@@ -18,13 +18,13 @@ setup_session_logging "$(basename "$0")"
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 main() {
-  if command -v install-my-completions >/dev/null 2>&1; then
-    install-my-completions
-    log_detail "Note: Completions available new term sessions (restart your terminal or run 'exec zsh')"
-  else
-    warning "install-my-completions command not found in PATH"
-    warning "Expected location: ${HOME}/.local/bin/install-my-completions"
+  if ! command -v install-my-completions >/dev/null 2>&1; then
+    log_warn "Missing install-my-completions (expected at ${HOME}/.local/bin/install-my-completions)"
+    return 0
   fi
+
+  install-my-completions
+  log_note "Completions available in new terminal sessions (restart, or run 'exec zsh')"
 }
 
 main "$@"

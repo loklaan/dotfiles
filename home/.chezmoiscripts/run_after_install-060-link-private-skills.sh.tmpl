@@ -10,7 +10,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "skills"
 
 #/ Usage:
 #/   run_after_install-060-link-private-skills.sh
@@ -49,12 +49,14 @@ main() {
   parse_args "$@"
 
   if [ ! -d "$STAGING_DIR" ]; then
-    log_step "Linking private skills"
-    log_detail "Staging directory not found, skipping (next chezmoi apply should clone it)"
+    log_warn "Skipping private skills — staging directory not found (next apply should clone it)"
     return 0
   fi
 
+  log_step "Linking private skills"
+
   local linked=0
+  local skipped=0
 
   for skill_dir in "$STAGING_DIR"/*/; do
     [ -d "$skill_dir" ] || continue
@@ -66,7 +68,8 @@ main() {
 
     # Skip if a non-symlink entry already exists (chezmoi-managed skill)
     if [ -e "$target" ] && [ ! -L "$target" ]; then
-      log_warn "Skipping '${skill_name}': already exists as a chezmoi-managed skill"
+      log_warn "Skipping '${skill_name}' — already exists as a chezmoi-managed skill"
+      skipped=$((skipped + 1))
       continue
     fi
 
@@ -75,7 +78,9 @@ main() {
   done
 
   if [ "$linked" -gt 0 ]; then
-    log_step "Linking private skills (${linked} linked)"
+    log_detail "Linked ${linked} skill(s)"
+  elif [ "$skipped" -eq 0 ]; then
+    log_detail "Unchanged: private skills"
   fi
 }
 

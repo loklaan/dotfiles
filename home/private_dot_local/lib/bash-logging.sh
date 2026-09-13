@@ -8,20 +8,36 @@
 #|                                                                            |
 #| Usage:                                                                     |
 #|   source "${HOME}/.local/lib/bash-logging.sh"                             |
-#|   setup_session_logging "$(basename "$0")"                                |
+#|   setup_session_logging "$(basename "$0")" "topic"                        |
 #|   bl_parse_help "$@"                                                       |
 #|   log_step "What this script is doing"                                     |
 #|   log_detail "What it just did"                                            |
 #|                                                                            |
 #| MESSAGE SHAPES — prefer these over hand-writing glyphs into info/warning.  |
-#|   log_step    "▶ msg"    the script's scope; one per script, printed first  |
+#|   log_step    "› msg"    the script's scope; one per script, printed first  |
 #|   log_detail  "╍ msg"    one outcome the script produced                    |
 #|   log_warn    "╍ msg"    one problem, at warning level                      |
 #|   log_cont    "  msg"    continuation of the line above (no glyph)          |
-#|   log_ok      "  ✓ msg"  summary block: did it                             |
-#|   log_skip    "  ⊘ msg"  summary block: skipped / unchanged                 |
-#|   log_fail    "  ✗ msg"  summary block: failed (warning level)              |
-#|   log_note    "  → msg"  summary block: where to look / what is next        |
+#|   log_ok      "✓ msg"    summary block: did it                              |
+#|   log_skip    "⊘ msg"    summary block: skipped / unchanged                 |
+#|   log_fail    "✗ msg"    summary block: failed (warning level)              |
+#|   log_note    "→ msg"    summary block: where to look / what is next        |
+#|                                                                            |
+#| TOPIC TAGS — each script passes its topic as the second argument to         |
+#|   setup_session_logging ("skills", "packages", "mcpproxy", …). Every        |
+#|   structured line then carries a padded lowercase topic column:             |
+#|     info packages    › Installing non-critical packages                    |
+#|     info packages  ╍ Sudo detected — using it for the following commands    |
+#|     info packages  ✓ Installed: 24                                          |
+#|   The column width is BL_TOPIC_WIDTH (default 12). Captured subprocess      |
+#|   output appended by run_quiet gets the same column with a "│" gutter, so   |
+#|   the log reads as one column even through foreign output.                  |
+#|                                                                            |
+#| SECTION BOUNDARIES — one per script, same text in terminal and log:         |
+#|     [HH:MM:SS] ──── install-060-reset-external-skills.sh ────               |
+#|   chezmoi runs lifecycle scripts from <numeric-id>.<name>; the id is        |
+#|   stripped. Nested calls (a script spawning another logging script inside   |
+#|   its own tee) do not open a second section.                                |
 #|                                                                            |
 #| CONVENTIONS the shapes exist to enforce:                                    |
 #|   - Every message starts with a capital letter and leads with a verb        |
@@ -68,26 +84,38 @@ if ! command -v color_printf >/dev/null 2>&1; then
   fi
 fi
 
+# --- Topic tag ---------------------------------------------------------------
+# Every structured line from a session script carries its topic in a padded
+# lowercase column, so any line is attributable without reading back to the
+# section boundary. BL_TOPIC_WIDTH is the fixed column width; topics longer
+# than it push the glyph right rather than truncating.
+BL_TOPIC_WIDTH="${BL_TOPIC_WIDTH:-12}"
+
+_bl_topic_prefix() {
+  [ -n "${BASH_LOGGING_TOPIC:-}" ] || return 0
+  printf '%-*s ' "$BL_TOPIC_WIDTH" "$BASH_LOGGING_TOPIC"
+}
+
 # --- Levels -----------------------------------------------------------------
 # Everything goes to stderr so a script's stdout stays usable for real output.
-info() { color_print cyan "info $*" >&2 ; }
-warning() { color_print yellow "warning $*" >&2 ; }
-error() { color_print red "error $*" >&2 ; }
-fatal() { color_print red bold "fatal $*" >&2 ; exit 1 ; }
+info() { color_print cyan "info $(_bl_topic_prefix)$*" >&2 ; }
+warning() { color_print yellow "warning $(_bl_topic_prefix)$*" >&2 ; }
+error() { color_print red "error $(_bl_topic_prefix)$*" >&2 ; }
+fatal() { color_print red bold "fatal $(_bl_topic_prefix)$*" >&2 ; exit 1 ; }
 
 # --- Message shapes ---------------------------------------------------------
 # Namespaced because bash-logging.sh is sourced by ~30 scripts; short generic
 # names (step, ok, note, fail) would be too easy to collide with.
-log_step() { info "▶ $*" ; }
+log_step() { info "› $*" ; }
 log_detail() { info "╍ $*" ; }
 log_warn() { warning "╍ $*" ; }
-log_warn_step() { warning "▶ $*" ; }
+log_warn_step() { warning "› $*" ; }
 log_cont() { info "  $*" ; }
 log_warn_cont() { warning "  $*" ; }
-log_ok() { info "  ✓ $*" ; }
-log_skip() { info "  ⊘ $*" ; }
-log_fail() { warning "  ✗ $*" ; }
-log_note() { info "  → $*" ; }
+log_ok() { info "✓ $*" ; }
+log_skip() { info "⊘ $*" ; }
+log_fail() { warning "✗ $*" ; }
+log_note() { info "→ $*" ; }
 
 # --- Argument parsing -------------------------------------------------------
 # Default usage: the `#/` comment block at the top of the calling script.
@@ -117,21 +145,82 @@ bl_parse_help() {
 
 # --- Command running --------------------------------------------------------
 # Run a command quietly, showing output only on failure.
-# On success, output is appended to the session log (if active) but hidden from terminal.
-# On failure, all captured stdout and stderr is shown on stderr.
+# On success, only NOTABLE output is appended to the session log (if active):
+# package-manager no-ops and progress noise are dropped, real changes are kept.
+# On failure, all captured stdout and stderr is shown on stderr (and reaches
+# the session log through the tee).
+# BL_LOG_ALL=1 disables the success filter (full output to the log).
 run_quiet() {
   local output rc
   output=$(mktemp)
   "$@" > "$output" 2>&1 && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then
     if [ -n "${BASH_LOGGING_FILE:-}" ]; then
-      cat "$output" >> "$BASH_LOGGING_FILE"
+      if [ "${BL_LOG_ALL:-0}" = "1" ]; then
+        cat "$output" >> "$BASH_LOGGING_FILE"
+      else
+        bl_log_notable < "$output"
+      fi
     fi
   else
     cat "$output" >&2
   fi
   rm -f "$output"
   return "$rc"
+}
+
+# Drop steady-state and progress noise from a successful command's output,
+# keeping evidence of real changes. Tuned for apt, mise and npm/mise resolver
+# rows; anything unmatched is kept, so ordinary command output survives whole.
+# Kept lines get the topic column with a "│" gutter so the log stays readable
+# as one column through foreign output.
+bl_log_notable() {
+  [ -n "${BASH_LOGGING_FILE:-}" ] || return 0
+  local prefix=""
+  if [ -n "${BASH_LOGGING_TOPIC:-}" ]; then
+    prefix=$(printf '     %-*s │ ' "$BL_TOPIC_WIDTH" "$BASH_LOGGING_TOPIC")
+  fi
+  awk -v prefix="$prefix" '
+    /^The following packages were automatically installed/ { skip_list=1; next }
+    skip_list && /^  / { next }
+    skip_list { skip_list=0 }
+    /^mise by @jdx/ { next }
+    /^mise ⇢ / { next }
+    /^mise █/ { next }
+    /^mise ✓ / { next }
+    /^mise is already up to date/ { next }
+    /^mise all tools are installed/ { next }
+    /ignored by minimum_release_age/ { next }
+    /^mise Newer versions are available/ { skip_mise_notes=1; next }
+    skip_mise_notes && /^  / { next }
+    skip_mise_notes && /^…/ { next }
+    skip_mise_notes && /^Run / { next }
+    skip_mise_notes { skip_mise_notes=0 }
+    /^Preparing to unpack / { next }
+    /^User sessions running outdated binaries:/ { skip_needrestart=1; next }
+    skip_needrestart && /^ / { next }
+    skip_needrestart { skip_needrestart=0 }
+    /\[[0-9]+\/[0-9]+\]/ { next }
+    /resolving [0-9]+\/[0-9]+ pkgs/ { next }
+    /is already the newest version/ { next }
+    /^Reading package lists/ { next }
+    /^Building dependency tree/ { next }
+    /^Reading state information/ { next }
+    /^\(Reading database/ { next }
+    /^(Hit|Get|Ign):/ { next }
+    /^Fetched / { next }
+    /^nginx: the configuration file .* syntax is ok$/ { next }
+    /^nginx: configuration file .* test is successful$/ { next }
+    /^0 upgraded, 0 newly installed/ { next }
+    /^Use .* to remove them/ { next }
+    /^debconf: delaying package/ { next }
+    /^Failed to retrieve available kernel versions/ { next }
+    /^No services need to be restarted/ { next }
+    /^No containers need to be restarted/ { next }
+    /^No VM guests are running/ { next }
+    /^[[:space:]]*$/ { next }
+    { print prefix $0 }
+  ' >> "$BASH_LOGGING_FILE"
 }
 
 # --- Session logging --------------------------------------------------------
@@ -184,6 +273,7 @@ _latest_session_log() {
 
 setup_session_logging() {
   local script_name="${1:-unknown}"
+  local topic="${2:-}"
   local timestamp
   local marker_file="${HOME}/.cache/dotfiles/chezmoi-session-current"
   local tmp_marker_file
@@ -199,16 +289,23 @@ setup_session_logging() {
   tmpdir="${tmpdir%/}"
   tmp_marker_file="${tmpdir}/.chezmoi-session-current"
 
-  # Print startup message
-  color_print magenta dim "Script: $script_name" >&2
+  # chezmoi executes lifecycle scripts from a temp path named
+  # <numeric-id>.<script-name>; the id is per-run noise, not part of the name.
+  case "$script_name" in
+    [0-9]*.*) script_name="${script_name#*.}" ;;
+  esac
 
+  # A nested script may pass its own topic even though the parent owns the tee.
+  if [ -n "$topic" ]; then
+    export BASH_LOGGING_TOPIC="$topic"
+  fi
+
+  # Nested invocation (a parent script already owns the session tee and the
+  # section boundary). Printing another boundary would duplicate the section
+  # for one logical script.
   if [ "${BASH_LOGGING_ACTIVE:-0}" = "1" ] && [ -n "${BASH_LOGGING_FILE:-}" ]; then
-    session_log="$BASH_LOGGING_FILE"
-    echo "" >> "$session_log"
-    echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
     if [ "${DEBUG:-0}" = "1" ]; then
       set -x
-      info "DEBUG mode enabled - command tracing active"
     fi
     return 0
   fi
@@ -250,13 +347,12 @@ setup_session_logging() {
     session_log="${tmpdir}/${script_name}.${timestamp}.log"
   fi
 
-  # Log script boundary marker
-  echo "" >> "$session_log"
-  echo "[$(date '+%H:%M:%S')] ===== $script_name =====" >> "$session_log"
-
-  # Terminal keeps colour; the log copy has escapes stripped.
+  # Terminal keeps colour; the log copy has escapes stripped. The boundary is
+  # printed AFTER the redirect so terminal and log show the same section line.
   exec > >(tee >(bl_strip_ansi >> "$session_log"))
   exec 2>&1
+
+  bl_section "$script_name"
 
   # Enable debug tracing if requested
   if [ "${DEBUG:-0}" = "1" ]; then
@@ -267,6 +363,12 @@ setup_session_logging() {
   # Store log path for reference
   export BASH_LOGGING_FILE="$session_log"
   export BASH_LOGGING_ACTIVE=1
+}
+
+# Section boundary. Mirrors the hook's session header so terminal and log
+# read the same: [HH:MM:SS] ──── script-name ────
+bl_section() {
+  color_print magenta dim "[$(date '+%H:%M:%S')] ──── $* ────" >&2
 }
 
 # Tell the caller where the full output went, so a terse one-line failure is
@@ -282,7 +384,7 @@ setup_session_logging() {
 # daemon startup is a side effect of a successful apply.
 print_log_path() {
   if [ -n "${BASH_LOGGING_FILE:-}" ] && [ -f "${BASH_LOGGING_FILE}" ]; then
-    color_print magenta dim "Log: ${BASH_LOGGING_FILE}" >&2
+    color_print magenta dim "Session log: ${BASH_LOGGING_FILE}" >&2
   fi
   return 0
 }

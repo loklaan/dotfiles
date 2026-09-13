@@ -11,7 +11,7 @@ IFS=$'\n\t'
 # which is always the current version. bash-logging.sh is not a template, so
 # the source file and the target are byte-identical.
 source "{{ .chezmoi.sourceDir }}/private_dot_local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "skills"
 
 #/ Usage:
 #/   run_before_install-060-reset-external-skills.sh

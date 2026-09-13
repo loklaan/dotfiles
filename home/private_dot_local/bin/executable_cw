@@ -1274,7 +1274,7 @@ const connectMigrateSource = () =>
     yield* writeStdout("  - Any SSH host:  user@hostname\n\n");
     const sourceHost = promptRequired("Source host: ");
     if (sourceHost === "") fatal("No source host specified");
-    yield* logInfo(`▶ Testing SSH connection to ${sourceHost}`);
+    yield* logInfo(`› Testing SSH connection to ${sourceHost}`);
     const res = yield* runChild("ssh", [
       "-o",
       "ConnectTimeout=10",
@@ -1455,7 +1455,7 @@ const doRsync = (state: MigrateState) =>
       yield* logInfo("Aborted");
       return 0;
     }
-    yield* logInfo("▶ Creating local directory structure");
+    yield* logInfo("› Creating local directory structure");
     for (const path of state.existingPaths) {
       const parent = parentOf(path);
       const homeDir = yield* home;
@@ -1485,7 +1485,7 @@ const doRsync = (state: MigrateState) =>
     yield* writeStdout("\n");
     if (failed === 0) {
       yield* logInfo(
-        `▶ Migration complete! All ${state.existingPaths.length} items pulled.`,
+        `› Migration complete! All ${state.existingPaths.length} items pulled.`,
       );
     } else {
       yield* logWarning(`Migration finished with ${failed} failure(s)`);
@@ -1506,7 +1506,7 @@ while IFS= read -r path; do
 done <<< ${shellQuote(remoteHereDoc(state.existingPaths))}
 tar -czf ${shellQuote(remoteArchive)} -C "\${HOME}" "\${paths[@]}"
 `;
-    yield* logInfo(`▶ Creating archive on ${state.sourceHost}`);
+    yield* logInfo(`› Creating archive on ${state.sourceHost}`);
     let res = yield* runChild("ssh", [state.sourceHost, "bash", "-s"], {
       input: script,
       stdin: "piped",

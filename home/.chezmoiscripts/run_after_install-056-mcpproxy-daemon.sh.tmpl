@@ -10,7 +10,7 @@ TMPDIR="${TMPDIR%/}"
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "mcpproxy"
 
 #/ Usage:
 #/   run_after_install-056-mcpproxy-daemon.sh
@@ -27,14 +27,13 @@ setup_session_logging "$(basename "$0")"
 start_darwin() {
   local enabled={{ dig "mcpproxyGate" true . }}
   if [ "$enabled" != "true" ]; then
-    log_step "mcpproxy (macOS, opt-out)"
-    log_detail "Skipping MCPProxy.app launch"
+    # Nothing to do on opt-out: MCPProxy.app is a GUI app we never manage.
     return 0
   fi
 
   local domain="gui/$(id -u)"
 
-  log_step "mcpproxy (macOS, opt-in)"
+  log_step "Opening MCPProxy.app"
 
   # Unload legacy launchd agents (replaced by native MCPProxy.app)
   local label
@@ -67,18 +66,19 @@ start_linux() {
   local enabled={{ dig "mcpproxyGate" true . }}
 
   if [ "$enabled" != "true" ]; then
-    log_step "mcpproxy (Linux, opt-out)"
-
     if pf_resolve; then
-      pf_stop df-mcpproxy
-      log_detail "Stopped df-mcpproxy daemon"
+      if pf_is_registered df-mcpproxy; then
+        log_step "Stopping mcpproxy daemon"
+        pf_stop df-mcpproxy
+        log_detail "Stopped mcpproxy daemon"
+      fi
     else
-      log_detail "Pitchfork not installed; no daemon to stop"
+      log_warn "Skipping daemon stop — Pitchfork not installed"
     fi
     return 0
   fi
 
-  log_step "mcpproxy (Linux, opt-in)"
+  log_step "Restarting mcpproxy daemon"
 
   # Activate mise so the mcpproxy shim is on PATH
   eval "$(mise activate bash --quiet)"
@@ -111,7 +111,7 @@ start_linux() {
 
   # Restart on every apply so config changes are picked up. Pitchfork's start
   # command is idempotent; stop first so a running daemon is replaced cleanly.
-  pf_restart df-mcpproxy
+  pf_restart df-mcpproxy "Restarted mcpproxy daemon"
 
   pf_probe_http {{ .ports.mcpproxy.internal }} "mcpproxy" || true   # warn but don't block
 }
@@ -123,8 +123,7 @@ main() {
     Darwin) start_darwin ;;
     Linux)  start_linux ;;
     *)
-      log_warn_step "mcpproxy daemon"
-      log_warn "Unsupported OS: $(uname -s), skipping"
+      log_warn "Skipping mcpproxy daemon — unsupported OS: $(uname -s)"
       return 0
       ;;
   esac

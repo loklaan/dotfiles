@@ -7,7 +7,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "hex"
 
 # content-hash: {{ $settingsHash }}
 
@@ -45,12 +45,12 @@ main() {
   # Only act if Hex is currently running; otherwise the settings already on
   # disk will be read at next launch and there is nothing to reload.
   if ! pgrep -x "$HEX_APP" >/dev/null 2>&1; then
-    log_step "Hex settings reload"
+    log_step "Reloading managed Hex settings"
     log_detail "Hex not running — managed settings will load on next launch"
     return 0
   fi
 
-  log_step "Hex settings reload"
+  log_step "Reloading managed Hex settings"
   log_detail "Restarting Hex to pick up managed word remappings"
 
   # Graceful quit (lets Hex flush its own UI/window state cleanly), then wait
@@ -70,8 +70,6 @@ main() {
     log_warn "Could not relaunch Hex; launch it manually to load managed settings"
     return 0
   }
-
-  log_detail "Done"
 }
 
 main "$@"

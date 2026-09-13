@@ -20,7 +20,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "topic"
 
 #/ Usage:
 #/   script-name.sh [OPTIONS]
@@ -63,8 +63,8 @@ parse_args() {
 main() {
   parse_args "$@"
 
-  info "▶ Starting main task"
-  info "╍ Sub-task or detail"
+  log_step "Starting main task"
+  log_detail "Sub-task or detail"
 
   # Main script logic here
 }
@@ -74,10 +74,20 @@ main "$@"
 
 ### Key Conventions
 
-- ALWAYS use `info`, `warning`, `error`, `fatal` for messaging (never raw `echo`)
+- Use the `log_*` shapes for messages, never hand-write glyphs into `info`/`warning`:
+  `log_step` (`›`, script scope), `log_detail` (`╍`, outcome), `log_warn` (`╍`, problem),
+  `log_ok`/`log_skip`/`log_fail`/`log_note` (summary block), `log_cont`/`log_warn_cont` (continuation)
+- Every script passes its lowercase topic as the second argument to
+  `setup_session_logging` (`"packages"`, `"skills"`, `"mcpproxy"`, …); every
+  structured line is tagged with the padded topic column. Topics are declared
+  in the Full Topic Map of `codebase-structure.md`
+- Messages start with a capital and lead with a verb; steady state prints
+  nothing; verify silently and warn only on failure
+- Commands whose output is only useful on failure go through `run_quiet`
+  (notable lines to the log, full dump to the terminal on failure)
+- ALWAYS use `info`, `warning`, `error`, `fatal` for the level prefix (never raw `echo`)
 - No-newline variants: `infof`, `warningf`, `errorf`, `fatalf`
 - Low-level colored output: `_print` (newline), `_printf` (no newline)
-- Log message icons: `▶` for major tasks, `╍` for sub-tasks
 - Usage docs use `#/` prefix, extracted by `usage()` — never skip the `usage()` function
 - Runnable scripts aren't sourceable — don't wrap in `if [[ "${BASH_SOURCE[0]}" = "$0" ]]`
 

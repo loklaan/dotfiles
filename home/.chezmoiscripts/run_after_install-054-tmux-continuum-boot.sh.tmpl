@@ -9,7 +9,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "tmux"
 
 #/ Usage:
 #/   run_after_install-054-tmux-continuum-boot.sh
@@ -53,7 +53,7 @@ remove_continuum_boot_unit() {
     return 0
   fi
 
-  log_step "tmux continuum boot unit (Linux, opt-out)"
+  log_step "Removing tmux continuum boot unit"
 
   if systemctl --user is-enabled --quiet "$UNIT_NAME" 2>/dev/null; then
     systemctl --user disable "$UNIT_NAME" >/dev/null 2>&1 || true
@@ -79,7 +79,7 @@ remove_continuum_boot_launchagent() {
     return 0
   fi
 
-  log_step "tmux continuum boot LaunchAgent (macOS, opt-out)"
+  log_step "Removing tmux continuum boot LaunchAgent"
 
   # Safe to bootout: the agent's only action is ProgramArguments at load, so
   # unloading it cannot run a save against a dying server the way the Linux

@@ -7,7 +7,7 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "apply"
 
 #/ Usage:
 #/   df-task-chezmoi-apply

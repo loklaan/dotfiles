@@ -9,7 +9,7 @@ TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "drift"
 
 #/ Usage:
 #/   run_after_install-061-drift-notifier.sh
@@ -56,7 +56,7 @@ retire_launchd_agent() {
     if launchctl bootout "${domain}/${LABEL}" 2>/dev/null; then
       log_detail "Booted out retired launchd agent ${LABEL}"
     else
-      log_warn "Failed to boot out ${LABEL} (continuing)"
+      log_warn "Failed to boot out ${LABEL} — continuing"
     fi
   fi
 
@@ -71,7 +71,7 @@ retire_launchd_agent() {
 main() {
   bl_parse_help "$@"
 
-  log_step "drift notifier (macOS, Pitchfork cron)"
+  log_step "Registering drift notifier"
 
   # Always retire the launchd agent, even if pitchfork isn't ready — otherwise
   # a half-migrated machine keeps the old schedule alive.

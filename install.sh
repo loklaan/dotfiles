@@ -7,7 +7,7 @@ IFS=$'\n\t'
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "-" ]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   source "${SCRIPT_DIR}/home/private_dot_local/lib/bash-logging.sh"
-  setup_session_logging "$(basename "$0")"
+  setup_session_logging "$(basename "$0")" "install"
 else
   # Piped mode: SCRIPT_DIR unavailable, use simple echo-based logging
   SCRIPT_DIR=""
@@ -15,6 +15,16 @@ else
   warning() { echo "warning $*" >&2 ; }
   fatal()  { echo "fatal $*" >&2 ; exit 1 ; }
   error()  { echo "error $*" >&2 ; }
+  log_step() { info "› $*" ; }
+  log_detail() { info "╍ $*" ; }
+  log_warn() { warning "╍ $*" ; }
+  log_warn_step() { warning "› $*" ; }
+  log_cont() { info "  $*" ; }
+  log_warn_cont() { warning "  $*" ; }
+  log_ok() { info "✓ $*" ; }
+  log_skip() { info "⊘ $*" ; }
+  log_fail() { warning "✗ $*" ; }
+  log_note() { info "→ $*" ; }
   run_quiet() { "$@" > /dev/null 2>&1 ; }
   print_log_path() { : ; }
 fi
@@ -56,18 +66,18 @@ parse_args() {
 
 main() {
   parse_args "$@"
-  info "▶ Starting installation of dotfiles!"
+  log_step "Installing dotfiles"
 
   # Install required shell & locale packages for OS
   if command -v git >/dev/null 2>&1 && command -v zsh >/dev/null 2>&1; then
-    info "╍ Found 'git' and 'zsh' already installed"
+    log_detail "Unchanged: git and zsh already installed"
   else
-    info "▶ Installing critical packages (shell, locale)"
+    log_step "Installing critical packages (shell, locale)"
     os_kind=$(get_os_kind)
     case $os_kind in
       windows|android) fatal "Nope, $os_kind is not supported." ;;
       macos)
-        info "╍ Running 'brew install git zsh'"
+        log_detail "Running 'brew install git zsh'"
         if ! command -v brew >/dev/null 2>&1; then
           fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"
         fi
@@ -76,32 +86,32 @@ main() {
       linux)
         if [ "$(id -u)" = "0" ]; then
           Sudo=''
-          info "╍ Root user detected, skipping sudo for following commands"
+          log_detail "Root user detected — skipping sudo"
         elif which sudo >/dev/null 2>&1; then
           Sudo='sudo'
-          info "╍ Sudo detected, using it for following commands"
+          log_detail "Sudo detected — using it for the following commands"
         else
           Sudo=''
-          warning "╍ Cannot find 'sudo' so will attempt to run following commands without it"
+          log_warn "Missing sudo — running the following commands without it"
         fi
 
         linux_distro=$(get_linux_distro)
         case $linux_distro in
           alpine)
-            info "╍ Running 'apk add git zsh gnupg'"
+            log_detail "Running 'apk add git zsh gnupg'"
             run_quiet $Sudo apk add --update --no-cache git zsh
           ;;
           amzn|rhel|fedora|rocky)
-            info "╍ Running 'yum install git zsh gnupg2'"
+            log_detail "Running 'yum install git zsh gnupg2'"
             run_quiet $Sudo yum update -y
             run_quiet $Sudo yum install -y git zsh gnupg2
           ;;
           ubuntu|debian)
-            info "╍ Running 'apt-get install git zsh locales gnupg'"
+            log_detail "Running 'apt-get install git zsh locales gnupg'"
             run_quiet $Sudo apt-get update
             run_quiet $Sudo apt-get --no-install-recommends -y install git zsh locales gnupg
 
-            info "╍ Running 'locale-gen en_US.UTF-8'"
+            log_detail "Running 'locale-gen en_US.UTF-8'"
             run_quiet $Sudo locale-gen en_US.UTF-8
           ;;
           *)
@@ -114,23 +124,23 @@ main() {
 
   # Install mise & critical packages
   if ! command -v mise >/dev/null 2>&1; then
-    info "▶ Installing critical packages (mise , chezmoi, bitwarden)"
-    info "╍ Fetching mise signing key over https for install script verification"
+    log_step "Installing mise, chezmoi and bitwarden"
+    log_detail "Fetching mise signing key over https for install script verification"
     run_quiet bash -c 'curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x7413A06D" | gpg --import'
     tmp_mise_install_sh=$(mktemp)
-    info "╍ Running 'curl mise.jdx.dev' for install script"
+    log_detail "Running 'curl mise.jdx.dev' for install script"
     run_quiet bash -c 'curl -fsSL https://mise.jdx.dev/install.sh.sig | gpg --decrypt > "$1"' _ "$tmp_mise_install_sh"
-    info "╍ Running downloaded install script"
+    log_detail "Running downloaded install script"
     run_quiet sh "$tmp_mise_install_sh"
   fi
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
-  info "╍ Running mise for chezmoi and bitwarden"
+  log_detail "Running mise for chezmoi and bitwarden"
   run_quiet mise use --global -y chezmoi@2.67.0 'github:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v2.0.0'
 
   # Run chezmoi init (skip scripts - they run after packages are installed)
   #  - Prompts should be kept in-sync with .chezmoi.toml.tmpl config
-  info "▶ Installing templated dotfiles with 'chezmoi init'"
+  log_step "Installing templated dotfiles with 'chezmoi init'"
   config_github_user="${CONFIG_GH_USER:-"loklaan"}"
   config_email="${CONFIG_EMAIL-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
   config_email_work="${CONFIG_EMAIL_WORK-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
@@ -156,12 +166,12 @@ main() {
   config_bws_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
 
   if [ -n "$config_bws_token" ]; then
-    info "╍ BWS token provided, saving to $bws_token_path"
+    log_detail "Saving BWS token to ${bws_token_path}"
     mkdir -p "$(dirname "$bws_token_path")"
     printf '%s' "$config_bws_token" > "$bws_token_path"
     chmod 600 "$bws_token_path"
   elif [ -f "$bws_token_path" ]; then
-    info "╍ Found existing BWS token"
+    log_detail "Unchanged: existing BWS token"
     chmod 600 "$bws_token_path"
   elif [ -t 0 ]; then
     read -rsp "BWS access token (or Enter to skip): " config_bws_token
@@ -172,7 +182,7 @@ main() {
       chmod 600 "$bws_token_path"
     fi
   else
-    warning "╍ No BWS token found - secrets will not be available"
+    log_warn "Missing BWS token — secrets will not be available"
   fi
 
   # --data must stay true (default): with --data=false, promptStringOnce can't
@@ -181,6 +191,14 @@ main() {
   # boot log instead of hanging on /dev/tty. Every prompt in .chezmoi.toml.tmpl
   # must have a matching seed here (text must match exactly) so a fresh clone or
   # a cache predating a newer key still converges without prompting.
+  # The session is owned by this installer; pass its log path to the child
+  # with the bash-logging variables cleared, so the apply hooks reuse this log
+  # and each lifecycle script opens its own tee to the same file. Without the
+  # clear, the scripts inherit BASH_LOGGING_ACTIVE and skip their tee, leaving
+  # structured lines out of the log.
+  local install_session_log="${BASH_LOGGING_FILE:-}"
+  CHEZMOI_SESSION_LOG="$install_session_log" \
+  BASH_LOGGING_ACTIVE='' BASH_LOGGING_FILE='' BASH_LOGGING_TOPIC='' \
   chezmoi init "$config_github_user" \
     --no-tty \
     --promptString="Email for you=${config_email}" \
@@ -210,14 +228,17 @@ main() {
   # scripts (packages, completions, fonts, etc.). A plain pull is fast-forward
   # only and silently aborts if the clone diverges, leaving a stale source the
   # next apply re-runs forever; fetch + reset --hard self-heals on every boot.
-  info "▶ Syncing dotfiles source to origin/main and running lifecycle scripts"
+  log_step "Syncing dotfiles source to origin/main and running lifecycle scripts"
   chezmoi_src="$(chezmoi source-path 2>/dev/null || echo "${HOME}/.local/share/chezmoi")"
   run_quiet git -C "$chezmoi_src" fetch origin main
   run_quiet git -C "$chezmoi_src" reset --hard origin/main
-  chezmoi apply --force
+  local apply_session_log="${BASH_LOGGING_FILE:-}"
+  CHEZMOI_SESSION_LOG="$apply_session_log" \
+  BASH_LOGGING_ACTIVE='' BASH_LOGGING_FILE='' BASH_LOGGING_TOPIC='' \
+    chezmoi apply --force
 
-  info "▶ Installation complete."
-  info "╍ Run 'install-my-packages --gui' to install GUI apps."
+  log_step "Installation complete"
+  log_note "Run 'install-my-packages --gui' to install GUI apps"
 
   # Show setup status and instructions for anything still missing
   if command -v df-setup >/dev/null 2>&1; then
