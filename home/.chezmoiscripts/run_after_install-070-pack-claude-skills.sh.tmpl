@@ -10,7 +10,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "skills"
 
 #/ Usage:
 #/   run_after_install-070-pack-claude-skills.sh
@@ -120,14 +120,23 @@ pack_skill() {
     strip_unsupported_frontmatter "${staging_dir}/${safe_name}/SKILL.md"
   fi
 
-  (cd "$staging_dir" && zip -r "$zip_path" "$safe_name/" \
-    -x '*/.git*' \
-    -x '*/.DS_Store' \
-    -x '*/.skills-cli.json' \
-  ) > /dev/null
+  # zip needs to run from the staging dir for clean internal paths; the
+  # subshell body keeps that cd local, and run_quiet keeps zip's chatter out
+  # of the terminal/log (notable lines only; full output on failure).
+  run_quiet pack_staged_skill
 
   rm -rf "$staging_dir"
 }
+
+# Reads the caller's locals through bash dynamic scoping; subshell body so the
+# cd cannot leak.
+pack_staged_skill() (
+  cd "$staging_dir" || return 1
+  zip -r "$zip_path" "$safe_name/" \
+    -x '*/.git*' \
+    -x '*/.DS_Store' \
+    -x '*/.skills-cli.json'
+)
 
 clean_stale_zips() {
   local valid_zip_names=("$@")
@@ -147,7 +156,7 @@ clean_stale_zips() {
 
     if [ "$found" = false ]; then
       rm -f "$zip_file"
-      log_ok "Removed stale zip: ${zip_name}.zip"
+      log_detail "Removed stale zip: ${zip_name}.zip"
     fi
   done
 }

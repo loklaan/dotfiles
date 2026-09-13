@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "fonts"
 
 #/ Usage:
 #/   run_after_install-100-install-fonts.sh
@@ -18,11 +18,11 @@ setup_session_logging "$(basename "$0")"
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 main() {
+  log_step "Installing fonts"
   if command -v font-install >/dev/null 2>&1; then
     font-install
   else
-    warning "font-install command not found in PATH"
-    warning "Expected location: ${HOME}/.local/bin/font-install"
+    log_warn "Missing font-install (expected at ${HOME}/.local/bin/font-install)"
   fi
 }
 

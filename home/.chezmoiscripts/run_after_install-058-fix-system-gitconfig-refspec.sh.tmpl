@@ -5,7 +5,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "gitconfig"
 
 #/ Usage:
 #/   fix-system-gitconfig-refspec.sh
@@ -69,7 +69,7 @@ remove_broken_refspec() {
   # trips gix/gitoxide/jj.
   if echo "$current" | grep -Eq '^\^refs/heads/.*\*'; then
     git config --file "$config" --unset-all remote.origin.fetch
-    info "removed negative-glob refspec from $config"
+    log_detail "Removed negative-glob refspec from ${config}"
   fi
 }
 
@@ -88,7 +88,7 @@ remove_broken_credential_helper() {
   if git config --file "$config" --get-all credential.helper 2>/dev/null \
        | grep -Eq '^[[:space:]]*$'; then
     git config --file "$config" --unset-all credential.helper '^[[:space:]]*$' 2>/dev/null || true
-    info "removed whitespace-only credential.helper from $config"
+    log_detail "Removed whitespace-only credential.helper from ${config}"
   fi
 }
 
@@ -103,7 +103,7 @@ register_optout() {
     return 0
   fi
   git config --file "$config" --add managedconfig.optout "$key"
-  info "registered managedconfig.optout for $key in $config"
+  log_detail "Registered managedconfig.optout for ${key} in ${config}"
 }
 
 main() {
@@ -118,7 +118,7 @@ main() {
   fi
 
   if [ ! -w "$config" ]; then
-    warning "$config is not writable; skipping (needs: chmod +w or sudo)"
+    log_warn "Skipping ${config} — not writable (needs: chmod +w or sudo)"
     return 0
   fi
 

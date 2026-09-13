@@ -89,9 +89,9 @@ credential_command = "gh auth token"
 
 [tasks.update]
 description = "Upgrade mise tools, pull dotfiles source, then converge chezmoi state"
-depends = ["mise:upgrade"]
-depends_post = ["chezmoi:update"]
-run = "true"
+# One wrapper owns the whole update so the session log covers the mise and git
+# phases too; see executable_df-task-update.
+run = "df-task-update"
 
 [tasks."mise:upgrade"]
 description = "Refresh tools pinned to `latest` (explicit pins untouched)"

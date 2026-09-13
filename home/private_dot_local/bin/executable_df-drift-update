@@ -55,7 +55,7 @@ main() {
     inner='mise run update'
   fi
 
-  local script="echo '▶ dotfiles drift update'; ${inner}; status=\$?; echo; if [ \$status -eq 0 ]; then echo '✓ update complete — press Return to close'; else echo \"✗ update exited \$status — press Return to close\"; fi; read -r"
+  local script="echo '› dotfiles drift update'; ${inner}; status=\$?; echo; if [ \$status -eq 0 ]; then echo '✓ update complete — press Return to close'; else echo \"✗ update exited \$status — press Return to close\"; fi; read -r"
 
   # Open a NEW Ghostty window (-n) running the update. -e passes the command;
   # we wrap it in a login shell so mise/PATH/aliases are live. Ghostty's own

@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (27) ---
+    # --- home/private_dot_local/bin (29) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -84,6 +84,9 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_df-task-chezmoi-update
       tier: runtime
       lang: deno
+    - path: home/private_dot_local/bin/executable_df-task-update
+      tier: runtime
+      lang: bash
     - path: home/private_dot_local/bin/executable_df-task-mise-upgrade
       tier: runtime
       lang: deno
@@ -99,6 +102,9 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_notify
       tier: runtime
       lang: deno
+    - path: home/private_dot_local/bin/executable_opencode2
+      tier: runtime
+      lang: bash
     - path: home/private_dot_local/bin/executable_opencode-tokenizer-check
       tier: runtime
       lang: deno
@@ -112,7 +118,7 @@ runtimeTiers:
       tier: runtime
       lang: deno
 
-    # --- home/.chezmoiscripts (27) ---
+    # --- home/.chezmoiscripts (28) ---
     #
     # POLICY: The post-050 chezmoiscripts (056 and above) are INTENTIONALLY
     # tier:runtime / lang:bash — this is deliberate policy, NOT a conversion backlog.
@@ -148,6 +154,9 @@ runtimeTiers:
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_after_install-070-pack-claude-skills.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_after_install-071-opencode2.sh
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_after_install-100-install-fonts.sh.tmpl
@@ -203,8 +212,12 @@ runtimeTiers:
       tier: runtime
       lang: bash
 
-    # --- home/private_dot_local/lib (12, all sourced) ---
+    # --- home/private_dot_local/lib (13, all sourced) ---
     - path: home/private_dot_local/lib/bash-logging.sh
+      tier: bootstrap
+      lang: bash
+      sourced: true
+    - path: home/private_dot_local/lib/chezmoi-session.sh
       tier: bootstrap
       lang: bash
       sourced: true

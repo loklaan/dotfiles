@@ -68,6 +68,9 @@ import {
   ChildProcess,
   ChildProcessSpawner,
 } from "npm:effect@4.0.0-rc.112/unstable/process";
+import { detail, setTopic, step } from "../lib/df-log.ts";
+
+setTopic("dotfiles");
 
 // Inline replacement for deno-logging.fatal: "fatal <msg>" on stderr, exit 1.
 const fatal = (msg: string): never => {
@@ -239,6 +242,7 @@ const program: Effect.Effect<
   const branch = resolveBranch(branchRaw);
 
   // 4. Fetch origin (inherit stdio so progress surfaces). Fatal on failure.
+  yield* Effect.sync(() => step("Updating dotfiles source"));
   const fetchCode = yield* spawner
     .exitCode(
       ChildProcess.make("git", ["-C", sourcePath, "fetch", "origin"], {
@@ -253,6 +257,7 @@ const program: Effect.Effect<
       fatal(`git fetch origin failed in ${sourcePath} (exit ${fetchCode})`)
     );
   }
+  yield* Effect.sync(() => detail("Fetched origin"));
 
   // 5. Fast-forward ONLY. A non-ff merge is a loud hard-fail — never a silent
   // merge commit or `git pull` fallback.
@@ -276,6 +281,7 @@ const program: Effect.Effect<
       )
     );
   }
+  yield* Effect.sync(() => detail(`Fast-forwarded origin/${branch}`));
 
   // 6. Apply. We own the pull now, so this is `chezmoi apply`, with the same
   // TTY-aware mode flags as the bash twin.
@@ -291,6 +297,7 @@ const program: Effect.Effect<
 
   // Inherit stdio so chezmoi's prompts/output go straight to the terminal and
   // (interactive path) chezmoi reads from the real stdin TTY.
+  yield* Effect.sync(() => step("Applying dotfiles"));
   const exitCode = yield* spawner
     .exitCode(
       ChildProcess.make("chezmoi", [...args], {

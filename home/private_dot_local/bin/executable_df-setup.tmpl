@@ -338,7 +338,10 @@ const checkWorkConfig: Effect.Effect<ReadonlyArray<string>> = Effect.gen(functio
 });
 {{- end }}
 
+{{- if eq .machineProfile "work" }}
+
 const formatMissingList = (missing: ReadonlyArray<string>): string => missing.join(", ");
+{{- end }}
 
 const printStatus = (
   bwsState: BwsState,
@@ -401,7 +404,7 @@ const printStatus = (
       print("white", ["dim"], "    Listening on :6767 — port-forward from a macbook to connect");
     } else {
       print("yellow", [], "  ✗ paseo daemon");
-      print("white", ["dim"], "    Opted in but not running. Try: systemctl --user status paseo-daemon");
+      print("white", ["dim"], "    Opted in but not running. Run: systemctl --user status paseo-daemon");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
@@ -427,7 +430,7 @@ const printStatus = (
       print("white", ["dim"], "    Pairing URL: pitchfork logs df-orca-server --raw | grep -oE 'orca://pair#[^[:space:]]+' | tail -1");
     } else {
       print("yellow", [], "  ✗ orca server");
-      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
+      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
     }
 {{- end }}
 {{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
@@ -449,7 +452,7 @@ const printStatus = (
       }
     } else {
       print("yellow", [], "  ✗ opencode serve");
-      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-opencode-serve");
+      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode-serve");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
@@ -471,7 +474,7 @@ const printStatus = (
       }
     } else {
       print("yellow", [], "  ✗ code-server");
-      print("white", ["dim"], "    Opted in but not running. Try: pitchfork status df-code-server");
+      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-code-server");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
@@ -493,7 +496,7 @@ const printStatus = (
       }
     } else {
       print("yellow", [], "  ✗ mcpproxy");
-      print("white", ["dim"], "    Not running. Try: pitchfork status df-mcpproxy");
+      print("white", ["dim"], "    Not running. Run: pitchfork status df-mcpproxy");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "darwin") (dig "mcpproxyGate" true .) }}
@@ -637,8 +640,10 @@ const printInstructions = (
         printPlain();
         step += 1;
         break;
+{{- if eq .machineProfile "work" }}
       case "ok":
         break;
+{{- end }}
     }
     {{- if eq .machineProfile "work" }}
 

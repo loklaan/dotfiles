@@ -9,7 +9,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "status"
 
 #/ Usage:
 #/   run_after_install-900-setup-status.sh
@@ -35,16 +35,14 @@ main() {
   {{- end }}
 
   if [ "$has_bws" = "false" ] || [ "$has_signing" = "false" ]; then
-    echo ""
-    log_warn "Dotfiles setup incomplete"
+    log_warn_step "Checking dotfiles setup"
     if [ "$has_bws" = "false" ]; then
-      log_detail "Missing: BWS token (for npm auth, GitHub tokens)"
+      log_fail "Missing BWS token (npm auth, GitHub tokens)"
     fi
     if [ "$has_signing" = "false" ]; then
-      log_detail "Missing: Signing key (for git commit signing)"
+      log_fail "Missing signing key (git commit signing)"
     fi
-    echo ""
-    log_detail "Run 'df-setup' for instructions"
+    log_note "Run 'df-setup' for instructions"
   fi
 }
 

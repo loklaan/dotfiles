@@ -5,7 +5,7 @@ IFS=$'\n\t'
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "shell"
 
 #/ Usage:
 #/   change-term.sh
@@ -51,7 +51,7 @@ set_login_shell() {
 }
 
 main() {
-  log_step "Setting the user shell to zsh"
+  log_step "Setting the login shell to zsh"
 
   zsh_shell="$(command -v zsh)"
 
@@ -63,12 +63,12 @@ main() {
   target_user="${SUDO_USER:-${LOGNAME:-${USER:-$(whoami)}}}"
 
   current_login_shell="$(get_login_shell "$target_user")"
-  log_detail " Target user      = ${target_user}"
-  log_detail " Current login    = ${current_login_shell:-unknown}"
-  log_detail " Desired shell    = ${zsh_shell}"
+  log_detail "Target user: ${target_user}"
+  log_detail "Current login shell: ${current_login_shell:-unknown}"
+  log_detail "Desired shell: ${zsh_shell}"
 
   if [ "$current_login_shell" = "$zsh_shell" ]; then
-    log_detail "Login shell already set to zsh"
+    log_detail "Unchanged: login shell (zsh)"
     return
   fi
 
@@ -81,19 +81,19 @@ main() {
     log_detail "Coder detected, skipping /etc/shells modification"
     log_detail "Running 'chsh' to change shell to: ${zsh_shell}"
     chsh -s "$zsh_shell"
-    log_detail "Now, run 'zsh' to start a new term session"
+    log_detail "Now, run 'zsh' to start a new terminal session"
     return
   fi
 
   if [ "$(id -u)" = "0" ]; then
     Sudo=''
-    log_detail "Root user detected, skipping sudo for following commands"
+    log_detail "Root user detected — skipping sudo"
   elif which sudo >/dev/null 2>&1; then
     Sudo='sudo'
-    log_detail "Sudo detected, using it for following commands"
+    log_detail "Sudo detected — using it for the following commands"
   else
     Sudo=''
-    log_warn "Cannot find 'sudo' so will attempt to run following commands without it"
+    log_warn "Missing sudo — running the following commands without it"
   fi
 
   # Check if the zsh_shell exists in /etc/shells, if not just append it in

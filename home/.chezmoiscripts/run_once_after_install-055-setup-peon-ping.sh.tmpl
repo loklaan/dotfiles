@@ -10,7 +10,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "peon-ping"
 
 #/ Usage:
 #/   run_once_after_install-055-setup-peon-ping.sh
@@ -29,14 +29,14 @@ setup_session_logging "$(basename "$0")"
 main() {
   bl_parse_help "$@"
 
+  log_step "Setting up peon-ping"
+
   if ! command -v peon-ping-setup >/dev/null 2>&1; then
-    log_step "Peon-ping setup"
-    log_detail "peon-ping-setup not found, skipping (install via: brew install PeonPing/tap/peon-ping)"
+    log_warn "Missing peon-ping-setup — install with: brew install PeonPing/tap/peon-ping"
     return 0
   fi
 
-  log_step "Running peon-ping-setup"
-  peon-ping-setup
+  run_quiet peon-ping-setup
 }
 
 main "$@"

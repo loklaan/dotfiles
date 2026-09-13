@@ -21,6 +21,49 @@
 # df-setup is the single source of truth for "what state is this
 # machine in and what should the user do next". This script is the hook
 # that wires it into chezmoi apply.
+#
+# Messages use the shared bash-logging shapes and are mirrored into the live
+# session log (via the marker) so preflight warnings are recorded, not just
+# printed to the terminal.
+
+# Shared logging shapes. The hook sources chezmoi-session.sh from the chezmoi
+# source tree before this file, but bash-logging is not loaded; on a fresh
+# bootstrap the installed copy may not exist yet, so keep plain fallbacks.
+if [ -r "${HOME}/.local/lib/bash-logging.sh" ]; then
+  # shellcheck source=./bash-logging.sh
+  source "${HOME}/.local/lib/bash-logging.sh"
+fi
+if ! command -v log_warn >/dev/null 2>&1; then
+  log_warn() { printf 'warning ╍ %s\n' "$*" >&2; }
+  log_warn_cont() { printf 'warning   %s\n' "$*" >&2; }
+  log_detail() { printf 'info ╍ %s\n' "$*" >&2; }
+  log_cont() { printf 'info   %s\n' "$*" >&2; }
+fi
+
+# Emit one line through the shared shapes and append the same (colourless)
+# line to the live session log, if one is open.
+_pf_emit() { # $1 = warn|info, $2 = 1 if continuation else 0, $3 = message
+  local level="$1" cont="$2" message="$3" marker log
+
+  if [ "$level" = "warn" ]; then
+    if [ "$cont" = "1" ]; then log_warn_cont "$message"; else log_warn "$message"; fi
+  else
+    if [ "$cont" = "1" ]; then log_cont "$message"; else log_detail "$message"; fi
+  fi
+
+  marker="${HOME}/.cache/dotfiles/chezmoi-session-current"
+  [ -r "$marker" ] || return 0
+  log=$(head -n 1 "$marker" 2>/dev/null || true)
+  [ -n "$log" ] && [ -w "$log" ] || return 0
+
+  if [ "$level" = "warn" ]; then
+    if [ "$cont" = "1" ]; then printf 'warning   %s\n' "$message" >> "$log"
+    else printf 'warning ╍ %s\n' "$message" >> "$log"; fi
+  else
+    if [ "$cont" = "1" ]; then printf 'info   %s\n' "$message" >> "$log"
+    else printf 'info ╍ %s\n' "$message" >> "$log"; fi
+  fi
+}
 
 chezmoi_preflight() {
   _chezmoi_preflight_path_sanity
@@ -71,15 +114,14 @@ _chezmoi_preflight_path_sanity() {
   [ "$any_exists" = "1" ] || return 0
   [ "$any_on_path" = "1" ] && return 0
 
-  printf '\033[31m✗ preflight: refusing to apply with a degraded PATH\033[0m\n' >&2
-  printf '\033[2;37m  PATH=%s\033[0m\n' "$PATH" >&2
-  printf '\033[2;37m  None of these provisioned dirs is on PATH:\033[0m\n' >&2
+  _pf_emit warn 0 "Refusing to apply with a degraded PATH"
+  _pf_emit warn 1 "PATH=${PATH}"
+  _pf_emit warn 1 "None of these provisioned dirs is on PATH:"
   for dir in "${expected[@]}"; do
-    [ -d "$dir" ] && printf '\033[2;37m    %s\033[0m\n' "$dir" >&2
+    [ -d "$dir" ] && _pf_emit warn 1 "  ${dir}"
   done
-  printf '\033[2;37m  Templates resolve binaries with lookPath, so this apply would\033[0m\n' >&2
-  printf '\033[2;37m  render and write WRONG files. Restore PATH, or set\033[0m\n' >&2
-  printf '\033[2;37m  CHEZMOI_ALLOW_DEGRADED_PATH=1 if you truly mean it.\033[0m\n' >&2
+  _pf_emit warn 1 "Templates resolve binaries with lookPath, so this apply would render and write WRONG files."
+  _pf_emit warn 1 "Restore PATH, or set CHEZMOI_ALLOW_DEGRADED_PATH=1 if you truly mean it."
   exit 1
 }
 
@@ -105,7 +147,7 @@ _chezmoi_preflight_prune_unmanaged() {
     local path="${HOME}/${rel}"
     [ -e "$path" ] || continue
     rm -f "$path" 2>/dev/null || \
-      printf '\033[33m⚠ preflight: failed to remove stale file %s\033[0m\n' "$path" >&2
+      _pf_emit warn 0 "Failed to remove stale file ${path}"
   done
 }
 
@@ -126,7 +168,7 @@ _chezmoi_preflight_sync_mise() {
   # Render the managed mise config to disk first, so `mise install` below
   # picks up version/backend migrations before any template renders.
   if ! chezmoi apply --force "$mise_config" >/dev/null 2>&1; then
-    printf '\033[33m⚠ preflight: failed to apply managed mise config\033[0m\n' >&2
+    _pf_emit warn 0 "Failed to apply managed mise config"
     return 0
   fi
 
@@ -153,7 +195,7 @@ _chezmoi_preflight_sync_mise() {
 
   # Reconcile installed tools with the (now-fresh) config.
   mise install -y >/dev/null 2>&1 || \
-    printf '\033[33m⚠ preflight: mise install reported errors\033[0m\n' >&2
+    _pf_emit warn 0 "mise install reported errors"
 }
 
 _chezmoi_preflight_tools() {
@@ -168,9 +210,9 @@ _chezmoi_preflight_tools() {
     list=$(printf '%s, ' "${missing[@]}")
     list="${list%, }"
 
-    printf '\033[33m⚠ Missing tools: %s\033[0m\n' "$list" >&2
-    printf '\033[2;37m  Some config will be incomplete. Run install.sh to set up:\033[0m\n' >&2
-    printf '\033[2;37m  %s/.local/share/chezmoi/install.sh\033[0m\n' "$HOME" >&2
+    _pf_emit warn 0 "Missing tools: ${list}"
+    _pf_emit warn 1 "Some config will be incomplete — run install.sh to set up:"
+    _pf_emit warn 1 "${HOME}/.local/share/chezmoi/install.sh"
   fi
 }
 
@@ -202,13 +244,12 @@ _chezmoi_preflight_bws_token() {
       return 0
       ;;
     2)
-      printf '\033[33m⚠ BWS token is present but rejected by the server\033[0m\n' >&2
-      printf '\033[2;37m  Secrets will be empty for this apply. For guidance:\033[0m\n' >&2
-      printf '\033[2;37m  %s/.local/bin/df-setup\033[0m\n' "$HOME" >&2
+      _pf_emit warn 0 "BWS token is present but rejected by the server"
+      _pf_emit warn 1 "Secrets will be empty for this apply — run 'df-setup' for guidance"
       return 0
       ;;
     *)
-      printf '\033[33m⚠ df-setup --probe-bws returned unexpected exit %d\033[0m\n' "$rc" >&2
+      _pf_emit warn 0 "df-setup --probe-bws returned unexpected exit ${rc}"
       return 0
       ;;
   esac

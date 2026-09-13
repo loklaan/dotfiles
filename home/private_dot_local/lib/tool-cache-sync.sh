@@ -15,7 +15,7 @@
 
 tcs_get_opencode_cache() {
   if ! command -v opencode >/dev/null 2>&1; then
-    log_warn "Missing opencode"
+    log_warn "Missing opencode — install with: mise install"
     return 1
   fi
 
@@ -28,7 +28,7 @@ tcs_get_opencode_cache() {
   fi
 
   if [ ! -d "$cache_dir" ]; then
-    log_warn "OpenCode cache not yet populated at ${cache_dir} — run opencode once first"
+    log_warn "OpenCode cache not yet populated at ${cache_dir} — run OpenCode once first"
     return 1
   fi
 

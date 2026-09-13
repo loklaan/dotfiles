@@ -12,7 +12,7 @@ TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "plugins"
 
 # content-hash: {{ printf "%s|%s|%s" $extHash ($registrySrc | sha256sum) ($aliasesSrc | sha256sum) | sha256sum }}
 
@@ -79,7 +79,7 @@ TOKENIZER_ALIASES_JSON_EOF
   # manifest the plugin would silently fall back from.
   if ! node -e "JSON.parse(require('fs').readFileSync('${tmp}','utf8'))" 2>/dev/null; then
     rm -f "$tmp"
-    fatal "╍ Rendered tokenizer-aliases.json is not valid JSON"
+    fatal "Rendered tokenizer-aliases.json is not valid JSON"
   fi
 
   if [ -f "$ALIASES_FILE" ] && cmp -s "$tmp" "$ALIASES_FILE"; then
@@ -105,31 +105,26 @@ main() {
   eval "$(mise activate bash --quiet)"
 
   if ! command -v node >/dev/null 2>&1; then
-    log_warn_step "OpenCode plugin setup"
-    log_warn "node not found, skipping (install via: mise install node)"
+    log_warn "Skipping OpenCode plugin setup — node not found (install with: mise install node)"
     return 0
   fi
 
   if ! command -v npm >/dev/null 2>&1; then
-    log_warn_step "OpenCode plugin setup"
-    log_warn "npm not found, skipping"
+    log_warn "Skipping OpenCode plugin setup — npm not found"
     return 0
   fi
 
   if [ ! -d "$PLUGIN_DIR" ]; then
-    log_warn_step "OpenCode plugin setup"
-    log_warn "Plugin directory not found: ${PLUGIN_DIR}"
-    log_warn "The opencode external archive may not have been applied yet"
+    log_warn "Skipping OpenCode plugin setup — plugin directory not found at ${PLUGIN_DIR}"
+    log_warn_cont "The opencode external archive may not have been applied yet"
     return 0
   fi
 
-  log_step "OpenCode plugin setup"
+  log_step "Setting up OpenCode plugin"
 
   install_vendor_deps
   write_registry
   write_aliases
-
-  log_detail "Done"
 }
 
 main "$@"

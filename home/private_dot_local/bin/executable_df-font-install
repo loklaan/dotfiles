@@ -49,6 +49,7 @@ import {
   FileSystem,
   Layer,
   Path,
+  Sink,
   Stdio,
   Stream,
   Terminal,
@@ -61,7 +62,15 @@ import {
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
-import { makeLoggerLayer } from "../lib/df-log.ts";
+import {
+  makeLoggerLayer,
+  setTopic,
+  step,
+  warn,
+  warnCont,
+} from "../lib/df-log.ts";
+
+setTopic("fonts");
 
 /** Print "fatal <msg>" to stderr and exit 1 (entrypoint argument/OS-fatal paths). */
 const fatal = (msg: string): never => {
@@ -192,20 +201,43 @@ const probeFcCache: Effect.Effect<
     );
 });
 
-/** `fc-cache -f "$font_dir"` — inherit stdio, return the child's exit code. */
+/** `fc-cache -f "$font_dir"` — capture output and return the child's exit
+ * code. Success is silent (the caller's step scopes it); a failure surfaces
+ * the tool's diagnostics before the code propagates. */
 const runFcCache = (
   fontDir: string,
 ): Effect.Effect<number, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* spawner
-      .exitCode(
+
+    const collected = yield* Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
         ChildProcess.make("fc-cache", ["-f", fontDir], {
-          stdout: "inherit",
-          stderr: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
         }),
-      )
-      .pipe(Effect.orElseSucceed(() => 1));
+      );
+      return yield* Effect.all(
+        {
+          output: handle.all.pipe(
+            Stream.decodeText(),
+            Stream.runFold(() => "", (acc, chunk) => acc + chunk),
+            Effect.orElseSucceed(() => ""),
+          ),
+          code: handle.exitCode,
+        },
+        { concurrency: "unbounded" },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.orElseSucceed(() => ({ output: "", code: 1 as const })),
+    );
+
+    const output = collected.output.trim();
+    if (Number(collected.code) !== 0 && output !== "") {
+      yield* Effect.sync(() => warnCont(output));
+    }
+    return Number(collected.code);
   });
 
 // --------------------------------------------------------------------------
@@ -218,7 +250,7 @@ const linuxProgram: Effect.Effect<
   Config.ConfigError,
   ChildProcessSpawner.ChildProcessSpawner
 > = Effect.gen(function* () {
-  yield* Effect.logInfo("▶ Updating font cache");
+  yield* Effect.sync(() => step("Updating font cache"));
 
   const fontDir = yield* fontDirPath;
   const fontDirExists = yield* statIsDir(fontDir);
@@ -229,22 +261,21 @@ const linuxProgram: Effect.Effect<
 
   switch (action.kind) {
     case "no-font-dir":
-      yield* Effect.logWarning(`Font directory does not exist: ${fontDir}`);
+      yield* Effect.sync(() =>
+        warn(`Missing font directory (expected at ${fontDir})`)
+      );
       return 0;
     case "no-fc-cache":
-      yield* Effect.logWarning("╍ fc-cache not found, font cache not updated");
-      yield* Effect.logWarning(
-        "╍ Install fontconfig package to enable font cache updates",
+      yield* Effect.sync(() =>
+        warn("fc-cache not found — font cache not updated")
+      );
+      yield* Effect.sync(() =>
+        warnCont("Install the fontconfig package to enable font cache updates")
       );
       return 0;
     case "update": {
       const code = yield* runFcCache(fontDir);
-      // bash `set -e`: the success line only prints when fc-cache succeeded.
-      if (code === 0) {
-        yield* Effect.logInfo(
-          "▶ Done installing fonts! Updated font cache with fc-cache.",
-        );
-      }
+      // Success is silent: the step already scopes the work and a failure warns.
       return code;
     }
   }
@@ -270,9 +301,7 @@ const program: Effect.Effect<
         }),
       );
     case "macos":
-      yield* Effect.logInfo(
-        "▶ Done installing fonts! MacOS does not require font cache update.",
-      );
+      // macOS does not require a font cache update; steady state, print nothing.
       return 0;
     case "linux":
       return yield* linuxProgram;
@@ -360,20 +389,42 @@ const assertEq = <T>(actual: T, expected: T, msg: string): void => {
   if (a !== e) throw new Error(`${msg}: ${a} !== ${e}`);
 };
 
-// Mock ChildProcessSpawner whose exit code is decided from the command's args,
-// so the presence probe (`fc-cache --version`) and the run (`fc-cache -f DIR`)
-// can be steered independently. Only `exitCode` is exercised; the rest are
-// deliberately unimplemented stubs that fail loudly if ever reached.
+// Mock ChildProcessSpawner whose exit code and output are decided from the
+// command's args, so the presence probe (`fc-cache --version`) and the run
+// (`fc-cache -f DIR`) can be steered independently. `exitCode` serves the
+// probe, `spawn` serves runFcCache; the other helpers die loudly if reached.
 const argsOf = (command: unknown): ReadonlyArray<string> =>
   (command as { readonly args?: ReadonlyArray<string> }).args ?? [];
 
+const mockHandle = (code: number, output: string) => {
+  const bytes = new TextEncoder().encode(output);
+  const stream = bytes.length === 0 ? Stream.empty : Stream.make(bytes);
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    stdout: stream,
+    stderr: Stream.empty,
+    all: stream,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+};
+
 const mockSpawnerLayer = (
   exitFor: (args: ReadonlyArray<string>) => number,
+  outputFor: (args: ReadonlyArray<string>) => string = () => "",
 ): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.ChildProcessSpawner.of({
-      spawn: () => Effect.die("mock spawner: spawn() unused"),
+      spawn: (command) =>
+        Effect.succeed(
+          mockHandle(exitFor(argsOf(command)), outputFor(argsOf(command))),
+        ),
       exitCode: (command) =>
         Effect.succeed(ChildProcessSpawner.ExitCode(exitFor(argsOf(command)))),
       streamString: () => Stream.die("mock spawner: streamString() unused"),
@@ -505,9 +556,13 @@ Deno.test("runFcCache: passes `-f DIR` and propagates exit code 0", async () => 
 });
 
 Deno.test("runFcCache: propagates fc-cache's non-zero exit code verbatim", async () => {
+  // Failure output goes through warnCont; suppressed here, but the exit code
+  // must come back unchanged and the capture must not throw.
   const code = await Effect.runPromise(
     runFcCache("/tmp/fonts").pipe(
-      Effect.provide(mockSpawnerLayer(() => 7)),
+      Effect.provide(
+        mockSpawnerLayer(() => 7, () => "fc-cache: scanning error\n"),
+      ),
     ),
   );
   assertEq(code, 7, "propagated exit code");

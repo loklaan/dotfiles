@@ -85,17 +85,74 @@ All bash scripts use a shared logging library at `home/private_dot_local/lib/bas
 
 ### Session Logging
 
-Session logging is driven by chezmoi hooks in `.chezmoi.toml.tmpl`:
+Session logging is driven by the hooks in `.chezmoi.toml.tmpl`, whose bodies
+live in `home/private_dot_local/lib/chezmoi-session.sh`:
 
-1. **Pre-apply/pre-update hook** creates a session log at `$TMPDIR/chezmoi-session.<timestamp>.log` and writes its path to `~/.cache/dotfiles/chezmoi-session-current`
-2. **`setup_session_logging`** in each script checks the same per-user marker file, reads the shared log path, and redirects output (stdout + stderr via `tee -a`) to both terminal and session log
-3. **Post-apply/post-update hook** removes the marker file
+1. **`chezmoi_session_pre apply|update`** creates a session log at
+   `$TMPDIR/chezmoi-session.<timestamp>.log`, writes the section header, and
+   points `~/.cache/dotfiles/chezmoi-session-current` at it. When the caller
+   already owns a session (`CHEZMOI_SESSION_LOG` or `BASH_LOGGING_FILE`), it
+   appends to that file instead — so `df-task-update` and `install.sh` produce
+   one log for the whole run instead of a near-empty hook log.
+2. **`setup_session_logging "$(basename "$0")" "<topic>"`** in each script
+   reads the marker, opens a tee to the log, prints the section boundary
+   (`[HH:MM:SS] ──── script-name ────`, chezmoi's `<numeric-id>.` temp prefix
+   stripped), and tags every structured line with the padded topic column
+   (`info packages    › Installing non-critical packages`). Nested calls (a
+   script spawning another logging script inside its own tee) skip the
+   boundary.
+3. **`chezmoi_session_post`** removes the marker.
 
-Standalone execution (no marker file): output goes to terminal only.
+`run_quiet` hides a command on the terminal and appends only *notable* output
+to the log — package-manager no-ops and progress rows are dropped, real
+changes kept; failures dump everything to stderr. `BL_LOG_ALL=1` disables the
+success filter. Captured lines get the topic column with a `│` gutter.
 
-The library also respects a legacy `CHEZMOI_SESSION_LOG` env var as fallback. `DEBUG=1` enables `set -x` tracing.
+The Deno/TS mirror of the format is `home/private_dot_local/lib/df-log.ts`
+(`setTopic(...)`, the same shapes and topic column); keep the two in step. TS
+tools call `setTopic` with their own topic constant; do not read env inside
+`df-log.ts` (it must stay importable with zero permission flags).
 
-Do NOT manually create `LOG_FILE` variables or use `trap cleanup EXIT` — the library handles all logging setup.
+Standalone execution (no marker): output goes to terminal only.
+
+`DEBUG=1` enables `set -x` tracing. Do NOT manually create `LOG_FILE`
+variables or use `trap cleanup EXIT` — the library handles all logging setup.
+
+#### Full Topic Map
+
+Scripts sharing a subject share a topic; the topic is always lowercase.
+
+| Topic | Scripts |
+|---|---|
+| `skills` | reset/patch/link/pack external skills (060 before/after, 070) |
+| `packages` | install-050 + install-my-packages |
+| `tmux` | tmux-continuum-boot (054) |
+| `peon-ping` | setup-peon-ping (055) |
+| `mcpproxy` | mcpproxy-daemon (056) |
+| `paseo` | paseo-daemon (057) |
+| `gitconfig` | fix-system-gitconfig-refspec (058) |
+| `orca` | orca-server (059) |
+| `drift` | drift-notifier (061) |
+| `aws` | prewarm-aws-region (062) |
+| `opencode` | opencode-serve (063) |
+| `code-server` | code-server (064) |
+| `auth` | opencode-auth (065) |
+| `plugins` | setup-opencode-plugin + sync-opencode-plugins (065/067) |
+| `nginx` | nginx-sites (066) |
+| `rtk` | rtk-opencode-plugin (068) |
+| `hex` | reload-hex-settings (068) |
+| `omo` | cleanup-legacy-omo-config (069) |
+| `opencode2` | opencode2 (071) |
+| `fonts` | install-fonts (100) |
+| `completions` | install-zsh-completions (100) |
+| `shell` | change-term (100) |
+| `canva` | canva-misc (100) |
+| `status` | setup-status (900) |
+| `install` | install.sh |
+| `github` | github-token |
+| `mise` | df-task-mise-upgrade |
+| `dotfiles` | df-task-chezmoi-update |
+| `apply` | df-task-chezmoi-apply |
 
 ## Common Tasks
 

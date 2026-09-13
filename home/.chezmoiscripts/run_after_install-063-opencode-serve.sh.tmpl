@@ -12,7 +12,7 @@ TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "opencode"
 
 #/ Usage:
 #/   run_after_install-063-opencode-serve.sh
@@ -35,16 +35,14 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
+# Returns 0 when opencode is installed, 1 when mise is missing, 2 when
+# opencode is missing from mise. Silent; the caller reports one line.
 verify_opencode_installed() {
-  if ! command -v mise >/dev/null 2>&1; then
-    log_warn "Cannot resolve opencode install — mise not on PATH"
-    return 1
-  fi
+  command -v mise >/dev/null 2>&1 || return 1
   local opencode_path
   opencode_path=$(mise which opencode 2>/dev/null || echo "")
   if [ -z "$opencode_path" ] || [ ! -x "$opencode_path" ]; then
-    log_warn "Missing opencode — install with: mise install"
-    return 1
+    return 2
   fi
 }
 
@@ -61,26 +59,35 @@ manage_service() {
   local enabled={{ dig "openCodeServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    log_step "opencode server (opt-out)"
-
     if pf_resolve; then
-      pf_stop df-opencode-serve
-      log_detail "Stopped df-opencode-serve daemon"
+      if pf_is_registered df-opencode-serve; then
+        log_step "Stopping OpenCode server"
+        pf_stop df-opencode-serve
+        log_detail "Stopped OpenCode server"
+      fi
     else
-      log_detail "Pitchfork not installed; no daemon to stop"
+      log_warn "Skipping daemon stop — Pitchfork not installed"
     fi
     return 0
   fi
 
-  log_step "opencode server (opt-in)"
+  log_step "Restarting OpenCode server"
 
-  if ! verify_opencode_installed; then
-    log_warn "Skipping daemon lifecycle — opencode not installed"
-    return 0
-  fi
+  local verify_rc=0
+  verify_opencode_installed || verify_rc=$?
+  case "$verify_rc" in
+    1)
+      log_warn "Skipping OpenCode server — mise not on PATH"
+      return 0
+      ;;
+    2)
+      log_warn "Skipping OpenCode server — opencode not installed (install with: mise install)"
+      return 0
+      ;;
+  esac
 
   if ! pf_resolve; then
-    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
+    log_warn "Skipping OpenCode server — Pitchfork not installed"
     return 0
   fi
 
@@ -112,9 +119,9 @@ manage_service() {
     sleep 1
   fi
 
-  pf_start df-opencode-serve
+  pf_start df-opencode-serve "Started OpenCode server"
 
-  pf_probe_http {{ $ocPort }} "opencode server" || true   # warn but don't block
+  pf_probe_http {{ $ocPort }} "OpenCode server" || true   # warn but don't block
 }
 
 main() {

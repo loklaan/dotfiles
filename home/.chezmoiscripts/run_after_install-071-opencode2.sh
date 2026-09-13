@@ -7,7 +7,7 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "opencode2"
 
 #/ Usage:
 #/   run_after_install-071-opencode2.sh
@@ -75,14 +75,14 @@ select_platform_binary() {
   local package_dir="${PREFIX}/lib/node_modules/@opencode-ai/cli"
 
   if [ ! -f "${package_dir}/postinstall.mjs" ]; then
-    warning "opencode2: postinstall.mjs missing; platform binary not selected"
+    log_warn "postinstall.mjs missing — platform binary not selected (opencode2 may not run)"
     return 0
   fi
 
   if (cd "$package_dir" && node ./postinstall.mjs >/dev/null 2>&1); then
     log_detail "Selected platform binary for $(uname -s)/$(uname -m)"
   else
-    warning "opencode2: postinstall failed; binary may not run"
+    log_warn "Platform binary postinstall failed — opencode2 may not run"
   fi
 }
 
@@ -122,13 +122,13 @@ main() {
     return 0
   fi
 
-  log_step "OpenCode 2 beta CLI"
+  log_step "Updating OpenCode 2 beta CLI"
 
   local available
   available=$(npm view "${PACKAGE}@${DIST_TAG}" version 2>/dev/null || true)
 
   if [ -z "$available" ]; then
-    warning "opencode2: could not resolve ${PACKAGE}@${DIST_TAG} (offline?)"
+    log_warn "Could not resolve ${PACKAGE}@${DIST_TAG} — offline?"
     return 0
   fi
 
@@ -136,28 +136,28 @@ main() {
   current=$(installed_version)
 
   if [ "$current" = "$available" ]; then
-    log_detail "Already current: ${available}"
+    log_detail "Unchanged: OpenCode 2 (${available})"
     return 0
   fi
 
   if [ -n "$current" ]; then
-    log_detail "Updating ${current} -> ${available}"
+    log_detail "Updated OpenCode 2: ${current} → ${available}"
   else
-    log_detail "Installing ${available}"
+    log_detail "Installed OpenCode 2: ${available}"
   fi
 
   mkdir -p "$PREFIX"
 
   if ! npm install --global --prefix "$PREFIX" --ignore-scripts \
     --no-audit --no-fund --loglevel=error "${PACKAGE}@${available}" >/dev/null 2>&1; then
-    warning "opencode2: npm install failed; leaving previous install in place"
+    log_warn "npm install failed — leaving previous install in place"
     return 0
   fi
 
   select_platform_binary
   stop_stale_service
 
-  log_detail "Wrapper: ~/.local/bin/opencode2 (config: ~/.config/opencode2)"
+  log_detail "Installed wrapper at ~/.local/bin/opencode2 (config: ~/.config/opencode2)"
 }
 
 main "$@"

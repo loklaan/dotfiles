@@ -12,7 +12,7 @@ TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "orca"
 
 
 #/ Usage:
@@ -43,16 +43,14 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
+# Returns 0 when orca is installed, 1 when mise is missing, 2 when orca is
+# missing from mise. Silent; the caller reports one line.
 verify_orca_installed() {
-  if ! command -v mise >/dev/null 2>&1; then
-    log_warn "Cannot resolve orca install — mise not on PATH"
-    return 1
-  fi
+  command -v mise >/dev/null 2>&1 || return 1
   local orca_path
   orca_path=$(mise which orca 2>/dev/null || echo "")
   if [ -z "$orca_path" ] || [ ! -x "$orca_path" ]; then
-    log_warn "Missing orca — install with: mise install"
-    return 1
+    return 2
   fi
 }
 
@@ -63,8 +61,8 @@ verify_fuse() {
   # provides this. We don't install it here — that's install-my-packages's
   # job — but we surface a clear warning if it's missing.
   if ! command -v fusermount >/dev/null 2>&1 && ! command -v fusermount3 >/dev/null 2>&1; then
-    log_warn "FUSE not available; orca AppImage may fail to start"
-    log_warn_cont "Install: sudo apt install -y libfuse2t64 (Ubuntu 24.04+) or libfuse2"
+    log_warn "Missing FUSE — orca AppImage may fail to start"
+    log_warn_cont "Install with: sudo apt install -y libfuse2t64 (Ubuntu 24.04+) or libfuse2"
     return 1
   fi
 }
@@ -126,30 +124,39 @@ manage_linux() {
   local enabled={{ dig "orcaServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    log_step "orca server (Linux, opt-out)"
-
     retire_legacy_orca_server
 
     if pf_resolve; then
-      pf_stop df-orca-server
-      log_detail "Stopped df-orca-server daemon"
+      if pf_is_registered df-orca-server; then
+        log_step "Stopping orca server"
+        pf_stop df-orca-server
+        log_detail "Stopped orca server"
+      fi
     else
-      log_detail "Pitchfork not installed; no daemon to stop"
+      log_warn "Skipping daemon stop — Pitchfork not installed"
     fi
     return 0
   fi
 
-  log_step "orca server (Linux, opt-in)"
+  log_step "Restarting orca server"
 
   retire_legacy_orca_server
 
-  if ! verify_orca_installed; then
-    log_warn "Skipping daemon lifecycle — orca not installed"
-    return 0
-  fi
+  local verify_rc=0
+  verify_orca_installed || verify_rc=$?
+  case "$verify_rc" in
+    1)
+      log_warn "Skipping orca server — mise not on PATH"
+      return 0
+      ;;
+    2)
+      log_warn "Skipping orca server — orca not installed (install with: mise install)"
+      return 0
+      ;;
+  esac
 
   if ! pf_resolve; then
-    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
+    log_warn "Skipping orca server — Pitchfork not installed"
     return 0
   fi
 
@@ -167,7 +174,7 @@ manage_linux() {
   # failing script, so a crash-looping orca previously took every later script
   # down with it — opencode-serve, the plugin cache bust, skill packing — leaving
   # the box half-converged. pf_start already warns with the log command to run.
-  pf_start df-orca-server || true
+  pf_start df-orca-server "Started orca server" || true
 }
 
 main() {

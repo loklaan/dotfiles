@@ -5,7 +5,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "aws"
 
 #/ Usage:
 #/   run_after_install-062-prewarm-aws-region.sh
@@ -37,23 +37,20 @@ done
 
 main() {
   if [ -z "${CODER:-}" ]; then
-    log_step "not a Coder box (\$CODER unset) — skipping aws-region prewarm"
+    # Not a Coder box: no IMDS to prewarm from. Steady state, print nothing.
     return 0
   fi
 
   if ! command -v df-prewarm >/dev/null 2>&1; then
-    log_warn "df-prewarm not on PATH — skipping aws-region prewarm"
+    log_warn "Skipping AWS region prewarm — df-prewarm not on PATH"
     return 0
   fi
 
-  log_step "prewarming AWS region from IMDS"
+  log_step "Prewarming AWS region from IMDS"
   # df-prewarm soft-fails: on IMDS failure it leaves aws_region unset and
-  # env.zsh keeps its fallback. Never fail the apply over a region probe.
-  if df-prewarm aws-region; then
-    log_detail "aws-region prewarm complete"
-  else
-    log_warn "aws-region prewarm returned non-zero (continuing)"
-  fi
+  # env.zsh keeps its fallback. It reports its own outcome through df-log, so
+  # only a hard failure needs a caller line here.
+  df-prewarm aws-region || log_warn "AWS region prewarm failed — continuing"
 }
 
 main "$@"

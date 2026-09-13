@@ -4,7 +4,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "omo"
 
 #/ Usage:
 #/   run_once_after_install-069-cleanup-legacy-omo-config.sh
@@ -31,6 +31,7 @@ main() {
   fi
 
   local legacy="${HOME}/.config/opencode/oh-my-openagent.json"
+  log_step "Cleaning up legacy OMO config"
   if [ -f "$legacy" ]; then
     rm -f "$legacy" "${legacy}.migrations.json"
     log_detail "Removed legacy OMO config: ${legacy}"

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/chezmoi-session.sh"
+
+#/ Usage:
+#/   df-task-update
+#/
+#/ Description:
+#/   Runs the whole dotfiles update as one session: mise upgrade, then the
+#/   chezmoi source fast-forward + apply. Invoked from the `[tasks.update]`
+#/   mise task; the task previously chained `mise:upgrade` and
+#/   `chezmoi:update`, which left the mise and git phases out of the session
+#/   log entirely.
+#/
+#/   Session ownership: this wrapper opens the session log and tees its own
+#/   output. Children get CHEZMOI_SESSION_LOG with the BASH_LOGGING_* markers
+#/   cleared, so the apply hooks reuse this log (instead of creating a second
+#/   one) and each lifecycle script opens its own tee to the same file.
+#/
+#/ Options:
+#/   --help    Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+main() {
+  bl_parse_help "$@"
+
+  chezmoi_session_pre update
+  setup_session_logging "$(basename "$0")"
+
+  export CHEZMOI_SESSION_LOG="$BASH_LOGGING_FILE"
+
+  # Children must not think they are nested inside this wrapper's tee: chezmoi
+  # spawns its scripts as separate processes that do not inherit the tee fd, so
+  # each needs to open its own. Empty/unset BASH_LOGGING_* makes
+  # setup_session_logging take the fresh path (marker -> shared log).
+  unset BASH_LOGGING_ACTIVE BASH_LOGGING_FILE BASH_LOGGING_TOPIC
+
+  df-task-mise-upgrade
+  df-task-chezmoi-update
+
+  chezmoi_session_post
+}
+
+main "$@"

@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/tool-cache-sync.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "plugins"
 
 #/ Usage:
 #/   run_after_install-067-sync-opencode-plugins.sh
@@ -34,7 +34,7 @@ cache_dir=$(tcs_get_opencode_cache) || exit 0
 packages_dir="${cache_dir}/packages"
 [ -d "$packages_dir" ] || exit 0
 
-log_step "OpenCode plugin cache"
+log_step "Refreshing OpenCode plugin cache"
 
 # tcs_bust_opencode_plugin <packages_dir> <sanitized-spec-dir>
 tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"

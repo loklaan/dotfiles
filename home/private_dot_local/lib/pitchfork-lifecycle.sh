@@ -99,8 +99,9 @@ pf_start() {
 # processes holding the daemon's port before it can bind).
 pf_restart() {
   local daemon="$1"
+  local message="${2:-Restarted ${daemon} daemon}"
   pf_stop "$daemon"
-  pf_start "$@"
+  pf_start "$daemon" "$message"
 }
 
 # Is the daemon known to the supervisor? Rows come from stdout; the version WARN
@@ -117,6 +118,11 @@ pf_is_registered() {
 # Called from pf_start on every apply, so it must stay idempotent and quiet: the
 # `boot status` check short-circuits before `boot enable` precisely so a steady
 # state costs one probe and logs nothing.
+#
+# A container/Coder workspace has no user systemd/D-Bus, so `boot enable` fails
+# with "Failed to connect to bus: No medium found". That is not a problem to
+# report — boot persistence is simply not applicable there — so those failures
+# stay silent; any other failure still warns.
 pf_ensure_supervisor() {
   "$PITCHFORK_BIN" supervisor start >/dev/null 2>&1 || true
 
@@ -125,11 +131,21 @@ pf_ensure_supervisor() {
     return 0
   fi
 
-  if "$PITCHFORK_BIN" boot enable >/dev/null 2>&1; then
+  local boot_err
+  if boot_err=$("$PITCHFORK_BIN" boot enable 2>&1); then
     log_detail "Enabled Pitchfork to start at boot"
-  else
-    log_warn "Could not enable Pitchfork to start at boot — daemons may not survive reboot"
+    return 0
   fi
+
+  case "$boot_err" in
+    *"connect to bus"*|*"No medium found"*)
+      # No user manager here (container / Coder workspace); boot persistence
+      # is not applicable, and warning about it every apply is noise.
+      ;;
+    *)
+      log_warn "Could not enable Pitchfork to start at boot — daemons may not survive reboot"
+      ;;
+  esac
 }
 
 # A supervisor left running from an older Pitchfork keeps serving after mise
@@ -160,13 +176,13 @@ pf_verify_cron_capable() {
   fi
 }
 
-# HTTP health probe against a daemon's loopback port.
+# HTTP health probe against a daemon's loopback port. Start already reports the
+# transition; the probe verifies silently and only surfaces failure.
 pf_probe_http() {
   local port="$1"
   local label="$2"
 
   if curl -sf "http://127.0.0.1:${port}/" -o /dev/null 2>/dev/null; then
-    log_detail "Health probe OK — ${label} is responding"
     return 0
   fi
   log_warn "Health probe failed — ${label} not responding at http://127.0.0.1:${port}/"

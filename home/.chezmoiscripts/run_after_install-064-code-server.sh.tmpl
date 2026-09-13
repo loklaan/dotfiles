@@ -12,7 +12,7 @@ TMPDIR="${TMPDIR%/}"
 
 source "${HOME}/.local/lib/bash-logging.sh"
 source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
-setup_session_logging "$(basename "$0")"
+setup_session_logging "$(basename "$0")" "code-server"
 
 
 #/ Usage:
@@ -36,16 +36,14 @@ setup_session_logging "$(basename "$0")"
 #/
 #/ Options:
 #/   --help:      Display this help message
+# Returns 0 when code-server is installed, 1 when mise is missing, 2 when
+# code-server is missing from mise. Silent; the caller reports one line.
 verify_code_server_installed() {
-  if ! command -v mise >/dev/null 2>&1; then
-    log_warn "Cannot resolve code-server install — mise not on PATH"
-    return 1
-  fi
+  command -v mise >/dev/null 2>&1 || return 1
   local code_server_path
   code_server_path=$(mise which code-server 2>/dev/null || echo "")
   if [ -z "$code_server_path" ] || [ ! -x "$code_server_path" ]; then
-    log_warn "Missing code-server — install with: mise install"
-    return 1
+    return 2
   fi
 }
 
@@ -60,33 +58,42 @@ manage_linux() {
   local enabled={{ dig "codeServer" false . }}
 
   if [ "$enabled" != "true" ]; then
-    log_step "code-server (Linux, opt-out)"
-
     if pf_resolve; then
-      pf_stop df-code-server
-      log_detail "Stopped df-code-server daemon"
+      if pf_is_registered df-code-server; then
+        log_step "Stopping code-server"
+        pf_stop df-code-server
+        log_detail "Stopped code-server"
+      fi
     else
-      log_detail "Pitchfork not installed; no daemon to stop"
+      log_warn "Skipping daemon stop — Pitchfork not installed"
     fi
     return 0
   fi
 
-  log_step "code-server (Linux, opt-in)"
+  log_step "Restarting code-server"
 
-  if ! verify_code_server_installed; then
-    log_warn "Skipping daemon lifecycle — code-server not installed"
-    return 0
-  fi
+  local verify_rc=0
+  verify_code_server_installed || verify_rc=$?
+  case "$verify_rc" in
+    1)
+      log_warn "Skipping code-server — mise not on PATH"
+      return 0
+      ;;
+    2)
+      log_warn "Skipping code-server — code-server not installed (install with: mise install)"
+      return 0
+      ;;
+  esac
 
   if ! pf_resolve; then
-    log_warn "Skipping daemon lifecycle — Pitchfork not installed"
+    log_warn "Skipping code-server — Pitchfork not installed"
     return 0
   fi
 
   # Restart on every apply — picks up potential version bumps.
   # Pitchfork's start command is idempotent; stop first so a running
   # daemon is replaced cleanly.
-  pf_restart df-code-server
+  pf_restart df-code-server "Restarted code-server"
 
   pf_probe_http {{ $csPort }} "code-server" || true   # warn but don't block
 }
