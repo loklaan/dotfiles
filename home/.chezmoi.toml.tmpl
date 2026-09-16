@@ -16,6 +16,7 @@
 {{- $codeServer := promptBoolOnce . "codeServer" "Run code-server on this machine?" false -}}
 {{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
 {{- $nginxProxy := promptBoolOnce . "nginxProxy" "Put nginx reverse proxy in front of services (gzip, loopback daemons)?" false -}}
+{{- $ephemeralCache := promptBoolOnce . "ephemeralCache" "Use ephemeral storage for ~/.cache on this machine?" false -}}
 
 [data]
   email = {{ $email | quote }}
@@ -44,6 +45,7 @@
   codeServer = {{ $codeServer }}
   mcpproxyGate = {{ $mcpproxyGate }}
   nginxProxy = {{ $nginxProxy }}
+  ephemeralCache = {{ $ephemeralCache }}
 
 # Session logging hooks. The bodies live in
 # home/private_dot_local/lib/chezmoi-session.sh so apply and update share one

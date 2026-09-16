@@ -160,6 +160,7 @@ main() {
   config_code_server="$(chezmoi execute-template "{{ .codeServer }}" 2>/dev/null || echo "false")"
   config_mcpproxy_gate="$(chezmoi execute-template "{{ .mcpproxyGate }}" 2>/dev/null || echo "true")"
   config_nginx_proxy="$(chezmoi execute-template "{{ .nginxProxy }}" 2>/dev/null || echo "false")"
+  config_ephemeral_cache="$(chezmoi execute-template "{{ dig \"ephemeralCache\" false . }}" 2>/dev/null || echo "false")"
 
   # BWS token setup - save to file if provided
   bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
@@ -219,6 +220,7 @@ main() {
     --promptBool="Run code-server on this machine?=${config_code_server}" \
     --promptBool="Run mcpproxy on this machine?=${config_mcpproxy_gate}" \
     --promptBool="Put nginx reverse proxy in front of services (gzip, loopback daemons)?=${config_nginx_proxy}" \
+    --promptBool="Use ephemeral storage for ~/.cache on this machine?=${config_ephemeral_cache}" \
     --apply \
     --force \
     --exclude=scripts \
