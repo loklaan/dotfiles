@@ -1,0 +1,80 @@
+{{- if and (eq .chezmoi.os "linux") (eq (dig "machineProfile" "personal" .) "work") (dig "ephemeralCache" false .) -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")" "cache"
+
+#/ Usage:
+#/   run_after_install-049-ephemeral-cache.sh
+#/
+#/ Description:
+#/   Places ~/.cache on ephemeral storage for Coder workspaces.
+#/
+#/ Options:
+#/   --help:      Display this help message
+
+cache_is_ephemeral() {
+  [ -L "${HOME}/.cache" ] \
+    && [ "$(readlink "${HOME}/.cache")" = "/mnt/ephemeral${HOME}/.cache" ]
+}
+
+restore_session_marker() {
+  local session_log=$1
+
+  [ -n "$session_log" ] || return 0
+  mkdir -p "${HOME}/.cache/dotfiles"
+  printf '%s\n' "$session_log" > "${HOME}/.cache/dotfiles/chezmoi-session-current"
+}
+
+main() {
+  bl_parse_help "$@"
+
+  if [ -z "${CODER:-}" ]; then
+    return 0
+  fi
+
+  if cache_is_ephemeral; then
+    return 0
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    log_warn "Cannot configure ephemeral cache because sudo is unavailable"
+    return 0
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    log_warn "Cannot configure ephemeral cache because systemctl is unavailable"
+    return 0
+  fi
+
+  local session_log=""
+  local session_marker="${HOME}/.cache/dotfiles/chezmoi-session-current"
+  if [ -f "$session_marker" ]; then
+    IFS= read -r session_log < "$session_marker"
+  fi
+
+  touch "${HOME}/.use-ephemeral-cache"
+  log_step "Configuring ephemeral cache"
+
+  local _
+  for _ in 1 2; do
+    if ! sudo -n systemctl restart configure-ephemeral-storage; then
+      log_warn "Failed to restart configure-ephemeral-storage"
+      return 0
+    fi
+
+    restore_session_marker "$session_log"
+    if cache_is_ephemeral; then
+      log_detail "Linked ~/.cache to ephemeral storage"
+      return 0
+    fi
+  done
+
+  log_warn "configure-ephemeral-storage completed without linking ~/.cache to /mnt/ephemeral"
+}
+
+main "$@"
+{{- end }}
