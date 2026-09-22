@@ -53,11 +53,11 @@
             "default": {
                 "categories": {
                     "unspecified-high": {
-                        "model": "openai/gpt-5.6-sol",
+                        "model": "openai/gpt-6-sol",
                         "reasoning": "high"
                     },
                     "unspecified-low": {
-                        "model": "openai/gpt-5.6-luna-fast",
+                        "model": "openai/gpt-6-luna",
                         "reasoning": "medium"
                     },
                     "ultrabrain": {
@@ -65,15 +65,15 @@
                         "reasoning": "high"
                     },
                     "deep": {
-                        "model": "openai/gpt-5.6-sol",
+                        "model": "openai/gpt-6-sol",
                         "reasoning": "high"
                     },
                     "quick": {
-                        "model": "openai/gpt-5.6-luna-fast",
+                        "model": "openai/gpt-6-luna",
                         "reasoning": "low"
                     },
                     "visual-engineering": {
-                        "model": "openai/gpt-5.6-sol",
+                        "model": "openai/gpt-6-sol",
                         "reasoning": "medium"
                     },
                     "artistry": {
