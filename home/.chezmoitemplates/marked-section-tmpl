@@ -1,0 +1,49 @@
+{{- /* Marked-section merge for modify_ templates.
+
+     Renders a file that chezmoi shares with other writers: chezmoi owns the
+     region between the markers, everything outside them is preserved. Because
+     the caller is a modify_ template, apply never prompts about foreign edits.
+
+     Arguments (dict):
+       existing  current target contents (.chezmoi.stdin)
+       body      managed content, WITHOUT markers
+       target    target name, for warnings
+       adopt     true when the file used to be a plain chezmoi file. A target
+                 with no markers then still holds the previous managed body
+                 verbatim; strip it instead of preserving it as foreign content,
+                 or it would be duplicated beneath the new section.
+
+     Output: the managed section first, then any preserved foreign content,
+     separated by one blank line, ending in a single newline. */ -}}
+{{- $begin := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
+{{- $end := "# --- END CHEZMOI MANAGED SECTION ---" -}}
+{{- $existing := .existing | default "" -}}
+{{- $body := .body | trim -}}
+{{- $foreign := list -}}
+
+{{- if contains $begin $existing -}}
+{{-   $parts := splitn $begin 2 $existing -}}
+{{-   $foreign = append $foreign ($parts._0 | trim) -}}
+{{-   if contains $end $parts._1 -}}
+{{-     $foreign = append $foreign ((splitn $end 2 $parts._1)._1 | trim) -}}
+{{-   else -}}
+{{-     warnf "%s: BEGIN marker without END marker; replaced everything after it" .target -}}
+{{-   end -}}
+{{- else if .adopt -}}
+{{-   $rest := replace $body "" $existing | trim -}}
+{{-   if and (ne "" $rest) (not (contains $body $existing)) -}}
+{{-     warnf "%s: no managed markers and no copy of the managed body; kept existing content below the new section, check for duplication" .target -}}
+{{-   end -}}
+{{-   $foreign = append $foreign $rest -}}
+{{- else -}}
+{{-   $foreign = append $foreign ($existing | trim) -}}
+{{- end -}}
+
+{{- $out := list (printf "%s\n%s\n\n%s" $begin $body $end) -}}
+{{- range $foreign -}}
+{{-   if ne "" . -}}
+{{-     $out = append $out . -}}
+{{-   end -}}
+{{- end -}}
+{{ join "\n\n" $out }}{{ "\n" }}
+{{- /* callers must close with -}} so this is the only trailing newline */ -}}
