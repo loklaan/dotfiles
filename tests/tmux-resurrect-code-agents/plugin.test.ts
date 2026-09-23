@@ -103,6 +103,13 @@ function sessionEvent(
   return { event: { type, properties: { info } } };
 }
 
+Deno.test("exports only the plugin factory", async () => {
+  // opencode's legacy loader invokes every export as a plugin factory, so any
+  // extra export is called with the plugin context and fails the whole module.
+  const mod = await import(`${PLUGIN}#${crypto.randomUUID()}`);
+  assert.deepEqual(Object.keys(mod), ["TmuxResurrect"]);
+});
+
 Deno.test("writes a claim carrying pid, start time and pane for a root session", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
