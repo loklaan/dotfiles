@@ -1,4 +1,3 @@
-{{- if or (eq .chezmoi.os "darwin") (and (eq .chezmoi.os "linux") (or (env "DISPLAY") (env "WAYLAND_DISPLAY"))) -}}
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -9,251 +8,95 @@ TMPDIR="${TMPDIR:-/tmp}"
 TMPDIR="${TMPDIR%/}"
 
 # Source shared logging library and setup session logging
+# shellcheck disable=SC1091
 source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")" "skills"
 
 #/ Usage:
-#/   run_after_install-070-pack-claude-skills.sh
+#/   run_after_install-070-pack-claude-skills.sh [OPTIONS]
 #/
 #/ Description:
-#/   Packs Claude skills into individual zip files for drag-and-drop
-#/   installation into Claude Desktop's capabilities panel. Only repacks
-#/   items whose content has changed since the last run. Opens the output
-#/   directory when complete.
+#/   Packages eligible canonical skills for Claude Desktop.
 #/
-#/ Output Directory:
-#/   ~/.cache/claude-skill-packs/
-#/
-#/ Claude Desktop Skill Zip Requirements:
-#/   - Zip internal paths must not contain colons or other special characters.
-#/     macOS renders ':' as '/' in Finder, and Desktop rejects both outright.
-#/   - SKILL.md frontmatter allows only these keys:
-#/       name, description, license, allowed-tools, compatibility, metadata
-#/     Any other key (e.g. attribution) causes an import error.
-#/   - The 'name' field must contain only lowercase letters, numbers, and
-#/     hyphens. Colons, underscores, and uppercase are rejected.
-#/   - The 'name' field must not contain reserved words like 'claude'.
-#/
-#/   These requirements are undocumented and discovered via whack-a-mole.
-#/   This script handles all of the above by staging a sanitized copy of each
-#/   skill before zipping: directory names are cleaned, unsupported frontmatter
-#/   fields are stripped, the name value is rewritten, and reserved words are
-#/   replaced with abbreviations (e.g. 'claude' → 'cc').
+#/ Options:
+#/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-SKILLS_DIR="${HOME}/.agents/skills"
-OUTPUT_DIR="${HOME}/.cache/claude-skill-packs"
-MANIFEST_FILE="${OUTPUT_DIR}/.skill-hashes"
-
-sanitize_name() {
-  local name="${1#lochy:}"
-  name="$(printf '%s' "$name" | tr ':' '-')"
-  name="${name//claude/cc}"
-  printf '%s' "$name"
-}
-
-strip_unsupported_frontmatter() {
-  local file="$1"
-  awk '
-    BEGIN { in_fm = 0; fm_started = 0; keep = 1 }
-    /^---[[:space:]]*$/ {
-      if (!fm_started) { fm_started = 1; in_fm = 1; print; next }
-      else { in_fm = 0; print; next }
-    }
-    in_fm {
-      if (/^[^[:space:]]/) {
-        key = $0; sub(/:.*/, "", key)
-        keep = (key == "name" || key == "description" || key == "license" || \
-                key == "allowed-tools" || key == "compatibility" || key == "metadata")
-      }
-      if (keep) {
-        if (key == "name" && /^name:/) {
-          val = $0; sub(/^name:[[:space:]]*/, "", val)
-          sub(/^lochy:/, "", val); gsub(/:/, "-", val); gsub(/claude/, "cc", val)
-          print "name: " val
-        } else {
-          print
-        }
-      }
-      next
-    }
-    { print }
-  ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
-}
-
-hash_skill() {
-  local skill_dir="$1"
-  find "$skill_dir" -type f \
-    -not -name '.DS_Store' \
-    -not -name '.skills-cli.json' \
-    -not -name '.git*' \
-    -not -path '*/.git/*' \
-    | sort \
-    | xargs shasum -a 256 \
-    | shasum -a 256 \
-    | cut -d' ' -f1
-}
-
-get_stored_hash() {
-  local skill_name="$1"
-  if [ -f "$MANIFEST_FILE" ]; then
-    grep "  ${skill_name}$" "$MANIFEST_FILE" | cut -d' ' -f1 || true
-  fi
-}
-
-pack_skill() {
-  local skill_dir="$1"
-  local skill_name
-  skill_name="$(basename "$skill_dir")"
-  local safe_name
-  safe_name="$(sanitize_name "$skill_name")"
-  local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
-
-  rm -f "$zip_path"
-
-  # Stage into a temp dir with the sanitized name so internal zip paths are clean
-  local staging_dir
-  staging_dir="$(mktemp -d "${TMPDIR}/skill-pack.XXXXXX")"
-  cp -R "$skill_dir" "${staging_dir}/${safe_name}"
-
-  if [ -f "${staging_dir}/${safe_name}/SKILL.md" ]; then
-    strip_unsupported_frontmatter "${staging_dir}/${safe_name}/SKILL.md"
-  fi
-
-  # zip needs to run from the staging dir for clean internal paths; the
-  # subshell body keeps that cd local, and run_quiet keeps zip's chatter out
-  # of the terminal/log (notable lines only; full output on failure).
-  run_quiet pack_staged_skill
-
-  rm -rf "$staging_dir"
-}
-
-# Reads the caller's locals through bash dynamic scoping; subshell body so the
-# cd cannot leak.
-pack_staged_skill() (
-  cd "$staging_dir" || return 1
-  zip -r "$zip_path" "$safe_name/" \
-    -x '*/.git*' \
-    -x '*/.DS_Store' \
-    -x '*/.skills-cli.json'
-)
-
-clean_stale_zips() {
-  local valid_zip_names=("$@")
-
-  for zip_file in "$OUTPUT_DIR"/*.zip; do
-    [ -f "$zip_file" ] || continue
-    local zip_name
-    zip_name="$(basename "$zip_file" .zip)"
-
-    local found=false
-    for name in "${valid_zip_names[@]}"; do
-      if [ "$zip_name" = "$name" ]; then
-        found=true
-        break
-      fi
-    done
-
-    if [ "$found" = false ]; then
-      rm -f "$zip_file"
-      log_detail "Removed stale zip: ${zip_name}.zip"
-    fi
+package_stderr_file=""
+observe_stderr_file=""
+package_stdout_file=""
+observe_stdout_file=""
+cleanup_skill_package_temps() {
+  local path
+  for path in \
+    "${package_stderr_file:-}" \
+    "${observe_stderr_file:-}" \
+    "${package_stdout_file:-}" \
+    "${observe_stdout_file:-}"; do
+    [ -z "$path" ] || rm -f -- "$path"
   done
 }
+trap cleanup_skill_package_temps EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 main() {
-  mkdir -p "$OUTPUT_DIR"
+  bl_parse_help "$@"
 
-  log_step "Packing skills for Claude Desktop"
-
-  # Discover own skills (lochy:* prefix only — skip org-provisioned skills)
-  local all_skills=()
-  if [ -d "$SKILLS_DIR" ]; then
-    for skill_dir in "$SKILLS_DIR"/lochy:*/; do
-      [ -d "$skill_dir" ] || continue
-      [ -f "${skill_dir}SKILL.md" ] || continue
-      all_skills+=("$(basename "$skill_dir")")
-    done
-  fi
-
-  local total=${#all_skills[@]}
-
-  if [ "$total" -eq 0 ]; then
-    log_skip "No skills found"
+  local manifest="$HOME/.config/dotfiles/skill-lifecycle.json"
+  if [ ! -f "$manifest" ]; then
+    log_skip "Skill packaging is disabled because no manifest was projected"
     return 0
   fi
-
-  # Collect all zip names and check for collisions
-  local all_zip_names=()
-  local seen_names=""
-
-  for skill_name in "${all_skills[@]}"; do
-    local safe
-    safe="$(sanitize_name "$skill_name")"
-    if printf '%s\n' "$seen_names" | grep -qx "$safe"; then
-      fatal "Name collision: '${skill_name}' sanitizes to '${safe}' which is already taken"
-    fi
-    seen_names="${seen_names}${safe}"$'\n'
-    all_zip_names+=("$safe")
-  done
-
-  local changed=()
-  local changed_zip_names=()
-  local new_manifest=""
-
-  # Pack skills
-  for skill_name in "${all_skills[@]}"; do
-    local skill_dir="${SKILLS_DIR}/${skill_name}"
-    local safe_name
-    safe_name="$(sanitize_name "$skill_name")"
-    local current_hash
-    current_hash="$(hash_skill "$skill_dir")"
-    local stored_hash
-    stored_hash="$(get_stored_hash "$skill_name")"
-    local zip_path="${OUTPUT_DIR}/${safe_name}.zip"
-
-    new_manifest="${new_manifest}${current_hash}  ${skill_name}"$'\n'
-
-    if [ "$current_hash" = "$stored_hash" ] && [ -f "$zip_path" ]; then
-      continue
-    fi
-
-    pack_skill "$skill_dir"
-    changed+=("$skill_name")
-    changed_zip_names+=("$safe_name")
-  done
-
-  clean_stale_zips "${all_zip_names[@]}"
-
-  # Save manifest (sorted by name)
-  printf '%s' "$new_manifest" | sort -t' ' -k3 > "$MANIFEST_FILE"
-
-  local changed_count=${#changed[@]}
-
-  if [ "$changed_count" -eq 0 ]; then
-    log_skip "Unchanged: all ${total} up to date"
-    return 0
+  if ! command -v df-skills >/dev/null 2>&1; then
+    fatal "Cannot package skills: df-skills is not installed"
   fi
 
-  local i
-  for i in "${!changed[@]}"; do
-    log_ok "Packed: ${changed[$i]} → ${changed_zip_names[$i]}.zip"
-  done
+  local package_status=0 observe_status=0 package_raw observe_raw
+  package_stderr_file="$(mktemp "${TMPDIR}/df-skills-package.XXXXXX")"
+  observe_stderr_file="$(mktemp "${TMPDIR}/df-skills-observe.XXXXXX")"
+  package_stdout_file="$(mktemp "${TMPDIR}/df-skills-package-json.XXXXXX")"
+  observe_stdout_file="$(mktemp "${TMPDIR}/df-skills-observe-json.XXXXXX")"
 
-  local unchanged=$(( total - changed_count ))
-  if [ "$unchanged" -gt 0 ]; then
-    log_skip "Unchanged: ${unchanged} of ${total}"
+  package_raw="$(df-skills package --manifest "$manifest" 2>"$package_stderr_file")" || package_status=$?
+  printf '%s\n' "$package_raw" > "$package_stdout_file"
+  observe_raw="$(df-skills observe --manifest "$manifest" 2>"$observe_stderr_file")" || observe_status=$?
+  printf '%s\n' "$observe_raw" > "$observe_stdout_file"
+  if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+    cat "$package_stdout_file" "$package_stderr_file" "$observe_stdout_file" "$observe_stderr_file" >> "$BASH_LOGGING_FILE"
   fi
 
-  log_note "${OUTPUT_DIR}/"
+  if [ "$package_status" -eq 0 ]; then
+    if ! printf '%s' "$package_raw" | jq -e '(.changed | type == "boolean") and (.packaged | type == "number") and (.removed | type == "number")' >/dev/null 2>&1; then
+      package_status=1
+      log_fail "Skill packaging returned malformed JSON"
+    elif [ "$(printf '%s' "$package_raw" | jq -er '.changed' 2>/dev/null)" = "false" ]; then
+      log_skip "Packages unchanged"
+    else
+      log_ok "Packages updated: $(printf '%s' "$package_raw" | jq -er '.packaged' 2>/dev/null) packaged, $(printf '%s' "$package_raw" | jq -er '.removed' 2>/dev/null) removed"
+    fi
+  else
+    log_fail "Skill packaging failed (exit $package_status)"
+  fi
 
-  # Open output directory in system file manager
-  if [ "$(uname)" = "Darwin" ]; then
-    open "$OUTPUT_DIR"
-  elif command -v xdg-open &>/dev/null; then
-    xdg-open "$OUTPUT_DIR"
+  if [ "$observe_status" -eq 0 ]; then
+    if ! printf '%s' "$observe_raw" | jq -e '.healthy == true' >/dev/null 2>&1; then
+      observe_status=1
+      log_fail "Skill observation found unresolved drift"
+    else
+      log_detail "Skill health: sources, providers, registry, and packages healthy"
+    fi
+  else
+    log_fail "Skill observation failed (exit $observe_status)"
+  fi
+
+  if [ "$package_status" -ne 0 ]; then
+    return "$package_status"
+  fi
+  if [ "$observe_status" -ne 0 ]; then
+    return "$observe_status"
   fi
 }
 
 main "$@"
-{{ end -}}

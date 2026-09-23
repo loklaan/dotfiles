@@ -300,6 +300,7 @@ Three primitives drive every "thing is out of date" workflow in this repo:
 
 ```
 mise.toml [tools] pins versions for installable tools (orca, paseo, opencode, etc.)
+  + mise task owns the pinned, data-only Effect v4 reference artifact
   ↓
 mise tasks (update / drift:check / drift:notify) dispatch dotfiles-task-* scripts
   ↓
@@ -372,6 +373,7 @@ cw fleet --include-local update
 | `latest`-pinned mise tool drifted (e.g. opencode) | `mise run update` (local) or `cw fleet --include-local update` (fleet) |
 | opencode `@latest` plugin drifted (e.g. oh-my-openagent) | `chezmoi apply`, then restart opencode so it reinstalls the cleared plugin cache |
 | Explicit pin drifted (orca, paseo) | Edit the version literal in `home/private_dot_config/mise/config.toml.tmpl` → commit → `cw fleet --include-local update` |
+| Effect v4 reference missing/stale | `mise run effect-v4:install` (also runs during the normal package-install apply phase) |
 | Cask drift on macOS (orca/paseo .app vs cask formula) | `brew upgrade --greedy --cask <name>` (Homebrew owns this; mise doesn't see casks) |
 | Repo itself behind origin/main | `mise run update` (local) or `cw fleet --include-local update` (fleet) — `update` now pulls the source before applying |
 

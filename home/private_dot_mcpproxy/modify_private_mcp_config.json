@@ -155,6 +155,88 @@
       "enabled" true
     ) -}}
 
+{{- /* Project the optional machine-local host allowlist. MCPProxy accepts
+       loopback separately; these entries cover non-loopback Host/Origin values. */ -}}
+{{- $mcpproxyConfig := dig "mcpproxy" (dict) . -}}
+{{- if not (kindIs "map" $mcpproxyConfig) -}}
+{{-   fail "mcpproxy must be an object" -}}
+{{- end -}}
+{{- $configuredHosts := dig "hosts" (list) $mcpproxyConfig -}}
+{{- if not (kindIs "slice" $configuredHosts) -}}
+{{-   fail "mcpproxy.hosts must be an array of strings" -}}
+{{- end -}}
+{{- $trustedHosts := list -}}
+{{- range $index, $rawHost := $configuredHosts -}}
+{{-   if not (kindIs "string" $rawHost) -}}
+{{-     fail (printf "mcpproxy.hosts[%d] must be a string" $index) -}}
+{{-   end -}}
+{{-   if regexMatch "[[:cntrl:]]" $rawHost -}}
+{{-     fail (printf "mcpproxy.hosts[%d] must not contain control characters" $index) -}}
+{{-   end -}}
+{{-   $host := lower (trim $rawHost) -}}
+{{-   if or (eq $host "") (eq $host "*") -}}
+{{-     fail (printf "mcpproxy.hosts[%d] must be a non-empty host and cannot be * or contain controls" $index) -}}
+{{-   end -}}
+{{-   $hostPattern := "^\\.?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]+)?$" -}}
+{{-   $ipv6Pattern := "^\\[[0-9a-f:.]+\\](?::[0-9]+)?$" -}}
+{{-   if not (or (regexMatch $hostPattern $host) (regexMatch $ipv6Pattern $host)) -}}
+{{-     fail (printf "mcpproxy.hosts[%d] %q must be a hostname or bracketed IPv6 address with an optional port" $index $rawHost) -}}
+{{-   end -}}
+{{-   if regexMatch $ipv6Pattern $host -}}
+{{-     $ipv6Body := regexReplaceAll "^\\[|\\](?::[0-9]+)?$" $host "" -}}
+{{-     $ipv6Parts := splitList "::" $ipv6Body -}}
+{{-     $validIPv6 := le (len $ipv6Parts) 2 -}}
+{{-     $ipv6Units := 0 -}}
+{{-     range $partIndex, $part := $ipv6Parts -}}
+{{-       $units := list -}}
+{{-       if ne $part "" -}}
+{{-         $units = splitList ":" $part -}}
+{{-       end -}}
+{{-       range $unitIndex, $unit := $units -}}
+{{-         $isIPv4 := contains "." $unit -}}
+{{-         if $isIPv4 -}}
+{{-           $octets := splitList "." $unit -}}
+{{-           if or (ne (len $octets) 4) (ne $partIndex (sub (len $ipv6Parts) 1)) (ne $unitIndex (sub (len $units) 1)) (not (regexMatch "^(?:0|[1-9][0-9]{0,2})(?:\\.(?:0|[1-9][0-9]{0,2})){3}$" $unit)) -}}
+{{-             $validIPv6 = false -}}
+{{-           else -}}
+{{-             range $octet := $octets -}}
+{{-               $octetNumber := atoi $octet -}}
+{{-               if or (lt $octetNumber 0) (gt $octetNumber 255) -}}
+{{-                 $validIPv6 = false -}}
+{{-               end -}}
+{{-             end -}}
+{{-           end -}}
+{{-           $ipv6Units = add $ipv6Units 2 -}}
+{{-         else -}}
+{{-           if not (regexMatch "^[0-9a-f]{1,4}$" $unit) -}}
+{{-             $validIPv6 = false -}}
+{{-           end -}}
+{{-           $ipv6Units = add $ipv6Units 1 -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-     if eq (len $ipv6Parts) 1 -}}
+{{-       if ne $ipv6Units 8 -}}
+{{-         $validIPv6 = false -}}
+{{-       end -}}
+{{-     else if ge $ipv6Units 8 -}}
+{{-       $validIPv6 = false -}}
+{{-     end -}}
+{{-     if not $validIPv6 -}}
+{{-       fail (printf "mcpproxy.hosts[%d] %q is not a valid IPv6 address" $index $rawHost) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if regexMatch ":[0-9]+$" $host -}}
+{{-     $port := regexReplaceAll "^.*:" $host "" -}}
+{{-     $portNumber := atoi $port -}}
+{{-     if or (lt $portNumber 1) (gt $portNumber 65535) -}}
+{{-       fail (printf "mcpproxy.hosts[%d] %q has a port outside 1-65535" $index $rawHost) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $trustedHosts = append $trustedHosts $host -}}
+{{- end -}}
+{{- $trustedHosts = $trustedHosts | sortAlpha | uniq -}}
+
 {{- /* Merge existing server entries to preserve runtime state (quarantined,
        created, updated, oauth) while ensuring our definitions are present.
        For each managed server, find the existing entry and overlay our fields. */ -}}
@@ -177,13 +259,14 @@
 
 {{- /* Overlay our managed keys, preserve everything else */ -}}
 {{- $config := $base -}}
+{{- $_ := unset $config "top_k" -}}
 {{- $config = $config | setValueAtPath "listen" (printf "127.0.0.1:%v" .ports.mcpproxy.internal) -}}
 {{- $config = $config | setValueAtPath "data_dir" (printf "%s/.mcpproxy" .chezmoi.homeDir) -}}
-{{- $config = $config | setValueAtPath "top_k" 5 -}}
 {{- $config = $config | setValueAtPath "tools_limit" 15 -}}
 {{- $config = $config | setValueAtPath "tool_response_limit" 20000 -}}
 {{- $config = $config | setValueAtPath "mcpServers" $mergedServers -}}
 {{- $config = $config | setValueAtPath "routing_mode" "retrieve_tools" -}}
+{{- $config = $config | setValueAtPath "trusted_hosts" $trustedHosts -}}
 {{- $config = $config | setValueAtPath "telemetry.enabled" false -}}
 
 {{ $config | toPrettyJson }}

@@ -8,7 +8,7 @@
 // Designed for tools that parse flat key=value field formats (e.g. Jira API
 // tools) where nested JSON in the value position would otherwise break the
 // field parser's comma-splitting. See:
-//   home/dot_agents/skills/lochy:pm/references/using-jira.md
+//   home/private_dot_local/share/dotfiles/skills/lochy:pm/references/using-jira.md
 //
 // CLI surface:
 //   json-escape [OPTIONS] [FILE]

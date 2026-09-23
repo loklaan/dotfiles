@@ -14,6 +14,7 @@ Chezmoi maps source paths in this repo to target paths under `~/` using [source 
 | Target path | Source path |
 |---|---|
 | `~/.local/lib/` | `home/private_dot_local/lib/` |
+| `~/.local/share/dotfiles/skills/<id>/` | `home/private_dot_local/share/dotfiles/skills/<id>/` |
 | `~/.config/zsh/` | `home/private_dot_config/private_zsh/` |
 | `~/.bashrc` | `home/dot_bashrc` |
 | `~/.ssh/config` | `home/private_dot_ssh/config` |
@@ -41,7 +42,9 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .bwsTokenPath                     // Absolute path to BWS access token file
 .bwsIdNpmAuthToken                // Bitwarden secret ID for npm auth
 .bwsIdGithubAuthToken             // Bitwarden secret ID for GitHub (personal)
-.privateSkillsRepo                // Git URL for private Claude skills repo
+.skillSources                     // Machine-local filesystem/Git/archive skill sources
+.skillProviders                   // Machine-local command/pack provider contracts
+.skills                           // Desired provider-owned skill IDs
 .npmWorkRegistry                  // Scoped npm registry for work packages
 .openCodeWorkPlugin               // OpenCode plugin for work environments
 .jetbrainsLicenseServer           // JetBrains license server URL
@@ -70,6 +73,8 @@ Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it 
 - `install.test.sh` — E2E Docker test for clean-environment validation
 - `home/` — all managed files and directories
 - `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
+- `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, and packaging
+- `home/private_dot_local/share/dotfiles/skills/` — repository/Git/archive skill store acquired or materialized by chezmoi; `df-skills` owns only receipt-recorded derived archive trees and individual links in the mixed `~/.agents/skills/` registry
 - `home/private_dot_zshrc` — zsh entry point
 - `home/private_dot_config/private_zsh/init/*.zsh.tmpl` — zsh init modules
 
@@ -124,7 +129,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 
 | Topic | Scripts |
 |---|---|
-| `skills` | reset/patch/link/pack external skills (060 before/after, 070) |
+| `skills` | reconcile skills (060) and package/observe eligible skills (070) |
 | `packages` | install-050 + install-my-packages |
 | `tmux` | tmux-continuum-boot (054) |
 | `peon-ping` | setup-peon-ping (055) |
@@ -133,7 +138,6 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
 | `orca` | orca-server (059) |
 | `drift` | drift-notifier (061) |
-| `aws` | prewarm-aws-region (062) |
 | `opencode` | opencode-serve (063) |
 | `code-server` | code-server (064) |
 | `auth` | opencode-auth (065) |

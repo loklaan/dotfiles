@@ -44,6 +44,7 @@ import {
   Data,
   Effect,
   Schema,
+  Sink,
   Stream,
 } from "npm:effect@4.0.0-rc.112";
 import { Path } from "npm:effect@4.0.0-rc.112/Path";
@@ -156,6 +157,31 @@ const streamText = (stream: Stream.Stream<Uint8Array, unknown>) =>
     Stream.decodeText(),
     Stream.runFold(() => "", (acc, chunk) => acc + chunk),
     Effect.orElseSucceed(() => ""),
+  );
+
+const runText = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  cmd: string,
+  args: ReadonlyArray<string>,
+): Effect.Effect<string> =>
+  spawner.string(ChildProcess.make(cmd, args, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  })).pipe(Effect.orElseSucceed(() => ""));
+
+const runExitCode = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  cmd: string,
+  args: ReadonlyArray<string>,
+): Effect.Effect<number> =>
+  spawner.exitCode(ChildProcess.make(cmd, args, {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  })).pipe(
+    Effect.map(Number),
+    Effect.orElseSucceed(() => 127),
   );
 
 const runCommand = (
@@ -697,8 +723,9 @@ const checkCoderConnect = () =>
       );
       return;
     }
-    const res = yield* runChild("scutil", ["--dns"]);
-    if (!coderConnectActiveFromScutil(res.stdout)) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const stdout = yield* runText(spawner, "scutil", ["--dns"]);
+    if (!coderConnectActiveFromScutil(stdout)) {
       yield* logWarning(
         "Coder Connect does not appear to be running (no `coder` DNS search domain).",
       );
@@ -803,7 +830,13 @@ const pairBox = (
     }
 
     if (alreadyHave && options.replace) {
-      yield* runChild("orca", ["environment", "rm", "--environment", name]);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      yield* runExitCode(spawner, "orca", [
+        "environment",
+        "rm",
+        "--environment",
+        name,
+      ]);
     }
 
     const add = yield* runChild("orca", [
@@ -991,6 +1024,57 @@ if (!import.meta.main) {
     );
     return `orca://pair#${b64}`;
   };
+
+  const commandSpawner = ChildProcessSpawner.make((command) => {
+    if (command._tag !== "StandardCommand") {
+      return Effect.die(new Error("expected a standard command"));
+    }
+    const isDnsProbe = command.command === "scutil" &&
+      JSON.stringify(command.args) === JSON.stringify(["--dns"]);
+    const isEnvironmentRemoval = command.command === "orca" &&
+      JSON.stringify(command.args) === JSON.stringify([
+          "environment",
+          "rm",
+          "--environment",
+          "box with spaces; untouched",
+        ]);
+    const stdout = isDnsProbe ? "search domain[0] : coder\n" : "";
+    const code = isEnvironmentRemoval ? 7 : 0;
+    const stdoutBytes = text.encode(stdout);
+    const stderrBytes = text.encode("separate stderr\n");
+    return Effect.succeed(ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(12345),
+      stdin: Sink.drain,
+      stdout: Stream.make(stdoutBytes),
+      stderr: Stream.make(stderrBytes),
+      all: Stream.make(stdoutBytes, stderrBytes),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+      unref: Effect.succeed(Effect.void),
+    }));
+  });
+
+  Deno.test("runText captures stdout through the canonical string operation", async () => {
+    const output = await Effect.runPromise(
+      runText(commandSpawner, "scutil", ["--dns"]),
+    );
+    assertEquals(output, "search domain[0] : coder\n");
+  });
+
+  Deno.test("runExitCode preserves argv and returns the canonical exit status", async () => {
+    const code = await Effect.runPromise(
+      runExitCode(commandSpawner, "orca", [
+        "environment",
+        "rm",
+        "--environment",
+        "box with spaces; untouched",
+      ]),
+    );
+    assertEquals(code, 7);
+  });
 
   Deno.test("runningWorkspaceNames keeps only running boxes", () => {
     assertEquals(

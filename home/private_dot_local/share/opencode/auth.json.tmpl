@@ -1,5 +1,12 @@
+{{- $profile := dig "machineProfile" "personal" . -}}
+{{- if not (or (eq $profile "personal") (eq $profile "work")) -}}
+{{-   fail (printf "unsupported machineProfile %q; expected work or personal" $profile) -}}
+{{- end -}}
+{{- if eq $profile "work" -}}
+{}
+{{- else -}}
 {
-{{- /* amazon-bedrock auth gating, per @canva/opencode-plugin-llmproxy README:
+{{- /* Personal-profile-only auth for @canva/opencode-plugin-llmproxy:
 
        VPN (no CODER env):
          The plugin fetches a bearer token via `otter` and injects it as the
@@ -14,12 +21,13 @@
          opencode picks up the placeholder and bypasses SigV4. So we omit
          the entry entirely on Coder.
 
-       google + openai are unconditional: they route through the proxy in
-       both modes (mTLS on Coder, VPN endpoint elsewhere), and both modes
-       need the placeholder to wire up auth.loader. */ -}}
+        google + openai route through the proxy on personal machines (mTLS on
+        Coder, VPN endpoint elsewhere), and need the placeholder to wire up
+        auth.loader. Work machines intentionally receive no auth entries. */ -}}
 {{- if eq "" (env "CODER") }}
   "amazon-bedrock": { "type": "api", "key": "llmproxy" },
 {{- end }}
   "google": { "type": "api", "key": "llmproxy" },
   "openai": { "type": "api", "key": "llmproxy" }
 }
+{{- end -}}

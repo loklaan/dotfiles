@@ -145,7 +145,6 @@ main() {
   config_email="${CONFIG_EMAIL-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
   config_email_work="${CONFIG_EMAIL_WORK-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
   config_signing_key="${CONFIG_SIGNING_KEY-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
-  config_private_skills_repo="$(chezmoi execute-template "{{ .privateSkillsRepo }}" 2>/dev/null || echo "")"
   config_npm_work_registry="$(chezmoi execute-template "{{ .npmWorkRegistry }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin="$(chezmoi execute-template "{{ .openCodeWorkPlugin }}" 2>/dev/null || echo "")"
   config_opencode_work_plugin_local_path="$(chezmoi execute-template "{{ .openCodeWorkPluginLocalPath }}" 2>/dev/null || echo "")"
@@ -205,7 +204,6 @@ main() {
     --promptString="Email for you=${config_email}" \
     --promptString="Email for Canva=${config_email_work}" \
     --promptString="Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
-    --promptString="Private skills repo (or empty)=${config_private_skills_repo}" \
     --promptString="Work npm registry (or empty)=${config_npm_work_registry}" \
     --promptString="OpenCode work plugin (or empty)=${config_opencode_work_plugin}" \
     --promptString="OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)=${config_opencode_work_plugin_local_path}" \

@@ -1,0 +1,254 @@
+{{- $root := . -}}
+{{- $defaults := dig "skillLifecycleDefaults" (dict) . -}}
+{{- $defaultSources := dig "sources" (dict) $defaults -}}
+{{- $localSources := dig "skillSources" (dict) . -}}
+{{- $localProviders := dig "skillProviders" (dict) . -}}
+{{- $desiredSkills := dig "skills" (dict) . -}}
+{{- range $name, $collection := dict "skillLifecycleDefaults.sources" $defaultSources "skillSources" $localSources "skillProviders" $localProviders "skills" $desiredSkills -}}
+{{-   if not (kindIs "map" $collection) -}}
+{{-     fail (printf "%s must be an object" $name) -}}
+{{-   end -}}
+{{- end -}}
+
+{{- $profileCatalog := dig "profiles" (dict) . -}}
+{{- if not (kindIs "map" $profileCatalog) -}}
+{{-   fail "profiles must be an object" -}}
+{{- end -}}
+{{- $profile := dig "machineProfile" "personal" . -}}
+{{- if or (not (kindIs "string" $profile)) (not (hasKey $profileCatalog $profile)) -}}
+{{-   fail (printf "machineProfile %q is unknown" $profile) -}}
+{{- end -}}
+{{- if not (has $root.chezmoi.os (list "darwin" "linux")) -}}
+{{-   fail (printf "chezmoi platform %q is unsupported" $root.chezmoi.os) -}}
+{{- end -}}
+
+{{- $sourceInputs := dict -}}
+{{- range $name, $source := $defaultSources -}}
+{{-   $_ := set $sourceInputs $name $source -}}
+{{- end -}}
+{{- range $name, $source := $localSources -}}
+{{-   if hasKey $sourceInputs $name -}}
+{{-     fail (printf "skillSources.%s conflicts with a repository default" $name) -}}
+{{-   end -}}
+{{-   $_ := set $sourceInputs $name $source -}}
+{{- end -}}
+
+{{- $links := list -}}
+{{- $archives := list -}}
+{{- $seenSourceIds := dict -}}
+{{- $store := joinPath $root.chezmoi.homeDir ".local/share/dotfiles/skills" -}}
+{{- range $entryName := keys $sourceInputs | sortAlpha -}}
+{{-   $source := get $sourceInputs $entryName -}}
+{{-   if not (kindIs "map" $source) -}}
+{{-     fail (printf "skillSources.%s must be an object" $entryName) -}}
+{{-   end -}}
+{{-   $id := dig "id" $entryName $source -}}
+{{-   if or (not (kindIs "string" $id)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._-]*$" $id)) -}}
+{{-     fail (printf "skillSources.%s.id must be a safe ASCII ID" $entryName) -}}
+{{-   end -}}
+{{-   $sourceKey := lower $id -}}
+{{-   if hasKey $seenSourceIds $sourceKey -}}
+{{-     fail (printf "skill source id %q duplicates %q" $id (get $seenSourceIds $sourceKey)) -}}
+{{-   end -}}
+{{-   $_ := set $seenSourceIds $sourceKey $id -}}
+{{-   $kind := dig "kind" "" $source -}}
+{{-   if not (has $kind (list "archive" "filesystem" "git" "repository")) -}}
+{{-     fail (printf "skillSources.%s.kind %q is unsupported" $entryName $kind) -}}
+{{-   end -}}
+{{-   $platforms := dig "platforms" (list) $source -}}
+{{-   $profiles := dig "profiles" (list) $source -}}
+{{-   if not (kindIs "slice" $platforms) -}}
+{{-     fail (printf "skillSources.%s.platforms must be an array" $entryName) -}}
+{{-   end -}}
+{{-   if not (kindIs "slice" $profiles) -}}
+{{-     fail (printf "skillSources.%s.profiles must be an array" $entryName) -}}
+{{-   end -}}
+{{-   range $platform := $platforms -}}
+{{-     if not (has $platform (list "darwin" "linux")) -}}
+{{-       fail (printf "skillSources.%s.platforms contains unsupported platform %q" $entryName $platform) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   range $sourceProfile := $profiles -}}
+{{-     if or (not (kindIs "string" $sourceProfile)) (not (hasKey $profileCatalog $sourceProfile)) -}}
+{{-       fail (printf "skillSources.%s.profiles contains unknown profile %q" $entryName $sourceProfile) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   $path := dig "path" "" $source -}}
+{{-   if not (kindIs "string" $path) -}}
+{{-     fail (printf "skillSources.%s.path must be a string" $entryName) -}}
+{{-   end -}}
+{{-   $path = replace "{chezmoiSourceDir}" $root.chezmoi.sourceDir $path -}}
+{{-   $path = replace "{homeDir}" $root.chezmoi.homeDir $path -}}
+{{-   if or (not (hasPrefix "/" $path)) (contains "\\" $path) (contains "//" $path) (hasSuffix "/" $path) (regexMatch "(^|/)\\.{1,2}(/|$)" $path) (regexMatch "[\\p{Cc}\\p{Cf}{}]" $path) -}}
+{{-     fail (printf "skillSources.%s.path must be an absolute lexically safe path" $entryName) -}}
+{{-   end -}}
+{{-   if and (eq $kind "repository") (ne $path $store) (not (hasPrefix (printf "%s/" $store) $path)) -}}
+{{-     $kind = "filesystem" -}}
+{{-   end -}}
+{{-   if and (has $kind (list "archive" "git" "repository")) (ne $path $store) (not (hasPrefix (printf "%s/" $store) $path)) -}}
+{{-     fail (printf "skillSources.%s.path must be within the chezmoi-owned skill store" $entryName) -}}
+{{-   end -}}
+{{-   $items := dig "items" (list) $source -}}
+{{-   if not (kindIs "slice" $items) -}}
+{{-     fail (printf "skillSources.%s.items must be an array" $entryName) -}}
+{{-   end -}}
+{{-   $transforms := dig "transforms" (list) $source -}}
+{{-   if not (kindIs "slice" $transforms) -}}
+{{-     fail (printf "skillSources.%s.transforms must be an array" $entryName) -}}
+{{-   end -}}
+{{-   $active := and (or (eq (len $platforms) 0) (has $root.chezmoi.os $platforms)) (or (eq (len $profiles) 0) (has $profile $profiles)) -}}
+{{-   $url := "" -}}
+{{-   $lock := dict -}}
+{{-   if has $kind (list "archive" "git") -}}
+{{-     $url = dig "url" "" $source -}}
+{{-     $lock = dig "lock" (dict) $source -}}
+{{-     if or (not (kindIs "string" $url)) (eq $url "") (regexMatch "[\\p{Cc}\\p{Cf}{}]" $url) -}}
+{{-       fail (printf "skillSources.%s.url must be a non-empty safe string" $entryName) -}}
+{{-     end -}}
+{{-     if not (kindIs "map" $lock) -}}
+{{-       fail (printf "skillSources.%s.lock must be an object" $entryName) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if eq $kind "archive" -}}
+{{-     if not (hasPrefix "https://" $url) -}}
+{{-       fail (printf "skillSources.%s.url must use https" $entryName) -}}
+{{-     end -}}
+{{-     if ne (dig "algorithm" "" $lock) "sha256" -}}
+{{-       fail (printf "skillSources.%s.lock.algorithm must be sha256" $entryName) -}}
+{{-     end -}}
+{{-     range $field := list "checksum" "contentDigest" -}}
+{{-       if not (regexMatch "^[a-f0-9]{64}$" (dig $field "" $lock)) -}}
+{{-         fail (printf "skillSources.%s.lock.%s must be a lowercase SHA-256 digest" $entryName $field) -}}
+{{-       end -}}
+{{-     end -}}
+{{-     $ref := dig "ref" "" $lock -}}
+{{-     if not (regexMatch "^[a-f0-9]{40}$" $ref) -}}
+{{-       fail (printf "skillSources.%s.lock.ref must be an immutable lowercase commit" $entryName) -}}
+{{-     end -}}
+{{-     if not (contains $ref $url) -}}
+{{-       fail (printf "skillSources.%s.url must contain lock.ref" $entryName) -}}
+{{-     end -}}
+{{-   else if eq $kind "git" -}}
+{{-     $ref := dig "ref" "" $lock -}}
+{{-     if or (not (kindIs "string" $ref)) (eq $ref "") (regexMatch "[\\p{Cc}\\p{Cf}{}]" $ref) -}}
+{{-       fail (printf "skillSources.%s.lock.ref must be a non-empty safe string" $entryName) -}}
+{{-     end -}}
+{{-     $refPolicy := dig "refPolicy" "" $lock -}}
+{{-     if not (has $refPolicy (list "branch" "commit" "tag")) -}}
+{{-       fail (printf "skillSources.%s.lock.refPolicy must be branch, commit, or tag" $entryName) -}}
+{{-     end -}}
+{{-     $revision := dig "revision" "" $lock -}}
+{{-     if not (regexMatch "^[a-f0-9]{40}$" $revision) -}}
+{{-       fail (printf "skillSources.%s.lock.revision must be an immutable lowercase commit" $entryName) -}}
+{{-     end -}}
+{{-     if and (eq $refPolicy "commit") (or (not (regexMatch "^[a-f0-9]{40}$" $ref)) (ne $ref $revision)) -}}
+{{-       fail (printf "skillSources.%s.lock.ref must equal lock.revision for commit policy" $entryName) -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if $active -}}
+{{-     range $index, $rawItem := $items -}}
+{{-       $item := $rawItem -}}
+{{-       if kindIs "string" $rawItem -}}
+{{-         $item = dict "id" $rawItem -}}
+{{-       else if not (kindIs "map" $rawItem) -}}
+{{-         fail (printf "skillSources.%s.items[%d] must be a string or object" $entryName $index) -}}
+{{-       end -}}
+{{-       $itemId := dig "id" "" $item -}}
+{{-       if or (not (kindIs "string" $itemId)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._-]*$" $itemId)) -}}
+{{-         fail (printf "skillSources.%s.items[%d].id must be a safe ASCII ID" $entryName $index) -}}
+{{-       end -}}
+{{-       $directory := dig "directory" $itemId $item -}}
+{{-       if or (not (kindIs "string" $directory)) (eq $directory "") (and (ne $directory ".") (or (hasPrefix "/" $directory) (contains "\\" $directory) (contains "//" $directory) (hasSuffix "/" $directory) (regexMatch "(^|/)\\.{1,2}(/|$)" $directory) (regexMatch "[\\p{Cc}\\p{Cf}{}]" $directory))) -}}
+{{-         fail (printf "skillSources.%s.items[%d].directory must be a safe relative path" $entryName $index) -}}
+{{-       end -}}
+{{-       $package := dig "package" false $item -}}
+{{-       if not (kindIs "bool" $package) -}}
+{{-         fail (printf "skillSources.%s.items[%d].package must be true or false" $entryName $index) -}}
+{{-       end -}}
+{{-       $target := $path -}}
+{{-       if ne $directory "." -}}{{- $target = joinPath $path $directory -}}{{- end -}}
+{{-       if eq $kind "archive" -}}
+{{-         $input := joinPath $store ".inputs" $id -}}
+{{-         if ne $directory "." -}}{{- $input = joinPath $input $directory -}}{{- end -}}
+{{-         $archives = append $archives (dict "id" $itemId "input" $input "target" $target "package" $package "lock" $lock "transforms" $transforms) -}}
+{{-       else -}}
+{{-         $link := dict "id" $itemId "target" $target "owner" (ternary "provider" "chezmoi" (eq $kind "filesystem")) "package" $package -}}
+{{-         if eq $kind "repository" -}}
+{{-           $_ := set $link "source" (dict "kind" "repository") -}}
+{{-         else if eq $kind "git" -}}
+{{-           $_ := set $link "source" (dict "kind" "git" "revision" (get $lock "revision") "url" $url) -}}
+{{-         end -}}
+{{-         $links = append $links $link -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+
+{{- $providers := list -}}
+{{- $providerNames := dict -}}
+{{- $commands := list "disable" "enable" "install" "observe" "remove" "sync" "update" "version" -}}
+{{- range $entryName := keys $localProviders | sortAlpha -}}
+{{-   $provider := get $localProviders $entryName -}}
+{{-   if not (kindIs "map" $provider) -}}
+{{-     fail (printf "skillProviders.%s must be an object" $entryName) -}}
+{{-   end -}}
+{{-   $id := dig "id" $entryName $provider -}}
+{{-   if or (not (kindIs "string" $id)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._-]*$" $id)) -}}
+{{-     fail (printf "skillProviders.%s.id must be a safe ASCII ID" $entryName) -}}
+{{-   end -}}
+{{-   $_ := set $providerNames $entryName true -}}
+{{-   $platforms := dig "platforms" (list) $provider -}}
+{{-   $profiles := dig "profiles" (list) $provider -}}
+{{-   if not (kindIs "slice" $platforms) -}}{{- fail (printf "skillProviders.%s.platforms must be an array" $entryName) -}}{{- end -}}
+{{-   if not (kindIs "slice" $profiles) -}}{{- fail (printf "skillProviders.%s.profiles must be an array" $entryName) -}}{{- end -}}
+{{-   range $platform := $platforms -}}
+{{-     if not (has $platform (list "darwin" "linux")) -}}{{- fail (printf "skillProviders.%s.platforms contains unsupported platform %q" $entryName $platform) -}}{{- end -}}
+{{-   end -}}
+{{-   range $providerProfile := $profiles -}}
+{{-     if or (not (kindIs "string" $providerProfile)) (not (hasKey $profileCatalog $providerProfile)) -}}{{- fail (printf "skillProviders.%s.profiles contains unknown profile %q" $entryName $providerProfile) -}}{{- end -}}
+{{-   end -}}
+{{-   $items := list -}}
+{{-   $active := and (or (eq (len $platforms) 0) (has $root.chezmoi.os $platforms)) (or (eq (len $profiles) 0) (has $profile $profiles)) -}}
+{{-   $rawItems := dig $entryName (list) $desiredSkills -}}
+{{-   if not (kindIs "slice" $rawItems) -}}{{- fail (printf "skills.%s must be an array" $entryName) -}}{{- end -}}
+{{-   if $active -}}
+{{-   range $index, $rawItem := $rawItems -}}
+{{-     $item := $rawItem -}}
+{{-     if kindIs "string" $rawItem -}}
+{{-       $item = dict "id" $rawItem -}}
+{{-     else if not (kindIs "map" $rawItem) -}}
+{{-       fail (printf "skills.%s[%d] must be a string or object" $entryName $index) -}}
+{{-     end -}}
+{{-     $itemId := dig "id" "" $item -}}
+{{-     if or (not (kindIs "string" $itemId)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._-]*$" $itemId)) -}}{{- fail (printf "skills.%s[%d].id must be a safe ASCII ID" $entryName $index) -}}{{- end -}}
+{{-     $itemOut := dict "id" $itemId -}}
+{{-     range $field := list "removeAs" "source" -}}
+{{-       if hasKey $item $field -}}{{- $_ := set $itemOut $field (get $item $field) -}}{{- end -}}
+{{-     end -}}
+{{-     $items = append $items $itemOut -}}
+{{-   end -}}
+{{-     $providerOut := dict "id" $id "kind" (dig "kind" "command" $provider) "exclusive" (dig "exclusive" false $provider) "lock" (dig "lock" (dict) $provider) "items" $items -}}
+{{-     range $commandName := $commands -}}
+{{-       if hasKey $provider $commandName -}}
+{{-         $rawCommand := get $provider $commandName -}}
+{{-         $command := dict -}}
+{{-         if kindIs "slice" $rawCommand -}}
+{{-           $_ := set $command "argv" $rawCommand -}}
+{{-         else if kindIs "map" $rawCommand -}}
+{{-           range $field, $value := $rawCommand -}}{{- $_ := set $command $field $value -}}{{- end -}}
+{{-         else -}}
+{{-           fail (printf "skillProviders.%s.%s must be an argv array or object" $entryName $commandName) -}}
+{{-         end -}}
+{{-         if not (kindIs "slice" (dig "argv" (list) $command)) -}}{{- fail (printf "skillProviders.%s.%s.argv must be an array" $entryName $commandName) -}}{{- end -}}
+{{-         if not (hasKey $command "timeoutSeconds") -}}{{- $_ := set $command "timeoutSeconds" 30 -}}{{- end -}}
+{{-         if not (hasKey $command "maxOutputBytes") -}}{{- $_ := set $command "maxOutputBytes" 1048576 -}}{{- end -}}
+{{-         $_ := set $providerOut $commandName $command -}}
+{{-       end -}}
+{{-     end -}}
+{{-     $providers = append $providers $providerOut -}}
+{{-   end -}}
+{{- end -}}
+{{- range $providerName, $_ := $desiredSkills -}}
+{{-   if not (hasKey $providerNames $providerName) -}}{{- fail (printf "skills.%s references an undeclared provider" $providerName) -}}{{- end -}}
+{{- end -}}
+{{ dict "schema" 2 "links" $links "archives" $archives "providers" $providers | toPrettyJson }}

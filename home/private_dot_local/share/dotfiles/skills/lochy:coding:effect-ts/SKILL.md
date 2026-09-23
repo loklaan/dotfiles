@@ -18,7 +18,7 @@ Load references by the work being done, not everything this skill contains.
 | Design or implement non-trivial software intended to be Effect-first | [Effect enforcement](references/effect-enforcement.md), before choosing capability implementations |
 | Review newly added or substantially changed Effect code for architectural compliance | [Effect enforcement](references/effect-enforcement.md), using its review mode |
 | Write or change v3 code | [v3 patterns](references/v3-patterns.md), relevant sections |
-| Write or change v4 code | [v4 patterns](references/v4-patterns.md), then the relevant linked module documentation |
+| Write or change v4 code | [v4 patterns](references/v4-patterns.md), attach `@effect-v4`, then inspect relative files on demand |
 | Write or review fan-out, retries, periodic loops, or state that grows with input/request rate | [Concurrency bounds](references/concurrency-bounds.md) |
 
 For enforcement, non-trivial means the work owns I/O, resource lifetimes,
@@ -39,17 +39,28 @@ Before selecting APIs, determine the consuming package's Effect version:
 3. For prereleases, retain the exact prerelease version when checking APIs.
 
 Use [v3 patterns](references/v3-patterns.md) for v3 and
-[v4 patterns](references/v4-patterns.md) for v4. Do not mix their service
-definitions, package layouts, or runtime APIs.
+[v4 patterns](references/v4-patterns.md) plus `@effect-v4` for v4. Do not mix
+their service definitions, package layouts, or runtime APIs.
 
 If resolution is unavailable, state which declared version you are targeting.
 Do not describe uncompiled imports as verified.
 
 **The Effect docs MCP tools serve v3 content only.** Do not use them for v4
-work. Use the v4 reference and documentation matching the resolved release.
-Vendored documentation may track a newer commit than the consuming project;
-the installed declarations and implementation settle API compatibility and
-behaviour questions.
+work. `@effect-v4` is pinned to `effect@4.0.0-rc.112` at upstream commit
+`2600f62f4532026928454dcea8d1c48557b3f942`; inspect its guidance, migrations,
+examples, source, and tests only when the task needs them.
+
+Attach the reference root as `@effect-v4`, then use read/search tools against
+relative paths under its resolved directory, such as `LLMS.md` or
+`packages/effect/src/Effect.ts`. Do not rely on nested
+`@effect-v4/<path>` autocomplete: OpenCode V1 attaches the root alias but does
+not provide that documented nested search behavior.
+
+Compare that pin with the consuming project's resolved Effect version before
+using an API. **Version mismatch fallback:** treat `@effect-v4` as conceptual
+and migration guidance only, then verify the exact API against the project's
+installed declarations, implementation, and tests. State the mismatch and do
+not silently transfer APIs between prereleases or releases.
 
 ## Effect docs MCP tools: v3 only
 

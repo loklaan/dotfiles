@@ -1,0 +1,2175 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-prompt --allow-env=HOME,MISE_DATA_DIR,EFFECT_V4_REFERENCE_ROOT,DF_EFFECT_V4_OPERATION --allow-run=deno
+
+import {
+  Console,
+  Crypto,
+  Duration,
+  Effect,
+  Layer,
+  Schema,
+  Stream,
+} from "npm:effect@4.0.0-rc.112";
+import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
+import * as PlatformError from "npm:effect@4.0.0-rc.112/PlatformError";
+import { Path } from "npm:effect@4.0.0-rc.112/Path";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-rc.112/unstable/process";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientResponse,
+} from "npm:effect@4.0.0-rc.112/unstable/http";
+import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, normalize, parse as parsePath } from "node:path";
+
+export const EFFECT_VERSION = "4.0.0-rc.112";
+export const EFFECT_COMMIT = "2600f62f4532026928454dcea8d1c48557b3f942";
+export const ARCHIVE_SHA256 =
+  "e44d9825313777a87daadeeea097edcef5ca66724ae1d5b279c7740dd777e190";
+export const ARCHIVE_URL =
+  `https://codeload.github.com/Effect-TS/effect/tar.gz/${EFFECT_COMMIT}`;
+
+const RECEIPT_NAME = ".effect-v4-reference.json";
+const STAGE_MARKER = ".effect-v4-stage";
+const TAR = "/usr/bin/tar";
+const KILL = "/bin/kill";
+const RMDIR = "/bin/rmdir";
+const OPERATION_ENV = "DF_EFFECT_V4_OPERATION";
+const MSGPACK_ENV = "MSGPACKR_NATIVE_ACCELERATION_DISABLED";
+const NODE_COVERAGE_ENV = "NODE_V8_COVERAGE";
+const PROCESS_ENVIRONMENT = { PATH: "/usr/bin:/bin" } as const;
+const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+const EXPECTED_INVENTORY_DIGEST =
+  "ff686399532fd2d5b599608f3b6b8a819f5aae7981296859523c6e37a74a89da";
+const encoder = new TextEncoder();
+
+const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+const Commit = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/));
+const Token = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9._-]+$/));
+const InventoryEntry = Schema.Struct({
+  relative: Schema.String,
+  kind: Schema.Literals(["directory", "file"]),
+  mode: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 0o7777 })),
+  digest: Schema.NullOr(Digest),
+});
+type InventoryEntry = typeof InventoryEntry.Type;
+const PublishPending = Schema.Struct({
+  operation: Schema.Literal("publish"),
+  commit: Commit,
+});
+const RemovePending = Schema.Struct({
+  operation: Schema.Literal("remove"),
+  commit: Commit,
+  tombstone: Schema.String.check(
+    Schema.isPattern(/^\.remove\.[a-f0-9]{40}\.[A-Za-z0-9._-]+$/),
+  ),
+  contentDigest: Digest,
+  entries: Schema.Array(InventoryEntry),
+});
+const PendingOperation = Schema.Union([PublishPending, RemovePending]);
+const LedgerWire = Schema.Struct({
+  schema: Schema.Literal(1),
+  versions: Schema.Array(Commit).check(
+    Schema.makeFilter((versions) => new Set(versions).size === versions.length),
+  ),
+  pending: Schema.NullOr(Schema.Union([Commit, PendingOperation])),
+});
+export const Ledger = Schema.Struct({
+  schema: Schema.Literal(1),
+  versions: Schema.Array(Commit).check(
+    Schema.makeFilter((versions) => new Set(versions).size === versions.length),
+  ),
+  pending: Schema.NullOr(PendingOperation),
+});
+type Ledger = typeof Ledger.Type;
+const LegacyReceipt = Schema.Struct({
+  schema: Schema.Literal(1),
+  version: Schema.String.check(Schema.isMinLength(1)),
+  commit: Commit,
+  checksum: Digest,
+  url: Schema.String,
+  contentDigest: Digest,
+});
+const Receipt = Schema.Struct({
+  schema: Schema.Literal(2),
+  version: Schema.String.check(Schema.isMinLength(1)),
+  commit: Commit,
+  checksum: Digest,
+  url: Schema.String,
+  contentDigest: Digest,
+  entries: Schema.Array(InventoryEntry),
+});
+const ReceiptWire = Schema.Union([LegacyReceipt, Receipt]);
+type Receipt = typeof Receipt.Type;
+const LockOwner = Schema.Struct({
+  schema: Schema.Literal(1),
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
+  token: Token,
+  commit: Commit,
+});
+type LockOwner = typeof LockOwner.Type;
+const StatusState = Schema.Literals([
+  "current",
+  "missing",
+  "stale",
+  "invalid",
+  "removed",
+]);
+type StatusState = typeof StatusState.Type;
+const StatusDocument = Schema.Struct({
+  schema: Schema.Literal(1),
+  state: StatusState,
+  path: Schema.String,
+  version: Schema.String,
+  commit: Commit,
+  checksum: Digest,
+  url: Schema.String,
+});
+export type StatusDocument = typeof StatusDocument.Type;
+const Operation = Schema.Struct({
+  schema: Schema.Literal(1),
+  command: Schema.Literals(["install", "remove", "status", "path"]),
+  root: Schema.String,
+});
+type Operation = typeof Operation.Type;
+const PackageVersion = Schema.Struct({
+  version: Schema.Literal(EFFECT_VERSION),
+});
+
+class ReferenceError extends Schema.TaggedError<ReferenceError>()(
+  "ReferenceError",
+  { message: Schema.String, cause: Schema.optional(Schema.Unknown) },
+) {}
+
+type ReferencePaths = {
+  readonly root: string;
+  readonly versions: string;
+  readonly version: string;
+  readonly current: string;
+  readonly ledger: string;
+  readonly lock: string;
+};
+type HeldLock = {
+  readonly token: string;
+  readonly owner: LockOwner;
+};
+type ProcessResult = {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+};
+type TreeFile = {
+  readonly relative: string;
+  readonly bytes: Uint8Array;
+};
+type TreeInventory = {
+  readonly entries: readonly InventoryEntry[];
+  readonly files: readonly TreeFile[];
+};
+const failure = (message: string, cause?: unknown) =>
+  new ReferenceError(cause === undefined ? { message } : { message, cause });
+const absent = Effect.catch((error: PlatformError.PlatformError) =>
+  error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error)
+);
+const decode = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  value: unknown,
+  message: string,
+) =>
+  Schema.decodeUnknownEffect(schema)(value, {
+    onExcessProperty: "error",
+  }).pipe(Effect.mapError((cause) => failure(message, cause)));
+const parseJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  text: string,
+  message: string,
+) =>
+  Effect.try({
+    try: () => JSON.parse(text),
+    catch: (cause) => failure(message, cause),
+  }).pipe(Effect.flatMap((value) => decode(schema, value, message)));
+const validatePackageVersion = (value: unknown) =>
+  Schema.decodeUnknownEffect(PackageVersion)(value, {
+    onExcessProperty: "preserve",
+  }).pipe(
+    Effect.mapError((cause) =>
+      failure("Effect package version does not match the reference pin", cause)
+    ),
+  );
+const hexDigest = Effect.fn(function* (value: Uint8Array) {
+  return (yield* (yield* Crypto.Crypto).digest("SHA-256", value)).toHex();
+});
+const directorySync = (target: string) =>
+  Effect.scoped(Effect.gen(function* () {
+    const handle = yield* (yield* FileSystem).open(target, { flag: "r" });
+    yield* handle.sync;
+  })).pipe(
+    Effect.mapError((cause) =>
+      failure(`Cannot sync directory: ${target}`, cause)
+    ),
+  );
+
+export const statusDocument = (
+  state: StatusState,
+  current: string,
+): StatusDocument => ({
+  schema: 1,
+  state,
+  path: current,
+  version: EFFECT_VERSION,
+  commit: EFFECT_COMMIT,
+  checksum: ARCHIVE_SHA256,
+  url: ARCHIVE_URL,
+});
+
+export const archiveEntrySafe = (entry: string, type: string): boolean => {
+  const components = entry.split("/").filter((part) => part !== "");
+  return (type === "-" || type === "d") && !entry.startsWith("/") &&
+    components.length > 0 &&
+    components.every((part) => part !== "." && part !== ".." && part !== "");
+};
+
+const pathsFor = (root: string): ReferencePaths => ({
+  root,
+  versions: `${root}/versions`,
+  version: `${root}/versions/${EFFECT_COMMIT}`,
+  current: `${root}/current`,
+  ledger: `${root}/ownership.json`,
+  lock: `${root}/.install.lock`,
+});
+
+const launcherRoot = (): string => {
+  const explicit = Deno.env.get("EFFECT_V4_REFERENCE_ROOT") ?? "";
+  if (explicit !== "") return explicit;
+  const home = Deno.env.get("HOME") ?? "";
+  if (home === "") throw failure("Reference root is unavailable");
+  const mise = Deno.env.get("MISE_DATA_DIR") ?? `${home}/.local/share/mise`;
+  return `${mise}/effect-v4-reference`;
+};
+
+const physicalInfo = Effect.fn(function* (target: string) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const parent = path.dirname(target);
+  const names = yield* fs.readDirectory(parent).pipe(absent);
+  if (names === null || !names.includes(path.basename(target))) return null;
+  const info = yield* fs.stat(target).pipe(absent);
+  if (info === null) {
+    return yield* Effect.fail(failure(`Dangling path: ${target}`));
+  }
+  const real = yield* fs.realPath(target);
+  if (real !== target) {
+    return yield* Effect.fail(failure(`Symlink path: ${target}`));
+  }
+  return info;
+});
+
+const requirePhysical = Effect.fn(function* (
+  target: string,
+  type: "File" | "Directory",
+  mode?: number,
+) {
+  const info = yield* physicalInfo(target);
+  if (info === null || info.type !== type) {
+    return yield* Effect.fail(
+      failure(`Expected physical ${type.toLowerCase()}: ${target}`),
+    );
+  }
+  if (mode !== undefined && (info.mode & 0o7777) !== mode) {
+    return yield* Effect.fail(
+      failure(`Expected mode ${mode.toString(8)}: ${target}`),
+    );
+  }
+  return info;
+});
+
+const ensureRoot = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  if (
+    !path.isAbsolute(paths.root) || paths.root === path.parse(paths.root).root
+  ) {
+    return yield* Effect.fail(
+      failure("Reference root must be a non-root absolute path"),
+    );
+  }
+  const parent = path.dirname(paths.root);
+  const parentInfo = yield* fs.stat(parent);
+  if (
+    parentInfo.type !== "Directory" || (yield* fs.realPath(parent)) !== parent
+  ) {
+    return yield* Effect.fail(
+      failure("Reference root parent must be a physical directory"),
+    );
+  }
+  const root = yield* physicalInfo(paths.root);
+  if (root === null) yield* fs.makeDirectory(paths.root);
+  else if (root.type !== "Directory") {
+    return yield* Effect.fail(
+      failure("Reference root must be a physical directory"),
+    );
+  }
+  yield* requirePhysical(paths.root, "Directory");
+});
+
+const normalizeLedger = (wire: typeof LedgerWire.Type): Ledger => ({
+  schema: 1,
+  versions: [...wire.versions].sort(),
+  pending: typeof wire.pending === "string"
+    ? { operation: "publish", commit: wire.pending }
+    : wire.pending,
+});
+
+const readLedger = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  yield* requirePhysical(paths.ledger, "File", 0o600);
+  const wire = yield* parseJson(
+    LedgerWire,
+    yield* fs.readFileString(paths.ledger),
+    "Effect reference ownership ledger is invalid",
+  );
+  return normalizeLedger(wire);
+});
+
+const atomicWrite = Effect.fn(function* (
+  target: string,
+  bytes: Uint8Array,
+  mode: number,
+  token: string,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const parent = path.dirname(target);
+  const temporary = path.join(parent, `.${path.basename(target)}.${token}`);
+  yield* Effect.scoped(Effect.acquireUseRelease(
+    fs.open(temporary, { flag: "wx", mode }),
+    (file) =>
+      file.writeAll(bytes).pipe(
+        Effect.andThen(file.sync),
+        Effect.andThen(fs.chmod(temporary, mode)),
+        Effect.andThen(fs.rename(temporary, target)),
+      ),
+    () => fs.remove(temporary, { force: true }).pipe(Effect.orDie),
+  ));
+  yield* directorySync(parent);
+});
+
+const writeLedger = (paths: ReferencePaths, ledger: Ledger, token: string) =>
+  decode(Ledger, ledger, "Refusing to write an invalid ownership ledger").pipe(
+    Effect.flatMap((value) =>
+      atomicWrite(
+        paths.ledger,
+        encoder.encode(`${JSON.stringify(value)}\n`),
+        0o600,
+        token,
+      )
+    ),
+  );
+
+const readLink = Effect.fn(function* (target: string) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const names = yield* fs.readDirectory(path.dirname(target)).pipe(absent);
+  if (names === null || !names.includes(path.basename(target))) return null;
+  return yield* fs.readLink(target).pipe(
+    Effect.mapError((cause) =>
+      failure(`Expected lifecycle-owned symlink: ${target}`, cause)
+    ),
+  );
+});
+
+const collectTree = Effect.fn(function* (
+  root: string,
+  allowRootWritable = false,
+  allowMarker = false,
+  allowWritable = false,
+  projectImmutable = false,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const files: TreeFile[] = [];
+  const entries: InventoryEntry[] = [];
+  const paths: Array<readonly [string, number, "File" | "Directory"]> = [];
+  const visit = (target: string, relative: string): Effect.Effect<
+    void,
+    ReferenceError | PlatformError.PlatformError,
+    Crypto.Crypto | FileSystem | Path
+  > =>
+    Effect.gen(function* () {
+      const info = yield* physicalInfo(target);
+      if (info === null) {
+        return yield* Effect.fail(failure(`Missing tree entry: ${target}`));
+      }
+      if (relative === "" && info.type !== "Directory") {
+        return yield* Effect.fail(
+          failure(`Expected tree directory: ${target}`),
+        );
+      }
+      if (info.type !== "File" && info.type !== "Directory") {
+        return yield* Effect.fail(failure(`Unsupported tree entry: ${target}`));
+      }
+      if (
+        !allowWritable && (info.mode & 0o222) !== 0 &&
+        !(allowRootWritable && relative === "")
+      ) {
+        return yield* Effect.fail(
+          failure(`Writable immutable tree entry: ${target}`),
+        );
+      }
+      const mode = projectImmutable
+        ? (info.mode & 0o7777) & ~0o222
+        : relative === "" && allowRootWritable
+        ? (info.mode & 0o7777) & ~0o200
+        : info.mode & 0o7777;
+      paths.push([target, info.mode & 0o7777, info.type]);
+      if (info.type === "File") {
+        const name = path.basename(target);
+        if (name === RECEIPT_NAME && relative !== RECEIPT_NAME) {
+          return yield* Effect.fail(failure("Nested Effect reference receipt"));
+        }
+        if (
+          name === STAGE_MARKER && !(allowMarker && relative === STAGE_MARKER)
+        ) {
+          return yield* Effect.fail(
+            failure("Unexpected Effect reference stage marker"),
+          );
+        }
+        // The root receipt is self-referential ownership metadata; the stage
+        // marker is temporary token proof. Both are validated separately.
+        if (relative !== RECEIPT_NAME && relative !== STAGE_MARKER) {
+          const bytes = yield* fs.readFile(target);
+          files.push({ relative, bytes });
+          entries.push({
+            relative,
+            kind: "file",
+            mode,
+            digest: yield* hexDigest(bytes),
+          });
+        }
+        return;
+      }
+      entries.push({
+        relative: relative === "" ? "." : relative,
+        kind: "directory",
+        mode,
+        digest: null,
+      });
+      for (const name of (yield* fs.readDirectory(target)).toSorted()) {
+        yield* visit(
+          path.join(target, name),
+          relative === "" ? name : `${relative}/${name}`,
+        );
+      }
+    });
+  yield* visit(root, "");
+  return { entries: sortInventory(entries), files, paths };
+});
+
+const compareRelative = (left: string, right: string): number => {
+  const leftParts = left.split("/");
+  const rightParts = right.split("/");
+  for (
+    let index = 0;
+    index < Math.min(leftParts.length, rightParts.length);
+    index += 1
+  ) {
+    const leftPart = leftParts[index] ?? "";
+    const rightPart = rightParts[index] ?? "";
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1;
+  }
+  return leftParts.length - rightParts.length;
+};
+const sortInventory = (entries: readonly InventoryEntry[]) =>
+  entries.toSorted((left, right) =>
+    compareRelative(left.relative, right.relative)
+  );
+export const canonicalArchiveMode = (
+  kind: InventoryEntry["kind"],
+  mode: number,
+): number =>
+  kind === "directory" ? 0o555 : (mode & 0o111) !== 0 ? 0o555 : 0o444;
+const legacyTreeDigest = Effect.fn(function* (files: readonly TreeFile[]) {
+  const chunks = files.toSorted((left, right) =>
+    compareRelative(left.relative, right.relative)
+  ).flatMap((
+    { relative, bytes },
+  ) => [
+    encoder.encode(relative),
+    new Uint8Array([0]),
+    bytes,
+    new Uint8Array([0]),
+  ]);
+  const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const combined = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return yield* hexDigest(combined);
+});
+const inventoryDigest = (entries: readonly InventoryEntry[]) =>
+  hexDigest(encoder.encode(JSON.stringify(sortInventory(entries))));
+
+const normalizeExtractedTree = Effect.fn(function* (root: string) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const { paths } = yield* collectTree(root, true, true, true);
+  for (const [target, mode, kind] of [...paths].reverse()) {
+    const name = path.basename(target);
+    const normalized = kind === "Directory"
+      ? canonicalArchiveMode("directory", mode)
+      : name === STAGE_MARKER
+      ? 0o400
+      : name === RECEIPT_NAME
+      ? 0o444
+      : canonicalArchiveMode("file", mode);
+    yield* fs.chmod(target, normalized);
+  }
+});
+
+const applyExpectedModes = Effect.fn(function* (
+  root: string,
+  entries: readonly InventoryEntry[],
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  for (const entry of [...entries].reverse()) {
+    yield* fs.chmod(
+      entry.relative === "." ? root : path.join(root, entry.relative),
+      entry.mode,
+    );
+  }
+  yield* fs.chmod(path.join(root, RECEIPT_NAME), 0o444);
+});
+
+const inventoryContentMatches = (
+  actual: readonly InventoryEntry[],
+  expected: readonly InventoryEntry[],
+): boolean =>
+  actual.length === expected.length && actual.every((entry, index) => {
+    const owned = expected[index];
+    return owned !== undefined && entry.relative === owned.relative &&
+      entry.kind === owned.kind && entry.digest === owned.digest;
+  });
+
+const validateTree = Effect.fn(function* (
+  root: string,
+  commit: string,
+  allowRootWritable = false,
+  allowMarker = false,
+  allowWritable = false,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const inventory = yield* collectTree(
+    root,
+    allowRootWritable,
+    allowMarker,
+    allowWritable,
+  );
+  const receiptInfo = yield* requirePhysical(
+    path.join(root, RECEIPT_NAME),
+    "File",
+  );
+  const receipt = yield* parseJson(
+    ReceiptWire,
+    yield* fs.readFileString(path.join(root, RECEIPT_NAME)),
+    "Effect reference receipt is invalid",
+  );
+  const receiptMode = receiptInfo.mode & 0o7777;
+  if (
+    receipt.schema === 2
+      ? receiptMode !== 0o444
+      : (receiptMode & 0o222) !== 0 || (receiptMode & 0o400) === 0
+  ) {
+    return yield* Effect.fail(failure("Effect reference receipt mode changed"));
+  }
+  const contentDigest = receipt.schema === 1
+    ? yield* legacyTreeDigest(inventory.files)
+    : yield* inventoryDigest(inventory.entries);
+  if (
+    receipt.commit !== commit ||
+    receipt.url !==
+      `https://codeload.github.com/Effect-TS/effect/tar.gz/${commit}` ||
+    receipt.contentDigest !== contentDigest
+  ) {
+    return yield* Effect.fail(
+      failure(
+        `Effect reference tree provenance changed: expected ${receipt.contentDigest}, observed ${contentDigest}`,
+      ),
+    );
+  }
+  if (
+    receipt.schema === 2 &&
+    JSON.stringify(receipt.entries) !== JSON.stringify(inventory.entries)
+  ) {
+    return yield* Effect.fail(
+      failure("Effect reference inventory changed"),
+    );
+  }
+  for (const relative of ["LLMS.md", "MIGRATION.md"]) {
+    yield* requirePhysical(path.join(root, relative), "File");
+  }
+  for (
+    const relative of [
+      "migration",
+      "ai-docs/src",
+      "packages/effect/src",
+      "packages/effect/test",
+    ]
+  ) yield* requirePhysical(path.join(root, relative), "Directory");
+  return { inventory, receipt };
+});
+
+const validatePinnedVersion = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const { inventory, receipt } = yield* validateTree(
+    paths.version,
+    EFFECT_COMMIT,
+  );
+  if (
+    receipt.version !== EFFECT_VERSION || receipt.checksum !== ARCHIVE_SHA256
+  ) {
+    return yield* Effect.fail(
+      failure("Pinned Effect reference receipt changed"),
+    );
+  }
+  if (
+    receipt.schema === 1 &&
+    (yield* inventoryDigest(inventory.entries)) !== EXPECTED_INVENTORY_DIGEST
+  ) {
+    return yield* Effect.fail(
+      failure(
+        "Legacy Effect reference inventory does not match the pinned archive",
+      ),
+    );
+  }
+  const packageText = yield* fs.readFileString(
+    path.join(paths.version, "packages/effect/package.json"),
+  );
+  const packageDocument = yield* Effect.try({
+    try: () => JSON.parse(packageText),
+    catch: (cause) => failure("Effect package metadata is invalid", cause),
+  });
+  yield* validatePackageVersion(packageDocument);
+});
+
+const expectedPinnedInventory = Effect.fn(function* (
+  paths: ReferencePaths,
+  token: string,
+) {
+  const fs = yield* FileSystem;
+  const stage = `${paths.root}/.install.${token}`;
+  const archive = `${paths.root}/.archive.${token}`;
+  yield* fs.makeDirectory(stage);
+  yield* fs.writeFileString(`${stage}/${STAGE_MARKER}`, `${token}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  yield* downloadArchive(archive);
+  if ((yield* hexDigest(yield* fs.readFile(archive))) !== ARCHIVE_SHA256) {
+    return yield* Effect.fail(failure("Effect archive checksum mismatch"));
+  }
+  yield* inspectArchive(archive);
+  const extracted = yield* runProcess(TAR, [
+    "-xzf",
+    archive,
+    "--strip-components=1",
+    "--no-same-owner",
+    "-C",
+    stage,
+  ]);
+  if (extracted.code !== 0) {
+    return yield* Effect.fail(failure("Effect archive extraction failed"));
+  }
+  yield* normalizeExtractedTree(stage);
+  const inventory = yield* collectTree(stage, false, true);
+  if (
+    (yield* inventoryDigest(inventory.entries)) !== EXPECTED_INVENTORY_DIGEST
+  ) {
+    return yield* Effect.fail(
+      failure(
+        "Pinned archive inventory differs from the compiled ownership lock",
+      ),
+    );
+  }
+  yield* fs.remove(archive);
+  yield* chmodTree(stage, true);
+  yield* fs.remove(stage, { recursive: true });
+  return inventory.entries;
+});
+
+const migrateLegacyVersion = Effect.fn(function* (
+  paths: ReferencePaths,
+  commit: string,
+  token: string,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const directory = path.join(paths.versions, commit);
+  const validated = yield* validateTree(directory, commit);
+  if (validated.receipt.schema === 2) return;
+  if (commit !== EFFECT_COMMIT) {
+    return yield* Effect.fail(
+      failure(`Cannot migrate unpinned legacy Effect reference: ${commit}`),
+    );
+  }
+  const expected = yield* expectedPinnedInventory(paths, token);
+  if (!inventoryContentMatches(validated.inventory.entries, expected)) {
+    return yield* Effect.fail(
+      failure(
+        "Legacy Effect reference contains entries not owned by the pinned archive",
+      ),
+    );
+  }
+  yield* applyExpectedModes(directory, expected);
+  const normalized = (yield* collectTree(directory)).entries;
+  if (JSON.stringify(normalized) !== JSON.stringify(expected)) {
+    return yield* Effect.fail(
+      failure("Legacy Effect reference mode normalization failed"),
+    );
+  }
+  const root = expected.find((entry) => entry.relative === ".");
+  if (root?.kind !== "directory") {
+    return yield* Effect.fail(failure("Legacy Effect inventory has no root"));
+  }
+  const receipt: Receipt = {
+    schema: 2,
+    version: validated.receipt.version,
+    commit: validated.receipt.commit,
+    checksum: validated.receipt.checksum,
+    url: validated.receipt.url,
+    contentDigest: yield* inventoryDigest(expected),
+    entries: [...expected],
+  };
+  yield* fs.chmod(directory, root.mode | 0o200);
+  yield* atomicWrite(
+    path.join(directory, RECEIPT_NAME),
+    encoder.encode(`${JSON.stringify(receipt)}\n`),
+    0o444,
+    token,
+  );
+  yield* fs.chmod(directory, root.mode);
+  yield* directorySync(directory);
+});
+
+const migrateOwnedVersions = Effect.fn(function* (
+  paths: ReferencePaths,
+  token: string,
+) {
+  for (const commit of (yield* readLedger(paths)).versions) {
+    yield* migrateLegacyVersion(paths, commit, token);
+  }
+});
+
+const chmodTree = Effect.fn(function* (root: string, writable: boolean) {
+  const fs = yield* FileSystem;
+  const { paths } = yield* collectTree(root, true, true, true);
+  const ordered = writable ? paths : [...paths].reverse();
+  for (const [target, mode] of ordered) {
+    const next = writable ? mode | 0o200 : mode & ~0o222;
+    yield* fs.chmod(target, next);
+  }
+});
+
+const runProcess = (
+  executable: string,
+  args: readonly string[],
+  maxOutputBytes = 16 * 1024 * 1024,
+) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const result = yield* Effect.scoped(Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(executable, [...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          extendEnv: false,
+          env: PROCESS_ENVIRONMENT,
+        }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all([
+        Stream.mkString(Stream.decodeText(child.stdout)),
+        Stream.mkString(Stream.decodeText(child.stderr)),
+        child.exitCode,
+      ], { concurrency: 3 });
+      return { code: Number(code), stdout, stderr } satisfies ProcessResult;
+    }));
+    if (result.stdout.length + result.stderr.length > maxOutputBytes) {
+      return yield* Effect.fail(
+        failure(`Process output exceeded ${maxOutputBytes} bytes`),
+      );
+    }
+    return result;
+  }).pipe(Effect.mapError((cause) =>
+    cause instanceof ReferenceError
+      ? cause
+      : failure("Child process failed", cause)
+  ));
+
+const processAlive = (pid: number) =>
+  runProcess(KILL, ["-0", String(pid)], 4096).pipe(
+    Effect.map((result) => result.code === 0),
+  );
+
+const removeEmptyDirectory = Effect.fn(function* (
+  target: string,
+  optional = false,
+) {
+  const result = yield* runProcess(RMDIR, [target], 4096);
+  if (result.code !== 0 && !optional) {
+    return yield* Effect.fail(
+      failure(`Cannot remove owned directory: ${target}`),
+    );
+  }
+});
+
+const inspectArchive = Effect.fn(function* (archive: string) {
+  const namesResult = yield* runProcess(TAR, ["-tzf", archive]);
+  const detailsResult = yield* runProcess(TAR, ["-tvzf", archive]);
+  if (namesResult.code !== 0 || detailsResult.code !== 0) {
+    return yield* Effect.fail(
+      failure("Cannot inspect Effect reference archive"),
+    );
+  }
+  const names = namesResult.stdout.split("\n").filter(Boolean);
+  const detailLines = detailsResult.stdout.split("\n").filter(Boolean);
+  if (names.length === 0 || names.length !== detailLines.length) {
+    return yield* Effect.fail(
+      failure("Effect reference archive listing is ambiguous"),
+    );
+  }
+  const roots = new Set<string>();
+  for (const [index, name] of names.entries()) {
+    const type = detailLines[index]?.[0] ?? "";
+    if (!archiveEntrySafe(name, type)) {
+      return yield* Effect.fail(
+        failure(`Unsafe Effect archive entry: ${name}`),
+      );
+    }
+    const root = name.split("/")[0];
+    if (root) roots.add(root);
+  }
+  if (roots.size !== 1) {
+    return yield* Effect.fail(
+      failure("Effect reference archive has multiple roots"),
+    );
+  }
+});
+
+const downloadArchive = Effect.fn(function* (target: string) {
+  const fs = yield* FileSystem;
+  const response = yield* HttpClient.get(ARCHIVE_URL).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.mapError((cause) =>
+      failure("Effect archive download failed", cause)
+    ),
+  );
+  let downloaded = 0;
+  yield* Effect.scoped(Effect.acquireUseRelease(
+    fs.open(target, { flag: "wx", mode: 0o600 }),
+    (file) =>
+      response.stream.pipe(
+        Stream.runForEach((chunk) => {
+          downloaded += chunk.length;
+          return downloaded > MAX_ARCHIVE_BYTES
+            ? Effect.fail(failure("Effect archive exceeds the download limit"))
+            : file.writeAll(chunk).pipe(
+              Effect.mapError((cause) =>
+                failure("Cannot write Effect archive", cause)
+              ),
+            );
+        }),
+        Effect.andThen(file.sync),
+      ),
+    () => Effect.void,
+  ));
+});
+
+const createOwnerFile = Effect.fn(function* (
+  directory: string,
+  owner: LockOwner,
+) {
+  const fs = yield* FileSystem;
+  yield* fs.writeFileString(
+    `${directory}/owner.json`,
+    `${JSON.stringify(owner)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
+  yield* fs.chmod(`${directory}/owner.json`, 0o600);
+  yield* directorySync(directory);
+});
+
+const readOwner = Effect.fn(function* (directory: string) {
+  const fs = yield* FileSystem;
+  const entries = yield* fs.readDirectory(directory);
+  if (entries.length !== 1 || entries[0] !== "owner.json") {
+    return yield* Effect.fail(failure("Install lock contains unknown content"));
+  }
+  yield* requirePhysical(`${directory}/owner.json`, "File", 0o600);
+  return yield* parseJson(
+    LockOwner,
+    yield* fs.readFileString(`${directory}/owner.json`),
+    "Install lock owner is malformed",
+  );
+});
+
+const removeOwnedWork = Effect.fn(function* (
+  paths: ReferencePaths,
+  token: string,
+  commit: string,
+) {
+  const fs = yield* FileSystem;
+  const stage = `${paths.root}/.install.${token}`;
+  const archive = `${paths.root}/.archive.${token}`;
+  const link = `${paths.root}/.current.${token}`;
+  const stageInfo = yield* physicalInfo(stage);
+  if (stageInfo !== null) {
+    if (stageInfo.type !== "Directory") {
+      return yield* Effect.fail(failure("Owned install stage changed type"));
+    }
+    const marker = yield* physicalInfo(`${stage}/${STAGE_MARKER}`).pipe(
+      Effect.result,
+    );
+    let proved = false;
+    if (marker._tag === "Success" && marker.success?.type === "File") {
+      proved =
+        (yield* fs.readFileString(`${stage}/${STAGE_MARKER}`)).trim() === token;
+    }
+    if (!proved) {
+      const ledger = yield* readLedger(paths).pipe(Effect.result);
+      proved = ledger._tag === "Success" &&
+        ledger.success.pending?.operation === "publish" &&
+        ledger.success.pending.commit === commit &&
+        (yield* validateTree(stage, commit, true).pipe(Effect.result))._tag ===
+          "Success";
+    }
+    if (!proved) {
+      return yield* Effect.fail(
+        failure("Owned install stage lost its ownership proof"),
+      );
+    }
+    yield* chmodTree(stage, true);
+    yield* fs.remove(stage, { recursive: true });
+  }
+  const archiveInfo = yield* physicalInfo(archive);
+  if (archiveInfo !== null) {
+    if (archiveInfo.type !== "File") {
+      return yield* Effect.fail(failure("Owned archive changed type"));
+    }
+    yield* fs.remove(archive);
+  }
+  const linkTarget = yield* readLink(link).pipe(Effect.result);
+  if (linkTarget._tag === "Failure") return yield* linkTarget.failure;
+  if (linkTarget.success !== null) {
+    if (linkTarget.success !== `versions/${commit}`) {
+      return yield* Effect.fail(failure("Owned pointer stage changed"));
+    }
+    yield* fs.remove(link);
+  }
+});
+
+const reclaimCandidates = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  const names = yield* fs.readDirectory(paths.root);
+  for (const name of names) {
+    const match = /^\.install-lock-candidate\.([1-9][0-9]*)\.([A-Za-z0-9._-]+)$/
+      .exec(name);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const token = `${match[1]}.${match[2]}`;
+    if (yield* processAlive(pid)) continue;
+    const candidate = `${paths.root}/${name}`;
+    const info = yield* physicalInfo(candidate).pipe(Effect.result);
+    if (info._tag === "Failure" || info.success?.type !== "Directory") continue;
+    const entries = yield* fs.readDirectory(candidate);
+    if (entries.length === 0) {
+      yield* removeEmptyDirectory(candidate);
+      continue;
+    }
+    if (entries.length !== 1 || entries[0] !== "owner.json") continue;
+    const owner = yield* readOwner(candidate).pipe(Effect.result);
+    if (owner._tag === "Failure" || owner.success.token !== token) continue;
+    yield* fs.remove(`${candidate}/owner.json`);
+    yield* removeEmptyDirectory(candidate);
+  }
+});
+
+const reclaimLock = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  const info = yield* physicalInfo(paths.lock);
+  if (info === null) return true;
+  if (info.type !== "Directory") {
+    return yield* Effect.fail(
+      failure("Install lock is not a physical directory"),
+    );
+  }
+  const entries = yield* fs.readDirectory(paths.lock);
+  if (entries.length === 0) {
+    yield* removeEmptyDirectory(paths.lock);
+    return true;
+  }
+  const owner = yield* readOwner(paths.lock);
+  if (yield* processAlive(owner.pid)) return false;
+  yield* Effect.sleep(Duration.millis(50));
+  const current = yield* readOwner(paths.lock).pipe(Effect.result);
+  if (current._tag === "Failure" || current.success.token !== owner.token) {
+    return false;
+  }
+  yield* removeOwnedWork(paths, owner.token, owner.commit);
+  yield* fs.remove(`${paths.lock}/owner.json`);
+  yield* removeEmptyDirectory(paths.lock);
+  return true;
+});
+
+const acquireLock = Effect.fn(function* (paths: ReferencePaths) {
+  const fs = yield* FileSystem;
+  const crypto = yield* Crypto.Crypto;
+  const token = `${Deno.pid}.${(yield* crypto.randomUUIDv4)}`;
+  const owner: LockOwner = {
+    schema: 1,
+    pid: Deno.pid,
+    token,
+    commit: EFFECT_COMMIT,
+  };
+  yield* reclaimCandidates(paths);
+  const candidate = `${paths.root}/.install-lock-candidate.${token}`;
+  return yield* Effect.acquireUseRelease(
+    fs.makeDirectory(candidate).pipe(
+      Effect.andThen(createOwnerFile(candidate, owner)),
+      Effect.as(candidate),
+    ),
+    () =>
+      Effect.gen(function* () {
+        for (let remaining = 300; remaining > 0; remaining -= 1) {
+          const renamed = yield* fs.rename(candidate, paths.lock).pipe(
+            Effect.result,
+          );
+          if (renamed._tag === "Success") {
+            return { token, owner } satisfies HeldLock;
+          }
+          if (yield* reclaimLock(paths)) {
+            continue;
+          }
+          yield* Effect.sleep(Duration.millis(100));
+        }
+        return yield* Effect.fail(
+          failure("Timed out waiting for the Effect reference install lock"),
+        );
+      }),
+    () =>
+      physicalInfo(candidate).pipe(
+        Effect.flatMap((info) =>
+          info === null ? Effect.void : readOwner(candidate).pipe(
+            Effect.flatMap((candidateOwner) =>
+              candidateOwner.token !== token
+                ? Effect.fail(
+                  failure("Install lock candidate ownership changed"),
+                )
+                : fs.remove(candidate, { recursive: true }).pipe(
+                  Effect.mapError((cause) =>
+                    failure("Cannot remove lock candidate", cause)
+                  ),
+                )
+            ),
+          )
+        ),
+        Effect.orDie,
+      ),
+  );
+});
+
+const releaseLock = Effect.fn(
+  function* (paths: ReferencePaths, held: HeldLock) {
+    const fs = yield* FileSystem;
+    yield* removeOwnedWork(paths, held.token, EFFECT_COMMIT);
+    const owner = yield* readOwner(paths.lock);
+    if (owner.token !== held.token) {
+      return yield* Effect.fail(failure("Install lock ownership changed"));
+    }
+    yield* fs.remove(`${paths.lock}/owner.json`);
+    yield* removeEmptyDirectory(paths.lock);
+  },
+);
+
+const withLock = <A, E, R>(
+  paths: ReferencePaths,
+  use: (held: HeldLock) => Effect.Effect<A, E, R>,
+) =>
+  Effect.acquireUseRelease(
+    acquireLock(paths),
+    use,
+    (held) => releaseLock(paths, held),
+  );
+
+const prepareRoot = Effect.fn(function* (paths: ReferencePaths, token: string) {
+  const fs = yield* FileSystem;
+  const versions = yield* physicalInfo(paths.versions);
+  if (versions === null) yield* fs.makeDirectory(paths.versions);
+  else if (versions.type !== "Directory") {
+    return yield* Effect.fail(
+      failure("Reference versions path must be a physical directory"),
+    );
+  }
+  const ledger = yield* physicalInfo(paths.ledger);
+  if (ledger === null) {
+    yield* writeLedger(
+      paths,
+      { schema: 1, versions: [], pending: null },
+      token,
+    );
+  }
+  yield* readLedger(paths);
+});
+
+const removalEntryMatches = (
+  actual: InventoryEntry,
+  expected: InventoryEntry,
+): boolean =>
+  actual.relative === expected.relative && actual.kind === expected.kind &&
+  actual.digest === expected.digest &&
+  (actual.kind === "directory" ? actual.mode & ~0o200 : actual.mode) ===
+    expected.mode;
+
+const cleanupTombstone = Effect.fn(function* (
+  paths: ReferencePaths,
+  pending: typeof RemovePending.Type,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const tombstone = path.join(paths.versions, pending.tombstone);
+  const info = yield* physicalInfo(tombstone);
+  if (info === null) return;
+  if (info.type !== "Directory") {
+    return yield* Effect.fail(failure("Owned removal tombstone changed type"));
+  }
+  const actual = yield* collectTree(tombstone, true, false, true);
+  const expected = new Map(
+    pending.entries.map((entry) => [entry.relative, entry]),
+  );
+  for (const entry of actual.entries) {
+    const owned = expected.get(entry.relative);
+    if (owned === undefined || !removalEntryMatches(entry, owned)) {
+      return yield* Effect.fail(
+        failure(`Owned removal tombstone changed at ${entry.relative}`),
+      );
+    }
+  }
+  const receiptPath = path.join(tombstone, RECEIPT_NAME);
+  const receiptInfo = yield* physicalInfo(receiptPath);
+  if (receiptInfo !== null) {
+    if (receiptInfo.type !== "File" || (receiptInfo.mode & 0o7777) !== 0o444) {
+      return yield* Effect.fail(failure("Owned removal receipt changed type"));
+    }
+    const receipt = yield* parseJson(
+      Receipt,
+      yield* fs.readFileString(receiptPath),
+      "Owned removal receipt is invalid",
+    );
+    if (
+      receipt.commit !== pending.commit ||
+      receipt.contentDigest !== pending.contentDigest ||
+      JSON.stringify(receipt.entries) !== JSON.stringify(pending.entries)
+    ) {
+      return yield* Effect.fail(failure("Owned removal receipt changed"));
+    }
+  }
+  const directories = actual.entries.filter((entry) =>
+    entry.kind === "directory"
+  );
+  for (const entry of directories) {
+    const target = entry.relative === "."
+      ? tombstone
+      : path.join(tombstone, entry.relative);
+    yield* fs.chmod(target, entry.mode | 0o200);
+  }
+  for (const entry of actual.entries.filter((entry) => entry.kind === "file")) {
+    yield* fs.remove(path.join(tombstone, entry.relative));
+  }
+  if (receiptInfo !== null) yield* fs.remove(receiptPath);
+  for (
+    const entry of directories.toSorted((left, right) =>
+      right.relative.split("/").length - left.relative.split("/").length ||
+      compareRelative(right.relative, left.relative)
+    )
+  ) {
+    yield* removeEmptyDirectory(
+      entry.relative === "." ? tombstone : path.join(tombstone, entry.relative),
+    );
+  }
+  yield* directorySync(paths.versions);
+});
+
+const finishPendingRemoval = Effect.fn(function* (
+  paths: ReferencePaths,
+  pending: typeof RemovePending.Type,
+  token: string,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* Path;
+  const stable = path.join(paths.versions, pending.commit);
+  const tombstone = path.join(paths.versions, pending.tombstone);
+  const stableInfo = yield* physicalInfo(stable);
+  const tombstoneInfo = yield* physicalInfo(tombstone);
+  if (stableInfo !== null && tombstoneInfo !== null) {
+    return yield* Effect.fail(
+      failure("Removal has both stable and tombstone trees"),
+    );
+  }
+  if (stableInfo !== null) {
+    const validated = yield* validateTree(stable, pending.commit);
+    if (
+      validated.receipt.schema !== 2 ||
+      validated.receipt.contentDigest !== pending.contentDigest ||
+      JSON.stringify(validated.inventory.entries) !==
+        JSON.stringify(pending.entries)
+    ) {
+      return yield* Effect.fail(
+        failure("Stable removal tree changed before detach"),
+      );
+    }
+    yield* fs.rename(stable, tombstone);
+    yield* directorySync(paths.versions);
+  }
+  yield* cleanupTombstone(paths, pending);
+  const ledger = yield* readLedger(paths);
+  yield* writeLedger(paths, {
+    schema: 1,
+    versions: ledger.versions.filter((version) => version !== pending.commit),
+    pending: null,
+  }, token);
+});
+
+const removeOwnedVersion = Effect.fn(function* (
+  paths: ReferencePaths,
+  commit: string,
+  token: string,
+) {
+  const directory = `${paths.versions}/${commit}`;
+  const ledger = yield* readLedger(paths);
+  if (!ledger.versions.includes(commit)) {
+    return yield* Effect.fail(
+      failure(`Version is not ledger-owned: ${commit}`),
+    );
+  }
+  const validated = yield* validateTree(directory, commit);
+  if (validated.receipt.schema !== 2) {
+    return yield* Effect.fail(
+      failure("Legacy version must migrate before removal"),
+    );
+  }
+  const pending: typeof RemovePending.Type = {
+    operation: "remove",
+    commit,
+    tombstone: `.remove.${commit}.${token}`,
+    contentDigest: validated.receipt.contentDigest,
+    entries: [...validated.inventory.entries],
+  };
+  yield* writeLedger(paths, { ...ledger, pending }, token);
+  yield* finishPendingRemoval(paths, pending, token);
+});
+
+const recoverPending = Effect.fn(
+  function* (paths: ReferencePaths, token: string) {
+    const ledger = yield* readLedger(paths);
+    const pending = ledger.pending;
+    if (pending === null) return;
+    const directory = `${paths.versions}/${pending.commit}`;
+    if (pending.operation === "remove") {
+      yield* finishPendingRemoval(paths, pending, token);
+      return;
+    }
+    const info = yield* physicalInfo(directory);
+    if (info === null) {
+      yield* writeLedger(paths, { ...ledger, pending: null }, token);
+      return;
+    }
+    yield* validateTree(directory, pending.commit, true);
+    yield* chmodTree(directory, false);
+    yield* validateTree(directory, pending.commit);
+    yield* writeLedger(paths, {
+      schema: 1,
+      versions: [...new Set([...ledger.versions, pending.commit])].sort(),
+      pending: null,
+    }, token);
+  },
+);
+
+const validateOwnedVersions = Effect.fn(function* (paths: ReferencePaths) {
+  const ledger = yield* readLedger(paths);
+  for (const commit of ledger.versions) {
+    yield* validateTree(`${paths.versions}/${commit}`, commit);
+  }
+});
+
+const validatePointer = Effect.fn(function* (paths: ReferencePaths) {
+  const target = yield* readLink(paths.current);
+  if (target === null) return;
+  const match = /^versions\/([a-f0-9]{40})$/.exec(target);
+  if (!match) {
+    return yield* Effect.fail(
+      failure("Stable reference pointer is not lifecycle-owned"),
+    );
+  }
+  const ledger = yield* readLedger(paths);
+  if (!ledger.versions.includes(match[1])) {
+    return yield* Effect.fail(
+      failure("Stable reference pointer is not ledger-owned"),
+    );
+  }
+});
+
+const prepareStage = Effect.fn(
+  function* (paths: ReferencePaths, token: string) {
+    const fs = yield* FileSystem;
+    const path = yield* Path;
+    const stage = `${paths.root}/.install.${token}`;
+    const archive = `${paths.root}/.archive.${token}`;
+    yield* fs.makeDirectory(stage);
+    yield* fs.writeFileString(`${stage}/${STAGE_MARKER}`, `${token}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    yield* downloadArchive(archive);
+    if ((yield* hexDigest(yield* fs.readFile(archive))) !== ARCHIVE_SHA256) {
+      return yield* Effect.fail(failure("Effect archive checksum mismatch"));
+    }
+    yield* inspectArchive(archive);
+    const extracted = yield* runProcess(TAR, [
+      "-xzf",
+      archive,
+      "--strip-components=1",
+      "--no-same-owner",
+      "-C",
+      stage,
+    ]);
+    if (extracted.code !== 0) {
+      return yield* Effect.fail(failure("Effect archive extraction failed"));
+    }
+    yield* fs.remove(archive);
+    const pendingReceipt: Receipt = {
+      schema: 2,
+      version: EFFECT_VERSION,
+      commit: EFFECT_COMMIT,
+      checksum: ARCHIVE_SHA256,
+      url: ARCHIVE_URL,
+      contentDigest: "0".repeat(64),
+      entries: [],
+    };
+    yield* fs.writeFileString(
+      path.join(stage, RECEIPT_NAME),
+      `${JSON.stringify(pendingReceipt)}\n`,
+      { flag: "wx", mode: 0o644 },
+    );
+    yield* normalizeExtractedTree(stage);
+    yield* fs.chmod(stage, 0o755);
+    yield* fs.chmod(path.join(stage, RECEIPT_NAME), 0o644);
+    const { entries } = yield* collectTree(stage, true, true, true);
+    const receipt = {
+      ...pendingReceipt,
+      contentDigest: yield* inventoryDigest(entries),
+      entries,
+    };
+    yield* fs.writeFileString(
+      path.join(stage, RECEIPT_NAME),
+      `${JSON.stringify(receipt)}\n`,
+    );
+    yield* fs.chmod(path.join(stage, RECEIPT_NAME), 0o444);
+    const packageText = yield* fs.readFileString(
+      path.join(stage, "packages/effect/package.json"),
+    );
+    const packageDocument = yield* Effect.try({
+      try: () => JSON.parse(packageText),
+      catch: (cause) => failure("Effect package metadata is invalid", cause),
+    });
+    yield* validatePackageVersion(packageDocument);
+    const rootMode = entries.find((entry) => entry.relative === ".")?.mode;
+    if (rootMode === undefined) {
+      return yield* Effect.fail(
+        failure("Prepared Effect inventory has no root"),
+      );
+    }
+    yield* fs.chmod(stage, rootMode | 0o200);
+    yield* validateTree(stage, EFFECT_COMMIT, true, true);
+    return stage;
+  },
+);
+
+const publishStage = Effect.fn(function* (
+  paths: ReferencePaths,
+  token: string,
+  stage: string,
+) {
+  const fs = yield* FileSystem;
+  const ledger = yield* readLedger(paths);
+  yield* writeLedger(paths, {
+    ...ledger,
+    pending: { operation: "publish", commit: EFFECT_COMMIT },
+  }, token);
+  yield* fs.chmod(`${stage}/${STAGE_MARKER}`, 0o600);
+  yield* fs.remove(`${stage}/${STAGE_MARKER}`);
+  yield* validateTree(stage, EFFECT_COMMIT, true);
+  yield* fs.rename(stage, paths.version);
+  yield* directorySync(paths.versions);
+  yield* chmodTree(paths.version, false);
+  yield* directorySync(paths.version);
+  yield* validatePinnedVersion(paths);
+  const pending = yield* readLedger(paths);
+  yield* writeLedger(paths, {
+    schema: 1,
+    versions: [...new Set([...pending.versions, EFFECT_COMMIT])].sort(),
+    pending: null,
+  }, token);
+});
+
+const publishCurrent = Effect.fn(
+  function* (paths: ReferencePaths, token: string) {
+    const fs = yield* FileSystem;
+    const target = yield* readLink(paths.current).pipe(Effect.result);
+    if (target._tag === "Failure") return yield* target.failure;
+    const temporary = `${paths.root}/.current.${token}`;
+    yield* fs.symlink(`versions/${EFFECT_COMMIT}`, temporary);
+    yield* fs.rename(temporary, paths.current);
+    yield* directorySync(paths.root);
+  },
+);
+
+const observeStatus = Effect.fn(function* (paths: ReferencePaths) {
+  const target = yield* readLink(paths.current).pipe(Effect.result);
+  if (target._tag === "Failure") {
+    return statusDocument("invalid", paths.current);
+  }
+  if (target.success === null) return statusDocument("missing", paths.current);
+  if (target.success !== `versions/${EFFECT_COMMIT}`) {
+    return statusDocument("stale", paths.current);
+  }
+  const valid = yield* Effect.gen(function* () {
+    const ledger = yield* readLedger(paths);
+    if (ledger.pending !== null || !ledger.versions.includes(EFFECT_COMMIT)) {
+      return false;
+    }
+    yield* validatePinnedVersion(paths);
+    return true;
+  }).pipe(Effect.catch(() => Effect.succeed(false)));
+  return statusDocument(valid ? "current" : "invalid", paths.current);
+});
+
+const install = Effect.fn(function* (paths: ReferencePaths) {
+  yield* ensureRoot(paths);
+  return yield* withLock(paths, (held) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem;
+      yield* prepareRoot(paths, held.token);
+      yield* recoverPending(paths, held.token);
+      yield* migrateOwnedVersions(paths, held.token);
+      yield* validateOwnedVersions(paths);
+      yield* validatePointer(paths);
+      const version = yield* physicalInfo(paths.version);
+      if (version !== null) {
+        const ledger = yield* readLedger(paths);
+        if (!ledger.versions.includes(EFFECT_COMMIT)) {
+          return yield* Effect.fail(
+            failure("Pinned version path exists without ledger ownership"),
+          );
+        }
+        yield* validatePinnedVersion(paths);
+      } else {
+        const stage = yield* prepareStage(paths, held.token);
+        yield* publishStage(paths, held.token, stage);
+      }
+      if ((yield* readLink(paths.current)) !== `versions/${EFFECT_COMMIT}`) {
+        yield* publishCurrent(paths, held.token);
+      }
+      for (const commit of (yield* readLedger(paths)).versions) {
+        if (commit !== EFFECT_COMMIT) {
+          yield* removeOwnedVersion(paths, commit, held.token);
+        }
+      }
+      yield* fs.chmod(paths.ledger, 0o600);
+      return statusDocument("current", paths.current);
+    }));
+});
+
+const removeReference = Effect.fn(function* (paths: ReferencePaths) {
+  yield* ensureRoot(paths);
+  const status = yield* withLock(paths, (held) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem;
+      yield* prepareRoot(paths, held.token);
+      yield* recoverPending(paths, held.token);
+      yield* migrateOwnedVersions(paths, held.token);
+      yield* validateOwnedVersions(paths);
+      yield* validatePointer(paths);
+      if ((yield* readLink(paths.current)) !== null) {
+        yield* fs.remove(paths.current);
+      }
+      for (const commit of [...(yield* readLedger(paths)).versions]) {
+        yield* removeOwnedVersion(paths, commit, held.token);
+      }
+      yield* fs.remove(paths.ledger);
+      yield* directorySync(paths.root);
+      yield* removeEmptyDirectory(paths.versions, true);
+      return statusDocument("removed", paths.current);
+    }));
+  yield* removeEmptyDirectory(paths.root, true);
+  return status;
+});
+
+const usage = `Usage:
+  df-effect-v4-reference install
+  df-effect-v4-reference remove
+  df-effect-v4-reference status
+  df-effect-v4-reference path
+
+Description:
+  Reconciles the immutable Effect v4 source reference owned by the
+  \`effect-v4:install\` mise task. The corpus stays outside skill and OpenCode
+  config trees and is never added to PATH.\n`;
+
+const operationGrants = (operation: Operation): readonly string[] => {
+  const parent = dirname(operation.root);
+  const mutable = operation.command === "install" ||
+    operation.command === "remove";
+  return [
+    `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+    `--allow-read=${parent},${operation.root}`,
+    ...(mutable ? [`--allow-write=${operation.root}`] : []),
+    "--allow-sys=uid",
+    ...(mutable ? [`--allow-run=${TAR},${KILL},${RMDIR}`] : []),
+    ...(mutable ? ["--allow-net=codeload.github.com"] : []),
+  ];
+};
+
+const validateLauncherRoot = (root: string): void => {
+  if (
+    !isAbsolute(root) || normalize(root) !== root ||
+    root === parsePath(root).root ||
+    /[,\p{Cc}\p{Cf}]/u.test(root)
+  ) throw failure("Reference root must be a safe non-root absolute path");
+};
+
+const broadPermissionGranted = (): boolean =>
+  (["read", "write", "env", "net", "run"] as const).some((name) =>
+    Deno.permissions.querySync({ name }).state === "granted"
+  );
+
+const operationalPermissionsValid = (operation: Operation): boolean => {
+  if (broadPermissionGranted()) return false;
+  const parent = dirname(operation.root);
+  const mutable = operation.command === "install" ||
+    operation.command === "remove";
+  const required = [
+    Deno.permissions.querySync({ name: "env", variable: OPERATION_ENV }).state,
+    Deno.permissions.querySync({ name: "env", variable: MSGPACK_ENV }).state,
+    Deno.permissions.querySync({ name: "env", variable: NODE_COVERAGE_ENV })
+      .state,
+    Deno.permissions.querySync({ name: "read", path: parent }).state,
+    Deno.permissions.querySync({ name: "read", path: operation.root }).state,
+    Deno.permissions.querySync({ name: "sys", kind: "uid" }).state,
+    ...(mutable
+      ? [
+        Deno.permissions.querySync({ name: "write", path: operation.root })
+          .state,
+        Deno.permissions.querySync({ name: "run", command: TAR }).state,
+        Deno.permissions.querySync({ name: "run", command: KILL }).state,
+        Deno.permissions.querySync({ name: "run", command: RMDIR }).state,
+        Deno.permissions.querySync({ name: "net", host: "codeload.github.com" })
+          .state,
+      ]
+      : []),
+  ];
+  if (required.some((state) => state !== "granted")) return false;
+  if (!mutable) {
+    return Deno.permissions.querySync({ name: "write", path: operation.root })
+          .state !==
+        "granted" &&
+      Deno.permissions.querySync({ name: "net", host: "codeload.github.com" })
+          .state !==
+        "granted" &&
+      [TAR, KILL, RMDIR].every((command) =>
+        Deno.permissions.querySync({ name: "run", command }).state !== "granted"
+      );
+  }
+  return true;
+};
+
+const launchOperational = async (operation: Operation): Promise<never> => {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--no-prompt",
+      ...operationGrants(operation),
+      fileURLToPath(import.meta.url),
+      operation.command,
+    ],
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    clearEnv: true,
+    env: {
+      [OPERATION_ENV]: JSON.stringify(operation),
+      [MSGPACK_ENV]: "true",
+      DENO_NO_PACKAGE_JSON: "1",
+    },
+  });
+  const status = await child.spawn().status;
+  Deno.exit(status.code);
+};
+
+const commandProgram = Effect.fn(function* (operation: Operation) {
+  const paths = pathsFor(operation.root);
+  const command = operation.command;
+  if (command === "status") {
+    const status = yield* observeStatus(paths);
+    yield* Console.log(JSON.stringify(status));
+    Deno.exitCode = status.state === "current" ? 0 : 1;
+    return;
+  }
+  if (command === "path") {
+    const status = yield* observeStatus(paths);
+    if (status.state === "current") yield* Console.log(paths.current);
+    else Deno.exitCode = 1;
+    return;
+  }
+  const status = command === "install"
+    ? yield* install(paths)
+    : yield* removeReference(paths);
+  yield* Console.log(JSON.stringify(status));
+});
+
+if (import.meta.main) {
+  const requested = Deno.args[0];
+  if (requested === "-h" || requested === "--help") {
+    console.log(usage.trimEnd());
+    Deno.exit(0);
+  }
+  if (!["install", "remove", "status", "path"].includes(requested ?? "")) {
+    console.error(usage.trimEnd());
+    Deno.exit(2);
+  }
+  const marker = Deno.env.get(OPERATION_ENV) ?? "";
+  if (marker === "") {
+    try {
+      const root = launcherRoot();
+      validateLauncherRoot(root);
+      const operation = Schema.decodeUnknownSync(Operation)({
+        schema: 1,
+        command: requested,
+        root,
+      });
+      await launchOperational(operation);
+    } catch (cause) {
+      console.error(
+        `error ${
+          cause instanceof ReferenceError
+            ? cause.message
+            : "invalid launcher state"
+        }`,
+      );
+      Deno.exit(1);
+    }
+  }
+  let operation: Operation;
+  try {
+    operation = Schema.decodeUnknownSync(Operation)(JSON.parse(marker));
+  } catch {
+    console.error("error invalid operational invocation marker");
+    Deno.exit(1);
+  }
+  if (
+    operation.command !== requested || !operationalPermissionsValid(operation)
+  ) {
+    console.error("error unexpected operational invocation state");
+    Deno.exit(1);
+  }
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error("error unexpected Effect reference rejection");
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error("error unexpected Effect reference defect");
+    Deno.exit(1);
+  });
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+  );
+  commandProgram(operation).pipe(
+    Effect.catch((error) =>
+      Console.error(
+        `error ${
+          error instanceof ReferenceError ? error.message : String(error)
+        }`,
+      ).pipe(
+        Effect.tap(() => Effect.sync(() => Deno.exitCode = 1)),
+      )
+    ),
+    Effect.catchCause(() =>
+      Console.error("error unexpected Effect reference failure").pipe(
+        Effect.tap(() => Effect.sync(() => Deno.exitCode = 1)),
+      )
+    ),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+    NodeRuntime.runMain,
+  );
+}
+
+// === Tests =================================================================
+// deno test --config deno.json home/private_dot_local/bin/executable_df-effect-v4-reference
+// deno test --config deno.json --allow-read --allow-write --allow-env --allow-sys=uid --allow-run=deno,/usr/bin/tar,/bin/kill,/bin/rmdir --allow-net=codeload.github.com home/private_dot_local/bin/executable_df-effect-v4-reference
+
+import { strict as assert } from "node:assert";
+
+Deno.test("status contract preserves every lifecycle field and state", () => {
+  assert.deepEqual(statusDocument("current", "/reference/current"), {
+    schema: 1,
+    state: "current",
+    path: "/reference/current",
+    version: EFFECT_VERSION,
+    commit: EFFECT_COMMIT,
+    checksum: ARCHIVE_SHA256,
+    url: ARCHIVE_URL,
+  });
+});
+
+Deno.test("archive inspection rejects escaping and non-regular entries", () => {
+  assert.deepEqual([
+    archiveEntrySafe("effect/file.ts", "-"),
+    archiveEntrySafe("/etc/passwd", "-"),
+    archiveEntrySafe("effect/../escape", "-"),
+    archiveEntrySafe("effect/link", "l"),
+  ], [true, false, false, false]);
+});
+
+Deno.test("ledger decoder upgrades the historical pending commit", () => {
+  const wire = Schema.decodeUnknownSync(LedgerWire)({
+    schema: 1,
+    versions: [],
+    pending: EFFECT_COMMIT,
+  });
+  assert.deepEqual(normalizeLedger(wire), {
+    schema: 1,
+    versions: [],
+    pending: { operation: "publish", commit: EFFECT_COMMIT },
+  });
+});
+
+Deno.test("ledger rejects duplicate ownership", () => {
+  assert.equal(
+    Schema.is(Ledger)({
+      schema: 1,
+      versions: [EFFECT_COMMIT, EFFECT_COMMIT],
+      pending: null,
+    }),
+    false,
+  );
+});
+
+Deno.test("legacy help bytes remain exact", () => {
+  assert.equal(
+    usage,
+    `Usage:
+  df-effect-v4-reference install
+  df-effect-v4-reference remove
+  df-effect-v4-reference status
+  df-effect-v4-reference path
+
+Description:
+  Reconciles the immutable Effect v4 source reference owned by the
+  \`effect-v4:install\` mise task. The corpus stays outside skill and OpenCode
+  config trees and is never added to PATH.\n`,
+  );
+});
+
+Deno.test("permission phases grant only command capabilities", () => {
+  assert.deepEqual(
+    operationGrants({
+      schema: 1,
+      command: "status",
+      root: "/physical/reference",
+    }),
+    [
+      `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+      "--allow-read=/physical,/physical/reference",
+      "--allow-sys=uid",
+    ],
+  );
+  assert.deepEqual(
+    operationGrants({
+      schema: 1,
+      command: "install",
+      root: "/physical/reference",
+    }),
+    [
+      `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+      "--allow-read=/physical,/physical/reference",
+      "--allow-write=/physical/reference",
+      "--allow-sys=uid",
+      `--allow-run=${TAR},${KILL},${RMDIR}`,
+      "--allow-net=codeload.github.com",
+    ],
+  );
+});
+
+Deno.test("archive modes ignore umask while preserving executable files", () => {
+  assert.deepEqual([
+    canonicalArchiveMode("directory", 0o755),
+    canonicalArchiveMode("directory", 0o700),
+    canonicalArchiveMode("file", 0o644),
+    canonicalArchiveMode("file", 0o600),
+    canonicalArchiveMode("file", 0o755),
+    canonicalArchiveMode("file", 0o700),
+  ], [0o555, 0o555, 0o444, 0o444, 0o555, 0o555]);
+});
+
+const integrationPermissions = [
+  Deno.permissions.querySync({ name: "read" }).state,
+  Deno.permissions.querySync({ name: "write" }).state,
+  Deno.permissions.querySync({ name: "env" }).state,
+  Deno.permissions.querySync({ name: "sys", kind: "uid" }).state,
+  Deno.permissions.querySync({ name: "run", command: TAR }).state,
+  Deno.permissions.querySync({ name: "run", command: KILL }).state,
+  Deno.permissions.querySync({ name: "run", command: RMDIR }).state,
+  Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state,
+  Deno.permissions.querySync({
+    name: "net",
+    host: "codeload.github.com",
+  }).state,
+].every((state) => state === "granted");
+
+const runGoldenCli = async (
+  args: readonly string[],
+  root: string,
+): Promise<
+  { readonly code: number; readonly stdout: string; readonly stderr: string }
+> => {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--no-prompt",
+      "--allow-env=HOME,MISE_DATA_DIR,EFFECT_V4_REFERENCE_ROOT,DF_EFFECT_V4_OPERATION",
+      "--allow-run=deno",
+      fileURLToPath(import.meta.url),
+      ...args,
+    ],
+    env: { EFFECT_V4_REFERENCE_ROOT: root },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return {
+    code: output.code,
+    stdout: new TextDecoder().decode(output.stdout),
+    stderr: new TextDecoder().decode(output.stderr),
+  };
+};
+
+Deno.test({
+  name: "integration: legacy CLI stdout, stderr and exits remain golden",
+  ignore: !integrationPermissions,
+  fn: async () => {
+    const temporary = await Deno.makeTempDir({ prefix: "df-effect-cli-" });
+    const root = `${await Deno.realPath(temporary)}/reference`;
+    try {
+      assert.deepEqual(await runGoldenCli(["--help"], root), {
+        code: 0,
+        stdout: usage,
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli([], root), {
+        code: 2,
+        stdout: "",
+        stderr: usage,
+      });
+      assert.deepEqual(await runGoldenCli(["status"], root), {
+        code: 1,
+        stdout: `${
+          JSON.stringify(statusDocument("missing", `${root}/current`))
+        }\n`,
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli(["path"], root), {
+        code: 1,
+        stdout: "",
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli(["remove"], root), {
+        code: 0,
+        stdout: `${
+          JSON.stringify(statusDocument("removed", `${root}/current`))
+        }\n`,
+        stderr: "",
+      });
+    } finally {
+      await Deno.remove(temporary, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "integration: disposable install, recovery, ownership, status, path and remove matrix",
+  ignore: !integrationPermissions,
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const NodeServices = await import(
+      "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    );
+    const program = Effect.scoped(Effect.gen(function* () {
+      const fs = yield* FileSystem;
+      const temporary = yield* fs.makeTempDirectoryScoped({
+        prefix: "df-effect-v4-reference-",
+      });
+      const root = `${yield* fs.realPath(temporary)}/reference`;
+      const paths = pathsFor(root);
+      yield* fs.makeDirectory(root);
+      const staleToken = "99999999.stale-owner";
+      const preOwnerToken = "99999998.pre-owner";
+      const malformedToken = "99999997.malformed";
+      yield* fs.makeDirectory(
+        `${root}/.install-lock-candidate.${preOwnerToken}`,
+      );
+      yield* fs.makeDirectory(
+        `${root}/.install-lock-candidate.${malformedToken}`,
+      );
+      yield* fs.writeFileString(
+        `${root}/.install-lock-candidate.${malformedToken}/owner.json`,
+        "",
+      );
+      yield* fs.makeDirectory(paths.lock);
+      yield* fs.writeFileString(
+        `${paths.lock}/owner.json`,
+        `${
+          JSON.stringify({
+            schema: 1,
+            pid: 99999999,
+            token: staleToken,
+            commit: EFFECT_COMMIT,
+          })
+        }\n`,
+        { mode: 0o600 },
+      );
+      yield* fs.chmod(`${paths.lock}/owner.json`, 0o600);
+      yield* fs.makeDirectory(`${root}/.install.${staleToken}`);
+      yield* fs.writeFileString(
+        `${root}/.install.${staleToken}/${STAGE_MARKER}`,
+        `${staleToken}\n`,
+      );
+      yield* fs.writeFileString(`${root}/.archive.${staleToken}`, "partial");
+      yield* fs.symlink(
+        `versions/${EFFECT_COMMIT}`,
+        `${root}/.current.${staleToken}`,
+      );
+
+      assert.equal((yield* observeStatus(paths)).state, "missing");
+      assert.equal((yield* install(paths)).state, "current");
+      assert.equal((yield* observeStatus(paths)).state, "current");
+      assert.equal(paths.current, `${root}/current`);
+      const installed = yield* validateTree(paths.version, EFFECT_COMMIT);
+      assert.equal(installed.receipt.schema, 2);
+      if (installed.receipt.schema !== 2) {
+        return yield* Effect.fail(
+          failure("Expected installed inventory receipt"),
+        );
+      }
+      assert.equal(installed.receipt.contentDigest, EXPECTED_INVENTORY_DIGEST);
+      const executableEntry = installed.receipt.entries.find((entry) =>
+        entry.kind === "file" && entry.mode === 0o555
+      );
+      assert.ok(executableEntry);
+      assert.equal(
+        (yield* fs.stat(`${paths.version}/${executableEntry.relative}`)).mode &
+          0o7777,
+        0o555,
+      );
+      const modeDriftPath = `${paths.version}/LLMS.md`;
+      yield* fs.chmod(modeDriftPath, 0o400);
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      yield* fs.chmod(modeDriftPath, 0o444);
+      assert.equal((yield* observeStatus(paths)).state, "current");
+      const legacy: typeof LegacyReceipt.Type = {
+        schema: 1,
+        version: installed.receipt.version,
+        commit: installed.receipt.commit,
+        checksum: installed.receipt.checksum,
+        url: installed.receipt.url,
+        contentDigest: yield* legacyTreeDigest(installed.inventory.files),
+      };
+      const installedRootMode = (yield* fs.stat(paths.version)).mode & 0o7777;
+      const installedReceiptPath = `${paths.version}/${RECEIPT_NAME}`;
+      yield* fs.chmod(paths.version, installedRootMode | 0o200);
+      yield* fs.chmod(installedReceiptPath, 0o644);
+      yield* fs.writeFileString(
+        installedReceiptPath,
+        `${JSON.stringify(legacy)}\n`,
+      );
+      yield* fs.chmod(installedReceiptPath, 0o444);
+      const legacyUnknown = `${paths.version}/legacy-unknown-empty`;
+      yield* fs.makeDirectory(legacyUnknown, { mode: 0o555 });
+      yield* fs.chmod(paths.version, installedRootMode);
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      assert.equal((yield* install(paths).pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* fs.stat(legacyUnknown)).type, "Directory");
+      assert.equal(
+        JSON.parse(yield* fs.readFileString(installedReceiptPath)).schema,
+        1,
+      );
+      yield* fs.chmod(paths.version, installedRootMode | 0o200);
+      yield* removeEmptyDirectory(legacyUnknown);
+      for (const entry of [...installed.receipt.entries].reverse()) {
+        const target = entry.relative === "."
+          ? paths.version
+          : `${paths.version}/${entry.relative}`;
+        yield* fs.chmod(
+          target,
+          entry.kind === "directory"
+            ? 0o500
+            : entry.mode === 0o555
+            ? 0o500
+            : 0o400,
+        );
+      }
+      yield* fs.chmod(installedReceiptPath, 0o400);
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      assert.equal((yield* install(paths)).state, "current");
+      assert.equal(
+        JSON.parse(yield* fs.readFileString(installedReceiptPath)).schema,
+        2,
+      );
+      assert.equal((yield* install(paths)).state, "current");
+      assert.equal(
+        (yield* fs.readDirectory(root)).some((name) =>
+          name.includes(staleToken) || name.includes(preOwnerToken)
+        ),
+        false,
+      );
+      assert.equal(
+        (yield* fs.stat(`${root}/.install-lock-candidate.${malformedToken}`))
+          .type,
+        "Directory",
+      );
+
+      const ledger = yield* readLedger(paths);
+      yield* writeLedger(paths, {
+        schema: 1,
+        versions: [],
+        pending: { operation: "publish", commit: EFFECT_COMMIT },
+      }, "test-recovery");
+      yield* fs.chmod(paths.version, installedRootMode | 0o200);
+      assert.equal((yield* install(paths)).state, "current");
+      assert.deepEqual(yield* readLedger(paths), ledger);
+
+      const originalLedger = yield* fs.readFile(paths.ledger);
+      yield* fs.writeFileString(paths.ledger, "{malformed\n");
+      yield* fs.chmod(paths.ledger, 0o600);
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      yield* fs.writeFile(paths.ledger, originalLedger);
+      yield* fs.chmod(paths.ledger, 0o600);
+
+      const llms = `${paths.version}/LLMS.md`;
+      const originalLlms = yield* fs.readFile(llms);
+      const originalMode = (yield* fs.stat(llms)).mode & 0o7777;
+      yield* fs.chmod(llms, originalMode | 0o200);
+      yield* fs.writeFileString(llms, "changed\n");
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      assert.equal(
+        (yield* removeReference(paths).pipe(Effect.result))._tag,
+        "Failure",
+      );
+      yield* fs.writeFile(llms, originalLlms);
+      yield* fs.chmod(llms, originalMode);
+      assert.equal((yield* observeStatus(paths)).state, "current");
+
+      const oldCommit = "1111111111111111111111111111111111111111";
+      const oldPath = `${paths.versions}/${oldCommit}`;
+      yield* fs.copy(paths.version, oldPath, { preserveTimestamps: true });
+      yield* chmodTree(oldPath, true);
+      const oldReceiptPath = `${oldPath}/${RECEIPT_NAME}`;
+      const oldReceipt = yield* parseJson(
+        Receipt,
+        yield* fs.readFileString(oldReceiptPath),
+        "fixture receipt",
+      );
+      yield* fs.writeFileString(
+        oldReceiptPath,
+        `${
+          JSON.stringify({
+            ...oldReceipt,
+            commit: oldCommit,
+            url:
+              `https://codeload.github.com/Effect-TS/effect/tar.gz/${oldCommit}`,
+          })
+        }\n`,
+      );
+      yield* chmodTree(oldPath, false);
+      const oldValidated = yield* validateTree(oldPath, oldCommit);
+      assert.equal(oldValidated.receipt.schema, 2);
+      if (oldValidated.receipt.schema !== 2) {
+        return yield* Effect.fail(failure("Expected current receipt fixture"));
+      }
+      const oldPending: typeof RemovePending.Type = {
+        operation: "remove",
+        commit: oldCommit,
+        tombstone: `.remove.${oldCommit}.test-prune-recovery`,
+        contentDigest: oldValidated.receipt.contentDigest,
+        entries: [...oldValidated.inventory.entries],
+      };
+      yield* writeLedger(paths, {
+        schema: 1,
+        versions: [EFFECT_COMMIT, oldCommit].sort(),
+        pending: oldPending,
+      }, "test-prune-recovery");
+      const oldTombstone = `${paths.versions}/${oldPending.tombstone}`;
+      yield* fs.rename(oldPath, oldTombstone);
+      const removed = oldPending.entries.find((entry) => entry.kind === "file");
+      assert.ok(removed);
+      const removedParent = removed.relative.includes("/")
+        ? removed.relative.slice(0, removed.relative.lastIndexOf("/"))
+        : ".";
+      const parentEntry = oldPending.entries.find((entry) =>
+        entry.relative === removedParent && entry.kind === "directory"
+      );
+      assert.ok(parentEntry);
+      yield* fs.chmod(
+        removedParent === "."
+          ? oldTombstone
+          : `${oldTombstone}/${removedParent}`,
+        parentEntry.mode | 0o200,
+      );
+      yield* fs.remove(`${oldTombstone}/${removed.relative}`);
+      assert.equal((yield* install(paths)).state, "current");
+      assert.equal(yield* physicalInfo(oldPath), null);
+
+      const versionMode = (yield* fs.stat(paths.version)).mode & 0o7777;
+      const unexpected = `${paths.version}/unexpected-empty`;
+      yield* fs.chmod(paths.version, versionMode | 0o200);
+      yield* fs.makeDirectory(unexpected, { mode: 0o555 });
+      yield* fs.chmod(paths.version, versionMode);
+      assert.equal((yield* observeStatus(paths)).state, "invalid");
+      assert.equal(
+        (yield* removeReference(paths).pipe(Effect.result))._tag,
+        "Failure",
+      );
+      assert.equal((yield* fs.stat(unexpected)).type, "Directory");
+      yield* fs.chmod(paths.version, versionMode | 0o200);
+      yield* removeEmptyDirectory(unexpected);
+      yield* fs.chmod(paths.version, versionMode);
+
+      yield* fs.writeFileString(`${root}/foreign`, "preserve\n");
+      assert.equal((yield* removeReference(paths)).state, "removed");
+      assert.equal(yield* fs.readFileString(`${root}/foreign`), "preserve\n");
+    }));
+    await Effect.runPromise(program.pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+    ));
+  },
+});

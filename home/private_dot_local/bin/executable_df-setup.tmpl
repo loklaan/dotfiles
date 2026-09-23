@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }} --allow-read --allow-env --allow-net=api.github.com
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,{{ .chezmoi.homeDir }}/.local/bin/df-effect-v4-reference,{{ .chezmoi.homeDir }}/.local/bin/df-skills{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }}{{ if lookPath "pgrep" }},pgrep{{ end }} --allow-read --allow-env --allow-net=api.github.com
 
 // deno-fmt-ignore-file
 // df-setup — dotfiles health-check doctor (Deno + Effect v4).
@@ -6,8 +6,21 @@
 // `--probe-bws` returns 0=ok, 1=missing, 2=invalid; `chezmoi-preflight.sh`
 // depends on these exit codes, so keep them and the output/prose stable.
 
-import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.112";
+import {
+  Config,
+  Effect,
+  Layer,
+  Runtime,
+  Schema,
+  Sink,
+  Stream,
+} from "npm:effect@4.0.0-rc.112";
+import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-rc.112/unstable/process";
 
 const DESCRIPTION = `Checks dotfiles configuration status and prints instructions for
   completing setup. Run it after an initial dotfiles installation.`;
@@ -52,6 +65,11 @@ interface RunResult {
   readonly stderr: string;
 }
 
+type DoctorServices =
+  | FileSystem.FileSystem
+  | ChildProcessSpawner.ChildProcessSpawner;
+type ProcessExitCode = 0 | 1 | 2;
+
 type Color = "red" | "green" | "yellow" | "cyan" | "white";
 type Style = "bold" | "dim";
 
@@ -65,22 +83,10 @@ const COLORS: Record<Color, string> = {
 };
 
 let colorSupport: boolean | undefined;
+let skillsConverged = true;
+let effectReferenceConverged = true;
 
-const supportedColors = (): boolean => {
-  if (colorSupport !== undefined) return colorSupport;
-  try {
-    const result = new Deno.Command("tput", {
-      args: ["colors"],
-      stdout: "piped",
-      stderr: "null",
-    }).outputSync();
-    const colors = Number(new TextDecoder().decode(result.stdout).trim());
-    colorSupport = Number.isFinite(colors) && colors > 8;
-  } catch {
-    colorSupport = false;
-  }
-  return colorSupport;
-};
+const supportedColors = (): boolean => colorSupport ?? false;
 
 const colorize = (color: Color, styles: readonly Style[], text: string): string => {
   if (!supportedColors()) return text;
@@ -108,26 +114,38 @@ const run = (
   cmd: string,
   args: readonly string[],
   options: Partial<{ env: Record<string, string> }> = {},
-): Effect.Effect<RunResult> =>
-  Effect.tryPromise({
-    try: async () => {
-      const command = new Deno.Command(cmd, {
-        args: [...args],
-        stdout: "piped",
-        stderr: "piped",
-        ...(options.env ? { env: options.env } : {}),
-      });
-      const { code, stdout, stderr } = await command.output();
-      const dec = new TextDecoder();
-      return {
-        ok: code === 0,
-        code,
-        stdout: dec.decode(stdout),
-        stderr: dec.decode(stderr),
-      };
-    },
-    catch: () => undefined,
+): Effect.Effect<RunResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(cmd, args, {
+        env: options.env,
+        extendEnv: true,
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    const collected = yield* Effect.all({
+      stdout: handle.stdout.pipe(
+        Stream.decodeText(),
+        Stream.runFold(() => "", (output, chunk) => output + chunk),
+      ),
+      stderr: handle.stderr.pipe(
+        Stream.decodeText(),
+        Stream.runFold(() => "", (output, chunk) => output + chunk),
+      ),
+      code: handle.exitCode,
+    }, { concurrency: "unbounded" });
+    const code = Number(collected.code);
+    return {
+      ok: code === 0,
+      code,
+      stdout: collected.stdout,
+      stderr: collected.stderr,
+    };
   }).pipe(
+    Effect.scoped,
     Effect.orElseSucceed((): RunResult => ({
       ok: false,
       code: 127,
@@ -136,25 +154,38 @@ const run = (
     })),
   );
 
-const fileExists = (path: string): Effect.Effect<boolean> =>
-  Effect.tryPromise({
-    try: async () => {
-      const stat = await Deno.stat(path);
-      return stat.isFile;
-    },
-    catch: () => false,
+const detectColorSupport: Effect.Effect<
+  void,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = run("tput", ["colors"]).pipe(
+  Effect.map((result) => {
+    const colors = Number(result.stdout.trim());
+    colorSupport = result.ok && Number.isFinite(colors) && colors > 8;
+  }),
+);
+
+const fileExists = (
+  path: string,
+): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(path);
+    return info.type === "File";
   }).pipe(Effect.orElseSucceed(() => false));
 
-const pathExists = (path: string): Effect.Effect<boolean> =>
-  Effect.tryPromise({
-    try: async () => {
-      await Deno.stat(path);
-      return true;
-    },
-    catch: () => false,
+const pathExists = (
+  path: string,
+): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.stat(path);
+    return true;
   }).pipe(Effect.orElseSucceed(() => false));
 
-const hasCommand = (cmd: string): Effect.Effect<boolean> =>
+const hasCommand = (
+  cmd: string,
+): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     if (cmd.includes("/")) return yield* pathExists(cmd);
     const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
@@ -165,10 +196,12 @@ const hasCommand = (cmd: string): Effect.Effect<boolean> =>
     return false;
   }).pipe(Effect.orElseSucceed(() => false));
 
-const readTextFile = (path: string): Effect.Effect<string | null> =>
-  Effect.tryPromise({
-    try: () => Deno.readTextFile(path),
-    catch: () => null,
+const readTextFile = (
+  path: string,
+): Effect.Effect<string | null, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
   }).pipe(Effect.orElseSucceed(() => null));
 
 const parseJson = (text: string | null): unknown => {
@@ -180,13 +213,224 @@ const parseJson = (text: string | null): unknown => {
   }
 };
 
+interface EffectReferenceHealth {
+  readonly state: string;
+  readonly version: string;
+  readonly commit: string;
+}
+
+const effectReferenceHealth: Effect.Effect<
+  EffectReferenceHealth,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const result = yield* run("{{ .chezmoi.homeDir }}/.local/bin/df-effect-v4-reference", ["status"]);
+  const parsed = parseJson(result.stdout);
+  const entry = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+  return {
+    state: typeof entry.state === "string" ? entry.state : "unavailable",
+    version: typeof entry.version === "string" ? entry.version : "unknown",
+    commit: typeof entry.commit === "string" ? entry.commit : "unknown",
+  };
+});
+
+const SkillBoundary = Schema.Struct({
+  healthy: Schema.NullOr(Schema.Boolean),
+  error: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(Schema.String),
+});
+const SkillObservation = Schema.Struct({
+  manifestDigest: Schema.NullOr(Schema.String),
+  sources: Schema.Record(Schema.String, SkillBoundary),
+  providers: Schema.Record(Schema.String, SkillBoundary),
+  registry: SkillBoundary,
+  packages: SkillBoundary,
+  reference: SkillBoundary,
+  pendingOwnership: Schema.Unknown,
+  healthy: Schema.Boolean,
+});
+type SkillObservation = typeof SkillObservation.Type;
+type SkillBoundary = typeof SkillBoundary.Type;
+type SkillsState = "converged" | "disabled" | "stale" | "pending-recovery" | "invalid" | "unavailable";
+interface SkillsHealth {
+  readonly state: SkillsState;
+  readonly detail: string;
+  readonly action: string | null;
+  readonly manifest: string | null;
+  readonly boundary: string | null;
+}
+
+const disabledSkillsHealth: SkillsHealth = {
+  state: "disabled",
+  detail: "No schema-2 skills manifest is projected on this machine",
+  action: null,
+  manifest: null,
+  boundary: null,
+};
+const decodeSkillObservation = (text: string): SkillObservation | null => {
+  try {
+    return Schema.decodeUnknownSync(Schema.fromJsonString(SkillObservation))(text, {
+      onExcessProperty: "error",
+    });
+  } catch {
+    return null;
+  }
+};
+const firstSkillBoundary = (
+  observation: SkillObservation,
+): readonly [string, SkillBoundary] | null => {
+  if (observation.pendingOwnership !== null) {
+    return ["ownership", {
+      healthy: false,
+      error: "PendingProvider",
+      message: "A provider ownership transition is incomplete",
+    }];
+  }
+  for (const [group, statuses] of [
+    ["sources", observation.sources],
+    ["providers", observation.providers],
+  ] as const) {
+    for (const id of Object.keys(statuses).sort()) {
+      if (statuses[id].healthy === false) return [`${group}/${id}`, statuses[id]];
+    }
+  }
+  for (const [boundary, status] of [
+    ["registry", observation.registry],
+    ["packages", observation.packages],
+    ["reference", observation.reference],
+  ] as const) {
+    if (status.healthy === false) return [boundary, status];
+  }
+  return null;
+};
+const isProviderBoundary = (boundary: string): boolean =>
+  boundary === "provider" || boundary === "providers" || boundary.startsWith("providers/");
+const isSourceBoundary = (boundary: string): boolean =>
+  boundary === "source" || boundary === "sources" || boundary.startsWith("sources/");
+const classifySkillObservation = (
+  observation: SkillObservation,
+): SkillsHealth => {
+  const failed = firstSkillBoundary(observation);
+  const expectedHealthy = failed === null;
+  if (observation.healthy !== expectedHealthy) {
+    return {
+      state: "invalid",
+      detail: "The observe envelope contradicts its boundary statuses",
+      action: "Run: df-skills observe; inspect the machine-readable envelope",
+      manifest: observation.manifestDigest,
+      boundary: "envelope",
+    };
+  }
+  if (failed === null) {
+    return {
+      state: "converged",
+      detail: "Sources, providers, registry links, and packages are healthy",
+      action: null,
+      manifest: observation.manifestDigest,
+      boundary: null,
+    };
+  }
+  const [boundary, status] = failed;
+  const unavailable = status.error === "NotFound" &&
+      (isProviderBoundary(boundary) || isSourceBoundary(boundary)) ||
+    isProviderBoundary(boundary) && [
+      "ExecutableMissing",
+      "ExecutableChanged",
+      "VersionMismatch",
+      "CommandFailed",
+      "CommandTimeout",
+      "OutputLimit",
+      "ObservationInvalid",
+    ].includes(status.error ?? "");
+  const state: SkillsState = boundary === "ownership"
+    ? "pending-recovery"
+    : unavailable
+    ? "unavailable"
+    : "stale";
+  const action = boundary === "ownership"
+    ? "Run: df-skills reconcile"
+    : isSourceBoundary(boundary)
+    ? "Restore the declared source through chezmoi, then run: df-skills observe"
+    : isProviderBoundary(boundary)
+    ? "Correct the provider contract or executable, then run: df-skills reconcile"
+    : boundary === "registry"
+    ? "Run: df-skills reconcile"
+    : boundary === "packages"
+    ? "Run: df-skills package"
+    : "Run: mise run effect-v4:install";
+  return {
+    state,
+    detail: `${status.error ?? "Unhealthy"}: ${status.message ?? "The boundary is not healthy"}`,
+    action,
+    manifest: observation.manifestDigest,
+    boundary,
+  };
+};
+const classifyObservedSkills = (
+  observed: RunResult,
+  observation: SkillObservation,
+): SkillsHealth => observed.ok === observation.healthy
+  ? classifySkillObservation(observation)
+  : {
+    state: "invalid",
+    detail: "The df-skills exit code contradicts its observe envelope",
+    action: "Run: df-skills observe; inspect the exit code and machine-readable envelope",
+    manifest: observation.manifestDigest,
+    boundary: "exit",
+  };
+const failedSkillsHealth = (observed: RunResult): SkillsHealth => {
+  const failure = parseJson(observed.stderr);
+  const record = failure !== null && typeof failure === "object" && !Array.isArray(failure)
+    ? failure as Record<string, unknown>
+    : {};
+  const error = typeof record.error === "string" ? record.error : observed.code === 127 ? "ExecutableMissing" : "ObservationInvalid";
+  const boundary = typeof record.boundary === "string" ? record.boundary : "runtime";
+  const message = typeof record.message === "string" ? record.message : "df-skills did not return a valid observe envelope";
+  const missingTool = error === "ExecutableMissing" || error === "RuntimeUnavailable";
+  const unavailable = missingTool || error === "NotFound" &&
+    (isProviderBoundary(boundary) || isSourceBoundary(boundary));
+  return {
+    state: unavailable ? "unavailable" : "invalid",
+    detail: `${error}: ${message}`,
+    action: missingTool
+      ? "Install df-skills, then rerun: df-setup"
+      : isProviderBoundary(boundary)
+      ? "Correct the provider contract or executable, then run: df-skills reconcile"
+      : isSourceBoundary(boundary)
+      ? "Restore the declared source through chezmoi, then run: df-skills observe"
+      : boundary === "manifest"
+      ? "Correct the projected schema-2 manifest, then run: chezmoi diff"
+      : "Run: df-skills observe; inspect the machine-readable failure",
+    manifest: null,
+    boundary,
+  };
+};
+const skillsHealth: Effect.Effect<SkillsHealth, never, DoctorServices> = Effect.gen(function* () {
+  const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+  const root = yield* Config.string("DF_SETUP_SKILLS_ROOT").pipe(Config.withDefault(home), Effect.orElseSucceed(() => home));
+  const stateHome = root === home
+    ? yield* Config.string("XDG_STATE_HOME").pipe(Config.withDefault(`${root}/.local/state`), Effect.orElseSucceed(() => `${root}/.local/state`))
+    : `${root}/.local/state`;
+  const manifestPath = `${root}/.config/dotfiles/skill-lifecycle.json`;
+  const stateDir = `${stateHome}/dotfiles/skill-lifecycle`;
+  const skillsPath = `${root}/.agents/skills`;
+  if (!(yield* pathExists(manifestPath))) return disabledSkillsHealth;
+  const observed = yield* run("{{ .chezmoi.homeDir }}/.local/bin/df-skills", ["observe", "--manifest", manifestPath, "--state-dir", stateDir, "--skills-path", skillsPath, "--package-dir", `${root}/.cache/claude-skill-packs`]);
+  const observation = decodeSkillObservation(observed.stdout);
+  return observation === null
+    ? failedSkillsHealth(observed)
+    : classifyObservedSkills(observed, observation);
+});
+
 const trimAllWhitespace = (value: string): string => value.replace(/\s/g, "");
 
 // Probes the BWS token by fetching a canary secret. Returns:
 //   0  — token file present AND server accepts it (ok)
 //   1  — token file missing (missing)
 //   2  — token file present AND server rejects it (invalid)
-const checkBwsToken: Effect.Effect<ProbeResult> = Effect.gen(function* () {
+const checkBwsToken: Effect.Effect<ProbeResult, never, DoctorServices> = Effect.gen(function* () {
   const tokenPath = yield* bwsTokenPath;
   if (!(yield* fileExists(tokenPath))) {
     return { state: "missing", exitCode: 1 } as const;
@@ -204,7 +448,7 @@ const checkBwsToken: Effect.Effect<ProbeResult> = Effect.gen(function* () {
   // Pass the token via BWS_ACCESS_TOKEN env (never argv) so it cannot leak
   // through `ps`/procfs to other local users (CWE-214).
   const probe = yield* run("bws", ["secret", "get", BWS_PROBE_SECRET_ID], {
-    env: { ...Deno.env.toObject(), BWS_ACCESS_TOKEN: token },
+    env: { BWS_ACCESS_TOKEN: token },
   });
 
   if (probe.ok) return { state: "ok", exitCode: 0 } as const;
@@ -220,7 +464,11 @@ const checkBwsToken: Effect.Effect<ProbeResult> = Effect.gen(function* () {
 
 {{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
 
-const checkPaseoDaemon: Effect.Effect<boolean> = run("systemctl", [
+const checkPaseoDaemon: Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = run("systemctl", [
   "--user",
   "is-active",
   "--quiet",
@@ -240,7 +488,7 @@ interface OrcaVersionState {
 // `pitchfork start df-orca-server`. `pitchfork status` exits 0 and prints
 // `Status: running` for a live daemon, so we match that explicitly rather
 // than trusting exit code alone (a stopped/failed daemon still exits 0).
-const checkOrcaServer: Effect.Effect<boolean> = Effect.gen(function* () {
+const checkOrcaServer: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
   const pitchfork = (yield* hasCommand("pitchfork"))
     ? "pitchfork"
     : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
@@ -251,7 +499,7 @@ const checkOrcaServer: Effect.Effect<boolean> = Effect.gen(function* () {
 
 // Returns "<installed>|<latest>" — values may be empty on failure.
 // Latest is best-effort (network + GitHub API); failures yield empty string.
-const orcaVersionState: Effect.Effect<OrcaVersionState> = Effect.gen(function* () {
+const orcaVersionState: Effect.Effect<OrcaVersionState, never, DoctorServices> = Effect.gen(function* () {
   let installed = "";
   let latest = "";
 
@@ -285,7 +533,7 @@ const orcaVersionState: Effect.Effect<OrcaVersionState> = Effect.gen(function* (
 
 {{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
-const checkOpencodeServe: Effect.Effect<boolean> = Effect.gen(function* () {
+const checkOpencodeServe: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
   const pitchfork = (yield* hasCommand("pitchfork"))
     ? "pitchfork"
     : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
@@ -297,7 +545,7 @@ const checkOpencodeServe: Effect.Effect<boolean> = Effect.gen(function* () {
 
 {{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
 
-const checkCodeServer: Effect.Effect<boolean> = Effect.gen(function* () {
+const checkCodeServer: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
   const pitchfork = (yield* hasCommand("pitchfork"))
     ? "pitchfork"
     : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
@@ -309,7 +557,11 @@ const checkCodeServer: Effect.Effect<boolean> = Effect.gen(function* () {
 
 {{- if eq .chezmoi.os "linux" }}
 
-const checkMcpproxy: Effect.Effect<boolean> = run("pitchfork", [
+const checkMcpproxy: Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = run("pitchfork", [
   "status",
   "df-mcpproxy",
 ]).pipe(Effect.map((result) => result.ok));
@@ -317,7 +569,11 @@ const checkMcpproxy: Effect.Effect<boolean> = run("pitchfork", [
 
 {{- if eq .machineProfile "work" }}
 
-const checkGhAuth: Effect.Effect<boolean> = run("gh", ["auth", "status"]).pipe(
+const checkGhAuth: Effect.Effect<
+  boolean,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = run("gh", ["auth", "status"]).pipe(
   Effect.map((result) => result.ok && `${result.stdout}${result.stderr}`.includes("Logged in")),
 );
 
@@ -328,7 +584,11 @@ const workConfigVars = [
   ["jetbrainsLicenseServer", '{{ "{{" }} .jetbrainsLicenseServer {{ "}}" }}'],
 ] as const;
 
-const checkWorkConfig: Effect.Effect<ReadonlyArray<string>> = Effect.gen(function* () {
+const checkWorkConfig: Effect.Effect<
+  ReadonlyArray<string>,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
   const missing: string[] = [];
   for (const [name, template] of workConfigVars) {
     const result = yield* run("chezmoi", ["execute-template", template]);
@@ -349,7 +609,7 @@ const printStatus = (
   hasGhAuth: boolean,
   workMissing: ReadonlyArray<string>,
 {{- end }}
-): Effect.Effect<void> =>
+): Effect.Effect<void, never, DoctorServices> =>
   Effect.gen(function* () {
     printPlain();
     print("white", ["bold"], "  Dotfiles Configuration Status");
@@ -524,6 +784,8 @@ const printStatus = (
 {{- end }}
 
     // ── Drift report (read-only view of last drift:check) ─────────
+    yield* printEffectReferenceHealth();
+
     printPlain();
     const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
     const driftCache = `${home}/.cache/dotfiles/drift.json`;
@@ -548,11 +810,13 @@ const printStatus = (
     } else {
       print("white", ["dim"], "  ⋯ Tool drift (no cache)");
 {{- if eq .chezmoi.os "darwin" }}
-      print("white", ["dim"], "    Run: mise run drift:check (also runs daily via launchd agent)");
+      print("white", ["dim"], "    Run: mise run drift:check (also runs daily via Pitchfork cron daemon df-drift-notify)");
 {{- else }}
       print("white", ["dim"], "    Run: mise run drift:check");
 {{- end }}
     }
+
+    yield* printLifecycleHealth();
 
     printPlain();
   });
@@ -565,7 +829,57 @@ const decodeDrift = (parsed: unknown): DriftReport => {
   }
 };
 
-const hostname: Effect.Effect<string> = run("hostname", []).pipe(
+const printEffectReferenceHealth = (): Effect.Effect<
+  void,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const health = yield* effectReferenceHealth;
+    effectReferenceConverged = health.state === "current";
+    printPlain();
+    if (effectReferenceConverged) {
+      print("green", [], `  ✓ Effect v4 reference (${health.version})`);
+      print("white", ["dim"], `    Mise-owned source at ${health.commit.slice(0, 12)}`);
+      return;
+    }
+    print("yellow", [], `  ✗ Effect v4 reference (${health.state})`);
+    print("white", ["dim"], "    Run: mise run effect-v4:install");
+  });
+
+const printLifecycleHealth = (): Effect.Effect<void, never, DoctorServices> =>
+  Effect.gen(function* () {
+    const health = yield* skillsHealth;
+    skillsConverged = health.state === "converged" || health.state === "disabled";
+    printPlain();
+    const symbol = health.state === "converged"
+      ? "✓"
+      : health.state === "disabled"
+      ? "⋯"
+      : "✗";
+    const color: Color = health.state === "converged"
+      ? "green"
+      : health.state === "disabled"
+      ? "white"
+      : "yellow";
+    print(color, [], `  ${symbol} Skills (${health.state})`);
+    print("white", ["dim"], `    ${health.detail}`);
+    if (health.manifest !== null) {
+      print("white", ["dim"], `    Manifest schema 2: ${health.manifest}`);
+    }
+    if (health.boundary !== null) {
+      print("white", ["dim"], `    Boundary: ${health.boundary}`);
+    }
+    if (health.action !== null) {
+      print("white", ["dim"], `    ${health.action}`);
+    }
+  });
+
+const hostname: Effect.Effect<
+  string,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> = run("hostname", []).pipe(
   Effect.map((result) => result.ok ? result.stdout.trim() : ""),
 );
 
@@ -576,12 +890,12 @@ const printInstructions = (
   hasGhAuth: boolean,
   workMissing: ReadonlyArray<string>,
 {{- end }}
-): Effect.Effect<void> =>
+): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
 {{- if eq .machineProfile "work" }}
-    if (bwsState === "ok" && hasGhAuth && workMissing.length === 0) {
+    if (bwsState === "ok" && hasGhAuth && workMissing.length === 0 && skillsConverged && effectReferenceConverged) {
 {{- else }}
-    if (bwsState === "ok") {
+    if (bwsState === "ok" && skillsConverged && effectReferenceConverged) {
 {{- end }}
       print("green", ["bold"], "  All configuration complete!");
       printPlain();
@@ -679,12 +993,16 @@ const printInstructions = (
     printPlain();
   });
 
-const main = (probeOnly: boolean): Effect.Effect<number> =>
+const main = (
+  probeOnly: boolean,
+): Effect.Effect<ProcessExitCode, never, DoctorServices> =>
   Effect.gen(function* () {
   const bws = yield* checkBwsToken;
   if (probeOnly) {
     return bws.exitCode;
   }
+
+  yield* detectColorSupport;
 {{- if eq .machineProfile "work" }}
 
   const hasGhAuth = yield* checkGhAuth;
@@ -701,12 +1019,25 @@ const main = (probeOnly: boolean): Effect.Effect<number> =>
   return 0;
   });
 
+class ProbeExit extends Error {
+  override readonly name = "ProbeExit";
+  override readonly [Runtime.errorExitCode]: 1 | 2;
+  override readonly [Runtime.errorReported] = false;
+
+  constructor(exitCode: 1 | 2) {
+    super(`BWS probe exited with code ${exitCode}`);
+    this[Runtime.errorExitCode] = exitCode;
+  }
+}
+
 const setupCommand = Command.make(
   "df-setup",
   { probeBws: probeBwsFlag },
   ({ probeBws }) =>
     main(probeBws).pipe(
-      Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
+      Effect.flatMap((code) =>
+        code === 0 ? Effect.void : Effect.fail(new ProbeExit(code))
+      ),
     ),
 ).pipe(Command.withDescription(DESCRIPTION));
 
@@ -731,19 +1062,237 @@ if (import.meta.main) {
   const NodeServices = await import(
     "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+  );
 
-  Effect.runPromiseExit(
-    Command.run(setupCommand, { version: "0.0.0" }).pipe(
-      Effect.provide(NodeServices.layer),
-    ),
-  ).then((exit) => {
-    if (exit._tag === "Success") {
-      Deno.exit(0);
+  Command.run(setupCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain,
+  );
+}
+
+// === Tests =================================================================
+// Render this template before testing. The rendered tests need zero permissions:
+//   deno test /tmp/df-setup
+
+if (!import.meta.main) {
+  const assertEqual = <T>(actual: T, expected: T, message: string): void => {
+    if (actual !== expected) {
+      throw new Error(`${message}: ${String(actual)} !== ${String(expected)}`);
     }
-    console.error(exit.cause);
-    Deno.exit(1);
-  }).catch((err) => {
-    console.error(err);
-    Deno.exit(1);
+  };
+
+  Deno.test("run: captures both streams and the exit code from one spawn", async () => {
+    const commands: Array<ChildProcess.Command> = [];
+    const encoder = new TextEncoder();
+    const spawner = ChildProcessSpawner.make((command) => {
+      commands.push(command);
+      return Effect.succeed(ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(7)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.make(encoder.encode("stdout text")),
+        stderr: Stream.make(encoder.encode("stderr text")),
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      }));
+    });
+
+    const result = await Effect.runPromise(
+      run("doctor-probe", ["arg"], { env: { TEST_VALUE: "set" } }).pipe(
+        Effect.provide(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+
+    assertEqual(commands.length, 1, "spawn count");
+    assertEqual(result.ok, false, "ok");
+    assertEqual(result.code, 7, "exit code");
+    assertEqual(result.stdout, "stdout text", "stdout");
+    assertEqual(result.stderr, "stderr text", "stderr");
+    const command = commands[0];
+    if (command === undefined || !ChildProcess.isStandardCommand(command)) {
+      throw new Error("expected one standard command");
+    }
+    assertEqual(command.command, "doctor-probe", "command");
+    assertEqual(command.args.join("\0"), "arg", "arguments");
+    assertEqual(command.options.env?.TEST_VALUE, "set", "environment");
+    assertEqual(command.options.extendEnv, true, "environment inheritance");
+  });
+
+  Deno.test("probe exits: NodeRuntime preserves codes 1 and 2 without diagnostics", () => {
+    for (const code of [1, 2] as const) {
+      const exit = new ProbeExit(code);
+      assertEqual(Runtime.getErrorExitCode(exit), code, `probe code ${code}`);
+      assertEqual(
+        Runtime.getErrorReported(exit),
+        false,
+        `probe code ${code} reporting`,
+      );
+    }
+  });
+
+  const healthySkillBoundary: SkillBoundary = {
+    healthy: true,
+    error: null,
+    message: null,
+  };
+  const skillObservationFixture = (
+    overrides: Partial<SkillObservation> = {},
+  ): SkillObservation => ({
+    manifestDigest: "a".repeat(64),
+    sources: { repository: healthySkillBoundary },
+    providers: {},
+    registry: healthySkillBoundary,
+    packages: healthySkillBoundary,
+    reference: { healthy: null, error: null, message: null },
+    pendingOwnership: null,
+    healthy: true,
+    ...overrides,
+  });
+
+  Deno.test("doctor fixture: healthy observe envelope converges", () => {
+    const health = classifySkillObservation(skillObservationFixture());
+    assertEqual(health.state, "converged", "healthy state");
+    assertEqual(health.boundary, null, "healthy boundary");
+  });
+
+  Deno.test("doctor fixture: absent manifest is intentionally disabled", () => {
+    assertEqual(disabledSkillsHealth.state, "disabled", "disabled state");
+    assertEqual(disabledSkillsHealth.action, null, "disabled action");
+  });
+
+  Deno.test("doctor fixture: stale package reports one package action", () => {
+    const health = classifySkillObservation(skillObservationFixture({
+      packages: {
+        healthy: false,
+        error: "PackageChanged",
+        message: "A requested package differs from its receipt",
+      },
+      healthy: false,
+    }));
+    assertEqual(health.state, "stale", "package state");
+    assertEqual(health.boundary, "packages", "package boundary");
+    assertEqual(health.action, "Run: df-skills package", "package action");
+  });
+
+  Deno.test("doctor fixture: unavailable provider reports its provider boundary", () => {
+    const health = classifySkillObservation(skillObservationFixture({
+      providers: {
+        example: {
+          healthy: false,
+          error: "NotFound",
+          message: "Provider executable is unavailable; restore it before observation",
+        },
+      },
+      healthy: false,
+    }));
+    assertEqual(health.state, "unavailable", "provider state");
+    assertEqual(health.boundary, "providers/example", "provider boundary");
+    assertEqual(
+      health.action,
+      "Correct the provider contract or executable, then run: df-skills reconcile",
+      "provider action",
+    );
+  });
+
+  Deno.test("doctor fixture: exact NotFound provider failure is unavailable", () => {
+    const health = failedSkillsHealth({
+      ok: false,
+      code: 1,
+      stdout: "",
+      stderr: JSON.stringify({
+        error: "NotFound",
+        message: "Provider executable is unavailable; restore it before observation",
+        boundary: "provider",
+      }),
+    });
+    assertEqual(health.state, "unavailable", "provider failure state");
+    assertEqual(health.boundary, "provider", "provider failure boundary");
+    assertEqual(
+      health.action,
+      "Correct the provider contract or executable, then run: df-skills reconcile",
+      "provider failure action",
+    );
+  });
+
+  Deno.test("doctor fixture: missing df-skills binary is actionable", () => {
+    const health = failedSkillsHealth({
+      ok: false,
+      code: 127,
+      stdout: "",
+      stderr: "",
+    });
+    assertEqual(health.state, "unavailable", "missing binary state");
+    assertEqual(health.boundary, "runtime", "missing binary boundary");
+    assertEqual(health.action, "Install df-skills, then rerun: df-setup", "missing binary action");
+  });
+
+  Deno.test("doctor fixture: missing source is unavailable", () => {
+    const health = classifySkillObservation(skillObservationFixture({
+      sources: {
+        repository: {
+          healthy: false,
+          error: "NotFound",
+          message: "Materialized source has no SKILL.md",
+        },
+      },
+      healthy: false,
+    }));
+    assertEqual(health.state, "unavailable", "source state");
+    assertEqual(health.boundary, "sources/repository", "source boundary");
+  });
+
+  Deno.test("doctor fixture: changed source remains stale drift", () => {
+    const health = classifySkillObservation(skillObservationFixture({
+      sources: {
+        repository: {
+          healthy: false,
+          error: "SourceChanged",
+          message: "Materialized source differs from its declared lock",
+        },
+      },
+      healthy: false,
+    }));
+    assertEqual(health.state, "stale", "changed source state");
+    assertEqual(health.boundary, "sources/repository", "changed source boundary");
+  });
+
+  Deno.test("doctor fixture: invalid and misleading envelopes cannot report success", () => {
+    assertEqual(decodeSkillObservation("{"), null, "malformed envelope");
+    const health = classifySkillObservation(skillObservationFixture({
+      registry: {
+        healthy: false,
+        error: "RegistryStale",
+        message: "A registry link needs reconciliation",
+      },
+      healthy: true,
+    }));
+    assertEqual(health.state, "invalid", "misleading success state");
+    assertEqual(health.boundary, "envelope", "misleading success boundary");
+    const misleadingExit = classifyObservedSkills({
+      ok: false,
+      code: 1,
+      stdout: "",
+      stderr: "",
+    }, skillObservationFixture());
+    assertEqual(misleadingExit.state, "invalid", "misleading exit state");
+    assertEqual(misleadingExit.boundary, "exit", "misleading exit boundary");
+  });
+
+  Deno.test("doctor fixture: pending ownership requests reconciliation", () => {
+    const health = classifySkillObservation(skillObservationFixture({
+      pendingOwnership: { providerId: "example" },
+      healthy: false,
+    }));
+    assertEqual(health.state, "pending-recovery", "pending state");
+    assertEqual(health.boundary, "ownership", "pending boundary");
+    assertEqual(health.action, "Run: df-skills reconcile", "pending action");
   });
 }

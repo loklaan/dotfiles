@@ -1,86 +1,53 @@
-# Effect v4 Docs — Reference Integrity Check
+# Effect v4 Reference Integrity Check
 
-## Source files
+## Contract
 
-| File | Purpose |
-|------|---------|
-| `home/dot_agents/skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl` | Chezmoiexternal config with allowlist |
-| `home/dot_agents/skills/lochy:coding:effect-ts/references/v4-patterns.md` | Reference file pointing to extracted docs |
+- Version: `effect@4.0.0-rc.112`
+- Commit: `2600f62f4532026928454dcea8d1c48557b3f942`
+- Archive SHA-256: `e44d9825313777a87daadeeea097edcef5ca66724ae1d5b279c7740dd777e190`
+- Stable path: `~/.local/share/mise/effect-v4-reference/current`
+- OpenCode alias: `@effect-v4`
 
-## Upstream
+The `effect-v4:install` mise task owns acquisition through
+`df-effect-v4-reference`. The artifact is a complete upstream source archive,
+not a selective copy in the Effect skill tree and not an OpenCode Git cache.
 
-- **Repo**: `Effect-TS/effect-smol`
-- **Branch**: `main`
-- **Target path**: `~/.agents/skills/lochy:coding:effect-ts/v4-docs/`
+## Check 1: provenance and ownership
 
-## Check 1: Allowlist vs upstream
+1. Read `home/private_dot_local/bin/executable_df-effect-v4-reference` and
+   extract the version, commit, URL, and checksum constants.
+2. Confirm the Effect tag resolves to the same commit:
+   `gh api repos/Effect-TS/effect/git/ref/tags/effect@4.0.0-rc.112`.
+3. Download the immutable commit archive to a temporary file and compare its
+   SHA-256 with the helper constant.
+4. Run `df-effect-v4-reference status`. Require `state=current`, the exact
+   provenance above, a relative `current -> versions/<commit>` pointer, and a
+   physical version directory beneath mise's data root.
+5. Require `LLMS.md`, `MIGRATION.md`, `migration/`, `ai-docs/src/`,
+   `packages/effect/src/`, and `packages/effect/test/`.
 
-Verify the `include` patterns in the chezmoiexternal TOML match what actually
-exists in the latest `main` of effect-smol.
+## Check 2: OpenCode registration
 
-### Procedure
+Render, but do not apply, both global configs:
 
-1. Read the chezmoiexternal TOML at
-   `home/dot_agents/skills/lochy:coding:effect-ts/.chezmoiexternals/effect-v4-docs.toml.tmpl`.
-   Extract the `include` list.
+```bash
+chezmoi cat ~/.config/opencode/opencode.json
+chezmoi cat ~/.config/opencode2/opencode.json
+```
 
-2. Fetch the full repo tree:
-   ```bash
-   gh api repos/Effect-TS/effect-smol/git/trees/main?recursive=1
-   ```
+Require byte-equivalent `references.effect-v4` objects containing only the
+stable local path and concise description. Reject repository/branch fields,
+corpus text in `instructions`, or paths under a skill, config, project, or
+OpenCode cache tree.
 
-3. The `stripComponents = 1` setting removes the top-level archive directory.
-   The `*/` prefix in each include pattern matches that stripped level. After
-   stripping, compare against the actual paths.
+## Check 3: skill guidance
 
-4. Focus on these areas of the tree (matching the allowlist intent):
-   - Root-level markdown: `LLMS.md`, `MIGRATION.md`
-   - `migration/` directory and its children
-   - `ai-docs/` directory and its children
-   - `packages/effect/` and its specific markdown files
+Read `home/private_dot_local/share/dotfiles/skills/lochy:coding:effect-ts/SKILL.md` and
+`references/v4-patterns.md`. Require both to direct v4 work to `@effect-v4`,
+state the pinned version/commit, attach the alias root before naming relative
+files, compare it with the consuming project's resolved Effect version, and
+label the fallback when versions differ. Reject guidance that depends on nested
+`@effect-v4/<path>` autocomplete because V1 supports root attachment only.
 
-5. Report:
-   - **Missing from allowlist**: files in upstream within these areas that are
-     NOT matched by any include pattern. These are candidates to add.
-     - Specifically check for new `packages/effect/*.md` files not in the list
-     - Check for new root-level `*.md` files that look like LLM documentation
-   - **Stale in allowlist**: include patterns that match zero files in the
-     upstream tree. These are candidates to remove.
-
-## Check 2: v4-patterns.md vs local directory
-
-Verify that every path referenced in v4-patterns.md exists on disk, and that
-the on-disk content is fully represented in v4-patterns.md.
-
-### Procedure
-
-1. Read `home/dot_agents/skills/lochy:coding:effect-ts/references/v4-patterns.md`
-   from the chezmoi source directory.
-
-2. Extract all file/directory paths mentioned. They use the prefix
-   `~/.agents/skills/lochy:coding:effect-ts/v4-docs/`.
-
-3. For each referenced path, check it exists on disk. Report broken references.
-
-4. Scan these directories on disk and compare against what v4-patterns.md lists:
-
-   **Topic directories** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/ai-docs/src/`):
-   - List all immediate subdirectories
-   - Compare against the topic list in v4-patterns.md under "Annotated examples"
-   - Report any directories present on disk but not listed
-
-   **Module deep dives** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/packages/effect/`):
-   - List all `.md` files
-   - Compare against the files listed under "Module deep dives"
-   - Report any files present on disk but not listed
-
-   **Migration guides** (`~/.agents/skills/lochy:coding:effect-ts/v4-docs/migration/`):
-   - List all `.md` files
-   - Compare against the files mentioned under "Migrating from v3"
-   - Report any files present on disk but not mentioned
-
-5. Report:
-   - **Broken references**: paths in v4-patterns.md that do not exist on disk
-   - **Unlisted topics**: `ai-docs/src/` directories not in v4-patterns.md
-   - **Unlisted modules**: `packages/effect/*.md` files not in v4-patterns.md
-   - **Unlisted migration guides**: `migration/*.md` files not in v4-patterns.md
+The Effect skill source must not contain `.chezmoiexternals/` or `v4-docs/`.
+Report any acquired descendant as a migration residue.

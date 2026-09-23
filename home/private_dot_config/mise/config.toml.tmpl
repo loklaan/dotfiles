@@ -98,6 +98,11 @@ description = "Refresh tools pinned to `latest` (explicit pins untouched)"
 hide = true
 run = "df-task-mise-upgrade"
 
+[tasks."effect-v4:install"]
+description = "Install the checksum-pinned Effect v4 source reference"
+hide = true
+run = "df-effect-v4-reference install"
+
 [tasks."chezmoi:apply"]
 description = "Apply chezmoi (converges dotfiles + lifecycle scripts)"
 hide = true
@@ -118,17 +123,9 @@ run = "df-task-chezmoi-update"
 description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
 run = "df-drift check"
 
-[tasks."prewarm:gh-auth"]
-description = "Cache gh auth liveness into ~/.cache/dotfiles/prewarm.json"
-run = "df-prewarm gh-auth"
-
 [tasks."drift:notify"]
 description = "Surface drift via macOS notification (debounced 24h)"
-# Rides the daily launchd fire: refreshing gh-auth liveness here means the
-# login.zsh setup reminder reads a fresh boolean from prewarm.json instead of
-# forking `gh auth status` per login. Distinct cache + concern from drift, so
-# it is a task-dependency edge, not a code merge.
-depends = ["drift:check", "prewarm:gh-auth"]
+depends = ["drift:check"]
 run = "df-drift notify"
 
 {{ end -}}

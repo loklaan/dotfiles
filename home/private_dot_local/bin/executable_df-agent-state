@@ -24,27 +24,101 @@
 //
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
-import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
+import {
+  Console,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  PlatformError,
+  Schema,
+} from "npm:effect@4.0.0-rc.112";
+import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import * as Path from "npm:effect@4.0.0-rc.112/Path";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 // NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only.
 // It transitively loads msgpackr, which reads process.env at module load and
 // throws NotCapable under zero-flag `deno test`. Same pattern as df-drift.
-import {
-  ensureDir,
-  fileExists,
-  hasCommand,
-  parseJson,
-  readTextFile,
-  run,
-} from "../lib/df-cache.ts";
-import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import { fileExists, hasCommand, parseJson, run } from "../lib/df-cache.ts";
 import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
 
 type ToolEnv =
   | FileSystem.FileSystem
+  | Path.Path
+  | PhysicalFileSystem
   | Process.ChildProcessSpawner.ChildProcessSpawner;
+
+interface PhysicalEntry {
+  readonly name: string;
+  readonly isFile: boolean;
+  readonly isSymlink: boolean;
+}
+
+interface PhysicalIdentity {
+  readonly device: number;
+  readonly inode: number;
+}
+
+// rc.112 FileSystem exposes only stat, which follows symlinks. This narrow
+// adapter retains Deno DirEntry.isFile and lstat identity without moving normal
+// reads, metadata, paths, rename, or remove out of Effect platform services.
+class PhysicalFileSystem extends Context.Service<PhysicalFileSystem, {
+  readonly readDirectory: (
+    path: string,
+  ) => Effect.Effect<readonly PhysicalEntry[], PlatformError.PlatformError>;
+  readonly identity: (
+    path: string,
+  ) => Effect.Effect<PhysicalIdentity | null, PlatformError.PlatformError>;
+}>()("df-agent-state/PhysicalFileSystem") {
+  static readonly layer = Layer.succeed(
+    PhysicalFileSystem,
+    PhysicalFileSystem.of({
+      readDirectory: (directory) =>
+        Effect.tryPromise({
+          try: async () => {
+            const entries: PhysicalEntry[] = [];
+            for await (const entry of Deno.readDir(directory)) {
+              entries.push({
+                name: entry.name,
+                isFile: entry.isFile,
+                isSymlink: entry.isSymlink,
+              });
+            }
+            return entries;
+          },
+          catch: (cause) =>
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "PhysicalFileSystem",
+              method: "readDirectory",
+              pathOrDescriptor: directory,
+              cause,
+            }),
+        }),
+      identity: (filePath) =>
+        Effect.tryPromise({
+          try: async () => {
+            const info = await Deno.lstat(filePath);
+            if (
+              !info.isFile || info.isSymlink || info.dev === null ||
+              info.ino === null
+            ) return null;
+            return { device: info.dev, inode: info.ino };
+          },
+          catch: (cause) =>
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "PhysicalFileSystem",
+              method: "identity",
+              pathOrDescriptor: filePath,
+              cause,
+            }),
+        }),
+    }),
+  );
+}
 
 const DESCRIPTION =
   "Survey and gated-reap per-pane code-agent session state files";
@@ -110,6 +184,17 @@ export interface RawFile {
   readonly pane: string;
   readonly text: string | null;
   readonly mtimeMs: number;
+}
+
+interface StateFileSnapshot {
+  readonly raw: RawFile;
+  readonly identity: PhysicalIdentity;
+  readonly digest: string;
+}
+
+interface ObservedStateFile {
+  readonly entry: Entry;
+  readonly snapshot: StateFileSnapshot;
 }
 
 export interface World {
@@ -268,19 +353,19 @@ export const summarise = (entries: readonly Entry[]): string => {
 // ===========================================================================
 
 const stateDirPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
   const xdg = yield* Effect.sync(() => Deno.env.get("XDG_STATE_HOME"));
   const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
-  const raw = xdg && xdg.length > 0 ? xdg : `${home}/.local/state`;
-  const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
-  return `${base}/tmux-code-agents`;
+  const base = xdg && xdg.length > 0 ? xdg : path.join(home, ".local", "state");
+  return path.join(base, "tmux-code-agents");
 });
 
 const opencodeDbPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
   const xdg = yield* Effect.sync(() => Deno.env.get("XDG_DATA_HOME"));
   const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
-  const raw = xdg && xdg.length > 0 ? xdg : `${home}/.local/share`;
-  const base = raw.endsWith("/") ? raw.slice(0, -1) : raw;
-  return `${base}/opencode/opencode.db`;
+  const base = xdg && xdg.length > 0 ? xdg : path.join(home, ".local", "share");
+  return path.join(base, "opencode", "opencode.db");
 });
 
 // Reads OpenCode's session table through node:sqlite rather than shelling out to
@@ -329,29 +414,77 @@ const readSessions = (
     }
   }).pipe(Effect.orElseSucceed(() => null));
 
+const readStateFile = (
+  filePath: string,
+  pane: string,
+): Effect.Effect<
+  StateFileSnapshot | null,
+  never,
+  FileSystem.FileSystem | PhysicalFileSystem
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const physical = yield* PhysicalFileSystem;
+    const before = yield* physical.identity(filePath);
+    if (before === null) return null;
+    const info = yield* fs.stat(filePath);
+    if (info.type !== "File") return null;
+    const text = yield* fs.readFileString(filePath);
+    const after = yield* physical.identity(filePath);
+    if (
+      after === null || before.device !== after.device ||
+      before.inode !== after.inode
+    ) return null;
+    return {
+      raw: {
+        pane,
+        text,
+        mtimeMs: info.mtime._tag === "Some" ? info.mtime.value.getTime() : 0,
+      },
+      identity: after,
+      digest: createHash("sha256").update(text).digest("hex"),
+    } satisfies StateFileSnapshot;
+  }).pipe(Effect.orElseSucceed(() => null));
+
 const readStateFiles = (
   stateDir: string,
-): Effect.Effect<readonly RawFile[], never, ToolEnv> =>
+): Effect.Effect<
+  readonly StateFileSnapshot[],
+  never,
+  FileSystem.FileSystem | Path.Path | PhysicalFileSystem
+> =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const physical = yield* PhysicalFileSystem;
     const present = yield* fileExists(stateDir);
     if (!present) return [];
-    const names = yield* Effect.try(() =>
-      [...Deno.readDirSync(stateDir)]
-        .filter((e) => e.isFile && e.name.startsWith("%"))
-        .map((e) => e.name)
-    ).pipe(Effect.orElseSucceed(() => [] as string[]));
+    const names = yield* physical.readDirectory(stateDir).pipe(
+      Effect.map((entries) =>
+        entries.filter((entry) =>
+          entry.isFile && !entry.isSymlink && entry.name.startsWith("%")
+        ).map((entry) => entry.name)
+      ),
+      Effect.orElseSucceed(() => [] as string[]),
+    );
 
-    const files: RawFile[] = [];
+    const files: StateFileSnapshot[] = [];
     for (const pane of names.sort()) {
-      const path = `${stateDir}/${pane}`;
-      const text = yield* readTextFile(path);
-      const mtimeMs = yield* Effect.try(() =>
-        Deno.statSync(path).mtime?.getTime() ?? 0
-      ).pipe(Effect.orElseSucceed(() => 0));
-      files.push({ pane, text, mtimeMs });
+      const filePath = path.join(stateDir, pane);
+      const snapshot = yield* readStateFile(filePath, pane);
+      if (snapshot !== null) files.push(snapshot);
     }
     return files;
   });
+
+const sessionIds = (files: readonly RawFile[]): readonly string[] => {
+  const ids: string[] = [];
+  for (const raw of files) {
+    const parsed = raw.text === null ? null : parseJson(raw.text);
+    const id = (parsed as Record<string, unknown> | null)?.session_id;
+    if (typeof id === "string" && id.length > 0) ids.push(id);
+  }
+  return ids;
+};
 
 const observeWorld = (
   sessionIds: readonly string[],
@@ -397,17 +530,13 @@ const observeWorld = (
 const survey = Effect.gen(function* () {
   const stateDir = yield* stateDirPath;
   const files = yield* readStateFiles(stateDir);
-
-  const ids: string[] = [];
-  for (const f of files) {
-    const parsed = f.text === null ? null : parseJson(f.text);
-    const id = (parsed as Record<string, unknown> | null)?.session_id;
-    if (typeof id === "string" && id.length > 0) ids.push(id);
-  }
-
-  const world = yield* observeWorld(ids);
-  const entries = files.map((f) => classify(f, world));
-  return { stateDir, entries, checksum: reportChecksum(entries) };
+  const world = yield* observeWorld(sessionIds(files.map(({ raw }) => raw)));
+  const observed = files.map((snapshot) => ({
+    entry: classify(snapshot.raw, world),
+    snapshot,
+  } satisfies ObservedStateFile));
+  const entries = observed.map(({ entry }) => entry);
+  return { stateDir, entries, observed, checksum: reportChecksum(entries) };
 });
 
 const runSurvey = (asJson: boolean) =>
@@ -439,6 +568,99 @@ const runSurvey = (asJson: boolean) =>
     }
   });
 
+interface ReapPlan<R> {
+  readonly stateDir: string;
+  readonly archiveDir: string;
+  readonly targets: readonly ObservedStateFile[];
+  readonly classifyCurrent: (
+    raw: RawFile,
+  ) => Effect.Effect<Entry, never, R>;
+  readonly destructive: boolean;
+}
+
+interface ReapResult {
+  readonly completed: number;
+  readonly failed: number;
+}
+
+const reapExitCode = (result: ReapResult): 0 | 1 => result.failed === 0 ? 0 : 1;
+
+const executeReap = <R>(
+  plan: ReapPlan<R>,
+): Effect.Effect<
+  ReapResult,
+  never,
+  FileSystem.FileSystem | Path.Path | PhysicalFileSystem | R
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const verb = plan.destructive ? "delete" : "archive";
+    if (!plan.destructive) {
+      const prepared = yield* fs.makeDirectory(plan.archiveDir, {
+        recursive: true,
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!prepared) {
+        yield* Console.error(
+          `error could not create archive directory ${plan.archiveDir}`,
+        );
+        return { completed: 0, failed: plan.targets.length };
+      }
+    }
+
+    let completed = 0;
+    let failed = 0;
+    for (const target of plan.targets) {
+      const from = path.join(plan.stateDir, target.entry.pane);
+      const classified = yield* readStateFile(from, target.entry.pane);
+      if (classified === null) {
+        failed++;
+        yield* Console.error(
+          `error skipped ${from}: current state could not be revalidated`,
+        );
+        continue;
+      }
+      const currentEntry = yield* plan.classifyCurrent(classified.raw);
+      const current = yield* readStateFile(from, target.entry.pane);
+      if (
+        current === null ||
+        current.identity.device !== classified.identity.device ||
+        current.identity.inode !== classified.identity.inode ||
+        current.digest !== classified.digest ||
+        current.identity.device !== target.snapshot.identity.device ||
+        current.identity.inode !== target.snapshot.identity.inode ||
+        current.digest !== target.snapshot.digest ||
+        reportChecksum([currentEntry]) !== reportChecksum([target.entry])
+      ) {
+        failed++;
+        yield* Console.error(
+          `error skipped ${from}: state changed since the confirmed survey`,
+        );
+        continue;
+      }
+      const operation = plan.destructive
+        ? fs.remove(from)
+        : fs.rename(from, path.join(plan.archiveDir, target.entry.pane));
+      const outcome = yield* operation.pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (outcome) {
+        completed++;
+        yield* Console.log(
+          `  ${plan.destructive ? "deleted" : "archived"} ${target.entry.pane}`,
+        );
+      } else {
+        failed++;
+        yield* Console.error(`error could not ${verb} ${from}`);
+      }
+    }
+    return { completed, failed };
+  });
+
 const runReap = (
   confirm: string,
   keepRaw: string,
@@ -452,7 +674,7 @@ const runReap = (
       );
       return 1;
     }
-    const { stateDir, entries, checksum } = yield* survey;
+    const { stateDir, entries, observed, checksum } = yield* survey;
     if (confirm !== checksum) {
       yield* Console.error(
         `error the state has changed since that survey (expected checksum ${checksum}, got ${confirm}). Re-run \`df-agent-state survey\` and review the new report before reaping.`,
@@ -463,26 +685,32 @@ const runReap = (
     const keep = new Set(
       keepRaw.split(",").map((s) => s.trim()).filter((s) => s.length > 0),
     );
-    const targets = reapable(entries, keep);
+    const targetPanes = new Set(
+      reapable(entries, keep).map(({ pane }) => pane),
+    );
+    const targets = observed.filter(({ entry }) => targetPanes.has(entry.pane));
     if (targets.length === 0) {
       yield* Console.log("  Nothing to reap.");
       return 0;
     }
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const path = yield* Path.Path;
     // Archived claims live beside the live ones, under the same subsystem that
     // owns them, and deliberately NOT as a hidden directory — a reap you cannot
     // see is a reap you will not remember you can undo. `readStateFiles` only
     // ever reads regular files whose name starts with "%", so a subdirectory
     // here can never be mistaken for a claim.
-    const archiveDir = `${stateDir}/archive/${stamp}`;
+    const archiveDir = path.join(stateDir, "archive", stamp);
     const verb = destructive ? "delete" : "archive";
 
     if (dryRun) {
       yield* Console.log(`\n  Would ${verb} ${targets.length} file(s):`);
-      for (const t of targets) {
+      for (const { entry } of targets) {
         yield* Console.log(
-          `    ${t.pane}  (${t.status})  ${t.title ?? t.sessionId ?? ""}`,
+          `    ${entry.pane}  (${entry.status})  ${
+            entry.title ?? entry.sessionId ?? ""
+          }`,
         );
       }
       if (!destructive) yield* Console.log(`  into ${archiveDir}`);
@@ -490,29 +718,23 @@ const runReap = (
       return 0;
     }
 
-    if (!destructive) yield* ensureDir(archiveDir);
-    let done = 0;
-    for (const t of targets) {
-      const from = `${stateDir}/${t.pane}`;
-      const outcome = yield* Effect.try(() => {
-        if (destructive) Deno.removeSync(from);
-        else Deno.renameSync(from, `${archiveDir}/${t.pane}`);
-      }).pipe(Effect.as(true), Effect.orElseSucceed(() => false));
-      if (outcome) {
-        done++;
-        yield* Console.log(
-          `  ${destructive ? "deleted" : "archived"} ${t.pane}`,
-        );
-      } else {
-        yield* Console.error(`error could not ${verb} ${from}`);
-      }
-    }
+    const result = yield* executeReap({
+      stateDir,
+      archiveDir,
+      targets,
+      classifyCurrent: (raw) =>
+        Effect.gen(function* () {
+          const currentWorld = yield* observeWorld(sessionIds([raw]));
+          return classify(raw, currentWorld);
+        }),
+      destructive,
+    });
     yield* Console.log(
       destructive
-        ? `\n  Deleted ${done} file(s).\n`
-        : `\n  Archived ${done} file(s) into ${archiveDir}\n`,
+        ? `\n  Deleted ${result.completed} file(s).\n`
+        : `\n  Archived ${result.completed} file(s) into ${archiveDir}\n`,
     );
-    return 0;
+    return reapExitCode(result);
   });
 
 // ===========================================================================
@@ -601,6 +823,7 @@ if (import.meta.main) {
     "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
   Command.run(agentStateCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(PhysicalFileSystem.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
@@ -640,6 +863,377 @@ const claimed = (pane: string, over: Record<string, unknown> = {}) => ({
 const expect = (cond: boolean, msg: string) => {
   if (!cond) throw new Error(msg);
 };
+
+const systemError = (method: string, path: string) =>
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "FileSystem",
+    method,
+    description: "test fixture failure",
+    pathOrDescriptor: path,
+  });
+
+const fileInfo = (
+  type: FileSystem.File.Type,
+  mtime: Option.Option<Date>,
+): FileSystem.File.Info => ({
+  type,
+  mtime,
+  atime: Option.none(),
+  birthtime: Option.none(),
+  dev: 1,
+  ino: Option.none(),
+  mode: type === "Directory" ? 0o700 : 0o600,
+  nlink: Option.none(),
+  uid: Option.none(),
+  gid: Option.none(),
+  rdev: Option.none(),
+  size: FileSystem.Size(0),
+  blksize: Option.none(),
+  blocks: Option.none(),
+});
+
+const physicalLayer = (
+  entries: readonly PhysicalEntry[],
+  identity: (path: string) => PhysicalIdentity | null = () => ({
+    device: 1,
+    inode: 1,
+  }),
+): Layer.Layer<PhysicalFileSystem> =>
+  Layer.succeed(
+    PhysicalFileSystem,
+    PhysicalFileSystem.of({
+      readDirectory: () => Effect.succeed(entries),
+      identity: (path) => Effect.succeed(identity(path)),
+    }),
+  );
+
+const observedTarget = (pane: string): ObservedStateFile => {
+  const raw = file(pane, claimed(pane, { pid: 9999 }));
+  return {
+    entry: classify(raw, world()),
+    snapshot: {
+      raw,
+      identity: { device: 1, inode: 1 },
+      digest: createHash("sha256").update(raw.text ?? "").digest("hex"),
+    },
+  };
+};
+
+const paneFromPath = (filePath: string): string =>
+  filePath.slice(filePath.lastIndexOf("/") + 1);
+
+const reapFileSystem = (
+  targets: readonly ObservedStateFile[],
+  overrides: Partial<FileSystem.FileSystem> = {},
+): Layer.Layer<FileSystem.FileSystem> => {
+  const textByPane = new Map(
+    targets.map(({ snapshot }) => [
+      snapshot.raw.pane,
+      snapshot.raw.text ?? "",
+    ]),
+  );
+  return FileSystem.layerNoop({
+    makeDirectory: () => Effect.void,
+    stat: () => Effect.succeed(fileInfo("File", Option.some(new Date(NOW)))),
+    readFileString: (filePath) => {
+      const text = textByPane.get(paneFromPath(filePath));
+      return text === undefined
+        ? Effect.fail(systemError("readFileString", filePath))
+        : Effect.succeed(text);
+    },
+    ...overrides,
+  });
+};
+
+const expectReapCounts = (
+  result: ReapResult,
+  completed: number,
+  failed: number,
+): void => {
+  expect(
+    result.completed === completed && result.failed === failed,
+    `expected ${completed} completed and ${failed} failed, got ${
+      JSON.stringify(result)
+    }`,
+  );
+};
+
+Deno.test("unit: incomplete reap outcomes return nonzero", () => {
+  expect(
+    reapExitCode({ completed: 2, failed: 0 }) === 0,
+    "success was nonzero",
+  );
+  expect(
+    reapExitCode({ completed: 2, failed: 1 }) === 1,
+    "partial failure was zero",
+  );
+  expect(
+    reapExitCode({ completed: 0, failed: 2 }) === 1,
+    "setup failure was zero",
+  );
+});
+
+Deno.test("filesystem: survey excludes entries whose stat or read fails", async () => {
+  const stateDir = "/state";
+  const fixture = FileSystem.layerNoop({
+    exists: () => Effect.succeed(true),
+    readFileString: (path) =>
+      path.endsWith("/%2")
+        ? Effect.fail(systemError("readFileString", path))
+        : Effect.succeed(`claim:${path}`),
+    stat: (path) => {
+      if (path.endsWith("/archive")) {
+        return Effect.succeed(fileInfo("Directory", Option.none()));
+      }
+      if (path.endsWith("/%3")) {
+        return Effect.fail(systemError("stat", path));
+      }
+      const day = path.endsWith("/%1") ? 1 : 2;
+      return Effect.succeed(
+        fileInfo("File", Option.some(new Date(Date.UTC(2026, 0, day)))),
+      );
+    },
+  });
+
+  const files = await Effect.runPromise(
+    readStateFiles(stateDir).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer(
+        ["%3", "%1", "%2"].map((name) => ({
+          name,
+          isFile: true,
+          isSymlink: false,
+        })),
+      )),
+    ),
+  );
+
+  expect(
+    files.map(({ raw }) => raw.pane).join(",") === "%1",
+    `unexpected panes: ${files.map(({ raw }) => raw.pane).join(",")}`,
+  );
+  expect(
+    files[0]?.raw.mtimeMs === Date.UTC(2026, 0, 1),
+    "mtime was not preserved",
+  );
+});
+
+Deno.test("filesystem: survey excludes a symlink whose target is a file", async () => {
+  const fixture = FileSystem.layerNoop({
+    exists: () => Effect.succeed(true),
+    readFileString: () => Effect.succeed(JSON.stringify(claimed("%link"))),
+    stat: () => Effect.succeed(fileInfo("File", Option.some(new Date(NOW)))),
+  });
+
+  const files = await Effect.runPromise(
+    readStateFiles("/state").pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([{
+        name: "%link",
+        isFile: false,
+        isSymlink: true,
+      }])),
+    ),
+  );
+
+  expect(
+    files.length === 0,
+    "symlink target was admitted as a physical state file",
+  );
+});
+
+Deno.test("filesystem: archive reap is sequential and continues after failure", async () => {
+  const operations: string[] = [];
+  let inFlight = false;
+  const targets = ["%1", "%2", "%3"].map(observedTarget);
+  const fixture = reapFileSystem(targets, {
+    rename: (from, to) =>
+      Effect.gen(function* () {
+        expect(!inFlight, "rename operations overlapped");
+        inFlight = true;
+        operations.push(`${from}->${to}`);
+        yield* Effect.yieldNow;
+        inFlight = false;
+        if (from.endsWith("/%2")) {
+          return yield* Effect.fail(systemError("rename", from));
+        }
+      }),
+  });
+
+  const result = await Effect.runPromise(
+    executeReap({
+      stateDir: "/state",
+      archiveDir: "/state/archive/stamp",
+      targets,
+      classifyCurrent: (raw) => Effect.succeed(classify(raw, world())),
+      destructive: false,
+    }).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([])),
+    ),
+  );
+
+  expectReapCounts(result, 2, 1);
+  expect(
+    operations.join(",") ===
+      "/state/%1->/state/archive/stamp/%1,/state/%2->/state/archive/stamp/%2,/state/%3->/state/archive/stamp/%3",
+    `unexpected rename order: ${operations.join(",")}`,
+  );
+});
+
+Deno.test("filesystem: destructive reap removes through the injected service", async () => {
+  const removals: string[] = [];
+  let inFlight = false;
+  const targets = ["%4", "%5"].map(observedTarget);
+  const fixture = reapFileSystem(targets, {
+    remove: (path) =>
+      Effect.gen(function* () {
+        expect(!inFlight, "remove operations overlapped");
+        inFlight = true;
+        removals.push(path);
+        yield* Effect.yieldNow;
+        inFlight = false;
+        if (path.endsWith("/%5")) {
+          return yield* Effect.fail(systemError("remove", path));
+        }
+      }),
+  });
+
+  const result = await Effect.runPromise(
+    executeReap({
+      stateDir: "/state",
+      archiveDir: "/unused",
+      targets,
+      classifyCurrent: (raw) => Effect.succeed(classify(raw, world())),
+      destructive: true,
+    }).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([])),
+    ),
+  );
+
+  expectReapCounts(result, 1, 1);
+  expect(
+    removals.join(",") === "/state/%4,/state/%5",
+    "unexpected remove order",
+  );
+});
+
+Deno.test("filesystem: reap skips content, identity, and symlink replacements", async () => {
+  const operations: string[] = [];
+  const targets = ["%1", "%2", "%3", "%4"].map(observedTarget);
+  const fixture = reapFileSystem(targets, {
+    readFileString: (filePath) => {
+      const pane = paneFromPath(filePath);
+      const expected = targets.find(({ entry }) => entry.pane === pane);
+      if (expected === undefined) {
+        return Effect.fail(systemError("readFileString", filePath));
+      }
+      return Effect.succeed(
+        pane === "%2"
+          ? `${expected.snapshot.raw.text}\n`
+          : expected.snapshot.raw.text ?? "",
+      );
+    },
+    rename: (from) =>
+      Effect.sync(() => {
+        operations.push(from);
+      }),
+  });
+
+  const result = await Effect.runPromise(
+    executeReap({
+      stateDir: "/state",
+      archiveDir: "/state/archive/stamp",
+      targets,
+      classifyCurrent: (raw) => Effect.succeed(classify(raw, world())),
+      destructive: false,
+    }).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([], (filePath) => {
+        const pane = paneFromPath(filePath);
+        if (pane === "%3") return { device: 2, inode: 2 };
+        if (pane === "%4") return null;
+        return { device: 1, inode: 1 };
+      })),
+    ),
+  );
+
+  expectReapCounts(result, 1, 3);
+  expect(
+    operations.join(",") === "/state/%1",
+    `replaced claims were mutated: ${operations.join(",")}`,
+  );
+});
+
+Deno.test("filesystem: archive setup failure prevents every mutation", async () => {
+  const operations: string[] = [];
+  const targets = ["%6", "%7"].map(observedTarget);
+  const fixture = reapFileSystem(targets, {
+    makeDirectory: (path) => Effect.fail(systemError("makeDirectory", path)),
+    rename: (from) =>
+      Effect.sync(() => {
+        operations.push(from);
+      }),
+  });
+
+  const result = await Effect.runPromise(
+    executeReap({
+      stateDir: "/state",
+      archiveDir: "/state/archive/stamp",
+      targets,
+      classifyCurrent: (raw) => Effect.succeed(classify(raw, world())),
+      destructive: false,
+    }).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([])),
+    ),
+  );
+
+  expectReapCounts(result, 0, 2);
+  expect(operations.length === 0, "archive mutation ran without a directory");
+});
+
+Deno.test("filesystem: reap skips a claim that became live after survey", async () => {
+  const operations: string[] = [];
+  const targets = [observedTarget("%8")];
+  const fixture = reapFileSystem(targets, {
+    remove: (filePath) =>
+      Effect.sync(() => {
+        operations.push(filePath);
+      }),
+  });
+
+  const result = await Effect.runPromise(
+    executeReap({
+      stateDir: "/state",
+      archiveDir: "/unused",
+      targets,
+      classifyCurrent: (raw) =>
+        Effect.succeed(classify(
+          raw,
+          world({
+            processStarts: new Map([[9999, LIVE_START]]),
+          }),
+        )),
+      destructive: true,
+    }).pipe(
+      Effect.provide(fixture),
+      Effect.provide(Path.layer),
+      Effect.provide(physicalLayer([])),
+    ),
+  );
+
+  expectReapCounts(result, 0, 1);
+  expect(operations.length === 0, "claim was removed after becoming live");
+});
 
 Deno.test("unit: a claim backed by a live process is live", () => {
   const e = classify(file("%1", claimed("%1")), world());

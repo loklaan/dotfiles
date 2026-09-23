@@ -23,13 +23,19 @@
 // transcript on stdout stays clean and copy-pasteable.
 
 import {
+  Cause,
   Console,
   Context,
   Data,
+  Deferred,
+  Duration,
   Effect,
+  Fiber,
   Layer,
+  Sink,
   Stream,
 } from "npm:effect@4.0.0-rc.112";
+import { TestClock } from "npm:effect@4.0.0-rc.112/testing";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 import {
   ChildProcess,
@@ -97,6 +103,24 @@ class AudioDecodeError extends Data.TaggedError("AudioDecodeError")<{
   readonly cause: unknown;
 }> {}
 
+class FfmpegExitError extends Data.TaggedError("FfmpegExitError")<{
+  readonly input: string;
+  readonly exitCode: ChildProcessSpawner.ExitCode;
+}> {}
+
+class DecodedAudioLimitError extends Data.TaggedError(
+  "DecodedAudioLimitError",
+)<{
+  readonly limitBytes: number;
+  readonly attemptedBytes: number;
+}> {}
+
+class AudioDecodeTimeoutError extends Data.TaggedError(
+  "AudioDecodeTimeoutError",
+)<{
+  readonly timeoutSeconds: number;
+}> {}
+
 class ModelLoadError extends Data.TaggedError("ModelLoadError")<{
   readonly model: string;
   readonly device: string;
@@ -146,8 +170,38 @@ type DeviceChoice = "webgpu" | "wasm" | "cpu";
 // ===========================================================================
 
 const SAMPLE_RATE = 16000;
+const F32_BYTES_PER_SAMPLE = 4;
+// Two hours covers long meetings and podcasts while capping decoded PCM at
+// 460.8 MB before the model receives it.
+const MAX_DECODED_DURATION_SECONDS = 2 * 60 * 60;
+const MAX_DECODED_BYTES = SAMPLE_RATE * F32_BYTES_PER_SAMPLE *
+  MAX_DECODED_DURATION_SECONDS;
+const DECODE_TIMEOUT = Duration.minutes(30);
+const FORCE_KILL_GRACE = Duration.seconds(5);
 
-const decodeAudio = (input: string) =>
+const collectDecodedPcm = <E, R>(
+  stdout: Stream.Stream<Uint8Array, E, R>,
+  limitBytes: number,
+) =>
+  stdout.pipe(
+    Stream.mapAccumEffect(
+      () => 0,
+      (collectedBytes, chunk) => {
+        const attemptedBytes = collectedBytes + chunk.byteLength;
+        return attemptedBytes > limitBytes
+          ? Effect.fail(
+            new DecodedAudioLimitError({ limitBytes, attemptedBytes }),
+          )
+          : Effect.succeed([attemptedBytes, [chunk]] as const);
+      },
+    ),
+    Stream.runCollect,
+  );
+
+const decodeAudio = (
+  input: string,
+  maxDecodedBytes = MAX_DECODED_BYTES,
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -171,23 +225,38 @@ const decodeAudio = (input: string) =>
           "-ar",
           String(SAMPLE_RATE),
           "-",
-        ]),
+        ], { forceKillAfter: FORCE_KILL_GRACE }),
       );
-      const collected = yield* Stream.runCollect(handle.stdout);
-      const exit = yield* handle.exitCode;
+      const [collected, , exit] = yield* Effect.all([
+        collectDecodedPcm(handle.stdout, maxDecodedBytes),
+        Stream.runDrain(handle.stderr),
+        handle.exitCode,
+      ], { concurrency: 3 });
       if (exit !== ChildProcessSpawner.ExitCode(0)) {
         return yield* Effect.fail(
-          new Error(`ffmpeg exited with code ${exit}`),
+          new FfmpegExitError({ input, exitCode: exit }),
         );
       }
       return collected;
-    }).pipe(
-      Effect.scoped,
-      Effect.mapError((cause) => new AudioDecodeError({ input, cause })),
-    );
+    }).pipe(Effect.scoped);
 
     return chunksToFloat32(chunks);
-  });
+  }).pipe(
+    Effect.timeout(DECODE_TIMEOUT),
+    Effect.mapError((cause) => {
+      if (
+        cause instanceof FfmpegExitError ||
+        cause instanceof DecodedAudioLimitError
+      ) {
+        return cause;
+      }
+      return cause instanceof Cause.TimeoutError
+        ? new AudioDecodeTimeoutError({
+          timeoutSeconds: Duration.toSeconds(DECODE_TIMEOUT),
+        })
+        : new AudioDecodeError({ input, cause });
+    }),
+  );
 
 // Concatenate ffmpeg's stdout byte chunks and reinterpret them as little-endian
 // f32 mono samples. Split out from spawning so it can be unit-tested offline
@@ -490,6 +559,232 @@ if (import.meta.main) {
 const assert = (cond: boolean, msg: string) => {
   if (!cond) throw new Error(msg);
 };
+
+interface TestProcessOptions {
+  readonly stdout: Stream.Stream<Uint8Array>;
+  readonly stderr?: Stream.Stream<Uint8Array>;
+  readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly isRunning?: Effect.Effect<boolean>;
+  readonly kill?: (
+    options: ChildProcess.KillOptions | undefined,
+  ) => Effect.Effect<void>;
+}
+
+const testHandle = (options: TestProcessOptions) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    stdin: Sink.drain,
+    stdout: options.stdout,
+    stderr: options.stderr ?? Stream.empty,
+    all: Stream.empty,
+    exitCode: options.exitCode ?? Effect.succeed(
+      ChildProcessSpawner.ExitCode(0),
+    ),
+    isRunning: options.isRunning ?? Effect.succeed(false),
+    kill: options.kill ?? (() => Effect.void),
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+
+const testSpawnerLayer = (
+  makeChild: (
+    command: ChildProcess.Command,
+  ) => ChildProcessSpawner.ChildProcessHandle,
+  onSpawn: Effect.Effect<void> = Effect.void,
+) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.acquireRelease(
+        Effect.sync(() => makeChild(command)).pipe(Effect.tap(() => onSpawn)),
+        (handle) =>
+          handle.isRunning.pipe(
+            Effect.flatMap((running) =>
+              running
+                ? handle.kill(
+                  command._tag === "StandardCommand"
+                    ? command.options
+                    : undefined,
+                )
+                : Effect.void
+            ),
+            Effect.orDie,
+          ),
+      )
+    ),
+  );
+
+Deno.test("decodeAudio returns typed ffmpeg failure on non-zero exit", async () => {
+  // Given: a process that emits no PCM and exits unsuccessfully.
+  const layer = testSpawnerLayer(() =>
+    testHandle({
+      stdout: Stream.empty,
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(23)),
+    })
+  );
+
+  // When: the canonical scoped decoder consumes that process.
+  const failure = await Effect.runPromise(
+    Effect.flip(decodeAudio("recording.wav")).pipe(Effect.provide(layer)),
+  );
+
+  // Then: callers receive a dedicated error with safe process context.
+  if (failure._tag !== "FfmpegExitError") {
+    throw new Error(`error tag: ${failure._tag}`);
+  }
+  assert(failure.input === "recording.wav", `input: ${failure.input}`);
+  assert(failure.exitCode === 23, `exit code: ${failure.exitCode}`);
+});
+
+Deno.test("decoded PCM collection stops at the byte ceiling", async () => {
+  // Given: an unbounded stream that emits four decoded bytes per pull.
+  let pulls = 0;
+  const stdout = Stream.unfold(0, (state) =>
+    Effect.sync(() => {
+      pulls += 1;
+      return [new Uint8Array(4), state + 1] as const;
+    }));
+  const layer = testSpawnerLayer(() => testHandle({ stdout }));
+
+  // When: collection reaches a ceiling of two chunks.
+  const failure = await Effect.runPromise(
+    Effect.flip(decodeAudio("recording.wav", 8)).pipe(Effect.provide(layer)),
+  );
+
+  // Then: the third pull fails before the stream can grow without bound.
+  if (failure._tag !== "DecodedAudioLimitError") {
+    throw new Error(`error tag: ${failure._tag}`);
+  }
+  assert(failure.limitBytes === 8, `limit: ${failure.limitBytes}`);
+  assert(failure.attemptedBytes === 12, `attempted: ${failure.attemptedBytes}`);
+  assert(pulls === 3, `expected 3 pulls, got ${pulls}`);
+});
+
+Deno.test("decodeAudio drains stderr before pipe backpressure can block stdout", async () => {
+  const program = Effect.gen(function* () {
+    // Given: stdout cannot emit until the stderr consumer starts.
+    const stderrStarted = yield* Deferred.make<void>();
+    const stdout = Stream.fromEffect(
+      Deferred.await(stderrStarted).pipe(
+        Effect.as(new Uint8Array(new Float32Array([0.5]).buffer)),
+      ),
+    );
+    const stderr = Stream.fromEffect(
+      Deferred.succeed(stderrStarted, undefined).pipe(
+        Effect.as(new Uint8Array([1])),
+      ),
+    );
+    const layer = testSpawnerLayer(() => testHandle({ stdout, stderr }));
+
+    // When: decode runs with a test-only deadlock deadline.
+    const fiber = yield* decodeAudio("recording.wav").pipe(
+      Effect.provide(layer),
+      Effect.timeout(Duration.seconds(1)),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* TestClock.adjust(Duration.seconds(1));
+    const audio = yield* Fiber.join(fiber);
+
+    // Then: draining stderr releases stdout and preserves the PCM result.
+    assert(audio.length === 1, `expected 1 sample, got ${audio.length}`);
+  });
+
+  await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+});
+
+Deno.test("decodeAudio timeout closes scope and terminates ffmpeg", async () => {
+  const program = Effect.gen(function* () {
+    // Given: a child that never emits or exits.
+    const kills: Array<ChildProcess.KillOptions | undefined> = [];
+    const events: string[] = [];
+    const layer = testSpawnerLayer(() =>
+      testHandle({
+        stdout: Stream.never,
+        stderr: Stream.never,
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: (options) =>
+          Effect.gen(function* () {
+            kills.push(options);
+            yield* Effect.sleep(options?.forceKillAfter ?? Duration.zero);
+            events.push("terminated");
+          }),
+      })
+    );
+
+    // When: the production deadline and a later test guard both elapse.
+    const fiber = yield* Effect.flip(
+      decodeAudio("recording.wav").pipe(
+        Effect.provide(layer),
+        Effect.timeout(Duration.minutes(31)),
+      ),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust(Duration.minutes(31));
+    const failure = yield* Fiber.join(fiber);
+
+    // Then: the typed production timeout wins and scoped release kills once.
+    if (failure._tag !== "AudioDecodeTimeoutError") {
+      throw new Error(`error tag: ${failure._tag}`);
+    }
+    assert(failure.timeoutSeconds === 1800, "timeout: 1800s");
+    assert(kills.length === 1, `expected 1 kill, got ${kills.length}`);
+    assert(events.join(",") === "terminated", `events: ${events.join(",")}`);
+  });
+
+  await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+});
+
+Deno.test("decodeAudio interruption carries forced-kill grace into cleanup", async () => {
+  const program = Effect.gen(function* () {
+    // Given: a running child whose termination completes only after its grace.
+    const kills: Array<ChildProcess.KillOptions | undefined> = [];
+    const events: string[] = [];
+    const spawned = yield* Deferred.make<void>();
+    const layer = testSpawnerLayer(
+      () =>
+        testHandle({
+          stdout: Stream.never,
+          stderr: Stream.never,
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: (options) =>
+            Effect.gen(function* () {
+              kills.push(options);
+              yield* Effect.sleep(options?.forceKillAfter ?? Duration.zero);
+              events.push("terminated");
+            }),
+        }),
+      Deferred.succeed(spawned, undefined),
+    );
+
+    // When: decode is interrupted and the configured grace elapses.
+    const fiber = yield* decodeAudio("recording.wav").pipe(
+      Effect.provide(layer),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Deferred.await(spawned);
+    const interruption = yield* Fiber.interrupt(fiber).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* TestClock.adjust(Duration.seconds(5));
+    yield* Fiber.join(interruption);
+
+    // Then: acquire-release awaited termination with the command's kill grace.
+    assert(kills.length === 1, `expected 1 kill, got ${kills.length}`);
+    const killOptions = kills.at(0);
+    if (killOptions === undefined) {
+      throw new Error("cleanup did not receive child process options");
+    }
+    assert(
+      Duration.toMillis(killOptions.forceKillAfter ?? 0) === 5000,
+      `force-kill grace: ${killOptions.forceKillAfter}`,
+    );
+    assert(events.join(",") === "terminated", `events: ${events.join(",")}`);
+  });
+
+  await Effect.runPromise(program.pipe(Effect.provide(TestClock.layer({}))));
+});
 
 Deno.test("bytesToFloat32 reinterprets little-endian f32 samples", () => {
   const src = new Float32Array([0, 0.5, -0.5, 1]);
