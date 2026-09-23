@@ -251,4 +251,4 @@
 {{- range $providerName, $_ := $desiredSkills -}}
 {{-   if not (hasKey $providerNames $providerName) -}}{{- fail (printf "skills.%s references an undeclared provider" $providerName) -}}{{- end -}}
 {{- end -}}
-{{ dict "schema" 2 "links" $links "archives" $archives "providers" $providers | toPrettyJson }}
+{{ dict "schema" 2 "registry" (dict "ownership" "authoritative") "links" $links "archives" $archives "providers" $providers | toPrettyJson }}

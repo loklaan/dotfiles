@@ -151,6 +151,7 @@ const Archive = Struct({
   !target.startsWith(`${input}/`));
 export const Manifest = Struct({
   schema: Tag(2),
+  registry: Struct({ ownership: Tag("authoritative") }),
   links: List(Link),
   archives: List(Archive),
   providers: List(Provider),
@@ -159,7 +160,13 @@ export const Manifest = Struct({
   unique([...links, ...archives, ...providers.flatMap(({ items }) => items)]
     .map(({ id }) => id)));
 export type Manifest = typeof Manifest.Type;
-const empty: Manifest = { schema: 2, links: [], archives: [], providers: [] };
+const empty: Manifest = {
+  schema: 2,
+  registry: { ownership: "authoritative" },
+  links: [],
+  archives: [],
+  providers: [],
+};
 const owned = <S extends Schema.Constraint>(value: S) =>
   Schema.Record(Schema.String, value).check(
     rule((entries) =>
@@ -421,6 +428,35 @@ function* physical(target: string, type: "File" | "Directory", mode?: number) {
     cursor = parent;
   }
 }
+const canonicalPackageDirectory = Effect.fn(function* (target: string) {
+  yield* decodeContract(Path, target);
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const missing: string[] = [];
+  let cursor = target;
+  while (true) {
+    const info = yield* fs.stat(cursor).pipe(absent);
+    if (info !== null) {
+      if (info.type !== "Directory") {
+        return yield* fault(["FileType", "Expected a physical directory"]);
+      }
+      const root = yield* fs.realPath(cursor);
+      const resolved = missing.reduceRight(
+        (resolved, name) => path.join(resolved, name),
+        root,
+      );
+      yield* decodeContract(Path, resolved);
+      return resolved;
+    }
+    const parent = path.dirname(cursor);
+    const names = yield* fs.readDirectory(parent).pipe(absent);
+    if (names?.includes(path.basename(cursor))) {
+      return yield* fault("DanglingPath");
+    }
+    missing.push(path.basename(cursor));
+    cursor = parent;
+  }
+});
 export const loadDocument = <
   Contract extends Schema.ConstraintDecoder<unknown>,
 >(
@@ -1067,7 +1103,6 @@ const validateLocations = Effect.fn(function* (locations: Locations) {
   yield* physical(locations.manifest, "File", 0o600);
   yield* physical(locations.stateDir, "Directory", 0o700);
   yield* physical(locations.skillsPath, "Directory");
-  yield* physical(locations.packageDir, "Directory", 0o700);
   if (locations.reference) yield* decodeContract(Path, locations.reference);
   yield* physical(
     path.join(locations.stateDir, "operation.lock"),
@@ -1539,15 +1574,8 @@ export const linkAction = (
   if (live === null) {
     return target ? "creates" : owned ? "removes" : "unchanged";
   }
-  if (owned !== undefined && live === target) {
-    return owned === target ? "unchanged" : "replaces";
-  }
-  if (live !== owned) return "blocked";
-  return target === undefined
-    ? "removes"
-    : live === target
-    ? "unchanged"
-    : "replaces";
+  if (target === undefined) return "removes";
+  return owned === target && live === target ? "unchanged" : "replaces";
 };
 export const treeAction = (
   desired: string | undefined,
@@ -1796,6 +1824,43 @@ const liveLink = Effect.fn(function* (target: string) {
     Effect.mapError((cause) => fault("UnownedLink", "registry", cause)),
   );
 });
+type RegistryEntry =
+  | Readonly<{ kind: "link"; target: string }>
+  | Readonly<{ kind: "other" }>;
+const registryEntry = Effect.fn(function* (
+  root: string,
+  name: string,
+  names: readonly string[],
+) {
+  if (!names.includes(name)) return null;
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const child = path.join(root, name);
+  if (path.dirname(child) !== root || path.basename(child) !== name) {
+    return yield* fault("UnsafePath", "registry");
+  }
+  const link = yield* fs.readLink(child).pipe(Effect.result);
+  return link._tag === "Success"
+    ? { kind: "link", target: link.success } as const
+    : { kind: "other" } as const;
+});
+const removeRegistryEntry = Effect.fn(function* (
+  root: string,
+  name: string,
+  entry: RegistryEntry,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const child = path.join(root, name);
+  if (path.dirname(child) !== root || path.basename(child) !== name) {
+    return yield* fault("UnsafePath", "registry");
+  }
+  yield* fs.remove(
+    child,
+    entry.kind === "other" ? { recursive: true } : undefined,
+  );
+  yield* syncDirectory(root);
+});
 const publishLink = Effect.fn(function* (
   root: string,
   id: string,
@@ -1807,15 +1872,12 @@ const publishLink = Effect.fn(function* (
   const link = path.join(root, id);
   const temporary = path.join(root, `.df-skills-link-${id}`);
   const live = yield* liveLink(link);
-  if (live === target) {
+  if (live === target && owned?.target === target) {
     const staged = yield* liveLink(temporary).pipe(Effect.result);
     if (staged._tag === "Success" && staged.success === target) {
       yield* fs.remove(temporary);
     }
     return;
-  }
-  if (live !== null && live !== owned?.target) {
-    return yield* fault(owned ? "ChangedLink" : "UnownedLink", "registry");
   }
   const staged = yield* liveLink(temporary).pipe(Effect.result);
   if (staged._tag === "Failure") return yield* staged.failure;
@@ -2083,10 +2145,17 @@ const reconcileFiles = (locations: Locations) =>
       if (result._tag === "Success") prepared.set(id, result.success);
       else statuses[id] = issue([result.failure.error, result.failure.message]);
     }
-    for (
-      const [id] of collisions(desired.map((entry) => entry.id), liveNames)
-    ) {
-      statuses[id] = issue("SkillCollision");
+    const desiredById = new Map(desired.map((entry) => [entry.id, entry]));
+    const names = liveNames.toSorted();
+    for (const name of names) {
+      const live = yield* registryEntry(locations.skillsPath, name, names);
+      if (live === null) continue;
+      const wanted = desiredById.get(name);
+      if (wanted === undefined) {
+        yield* removeRegistryEntry(locations.skillsPath, name, live);
+      } else if (prepared.has(name) && live.kind === "other") {
+        yield* removeRegistryEntry(locations.skillsPath, name, live);
+      }
     }
     for (const entry of desired) {
       if (Object.hasOwn(statuses, entry.id)) continue;
@@ -2106,10 +2175,6 @@ const reconcileFiles = (locations: Locations) =>
       const observed = yield* liveLink(`${locations.skillsPath}/${entry.id}`)
         .pipe(Effect.result);
       if (observed._tag === "Failure") {
-        statuses[entry.id] = issue(prior ? "ChangedLink" : "UnownedLink");
-      } else if (
-        linkAction(entry.target, prior?.target, observed.success) === "blocked"
-      ) {
         statuses[entry.id] = issue(prior ? "ChangedLink" : "UnownedLink");
       }
       if (prior && prior.kind !== ("input" in entry ? "archive" : "link")) {
@@ -2182,7 +2247,7 @@ const reconcileFiles = (locations: Locations) =>
           prior = ownership;
         }
         if ("input" in entry) yield* publishArchive(next, prior);
-        yield* publishLink(locations.skillsPath, id, entry.target, prior);
+        yield* publishLink(locations.skillsPath, id, entry.target, owned);
         yield* save({
           ...receipt,
           pendingPublication: null,
@@ -2461,13 +2526,13 @@ function* inspectState(active: Active, locations: Locations) {
   const stale = receiptStatus(receipt, manifestDigest);
   if (stale) registryChecks.set(null, stale);
   const registry = yield* observe("registry", function* () {
-    if (linkItems.length === 0) return stale;
     const root = yield* physical(locations.skillsPath, "Directory");
     const names = root === null
       ? []
-      : yield* fs.readDirectory(locations.skillsPath);
-    for (const [id] of collisions(files.map((entry) => entry.id), names)) {
-      registryChecks.set(id, issue("SkillCollision"));
+      : (yield* fs.readDirectory(locations.skillsPath)).toSorted();
+    const desiredIds = new Set(files.map((entry) => entry.id));
+    for (const name of names) {
+      if (!desiredIds.has(name)) links.removes.push(name);
     }
     for (const { id, desired, owned } of linkItems) {
       if (registryChecks.has(id)) continue;
@@ -2475,23 +2540,11 @@ function* inspectState(active: Active, locations: Locations) {
         registryChecks.set(id, sources[id]);
         continue;
       }
-      const live = names.includes(id)
-        ? yield* fs.readLink(path.join(locations.skillsPath, id)).pipe(
-          Effect.mapError((cause) => fault("UnownedLink", "registry", cause)),
-          Effect.catch(Effect.succeed),
-        )
-        : null;
-      if (live instanceof BoundaryError) {
-        registryChecks.set(id, issue([live.error, live.message]));
-        continue;
-      }
-      const action = linkAction(desired?.target, owned?.target, live);
-      if (action === "blocked") {
-        registryChecks.set(
-          id,
-          issue(owned ? "ChangedLink" : "UnownedLink"),
-        );
-      } else if (desired && "input" in desired) {
+      const live = yield* registryEntry(locations.skillsPath, id, names);
+      const action = live?.kind === "other"
+        ? desired ? "replaces" : "removes"
+        : linkAction(desired?.target, owned?.target, live?.target ?? null);
+      if (desired && "input" in desired) {
         const inspected = yield* Effect.gen(function* () {
           const prepared = yield* prepareArchive(desired);
           const liveDigest = yield* treeAt(desired.target);
@@ -2639,6 +2692,11 @@ function* inspectState(active: Active, locations: Locations) {
       ...Object.values(singles),
     ].every(okay),
   };
+  for (
+    const action of ["creates", "replaces", "removes", "unchanged"] as const
+  ) {
+    links[action] = [...new Set(links[action])].sort();
+  }
   const plan = {
     manifestDigest,
     links,
@@ -2676,12 +2734,16 @@ const run = (command: string, input: Locations) =>
     const state = yield* Config.String("XDG_STATE_HOME").pipe(
       Config.withDefault(`${home}/.local/state`),
     );
+    const packageDir = input.packageDir ||
+      `${home}/.cache/claude-skill-packs`;
     const locations = {
       manifest: input.manifest ||
         `${home}/.config/dotfiles/skill-lifecycle.json`,
       stateDir: input.stateDir || `${state}/dotfiles/skill-lifecycle`,
       skillsPath: input.skillsPath || `${home}/.agents/skills`,
-      packageDir: input.packageDir || `${home}/.cache/claude-skill-packs`,
+      packageDir: yield* canonicalPackageDirectory(packageDir).pipe(
+        guarded("config"),
+      ),
       reference: input.reference,
     };
     yield* validateLocations(locations).pipe(guarded("config"));
@@ -2853,6 +2915,7 @@ const commandFixture = (executable: string) => ({ ...provider(executable), id: "
 const packFixture = (executable: string) => ({ ...provider(executable), id: "pack", kind: "pack", lock: { ...provider(executable).lock, identity: "pack.lock" }, install: call(executable, "install", "{source}"), update: call(executable, "update"), remove: call(executable, "remove", "{removeAs}"), items: [{ id: "pack-item", source: "example/pack", removeAs: "pack" }] });
 export const manifestFixture = (executable = "provider") => ({
   schema: 2,
+  registry: { ownership: "authoritative" },
   links: sourceFixtures(),
   archives: [archiveFixture],
   providers: [commandFixture(executable), packFixture(executable)],
@@ -3020,8 +3083,8 @@ const linkCases = [
   ["next", "old", "old", "replaces"],
   [undefined, "old", "old", "removes"],
   ["old", "old", "old", "unchanged"],
-  ["next", "old", "other", "blocked"],
-  ["old", undefined, "old", "blocked"],
+  ["next", "old", "other", "replaces"],
+  ["old", undefined, "old", "replaces"],
 ] as const;
 for (const [target, owned, live, action] of linkCases) {
   Deno.test(`link ${target}/${owned}/${live}`, () =>
@@ -3042,7 +3105,7 @@ Deno.test("receipt persistence is content-addressed", () => {
 });
 Deno.test("owned link replacement recovers after the final rename", () => {
   assert.equal(linkAction("next", "old", "next"), "replaces");
-  assert.equal(linkAction("next", undefined, "next"), "blocked");
+  assert.equal(linkAction("next", undefined, "next"), "replaces");
 });
 Deno.test("archive ownership classifies exact partial cleanup", () => {
   // deno-fmt-ignore
@@ -3502,6 +3565,316 @@ Deno.test("named executable targets stay inside their provisioned root", () => {
     executableTargetAllowed("/private/tmp/tools", "/usr/bin/git"),
     executableTargetAllowed("/", "/usr/bin/git"),
   ], [true, false, false]);
+});
+const filesystemIntegration =
+  Deno.permissions.querySync({ name: "read" }).state === "granted" &&
+  Deno.permissions.querySync({ name: "write" }).state === "granted";
+type RuntimeDependencies =
+  | FileSystem
+  | PathService
+  | Crypto.Crypto
+  | ChildProcessSpawner.ChildProcessSpawner;
+type RegistryFixtureContext = Readonly<{
+  locations: Locations;
+  reconcile: () => Promise<unknown>;
+  reconcileResult: () => Promise<Result.Result<unknown, BoundaryCause>>;
+  run: <Value, Error>(
+    effect: Effect.Effect<Value, Error, RuntimeDependencies>,
+  ) => Promise<Value>;
+  writeManifest: (links: Manifest["links"]) => Promise<void>;
+}>;
+const directoryNames = async (target: string) => {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir(target)) names.push(entry.name);
+  return names.toSorted();
+};
+const withRegistryFixture = async (
+  test: (context: RegistryFixtureContext) => Promise<void>,
+) => {
+  const created = await Deno.makeTempDir({ prefix: "df-skills-registry-" });
+  const root = await Deno.realPath(created);
+  try {
+    const stateDir = `${root}/state`;
+    const source = `${stateDir}/source`;
+    const locations: Locations = {
+      manifest: `${root}/manifest.json`,
+      stateDir,
+      skillsPath: `${root}/registry`,
+      packageDir: `${root}/packages`,
+      reference: "",
+    };
+    await Deno.mkdir(stateDir, { mode: 0o700 });
+    await Deno.mkdir(source, { mode: 0o755 });
+    await Deno.mkdir(locations.skillsPath, { mode: 0o755 });
+    await Deno.writeTextFile(
+      `${source}/SKILL.md`,
+      "---\nname: desired\ndescription: fixture\n---\n",
+      { mode: 0o644 },
+    );
+    await Deno.writeTextFile(`${stateDir}/operation.lock`, "", {
+      mode: 0o600,
+    });
+    const writeManifest = async (links: Manifest["links"]) => {
+      const manifest: Manifest = {
+        schema: 2,
+        registry: { ownership: "authoritative" },
+        links,
+        archives: [],
+        providers: [],
+      };
+      await Deno.writeTextFile(locations.manifest, canonical(manifest), {
+        mode: 0o600,
+      });
+      await Deno.chmod(locations.manifest, 0o600);
+    };
+    await writeManifest([{
+      id: "desired",
+      target: source,
+      owner: "chezmoi",
+      source: { kind: "repository" },
+      package: false,
+    }]);
+    const NodeServices = await import(
+      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    );
+    const run = <Value, Error>(
+      effect: Effect.Effect<Value, Error, RuntimeDependencies>,
+    ) => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+    await test({
+      locations,
+      reconcile: () => run(reconcileFiles(locations)),
+      reconcileResult: () => run(reconcileFiles(locations).pipe(Effect.result)),
+      run,
+      writeManifest,
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+};
+Deno.test({
+  name: "authoritative registry creates fresh links and keeps reapply stable",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      await reconcile();
+      const first = await Deno.lstat(`${locations.skillsPath}/desired`);
+      await reconcile();
+      const second = await Deno.lstat(`${locations.skillsPath}/desired`);
+      assert.equal(
+        await Deno.readLink(`${locations.skillsPath}/desired`),
+        `${locations.stateDir}/source`,
+      );
+      assert.equal(second.ino, first.ino);
+      const receipt = JSON.parse(
+        await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+      );
+      assert.equal(
+        receipt.links.desired.target,
+        `${locations.stateDir}/source`,
+      );
+    });
+  },
+});
+Deno.test({
+  name:
+    "authoritative registry removes an unknown symlink without following it",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      const outside = `${locations.stateDir}/outside`;
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(`${outside}/sentinel`, "safe");
+      await Deno.symlink(outside, `${locations.skillsPath}/unknown-link`);
+      await reconcile();
+      await assert.rejects(() =>
+        Deno.lstat(`${locations.skillsPath}/unknown-link`)
+      );
+      assert.equal(await Deno.readTextFile(`${outside}/sentinel`), "safe");
+    });
+  },
+});
+Deno.test({
+  name:
+    "authoritative registry removes an unknown directory without following nested links",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      const outside = `${locations.stateDir}/outside`;
+      const unknown = `${locations.skillsPath}/unknown-directory`;
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(`${outside}/sentinel`, "safe");
+      await Deno.mkdir(unknown);
+      await Deno.symlink(outside, `${unknown}/nested-link`);
+      await reconcile();
+      await assert.rejects(() => Deno.lstat(unknown));
+      assert.equal(await Deno.readTextFile(`${outside}/sentinel`), "safe");
+    });
+  },
+});
+Deno.test({
+  name: "authoritative registry replaces a wrong desired symlink",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      const wrong = `${locations.stateDir}/wrong`;
+      await Deno.mkdir(wrong);
+      await Deno.symlink(wrong, `${locations.skillsPath}/desired`);
+      await reconcile();
+      assert.equal(
+        await Deno.readLink(`${locations.skillsPath}/desired`),
+        `${locations.stateDir}/source`,
+      );
+    });
+  },
+});
+Deno.test({
+  name: "authoritative registry replaces a physical desired directory",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      const desired = `${locations.skillsPath}/desired`;
+      await Deno.mkdir(desired);
+      await Deno.writeTextFile(`${desired}/legacy`, "remove");
+      await reconcile();
+      assert.equal(
+        await Deno.readLink(desired),
+        `${locations.stateDir}/source`,
+      );
+      await assert.rejects(() => Deno.lstat(`${desired}/legacy`));
+    });
+  },
+});
+Deno.test({
+  name:
+    "authoritative registry rebuilds an exact legacy link without a receipt",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile }) => {
+      const link = `${locations.skillsPath}/desired`;
+      await Deno.symlink(`${locations.stateDir}/source`, link);
+      const legacy = await Deno.lstat(link);
+      await reconcile();
+      const rebuilt = await Deno.lstat(link);
+      assert.notEqual(rebuilt.ino, legacy.ino);
+      const receipt = JSON.parse(
+        await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+      );
+      assert.equal(
+        receipt.links.desired.target,
+        `${locations.stateDir}/source`,
+      );
+    });
+  },
+});
+Deno.test({
+  name: "authoritative registry removes declared links after intent removal",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ locations, reconcile, writeManifest }) => {
+        await reconcile();
+        await writeManifest([]);
+        await reconcile();
+        await assert.rejects(() =>
+          Deno.lstat(`${locations.skillsPath}/desired`)
+        );
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.deepEqual(receipt.links, {});
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative opt-out clears unknown registry children",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ locations, reconcile, writeManifest }) => {
+        await writeManifest([]);
+        await Deno.mkdir(`${locations.skillsPath}/unknown`, {
+          recursive: true,
+        });
+        await Deno.writeTextFile(
+          `${locations.skillsPath}/unknown/file`,
+          "remove",
+        );
+        await reconcile();
+        assert.deepEqual(await directoryNames(locations.skillsPath), []);
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative registry rejects a symlink component in its root",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcileResult }) => {
+      const physical = `${locations.stateDir}/physical-registry`;
+      await Deno.rename(locations.skillsPath, physical);
+      await Deno.symlink(physical, locations.skillsPath);
+      const result = await reconcileResult();
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(
+          result.failure instanceof BoundaryError && result.failure.error,
+          "UnsafePath",
+        );
+      }
+    });
+  },
+});
+Deno.test({
+  name: "package symlink components do not block registry validation",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, run }) => {
+      const cache = `${locations.stateDir}/cache`;
+      const alias = `${locations.stateDir}/cache-alias`;
+      await Deno.mkdir(cache);
+      await Deno.symlink(cache, alias);
+      const result = await run(
+        validateLocations({ ...locations, packageDir: `${alias}/packs` }).pipe(
+          Effect.result,
+        ),
+      );
+      assert.equal(result._tag, "Success");
+    });
+  },
+});
+Deno.test({
+  name: "package roots canonicalize symlink components before mutation",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, run }) => {
+      const cache = `${locations.stateDir}/canonical-cache`;
+      const alias = `${locations.stateDir}/canonical-cache-alias`;
+      await Deno.mkdir(cache);
+      await Deno.symlink(cache, alias);
+      assert.equal(
+        await run(canonicalPackageDirectory(`${alias}/packs`)),
+        `${cache}/packs`,
+      );
+    });
+  },
+});
+Deno.test({
+  name:
+    "authoritative plan reports unknown removal without mutating the registry",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, run }) => {
+      const unknown = `${locations.skillsPath}/unknown`;
+      await Deno.mkdir(unknown);
+      const active = await run(Effect.gen(() => loadActive(locations)));
+      const result = await run(
+        Effect.gen(() => inspectState(active, locations)),
+      );
+      assert.deepEqual(result.plan.links.removes, ["unknown"]);
+      assert.equal((await Deno.lstat(unknown)).isDirectory, true);
+    });
+  },
 });
 Deno.test("reference status states remain independent", () => {
   const observed = (["current", "missing", "stale", "invalid"] as const).map(
