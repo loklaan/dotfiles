@@ -8,7 +8,16 @@ Run everything:
 ```bash
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
+bash tests/omo-profile-config.test.sh
 ```
+
+## OMO profile config
+
+`omo-profile-config.test.sh` validates the source profile table and renders both
+modify templates with temporary data, sidecar, and destination paths. It covers
+tier names, exact category routing, Bedrock model
+registration, legacy tier migration, and invalid-value fallback without running
+`chezmoi apply` or writing managed targets under `$HOME`.
 
 ## tmux-resurrect-code-agents
 
