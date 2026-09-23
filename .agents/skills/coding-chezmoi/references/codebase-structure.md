@@ -25,7 +25,7 @@ Chezmoi maps source paths in this repo to target paths under `~/` using [source 
 | Add to `~/.local/lib/` | `home/private_dot_local/lib/` |
 | Create `~/.config/git/config` | `home/private_dot_config/git/config` |
 | Add script to `~/.local/bin/` | `home/private_dot_local/bin/executable_scriptname` |
-| Update `~/.zshrc` | `home/private_dot_zshrc` |
+| Update `~/.zshrc` | `home/.chezmoitemplates/zshrc-body` (wrapped by `home/modify_private_dot_zshrc`) |
 | Create templated `~/.npmrc` | `home/private_dot_npmrc.tmpl` |
 
 To find the source path for any target: `chezmoi source-path <target-path>`
@@ -75,7 +75,7 @@ Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it 
 - `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
 - `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, and packaging
 - `home/private_dot_local/share/dotfiles/skills/` — repository/Git/archive skill store acquired or materialized by chezmoi; `df-skills` owns only receipt-recorded derived archive trees and individual links in the mixed `~/.agents/skills/` registry
-- `home/private_dot_zshrc` — zsh entry point
+- `home/.chezmoitemplates/zshrc-body` — zsh entry point; `home/modify_private_dot_zshrc` renders it as a marked section so installer-appended lines survive and apply never prompts (same for `zprofile-body`)
 - `home/private_dot_config/private_zsh/init/*.zsh.tmpl` — zsh init modules
 
 ## Shared Logging Library
@@ -171,7 +171,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 
 1. Create: `home/private_dot_config/private_zsh/init/name.zsh.tmpl`
 2. Use the file header style from [coding-patterns.md](coding-patterns.md)
-3. Source it in `private_dot_zshrc` or another init module
+3. Source it in `home/.chezmoitemplates/zshrc-body` or another init module
 
 ### Adding a Lifecycle Script
 
