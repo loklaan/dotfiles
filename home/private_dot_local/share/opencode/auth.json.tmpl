@@ -1,33 +1,27 @@
-{{- $profile := dig "machineProfile" "personal" . -}}
-{{- if not (or (eq $profile "personal") (eq $profile "work")) -}}
-{{-   fail (printf "unsupported machineProfile %q; expected work or personal" $profile) -}}
-{{- end -}}
-{{- if eq $profile "work" -}}
-{}
-{{- else -}}
 {
-{{- /* Personal-profile-only auth for @canva/opencode-plugin-llmproxy:
+{{- /* Auth placeholders for @canva/opencode-plugin-llmproxy. Only rendered on
+       work machines — .chezmoiignore skips this file on every other profile.
+
+       opencode only invokes a plugin's auth.loader for providers that have an
+       entry in auth.json (provider.ts: `if (!stored) continue`). Without these
+       placeholders the plugin loads but never wires up its proxy transport,
+       and the provider vanishes (`Provider not found: openai`).
 
        VPN (no CODER env):
-         The plugin fetches a bearer token via `otter` and injects it as the
-         placeholder API key. The "llmproxy" placeholder MUST be present in
-         auth.json — opencode only invokes the plugin's auth.loader for
-         providers that have an entry, so without it the plugin never gets
-         to do its bearer-token swap.
+         The plugin fetches a bearer token via `otter` and injects it in place
+         of the "llmproxy" placeholder key.
 
        Coder devbox (CODER=true):
          The plugin uses AWS IMDS credentials with SigV4 signing instead of
          a bearer token. Having a placeholder key here breaks that path —
          opencode picks up the placeholder and bypasses SigV4. So we omit
-         the entry entirely on Coder.
+         the amazon-bedrock entry entirely on Coder.
 
-        google + openai route through the proxy on personal machines (mTLS on
-        Coder, VPN endpoint elsewhere), and need the placeholder to wire up
-        auth.loader. Work machines intentionally receive no auth entries. */ -}}
+       google + openai route through the proxy in both modes (mTLS on Coder,
+       VPN endpoint elsewhere), and both need the placeholder. */ -}}
 {{- if eq "" (env "CODER") }}
   "amazon-bedrock": { "type": "api", "key": "llmproxy" },
 {{- end }}
   "google": { "type": "api", "key": "llmproxy" },
   "openai": { "type": "api", "key": "llmproxy" }
 }
-{{- end -}}
