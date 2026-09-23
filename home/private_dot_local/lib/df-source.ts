@@ -21,14 +21,14 @@
 // Nothing runs at import, so importing this module under `deno test` stays
 // permission-free. Callers need --allow-run=chezmoi,git.
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
-import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.112";
-import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.117";
+import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 export class SourceRootError
   extends Schema.TaggedError<SourceRootError>()("SourceRootError", {
@@ -92,7 +92,7 @@ export const resolveRepoRoot = (
 
     // Config (not Deno.env.get) so the read is deferred to Effect execution and
     // needs no --allow-env at import. An unset OR empty var yields "".
-    const fromEnv = (yield* Config.string("CHEZMOI_SOURCE_DIR").pipe(
+    const fromEnv = (yield* Config.String("CHEZMOI_SOURCE_DIR").pipe(
       Config.withDefault(""),
       Effect.orElseSucceed(() => ""),
     )).trim();

@@ -5,7 +5,7 @@
 // Reads home/.chezmoidata/runtime-tiers.yaml from the chezmoi source repo and
 // compares it with runnable source files on disk. The manifest is the source of
 // truth for bootstrap/runtime tiering and shebang-derived language labels.
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Array as Arr,
@@ -13,16 +13,16 @@ import {
   Data,
   Effect,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.112/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Path } from "npm:effect@4.0.0-rc.117/Path";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import { parse as parseYaml } from "jsr:@std/yaml@^1";
 import { resolveRepoRoot } from "../lib/df-source.ts";
 
 // Repo files resolve against the repo root, never the process cwd, so the
 // deployed tool works from any directory.
-const repoRootFlag = Flag.string("repo-root").pipe(
+const repoRootFlag = Flag.String("repo-root").pipe(
   Flag.withDescription(
     "dotfiles repo root (default: derived from chezmoi source-path)",
   ),
@@ -359,19 +359,18 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // @effect/platform-node is imported dynamically so `deno test` needs no
-  // permission flags (msgpackr reads process.env at load time). The imports are
-  // SUBMODULE paths, never the bare package: the package index re-exports
+  // @effect/platform-node is imported dynamically so `deno test` does not
+  // initialize the live runtime. The imports are SUBMODULE paths, never the
+  // bare package: the package index re-exports
   // unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
   // module-evaluation time and so ENUMERATES process.env — an enumeration Deno
   // cannot scope, forcing a blanket --allow-env. The submodules never reach that
-  // module, leaving only msgpackr's read of the single named
-  // MSGPACKR_NATIVE_ACCELERATION_DISABLED, which the shebang's allowlist covers.
+  // module.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
 
   // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,

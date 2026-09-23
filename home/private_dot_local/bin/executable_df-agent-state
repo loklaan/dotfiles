@@ -22,9 +22,10 @@
 // state that changed since. The checksum deliberately excludes mtime/timestamps
 // so it is stable across time and sensitive only to what a reviewer judged.
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
+  ByteSize,
   Console,
   Context,
   Effect,
@@ -32,17 +33,16 @@ import {
   Option,
   PlatformError,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
-import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
-import * as Path from "npm:effect@4.0.0-rc.112/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
+import * as Path from "npm:effect@4.0.0-rc.117/Path";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-// NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only.
-// It transitively loads msgpackr, which reads process.env at module load and
-// throws NotCapable under zero-flag `deno test`. Same pattern as df-drift.
+// NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only
+// so zero-flag tests do not initialize the live Node runtime.
 import { fileExists, hasCommand, parseJson, run } from "../lib/df-cache.ts";
-import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
+import type * as Process from "npm:effect@4.0.0-rc.117/unstable/process";
 
 type ToolEnv =
   | FileSystem.FileSystem
@@ -749,23 +749,23 @@ const exitAfter = <E>(
     Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
   ) as Effect.Effect<never, never, ToolEnv>;
 
-const jsonFlag = Flag.boolean("json").pipe(
+const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("emit machine-readable JSON including the checksum"),
   Flag.withDefault(false),
 );
-const confirmFlag = Flag.string("confirm").pipe(
+const confirmFlag = Flag.String("confirm").pipe(
   Flag.withDescription("checksum from the survey being acted on"),
   Flag.withDefault(""),
 );
-const keepFlag = Flag.string("keep").pipe(
+const keepFlag = Flag.String("keep").pipe(
   Flag.withDescription("comma-separated pane ids to spare"),
   Flag.withDefault(""),
 );
-const deleteFlag = Flag.boolean("delete").pipe(
+const deleteFlag = Flag.Boolean("delete").pipe(
   Flag.withDescription("unlink instead of archiving"),
   Flag.withDefault(false),
 );
-const dryRunFlag = Flag.boolean("dry-run").pipe(
+const dryRunFlag = Flag.Boolean("dry-run").pipe(
   Flag.withDescription("print what would happen and change nothing"),
   Flag.withDefault(false),
 );
@@ -817,10 +817,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(agentStateCommand, { version: "0.0.0" }).pipe(
     Effect.provide(PhysicalFileSystem.layer),
@@ -888,7 +888,7 @@ const fileInfo = (
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.bytes(0),
   blksize: Option.none(),
   blocks: Option.none(),
 });

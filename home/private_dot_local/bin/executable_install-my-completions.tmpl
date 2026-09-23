@@ -7,8 +7,8 @@
 //   chezmoi execute-template < home/private_dot_local/bin/executable_install-my-completions.tmpl > /tmp/imc.ts
 //   deno check /tmp/imc.ts && deno fmt --check /tmp/imc.ts && deno lint /tmp/imc.ts && deno test /tmp/imc.ts
 //
-// Effect v4 design (modules verified against effect@4.0.0-rc.112):
-//   - effect/unstable/cli      Command + a custom Flag.boolean("help"); the flag
+// Effect v4 design (modules verified against effect@4.0.0-rc.117):
+//   - effect/unstable/cli      Command + a custom Flag.Boolean("help"); the flag
 //                              shadows the built-in so `--help` prints the exact
 //                              usage below rather than the auto-generated help.
 //   - effect/FileSystem        directory creation, command-exists probing, and
@@ -24,8 +24,7 @@
 //   --allow-run=<allowlist>  spawn mise + the managed tools to source completions
 //   --allow-read             FileSystem.exists / temp + directory reads
 //   --allow-write            FileSystem makeDirectory / temp file / rename / remove
-//   --allow-env              Config (HOME/PATH) + the env @effect/platform-node's
-//                            msgpackr reads at module load (NotCapable otherwise)
+//   --allow-env              Config (HOME/PATH) + child-process env inheritance
 //   --allow-sys=uid          FileSystem.exists -> Node fs.access calls uid()
 // The @effect/platform-node import is dynamic (import.meta.main path only) so the
 // offline `deno test` stays hermetic and permission-free.
@@ -36,14 +35,14 @@ import {
   Data,
   Duration,
   Effect,
-} from "npm:effect@4.0.0-rc.112";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
-import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
-import * as Path from "npm:effect@4.0.0-rc.112/Path";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
+import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
+import * as Path from "npm:effect@4.0.0-rc.117/Path";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -465,8 +464,8 @@ const generateCompletion = (
   });
 
 const installCompletions = Effect.gen(function* () {
-  const home = yield* Config.string("HOME").pipe(Config.withDefault(""));
-  const basePath = yield* Config.string("PATH").pipe(Config.withDefault(""));
+  const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
+  const basePath = yield* Config.String("PATH").pipe(Config.withDefault(""));
   const augmentedPath = yield* augmentPath(home, basePath);
 
   const path = yield* Path.Path;
@@ -519,12 +518,12 @@ const installCompletions = Effect.gen(function* () {
 
 // One command, one optional `--help` flag. The custom `help` flag shadows the
 // CLI's built-in --help so we print the exact usage string above.
-// `Flag.withDefault(false)` is load-bearing: an omitted `Flag.boolean` fails as
+// `Flag.withDefault(false)` is load-bearing: an omitted `Flag.Boolean` fails as
 // a missing required flag rather than resolving to `false`, so without it a
 // bare `install-my-completions` (the normal invocation) exits 1.
 const command = Command.make(
   "install-my-completions",
-  { help: Flag.boolean("help").pipe(Flag.withDefault(false)) },
+  { help: Flag.Boolean("help").pipe(Flag.withDefault(false)) },
   Effect.fn(function* ({ help }) {
     if (help) {
       yield* Console.log(usage);
@@ -555,10 +554,10 @@ if (import.meta.main) {
   // NodeRuntime.runMain installs the signal handlers the parallel child-process
   // fan-out relies on for graceful teardown.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   const loggerLayer = await makeLoggerLayer();
   command.pipe(

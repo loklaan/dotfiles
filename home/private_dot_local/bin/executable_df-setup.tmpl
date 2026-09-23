@@ -14,19 +14,19 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 const DESCRIPTION = `Checks dotfiles configuration status and prints instructions for
   completing setup. Run it after an initial dotfiles installation.`;
 
 const bwsTokenPath: Effect.Effect<string> = Effect.gen(function* () {
-  const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+  const home = yield* Config.String("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
   return `${home}/.config/chezmoi/secrets/bws-access-token.txt`;
 });
 // Canary secret used to probe BWS token validity. Any live secret ID works;
@@ -103,7 +103,7 @@ const printPlain = (text = ""): void => {
   console.log(text);
 };
 
-const probeBwsFlag = Flag.boolean("probe-bws").pipe(
+const probeBwsFlag = Flag.Boolean("probe-bws").pipe(
   Flag.withDescription(
     "Probe BWS token validity and exit 0=ok, 1=missing, 2=invalid",
   ),
@@ -188,7 +188,7 @@ const hasCommand = (
 ): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     if (cmd.includes("/")) return yield* pathExists(cmd);
-    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+    const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
     for (const dir of pathEnv.split(":")) {
       if (dir === "") continue;
       if (yield* pathExists(`${dir}/${cmd}`)) return true;
@@ -408,10 +408,10 @@ const failedSkillsHealth = (observed: RunResult): SkillsHealth => {
   };
 };
 const skillsHealth: Effect.Effect<SkillsHealth, never, DoctorServices> = Effect.gen(function* () {
-  const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
-  const root = yield* Config.string("DF_SETUP_SKILLS_ROOT").pipe(Config.withDefault(home), Effect.orElseSucceed(() => home));
+  const home = yield* Config.String("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+  const root = yield* Config.String("DF_SETUP_SKILLS_ROOT").pipe(Config.withDefault(home), Effect.orElseSucceed(() => home));
   const stateHome = root === home
-    ? yield* Config.string("XDG_STATE_HOME").pipe(Config.withDefault(`${root}/.local/state`), Effect.orElseSucceed(() => `${root}/.local/state`))
+    ? yield* Config.String("XDG_STATE_HOME").pipe(Config.withDefault(`${root}/.local/state`), Effect.orElseSucceed(() => `${root}/.local/state`))
     : `${root}/.local/state`;
   const manifestPath = `${root}/.config/dotfiles/skill-lifecycle.json`;
   const stateDir = `${stateHome}/dotfiles/skill-lifecycle`;
@@ -787,7 +787,7 @@ const printStatus = (
     yield* printEffectReferenceHealth();
 
     printPlain();
-    const home = yield* Config.string("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
+    const home = yield* Config.String("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
     const driftCache = `${home}/.cache/dotfiles/drift.json`;
     if ((yield* fileExists(driftCache)) && (yield* hasCommand("jq"))) {
       const parsed = parseJson(yield* readTextFile(driftCache));
@@ -1057,13 +1057,12 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Dynamic import: @effect/platform-node loads msgpackr, which reads
-  // process.env at module load and throws NotCapable without --allow-env.
+  // Keep the live Node runtime out of permission-free unit tests.
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
 
   Command.run(setupCommand, { version: "0.0.0" }).pipe(

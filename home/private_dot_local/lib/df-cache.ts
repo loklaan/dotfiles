@@ -17,15 +17,15 @@
 // entrypoints, which provide NodeServices.layer, actually run them — and those
 // need --allow-sys=uid because node:fs reads uid via Deno node-compat.
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.112 and
-// @effect/platform-node@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117 and
+// @effect/platform-node@4.0.0-rc.117.
 
-import { Effect, Stream } from "npm:effect@4.0.0-rc.112";
-import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
+import { Effect, Stream } from "npm:effect@4.0.0-rc.117";
+import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // ===========================================================================
 // Process

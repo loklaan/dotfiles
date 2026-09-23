@@ -8,26 +8,26 @@ import {
   Layer,
   Schema,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import * as PlatformError from "npm:effect@4.0.0-rc.112/PlatformError";
-import { Path } from "npm:effect@4.0.0-rc.112/Path";
+} from "npm:effect@4.0.0-rc.117";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import * as PlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
+import { Path } from "npm:effect@4.0.0-rc.117/Path";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.112/unstable/http";
+} from "npm:effect@4.0.0-rc.117/unstable/http";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, normalize, parse as parsePath } from "node:path";
 
-export const EFFECT_VERSION = "4.0.0-rc.112";
-export const EFFECT_COMMIT = "2600f62f4532026928454dcea8d1c48557b3f942";
+export const EFFECT_VERSION = "4.0.0-rc.117";
+export const EFFECT_COMMIT = "14a3f140095fdebbff9162944fe7d4ea83e054e6";
 export const ARCHIVE_SHA256 =
-  "e44d9825313777a87daadeeea097edcef5ca66724ae1d5b279c7740dd777e190";
+  "588b72aaf1ec8f7d9958017460faffa1aec467ccb00fd998baadb4a165eb9363";
 export const ARCHIVE_URL =
   `https://codeload.github.com/Effect-TS/effect/tar.gz/${EFFECT_COMMIT}`;
 
@@ -35,14 +35,14 @@ const RECEIPT_NAME = ".effect-v4-reference.json";
 const STAGE_MARKER = ".effect-v4-stage";
 const TAR = "/usr/bin/tar";
 const KILL = "/bin/kill";
+const LN = "/bin/ln";
 const RMDIR = "/bin/rmdir";
 const OPERATION_ENV = "DF_EFFECT_V4_OPERATION";
-const MSGPACK_ENV = "MSGPACKR_NATIVE_ACCELERATION_DISABLED";
 const NODE_COVERAGE_ENV = "NODE_V8_COVERAGE";
 const PROCESS_ENVIRONMENT = { PATH: "/usr/bin:/bin" } as const;
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const EXPECTED_INVENTORY_DIGEST =
-  "ff686399532fd2d5b599608f3b6b8a819f5aae7981296859523c6e37a74a89da";
+  "63eec0bf1d6c44f84ed6a5361d67193c11a4af6313ae2982d0ba6673a3416b9c";
 const encoder = new TextEncoder();
 
 const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
@@ -191,9 +191,7 @@ const parseJson = <S extends Schema.ConstraintDecoder<unknown>>(
     catch: (cause) => failure(message, cause),
   }).pipe(Effect.flatMap((value) => decode(schema, value, message)));
 const validatePackageVersion = (value: unknown) =>
-  Schema.decodeUnknownEffect(PackageVersion)(value, {
-    onExcessProperty: "preserve",
-  }).pipe(
+  Schema.decodeUnknownEffect(PackageVersion)(value).pipe(
     Effect.mapError((cause) =>
       failure("Effect package version does not match the reference pin", cause)
     ),
@@ -1429,11 +1427,20 @@ const publishStage = Effect.fn(function* (
 
 const publishCurrent = Effect.fn(
   function* (paths: ReferencePaths, token: string) {
-    const fs = yield* FileSystem;
     const target = yield* readLink(paths.current).pipe(Effect.result);
     if (target._tag === "Failure") return yield* target.failure;
     const temporary = `${paths.root}/.current.${token}`;
-    yield* fs.symlink(`versions/${EFFECT_COMMIT}`, temporary);
+    const linked = yield* runProcess(LN, [
+      "-s",
+      `versions/${EFFECT_COMMIT}`,
+      temporary,
+    ], 4096);
+    if (linked.code !== 0) {
+      return yield* Effect.fail(
+        failure("Cannot stage current Effect reference pointer"),
+      );
+    }
+    const fs = yield* FileSystem;
     yield* fs.rename(temporary, paths.current);
     yield* directorySync(paths.root);
   },
@@ -1535,12 +1542,17 @@ const operationGrants = (operation: Operation): readonly string[] => {
   const parent = dirname(operation.root);
   const mutable = operation.command === "install" ||
     operation.command === "remove";
+  const runCommands = operation.command === "install"
+    ? [TAR, KILL, LN, RMDIR]
+    : operation.command === "remove"
+    ? [TAR, KILL, RMDIR]
+    : [];
   return [
-    `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+    `--allow-env=${OPERATION_ENV},${NODE_COVERAGE_ENV}`,
     `--allow-read=${parent},${operation.root}`,
     ...(mutable ? [`--allow-write=${operation.root}`] : []),
     "--allow-sys=uid",
-    ...(mutable ? [`--allow-run=${TAR},${KILL},${RMDIR}`] : []),
+    ...(mutable ? [`--allow-run=${runCommands.join(",")}`] : []),
     ...(mutable ? ["--allow-net=codeload.github.com"] : []),
   ];
 };
@@ -1565,7 +1577,6 @@ const operationalPermissionsValid = (operation: Operation): boolean => {
     operation.command === "remove";
   const required = [
     Deno.permissions.querySync({ name: "env", variable: OPERATION_ENV }).state,
-    Deno.permissions.querySync({ name: "env", variable: MSGPACK_ENV }).state,
     Deno.permissions.querySync({ name: "env", variable: NODE_COVERAGE_ENV })
       .state,
     Deno.permissions.querySync({ name: "read", path: parent }).state,
@@ -1577,6 +1588,9 @@ const operationalPermissionsValid = (operation: Operation): boolean => {
           .state,
         Deno.permissions.querySync({ name: "run", command: TAR }).state,
         Deno.permissions.querySync({ name: "run", command: KILL }).state,
+        ...(operation.command === "install"
+          ? [Deno.permissions.querySync({ name: "run", command: LN }).state]
+          : []),
         Deno.permissions.querySync({ name: "run", command: RMDIR }).state,
         Deno.permissions.querySync({ name: "net", host: "codeload.github.com" })
           .state,
@@ -1591,7 +1605,7 @@ const operationalPermissionsValid = (operation: Operation): boolean => {
       Deno.permissions.querySync({ name: "net", host: "codeload.github.com" })
           .state !==
         "granted" &&
-      [TAR, KILL, RMDIR].every((command) =>
+      [TAR, KILL, LN, RMDIR].every((command) =>
         Deno.permissions.querySync({ name: "run", command }).state !== "granted"
       );
   }
@@ -1613,7 +1627,6 @@ const launchOperational = async (operation: Operation): Promise<never> => {
     clearEnv: true,
     env: {
       [OPERATION_ENV]: JSON.stringify(operation),
-      [MSGPACK_ENV]: "true",
       DENO_NO_PACKAGE_JSON: "1",
     },
   });
@@ -1698,10 +1711,10 @@ if (import.meta.main) {
     Deno.exit(1);
   });
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   commandProgram(operation).pipe(
     Effect.catch((error) =>
@@ -1725,7 +1738,7 @@ if (import.meta.main) {
 
 // === Tests =================================================================
 // deno test --config deno.json home/private_dot_local/bin/executable_df-effect-v4-reference
-// deno test --config deno.json --allow-read --allow-write --allow-env --allow-sys=uid --allow-run=deno,/usr/bin/tar,/bin/kill,/bin/rmdir --allow-net=codeload.github.com home/private_dot_local/bin/executable_df-effect-v4-reference
+// deno test --config deno.json --allow-read --allow-write --allow-env --allow-sys=uid --allow-run=deno,/usr/bin/tar,/bin/kill,/bin/ln,/bin/rmdir --allow-net=codeload.github.com home/private_dot_local/bin/executable_df-effect-v4-reference
 
 import { strict as assert } from "node:assert";
 
@@ -1798,7 +1811,7 @@ Deno.test("permission phases grant only command capabilities", () => {
       root: "/physical/reference",
     }),
     [
-      `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+      `--allow-env=${OPERATION_ENV},${NODE_COVERAGE_ENV}`,
       "--allow-read=/physical,/physical/reference",
       "--allow-sys=uid",
     ],
@@ -1810,11 +1823,11 @@ Deno.test("permission phases grant only command capabilities", () => {
       root: "/physical/reference",
     }),
     [
-      `--allow-env=${OPERATION_ENV},${MSGPACK_ENV},${NODE_COVERAGE_ENV}`,
+      `--allow-env=${OPERATION_ENV},${NODE_COVERAGE_ENV}`,
       "--allow-read=/physical,/physical/reference",
       "--allow-write=/physical/reference",
       "--allow-sys=uid",
-      `--allow-run=${TAR},${KILL},${RMDIR}`,
+      `--allow-run=${TAR},${KILL},${LN},${RMDIR}`,
       "--allow-net=codeload.github.com",
     ],
   );
@@ -1838,6 +1851,7 @@ const integrationPermissions = [
   Deno.permissions.querySync({ name: "sys", kind: "uid" }).state,
   Deno.permissions.querySync({ name: "run", command: TAR }).state,
   Deno.permissions.querySync({ name: "run", command: KILL }).state,
+  Deno.permissions.querySync({ name: "run", command: LN }).state,
   Deno.permissions.querySync({ name: "run", command: RMDIR }).state,
   Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state,
   Deno.permissions.querySync({
@@ -1916,13 +1930,65 @@ Deno.test({
 
 Deno.test({
   name:
+    "integration: scoped launcher repairs a missing pointer, reapplies and removes the reference",
+  ignore: !integrationPermissions,
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const temporary = await Deno.makeTempDir({ prefix: "df-effect-cli-" });
+    const root = `${await Deno.realPath(temporary)}/reference`;
+    try {
+      const current = JSON.stringify(
+        statusDocument("current", `${root}/current`),
+      );
+      assert.deepEqual(await runGoldenCli(["install"], root), {
+        code: 0,
+        stdout: `${current}\n`,
+        stderr: "",
+      });
+      await Deno.remove(`${root}/current`);
+      assert.equal(
+        (await Deno.stat(`${root}/versions/${EFFECT_COMMIT}`)).isDirectory,
+        true,
+      );
+      assert.deepEqual(await runGoldenCli(["install"], root), {
+        code: 0,
+        stdout: `${current}\n`,
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli(["install"], root), {
+        code: 0,
+        stdout: `${current}\n`,
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli(["status"], root), {
+        code: 0,
+        stdout: `${current}\n`,
+        stderr: "",
+      });
+      assert.deepEqual(await runGoldenCli(["remove"], root), {
+        code: 0,
+        stdout: `${
+          JSON.stringify(statusDocument("removed", `${root}/current`))
+        }\n`,
+        stderr: "",
+      });
+    } finally {
+      await runGoldenCli(["remove"], root);
+      await Deno.remove(temporary, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
     "integration: disposable install, recovery, ownership, status, path and remove matrix",
   ignore: !integrationPermissions,
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
     const NodeServices = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
     );
     const program = Effect.scoped(Effect.gen(function* () {
       const fs = yield* FileSystem;

@@ -87,7 +87,7 @@ export const note = (message: string): void => info(`→ ${message}`);
 // pulls in no Effect runtime cost for the non-Effect tools.
 
 export const makeLoggerLayer = async () => {
-  const { Logger } = await import("npm:effect@4.0.0-rc.112");
+  const { Logger } = await import("npm:effect@4.0.0-rc.117");
   const logger = Logger.make((opts: { logLevel: string; message: unknown }) => {
     const message = String(opts.message);
     if (opts.logLevel === "Warn" || opts.logLevel === "Error") {

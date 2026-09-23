@@ -4,10 +4,10 @@ import {
   Fiber,
   Layer,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import * as PlatformError from "npm:effect@4.0.0-rc.112/PlatformError";
-import * as Sink from "npm:effect@4.0.0-rc.112/Sink";
-import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117";
+import * as PlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
+import * as Sink from "npm:effect@4.0.0-rc.117/Sink";
+import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.117/unstable/process";
 
 import { run } from "./df-cache.ts";
 

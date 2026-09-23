@@ -57,10 +57,9 @@ Detailed per-topic guides are in `migration/`:
 
 ## Provenance and compatibility
 
-`@effect-v4` is the complete `Effect-TS/effect` tree at
-`effect@4.0.0-rc.112`, commit
-`2600f62f4532026928454dcea8d1c48557b3f942`. Mise owns acquisition and verifies
-the archive SHA-256 before publishing the stable reference path.
+`@effect-v4` is the complete `Effect-TS/effect` tree at `effect@4.0.0-rc.117`,
+commit `14a3f140095fdebbff9162944fe7d4ea83e054e6`. Mise owns acquisition and
+verifies the archive SHA-256 before publishing the stable reference path.
 
 First compare the project's resolved `effect` version with this pin. When they
 match, use the reference's docs, source, and tests together. **Version mismatch

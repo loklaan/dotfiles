@@ -11,11 +11,8 @@
 // exit code to mirror it. Run under NodeRuntime.runMain so a Ctrl-C gracefully
 // tears the child down (SIGTERM -> SIGKILL).
 //
-// PERMISSIONS: --allow-run=mise (spawn mise) plus a one-name
-// --allow-env. That grant is load-bearing:
-// the SUPERVISE ChildProcessSpawner comes from @effect/platform-node's
-// NodeServices.layer, whose dependency chain pulls in msgpackr, which reads that
-// single named variable at module-load time. NodeRuntime and NodeServices are
+// PERMISSIONS: --allow-run=mise (spawn mise) plus --allow-env for child-process
+// environment inheritance. NodeRuntime and NodeServices are
 // imported as SUBMODULE paths, never as the bare package, because the package
 // index re-exports unstable/cluster/ShardingConfig, which calls
 // ConfigProvider.fromEnv at module-evaluation time and so ENUMERATES process.env —
@@ -27,7 +24,7 @@
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1); progress goes through df-log so the format matches every other
-// dotfiles tool. Effect v4 import paths verified against effect@4.0.0-rc.112.
+// dotfiles tool. Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Data,
@@ -38,12 +35,12 @@ import {
   Stdio,
   Stream,
   Terminal,
-} from "npm:effect@4.0.0-rc.112";
-import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 import { setTopic, step } from "../lib/df-log.ts";
 
 setTopic("mise");
@@ -171,10 +168,10 @@ if (import.meta.main) {
   // Submodule paths, not the bare package index — see the header note on
   // --allow-env.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

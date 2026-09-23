@@ -16,22 +16,22 @@ import {
   Stdio,
   Stream,
   Terminal,
-} from "npm:effect@4.0.0-rc.112";
+} from "npm:effect@4.0.0-rc.117";
 import {
   FileSystem,
   layerNoop as fileSystemLayerNoop,
-} from "npm:effect@4.0.0-rc.112/FileSystem";
-import { layer as pathLayer, Path } from "npm:effect@4.0.0-rc.112/Path";
+} from "npm:effect@4.0.0-rc.117/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0-rc.117/Path";
 import {
   Argument,
   CliConfig,
   Command,
   Flag,
-} from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -478,13 +478,13 @@ const logWarning = (value: string): Effect.Effect<void> =>
 const logError = (value: string): Effect.Effect<void> =>
   Effect.sync(() => error(value));
 
-const tmpdir = Config.string("TMPDIR").pipe(
+const tmpdir = Config.String("TMPDIR").pipe(
   Config.withDefault("/tmp"),
   Effect.orDie,
   Effect.map((value) => value.replace(/\/$/, "")),
 );
 
-const home = Config.string("HOME").pipe(Config.withDefault(""), Effect.orDie);
+const home = Config.String("HOME").pipe(Config.withDefault(""), Effect.orDie);
 
 const pad2 = (n: number): string => n.toString().padStart(2, "0");
 const timestamp = (): string => {
@@ -548,7 +548,7 @@ const fileExists = (path: string) =>
 const hasCommand = (cmd: string) =>
   Effect.gen(function* () {
     if (cmd.includes("/")) return yield* fileExists(cmd);
-    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""));
+    const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""));
     const path = yield* Path;
     for (const dir of pathEnv.split(":")) {
       if (dir !== "" && (yield* fileExists(path.join(dir, cmd)))) return true;
@@ -820,11 +820,11 @@ echo "GPG_SOCKET:${"${gpg_socket}"}"
       }
     }
 
-    const ghosttyResources = yield* Config.string("GHOSTTY_RESOURCES_DIR").pipe(
+    const ghosttyResources = yield* Config.String("GHOSTTY_RESOURCES_DIR").pipe(
       Config.withDefault(""),
     );
     if (ghosttyResources !== "") {
-      const homebrewPrefix = yield* Config.string("HOMEBREW_PREFIX").pipe(
+      const homebrewPrefix = yield* Config.String("HOMEBREW_PREFIX").pipe(
         Config.withDefault("/opt/homebrew"),
       );
       const path = yield* Path;
@@ -1064,21 +1064,21 @@ interface FleetOptions {
   readonly taskAndArgs: ReadonlyArray<string>;
 }
 
-// An omitted `Flag.boolean` fails as a missing required flag rather than
+// An omitted `Flag.Boolean` fails as a missing required flag rather than
 // resolving to `false`, so every boolean flag needs an explicit fallback.
-const fleetIncludeLocalFlag = Flag.boolean("include-local").pipe(
+const fleetIncludeLocalFlag = Flag.Boolean("include-local").pipe(
   Flag.withDefault(false),
 );
-const fleetLocalOnlyFlag = Flag.boolean("local-only").pipe(
+const fleetLocalOnlyFlag = Flag.Boolean("local-only").pipe(
   Flag.withDefault(false),
 );
-const fleetFilterFlag = Flag.string("filter").pipe(
+const fleetFilterFlag = Flag.String("filter").pipe(
   Flag.withDefault(DEFAULT_FLEET_FILTER),
 );
-const fleetParallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
-const fleetDryRunFlag = Flag.boolean("dry-run").pipe(Flag.withDefault(false));
-const fleetHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
-const fleetTaskArgs = Argument.string("mise-task").pipe(Argument.variadic());
+const fleetParallelFlag = Flag.Int("parallel").pipe(Flag.withDefault(4));
+const fleetDryRunFlag = Flag.Boolean("dry-run").pipe(Flag.withDefault(false));
+const fleetHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
+const fleetTaskArgs = Argument.String("mise-task").pipe(Argument.variadic());
 
 const makeFleetCli = <A, E, R>(
   handler: (options: FleetOptions) => Effect.Effect<A, E, R>,
@@ -1335,11 +1335,11 @@ const defaultManifestPath = home.pipe(
   Effect.map((homeDir) => `${homeDir}/.config/cw-migrate/manifest`),
 );
 
-const migrateManifestFlag = Flag.string("manifest").pipe(
+const migrateManifestFlag = Flag.String("manifest").pipe(
   Flag.withDescription("Custom manifest file"),
   Flag.withDefault(""),
 );
-const migrateHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const migrateHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
 
 const parseManifest = (content: string): MigrateManifest => {
   let section = "";
@@ -1731,8 +1731,8 @@ const migrateCommand = (
 // CLI
 // ============================================================================
 
-const connectHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
-const localForwardFlag = Flag.string("local-forward").pipe(
+const connectHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
+const localForwardFlag = Flag.String("local-forward").pipe(
   Flag.withAlias("L"),
   Flag.withMetavar("PORT:HOST:PORT"),
   Flag.withDescription(
@@ -1740,7 +1740,7 @@ const localForwardFlag = Flag.string("local-forward").pipe(
   ),
   Flag.atMost(Number.MAX_SAFE_INTEGER),
 );
-const remoteForwardFlag = Flag.string("remote-forward").pipe(
+const remoteForwardFlag = Flag.String("remote-forward").pipe(
   Flag.withAlias("R"),
   Flag.withMetavar("PORT:HOST:PORT"),
   Flag.withDescription(
@@ -1748,7 +1748,7 @@ const remoteForwardFlag = Flag.string("remote-forward").pipe(
   ),
   Flag.atMost(Number.MAX_SAFE_INTEGER),
 );
-const connectArgs = Argument.string("connect-arg").pipe(Argument.variadic());
+const connectArgs = Argument.String("connect-arg").pipe(Argument.variadic());
 const makeConnectCli = <A, E, R>(
   handler: (
     args: ReadonlyArray<string>,
@@ -1778,13 +1778,13 @@ const fleetCli = makeFleetCli((options) =>
   fleetCommand(options).pipe(Effect.flatMap(exitWith))
 );
 
-const tmuxHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const tmuxHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
 // Declared as two named positionals rather than a variadic, so a third
 // argument is a parse error instead of being silently dropped. `workspace` is
 // optional at the parser so `cw tmux --help` still reaches the help branch;
 // its absence is then reported here.
-const tmuxWorkspace = Argument.string("workspace").pipe(Argument.optional);
-const tmuxDirectory = Argument.string("directory").pipe(
+const tmuxWorkspace = Argument.String("workspace").pipe(Argument.optional);
+const tmuxDirectory = Argument.String("directory").pipe(
   Argument.withDefault(""),
 );
 
@@ -1835,7 +1835,7 @@ const migrateCli = Command.make(
       : migrateCommand(manifest).pipe(Effect.flatMap(exitWith)),
 );
 
-const completionShell = Argument.string("shell").pipe(Argument.withDefault(""));
+const completionShell = Argument.String("shell").pipe(Argument.withDefault(""));
 const completionCli = Command.make(
   "completion",
   { shell: completionShell },
@@ -1850,9 +1850,9 @@ const completionCli = Command.make(
     }),
 );
 
-const rootHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
-const rootWorkspace = Argument.string("workspace").pipe(Argument.optional);
-const rootConnectArgs = Argument.string("connect-arg").pipe(
+const rootHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
+const rootWorkspace = Argument.String("workspace").pipe(Argument.optional);
+const rootConnectArgs = Argument.String("connect-arg").pipe(
   Argument.variadic(),
 );
 const cwCli = Command.make(
@@ -1977,10 +1977,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(cwCli, { version: "0.0.0" }).pipe(
     Effect.catchTags({
