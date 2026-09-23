@@ -10,7 +10,7 @@
      a dotfiles-owned file has zero coupling to OMO's schema.
 
      Shape:
-       { "profile": "<active tier>", "availableTiers": ["default", "cheap"] }
+       { "profile": "<active tier>", "availableTiers": ["gptish", "claudeish"] }
 
      Read/written by:
        - modify_omo.jsonc  reads `profile` to decide which tier's models to render
@@ -28,6 +28,11 @@
 {{- $active := index $tiers 0 -}}
 {{- if hasKey $base "profile" -}}
 {{-   $requested := index $base "profile" -}}
+{{-   if eq $requested "default" -}}
+{{-     $requested = "gptish" -}}
+{{-   else if eq $requested "cheap" -}}
+{{-     $requested = "claudeish" -}}
+{{-   end -}}
 {{-   if and (ne "" $requested) (has $requested $tiers) -}}
 {{-     $active = $requested -}}
 {{-   end -}}
