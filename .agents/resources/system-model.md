@@ -222,7 +222,7 @@ The repository currently maps the model to mechanisms as follows:
 | Projection context | Chezmoi data, prompts, built-in machine facts, and availability of external tools and credentials |
 | Resolution | Go templates and shared template fragments |
 | Materialisation | Chezmoi target rendering, file creation, and permission application |
-| Skill registry publication | Chezmoi resolves machine context, acquires Git/archive inputs, and materializes repository skills before `df-skills` reconciles receipt-owned derived archive trees and individual child links in the physical mixed-owner registry; providers retain native content ownership, package ZIPs are separate derived outputs, mise owns the Effect reference, and no skills hook recursively invokes chezmoi |
+| Skill registry publication | Chezmoi resolves machine context, acquires Git/archive inputs, and materializes repository skills before `df-skills` authoritatively reconciles the physical registry to declared child links; cleanup is root-confined and never follows links, providers retain native content ownership, package ZIPs are separate derived outputs, mise owns the Effect reference, and no skills hook recursively invokes chezmoi |
 | File reconciliation | `chezmoi apply` |
 | Lifecycle effects | Chezmoi hooks and ordered `run_`, `run_once_`, and `run_onchange_` scripts |
 | External acquisition | Chezmoi externals, mise, package managers, and guarded secret retrieval |
