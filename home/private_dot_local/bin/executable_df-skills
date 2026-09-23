@@ -314,7 +314,7 @@ const messages = {
     "Preserve the archive tree; its content differs from receipt ownership",
   PackageInvalid: "Package input or archive content is unsafe",
   PackageChanged:
-    "Preserve the package; its bytes differ from receipt ownership",
+    "Generated packages differ from the authoritative desired state",
   ReceiptStale:
     "Receipt belongs to an earlier manifest; reconcile before claiming convergence",
   PendingProvider:
@@ -1405,6 +1405,7 @@ export const packageIds = (manifest: Manifest, receipt: Receipt) =>
     entry.package && receipt.links[entry.id]?.target === entry.target
   ).map((entry) => entry.id).sort();
 export const packageAction = (
+  ownership: string,
   desired: string | undefined,
   owned:
     | Readonly<
@@ -1414,14 +1415,28 @@ export const packageAction = (
   live: string | null,
 ) => {
   if (desired === undefined) {
-    return owned
-      ? (live === null || live === owned.archiveDigest ? "remove" : "blocked")
-      : "unchanged";
+    if (live === null) return "unchanged";
+    return ownership === "authoritative" ? "remove" : "blocked";
   }
-  if (live === null) return "build";
-  if (!owned || live !== owned.archiveDigest) return "blocked";
-  return desired === owned.contentDigest ? "unchanged" : "build";
+  if (live === null) return "create";
+  if (
+    owned && live === owned.archiveDigest && desired === owned.contentDigest
+  ) return "unchanged";
+  return ownership === "authoritative" ? "replace" : "blocked";
 };
+const packagePlanAction = {
+  create: "creates",
+  replace: "replaces",
+  remove: "removes",
+  unchanged: "unchanged",
+} as const;
+type PackagePlan = Record<
+  (typeof packagePlanAction)[keyof typeof packagePlanAction],
+  string[]
+>;
+export const packageArchiveEntryAllowed = (name: string) =>
+  name.normalize("NFC") === name && name !== "." && name !== ".." &&
+  !/[\/\\\p{Cc}\p{Cf}]/u.test(name) && /\.zip$/i.test(name);
 export const packageEntryAllowed = (relative: string) =>
   relative.split("/").every((name) => {
     const lower = name.toLocaleLowerCase("en-US");
@@ -1448,6 +1463,23 @@ export const packageEntryAllowed = (relative: string) =>
       !/^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519)(?:\.pub)?$/.test(lower) &&
       !/\.(?:key|pem|p12|pfx)$/.test(lower);
   });
+type LivePackage = Readonly<{ name: string; target: string }>;
+const packageArchives = Effect.fn(function* (packageDir: string) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  if ((yield* physical(packageDir, "Directory", 0o700)) === null) return [];
+  const archives: LivePackage[] = [];
+  for (const name of (yield* fs.readDirectory(packageDir)).toSorted()) {
+    if (!/\.zip$/i.test(name)) continue;
+    if (!packageArchiveEntryAllowed(name)) {
+      return yield* fault("UnsafePath", "packages");
+    }
+    const target = path.join(packageDir, name);
+    yield* physical(target, "File");
+    archives.push({ name, target });
+  }
+  return archives;
+});
 export const archiveEntriesAllowed = (
   safe: string,
   names: readonly string[],
@@ -2373,7 +2405,7 @@ const buildPackage = Effect.fn(function* (
     digest: yield* digestBytes(yield* fs.readFile(archive)),
   };
 });
-const reconcilePackages = (locations: Locations) =>
+const reconcilePackages = (locations: Locations, headless = false) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem;
     const path = yield* PathService;
@@ -2401,6 +2433,18 @@ const reconcilePackages = (locations: Locations) =>
     }
     const active = yield* loadActive(locations);
     let receipt = active.receipt;
+    const ownership = active.manifest.registry.ownership;
+    if (ownership !== "authoritative") {
+      return yield* fault([
+        "PackageOwnership",
+        "Package reconciliation requires authoritative registry ownership",
+      ], "packages");
+    }
+    for (const [id, record] of Object.entries(receipt.packages)) {
+      if (!packageArchiveOwned(locations.packageDir, id, record.archive)) {
+        return yield* fault("UnsafePath", "packages");
+      }
+    }
     const files = [...active.manifest.links, ...active.manifest.archives];
     const requested = files.filter((entry) => entry.package);
     if (packageIds(active.manifest, receipt).length !== requested.length) {
@@ -2427,18 +2471,35 @@ const reconcilePackages = (locations: Locations) =>
       builds.push({ entry, prepared, archive, safe: archive.slice(0, -4) });
     }
     let tools: Readonly<Record<"zip" | "unzip", string>> | null = null;
-    let packaged = 0, removed = 0;
+    let packaged = 0, removed = 0, receiptChanged = false;
+    const livePackages = new Map(
+      (yield* packageArchives(locations.packageDir)).map((entry) => [
+        entry.name,
+        entry,
+      ]),
+    );
     const save = (next: Receipt) =>
       writeReceipt(locations.stateDir, next).pipe(
-        Effect.tap(() => Effect.sync(() => receipt = next)),
+        Effect.tap((changed) =>
+          Effect.sync(() => {
+            receipt = next;
+            receiptChanged ||= changed;
+          })
+        ),
       );
     for (const build of builds) {
       const target = path.join(locations.packageDir, build.archive);
       const prior = receipt.packages[build.entry.id];
-      const info = yield* physical(target, "File");
-      const live = info ? yield* digestBytes(yield* fs.readFile(target)) : null;
+      const liveEntry = livePackages.get(build.archive);
+      const live = liveEntry
+        ? yield* digestBytes(yield* fs.readFile(liveEntry.target))
+        : null;
       const content = build.prepared.snapshot.ownershipDigest;
-      if (packageAction(content, prior, live) === "unchanged") continue;
+      const action = packageAction(ownership, content, prior, live);
+      if (action === "unchanged") continue;
+      if (action !== "create" && action !== "replace") {
+        return yield* fault("PackageChanged", "packages");
+      }
       if (tools === null) {
         tools = {
           zip: (yield* resolveExecutable("zip", "packages")).path,
@@ -2446,16 +2507,9 @@ const reconcilePackages = (locations: Locations) =>
         };
       }
       const staged = yield* buildPackage(locations.packageDir, build, tools);
-      if (
-        live !== null && live !== prior?.archiveDigest && live !== staged.digest
-      ) {
-        return yield* fault("PackageChanged", "packages");
-      }
-      if (live !== staged.digest) {
-        yield* fs.rename(staged.path, target);
-        yield* syncDirectory(locations.packageDir);
-        packaged += 1;
-      }
+      yield* fs.rename(staged.path, target);
+      yield* syncDirectory(locations.packageDir);
+      packaged += 1;
       yield* save({
         ...receipt,
         packages: {
@@ -2467,25 +2521,29 @@ const reconcilePackages = (locations: Locations) =>
           },
         },
       });
+      livePackages.set(build.archive, { name: build.archive, target });
     }
-    const desired = new Set(builds.map(({ entry }) => entry.id));
-    for (const [id, prior] of Object.entries(receipt.packages)) {
-      if (desired.has(id)) continue;
-      if (!packageArchiveOwned(locations.packageDir, id, prior.archive)) {
-        return yield* fault("PackageChanged", "packages");
+    const desiredIds = new Set(builds.map(({ entry }) => entry.id));
+    const desiredArchives = new Set(builds.map(({ archive }) => archive));
+    for (const live of livePackages.values()) {
+      if (desiredArchives.has(live.name)) continue;
+      yield* physical(live.target, "File");
+      yield* fs.remove(live.target);
+      yield* syncDirectory(locations.packageDir);
+      removed += 1;
+      const packages = Object.fromEntries(
+        Object.entries(receipt.packages).filter(([, record]) =>
+          record.archive !== live.target
+        ),
+      );
+      if (
+        Object.keys(packages).length !== Object.keys(receipt.packages).length
+      ) {
+        yield* save({ ...receipt, packages });
       }
-      const info = yield* physical(prior.archive, "File");
-      const live = info
-        ? yield* digestBytes(yield* fs.readFile(prior.archive))
-        : null;
-      if (packageAction(undefined, prior, live) === "blocked") {
-        return yield* fault("PackageChanged", "packages");
-      }
-      if (live !== null) {
-        yield* fs.remove(prior.archive);
-        yield* syncDirectory(path.dirname(prior.archive));
-        removed += 1;
-      }
+    }
+    for (const id of Object.keys(receipt.packages)) {
+      if (desiredIds.has(id)) continue;
       yield* save({
         ...receipt,
         packages: Object.fromEntries(
@@ -2494,10 +2552,10 @@ const reconcilePackages = (locations: Locations) =>
       });
     }
     return {
-      changed: recovered || packaged + removed > 0,
+      changed: recovered || receiptChanged || packaged + removed > 0,
       packaged,
       removed,
-      headless: false,
+      headless,
     };
   }).pipe(Effect.scoped, guarded("packages"));
 function* inspectState(active: Active, locations: Locations) {
@@ -2616,31 +2674,74 @@ function* inspectState(active: Active, locations: Locations) {
     { concurrency: 4 },
   );
   const providers = Object.fromEntries(providerPairs);
-  const builds = files.filter((entry) => entry.package).map((entry) => entry.id)
-    .sort();
-  const packageRemovals = Object.keys(receipt.packages).filter((id) =>
-    !builds.includes(id)
-  ).sort();
+  const packageEntries = files.filter((entry) => entry.package);
+  const packagePlan: PackagePlan = {
+    creates: [],
+    replaces: [],
+    removes: [],
+    unchanged: [],
+  };
   const packages = yield* observe("packages", function* () {
-    if (!builds.length && !packageRemovals.length) return null;
-    for (const entry of files.filter(({ package: selected }) => selected)) {
+    const ownership = manifest.registry.ownership;
+    if (ownership !== "authoritative") {
+      return yield* fault([
+        "PackageOwnership",
+        "Package planning requires authoritative registry ownership",
+      ], "packages");
+    }
+    for (const [id, record] of Object.entries(receipt.packages)) {
+      if (!packageArchiveOwned(locations.packageDir, id, record.archive)) {
+        return yield* fault("UnsafePath", "packages");
+      }
+    }
+    const live = yield* packageArchives(locations.packageDir);
+    const liveByName = new Map(live.map((entry) => [entry.name, entry]));
+    const desiredArchives = new Set<string>();
+    for (const entry of packageEntries) {
       const archive = packageArchiveName(entry.id);
+      if (!archive) return yield* fault("SkillCollision", "packages");
+      desiredArchives.add(archive);
       const record = receipt.packages[entry.id];
       const prepared = yield* inspectFileEntry(entry);
-      const expected = archive && path.join(locations.packageDir, archive);
+      const liveEntry = liveByName.get(archive);
+      const liveDigest = liveEntry
+        ? yield* digestBytes(yield* fs.readFile(liveEntry.target))
+        : null;
+      const action = packageAction(
+        ownership,
+        prepared.snapshot.ownershipDigest,
+        record,
+        liveDigest,
+      );
+      if (action === "blocked") return issue("PackageChanged");
+      packagePlan[packagePlanAction[action]].push(archive);
       if (
-        !record || record.archive !== expected ||
-        record.contentDigest !== prepared.snapshot.ownershipDigest ||
-        receipt.links[entry.id]?.contentDigest !== record.contentDigest
-      ) return issue("PackageChanged");
-      const info = yield* physical(record.archive, "File");
-      if (
-        info === null ||
-        (yield* digestBytes(yield* fs.readFile(record.archive))) !==
-          record.archiveDigest
+        action === "unchanged" &&
+        receipt.links[entry.id]?.contentDigest !== record?.contentDigest
       ) return issue("PackageChanged");
     }
-    return packageRemovals.length ? issue("PackageChanged") : true;
+    for (const entry of live) {
+      if (!desiredArchives.has(entry.name)) {
+        packagePlan.removes.push(entry.name);
+      }
+    }
+    for (const [id, record] of Object.entries(receipt.packages)) {
+      if (packageEntries.some((entry) => entry.id === id)) continue;
+      packagePlan.removes.push(path.basename(record.archive));
+    }
+    for (
+      const action of Object.keys(packagePlan) as (keyof typeof packagePlan)[]
+    ) {
+      packagePlan[action] = [...new Set(packagePlan[action])].sort();
+    }
+    if (
+      !packageEntries.length && !live.length &&
+      !Object.keys(receipt.packages).length
+    ) return null;
+    return packagePlan.creates.length + packagePlan.replaces.length +
+        packagePlan.removes.length
+      ? issue("PackageChanged")
+      : true;
   });
   const reference = yield* observe("reference", function* () {
     if (!locations.reference) return null;
@@ -2701,7 +2802,7 @@ function* inspectState(active: Active, locations: Locations) {
     manifestDigest,
     links,
     providers: { adds, removes, refreshes },
-    packages: { builds, removes: packageRemovals },
+    packages: packagePlan,
     blockers,
   };
   return { plan, observation };
@@ -2748,16 +2849,7 @@ const run = (command: string, input: Locations) =>
     };
     yield* validateLocations(locations).pipe(guarded("config"));
     const active = yield* loadActive(locations);
-    if (command === "package" && !(yield* graphical)) {
-      yield* Console.log(JSON.stringify({
-        changed: false,
-        packaged: 0,
-        removed: 0,
-        headless: true,
-      }));
-      Deno.exitCode = 0;
-      return;
-    }
+    const headless = command === "package" && !(yield* graphical);
     const workerCode = yield* permissionGate(
       active,
       command === "package",
@@ -2768,7 +2860,7 @@ const run = (command: string, input: Locations) =>
       return;
     }
     if (command === "package") {
-      const result = yield* reconcilePackages(locations);
+      const result = yield* reconcilePackages(locations, headless);
       yield* Console.log(JSON.stringify(result));
       Deno.exitCode = 0;
       return;
@@ -3478,27 +3570,65 @@ Deno.test("package eligibility is explicit, file-backed, and receipt-owned", asy
   assert.deepEqual(packageIds(manifest, { ...owned, links: {} }), []);
 });
 const packageActions = [
-  [hash, undefined, null, "build"],
-  [hash, { contentDigest: hash, archiveDigest: hash }, hash, "unchanged"],
-  ["b".repeat(64), { contentDigest: hash, archiveDigest: hash }, hash, "build"],
+  ["authoritative", hash, undefined, null, "create"],
   [
+    "authoritative",
+    hash,
+    { contentDigest: hash, archiveDigest: hash },
+    hash,
+    "unchanged",
+  ],
+  [
+    "authoritative",
+    "b".repeat(64),
+    { contentDigest: hash, archiveDigest: hash },
+    hash,
+    "replace",
+  ],
+  [
+    "authoritative",
     hash,
     { contentDigest: hash, archiveDigest: hash },
     "b".repeat(64),
-    "blocked",
+    "replace",
   ],
-  [undefined, { contentDigest: hash, archiveDigest: hash }, hash, "remove"],
   [
+    "authoritative",
+    undefined,
+    { contentDigest: hash, archiveDigest: hash },
+    hash,
+    "remove",
+  ],
+  [
+    "authoritative",
+    undefined,
+    undefined,
+    "b".repeat(64),
+    "remove",
+  ],
+  [
+    "mixed",
     undefined,
     { contentDigest: hash, archiveDigest: hash },
     "b".repeat(64),
     "blocked",
   ],
 ] as const;
-for (const [desired, ownedPackage, live, action] of packageActions) {
+for (const [ownership, desired, ownedPackage, live, action] of packageActions) {
   Deno.test(`package ownership ${desired}/${live} is ${action}`, () =>
-    assert.equal(packageAction(desired, ownedPackage, live), action));
+    assert.equal(
+      packageAction(ownership, desired, ownedPackage, live),
+      action,
+    ));
 }
+Deno.test("package archive entries reject traversal and non-ZIP paths", () => {
+  assert.deepEqual(
+    ["safe.zip", "SAFE.ZIP", "../escape.zip", "nested/file.zip", "plain"].map(
+      packageArchiveEntryAllowed,
+    ),
+    [true, true, false, false, false],
+  );
+});
 Deno.test("package content rejects sensitive, VCS, escaping, and colliding entries", () => {
   for (
     const name of [
@@ -3573,9 +3703,27 @@ type RuntimeDependencies =
   | FileSystem
   | PathService
   | Crypto.Crypto
-  | ChildProcessSpawner.ChildProcessSpawner;
+  | ChildProcessSpawner.ChildProcessSpawner
+  | OperationLock;
+type PackageResult = Readonly<{
+  changed: boolean;
+  packaged: number;
+  removed: number;
+  headless: boolean;
+}>;
+type PackageInspection = Readonly<{
+  plan: Readonly<{ packages: PackagePlan }>;
+  observation: Readonly<{
+    packages: ReturnType<typeof renderStatus>;
+    healthy: boolean;
+  }>;
+}>;
 type RegistryFixtureContext = Readonly<{
   locations: Locations;
+  inspect: () => Promise<PackageInspection>;
+  package: () => Promise<PackageResult>;
+  packageHeadless: () => Promise<PackageResult>;
+  packageResult: () => Promise<Result.Result<PackageResult, BoundaryCause>>;
   reconcile: () => Promise<unknown>;
   reconcileResult: () => Promise<Result.Result<unknown, BoundaryCause>>;
   run: <Value, Error>(
@@ -3639,9 +3787,24 @@ const withRegistryFixture = async (
     );
     const run = <Value, Error>(
       effect: Effect.Effect<Value, Error, RuntimeDependencies>,
-    ) => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+    ) =>
+      Effect.runPromise(
+        effect.pipe(
+          Effect.provide(OperationLock.layer),
+          Effect.provide(NodeServices.layer),
+        ),
+      );
     await test({
       locations,
+      inspect: () =>
+        run(Effect.gen(function* () {
+          const active = yield* loadActive(locations);
+          return yield* inspectState(active, locations);
+        })),
+      package: () => run(reconcilePackages(locations)),
+      packageHeadless: () => run(reconcilePackages(locations, true)),
+      packageResult: () =>
+        run(reconcilePackages(locations).pipe(Effect.result)),
       reconcile: () => run(reconcileFiles(locations)),
       reconcileResult: () => run(reconcileFiles(locations).pipe(Effect.result)),
       run,
@@ -3651,6 +3814,16 @@ const withRegistryFixture = async (
     await Deno.remove(root, { recursive: true });
   }
 };
+const fixtureLink = (
+  locations: Locations,
+  selected: boolean,
+): Manifest["links"][number] => ({
+  id: "desired",
+  target: `${locations.stateDir}/source`,
+  owner: "chezmoi",
+  source: { kind: "repository" },
+  package: selected,
+});
 Deno.test({
   name: "authoritative registry creates fresh links and keeps reapply stable",
   ignore: !filesystemIntegration,
@@ -3673,6 +3846,356 @@ Deno.test({
         `${locations.stateDir}/source`,
       );
     });
+  },
+});
+Deno.test({
+  name:
+    "authoritative packages create on headless hosts and report unchanged on reapply",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        {
+          inspect,
+          locations,
+          package: packageSkills,
+          packageHeadless,
+          reconcile,
+          writeManifest,
+        },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        const before = await inspect();
+        assert.deepEqual(before.plan.packages, {
+          creates: ["desired.zip"],
+          replaces: [],
+          removes: [],
+          unchanged: [],
+        });
+        await assert.rejects(() => Deno.lstat(locations.packageDir));
+
+        const created = await packageHeadless();
+        const archive = `${locations.packageDir}/desired.zip`;
+        const first = await Deno.lstat(archive);
+        assert.deepEqual(created, {
+          changed: true,
+          packaged: 1,
+          removed: 0,
+          headless: true,
+        });
+        const observed = await inspect();
+        assert.deepEqual(observed.plan.packages, {
+          creates: [],
+          replaces: [],
+          removes: [],
+          unchanged: ["desired.zip"],
+        });
+        assert.equal(observed.observation.packages.healthy, true);
+
+        const reapplied = await packageSkills();
+        const second = await Deno.lstat(archive);
+        assert.deepEqual(reapplied, {
+          changed: false,
+          packaged: 0,
+          removed: 0,
+          headless: false,
+        });
+        assert.equal(second.ino, first.ino);
+        assert.deepEqual(await directoryNames(locations.packageDir), [
+          "desired.zip",
+        ]);
+      },
+    );
+  },
+});
+Deno.test({
+  name:
+    "authoritative packages replace changed desired archive bytes atomically",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        {
+          inspect,
+          locations,
+          package: packageSkills,
+          reconcile,
+          run,
+          writeManifest,
+        },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await packageSkills();
+        const archive = `${locations.packageDir}/desired.zip`;
+        await Deno.writeTextFile(archive, "changed outside receipt ownership");
+        const changed = await Deno.lstat(archive);
+        const changedBytes = await Deno.readFile(archive);
+
+        const planned = await inspect();
+        assert.deepEqual(planned.plan.packages, {
+          creates: [],
+          replaces: ["desired.zip"],
+          removes: [],
+          unchanged: [],
+        });
+        assert.deepEqual(await Deno.readFile(archive), changedBytes);
+
+        const result = await packageSkills();
+        const published = await Deno.lstat(archive);
+
+        assert.deepEqual(result, {
+          changed: true,
+          packaged: 1,
+          removed: 0,
+          headless: false,
+        });
+        assert.notEqual(published.ino, changed.ino);
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.equal(
+          receipt.packages.desired.archiveDigest,
+          await run(digestBytes(await Deno.readFile(archive))),
+        );
+        assert.deepEqual(await directoryNames(locations.packageDir), [
+          "desired.zip",
+        ]);
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative packages replace an unreceipted desired archive",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        {
+          inspect,
+          locations,
+          package: packageSkills,
+          reconcile,
+          run,
+          writeManifest,
+        },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await packageSkills();
+        const receipt = Schema.decodeUnknownSync(Receipt)(JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        ));
+        await run(writeReceipt(locations.stateDir, {
+          ...receipt,
+          packages: {},
+        }));
+        const archive = `${locations.packageDir}/desired.zip`;
+        await Deno.writeTextFile(archive, "unreceipted desired bytes");
+        assert.deepEqual((await inspect()).plan.packages.replaces, [
+          "desired.zip",
+        ]);
+
+        await packageSkills();
+
+        const updated = Schema.decodeUnknownSync(Receipt)(JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        ));
+        assert.equal(updated.packages.desired.archive, archive);
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative packages remove stale unreceipted archives",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ inspect, locations, package: packageSkills, reconcile }) => {
+        await reconcile();
+        await Deno.mkdir(locations.packageDir, { mode: 0o700 });
+        const stale = `${locations.packageDir}/stale.zip`;
+        await Deno.writeTextFile(stale, "undeclared");
+        const planned = await inspect();
+        assert.deepEqual(planned.plan.packages.removes, ["stale.zip"]);
+        assert.equal(await Deno.readTextFile(stale), "undeclared");
+
+        await packageSkills();
+
+        await assert.rejects(() => Deno.lstat(stale));
+      },
+    );
+  },
+});
+Deno.test({
+  name: "package=false removes a stale receipted archive and never rebuilds it",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        {
+          inspect,
+          locations,
+          package: packageSkills,
+          reconcile,
+          writeManifest,
+        },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await packageSkills();
+        const archive = `${locations.packageDir}/desired.zip`;
+        await writeManifest([fixtureLink(locations, false)]);
+        await reconcile();
+        assert.deepEqual((await inspect()).plan.packages.removes, [
+          "desired.zip",
+        ]);
+
+        const removed = await packageSkills();
+        const reapplied = await packageSkills();
+
+        assert.deepEqual(removed, {
+          changed: true,
+          packaged: 0,
+          removed: 1,
+          headless: false,
+        });
+        assert.deepEqual(reapplied, {
+          changed: false,
+          packaged: 0,
+          removed: 0,
+          headless: false,
+        });
+        await assert.rejects(() => Deno.lstat(archive));
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.deepEqual(receipt.packages, {});
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative package opt-out removes its archive and receipt",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        { locations, package: packageSkills, reconcile, writeManifest },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await packageSkills();
+        const archive = `${locations.packageDir}/desired.zip`;
+        await writeManifest([]);
+        await reconcile();
+
+        const removed = await packageSkills();
+
+        assert.equal(removed.removed, 1);
+        await assert.rejects(() => Deno.lstat(archive));
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.deepEqual(receipt.packages, {});
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative packages refuse symlink archives without following them",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        { inspect, locations, packageResult, reconcile, writeManifest },
+      ) => {
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await Deno.mkdir(locations.packageDir, { mode: 0o700 });
+        const outside = `${locations.stateDir}/outside.zip`;
+        const archive = `${locations.packageDir}/desired.zip`;
+        await Deno.writeTextFile(outside, "outside sentinel");
+        await Deno.symlink(outside, archive);
+
+        const planned = await inspect();
+        const result = await packageResult();
+
+        assert.equal(planned.observation.packages.error, "UnsafePath");
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure instanceof BoundaryError && result.failure.error,
+            "UnsafePath",
+          );
+        }
+        assert.equal(await Deno.readTextFile(outside), "outside sentinel");
+        assert.equal(await Deno.readLink(archive), outside);
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.deepEqual(receipt.packages, {});
+      },
+    );
+  },
+});
+Deno.test({
+  name: "authoritative packages reject a symlink package root",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ locations, packageResult, reconcile }) => {
+        await reconcile();
+        const outside = `${locations.stateDir}/outside-packages`;
+        await Deno.mkdir(outside);
+        await Deno.writeTextFile(`${outside}/sentinel`, "safe");
+        await Deno.symlink(outside, locations.packageDir);
+
+        const result = await packageResult();
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure instanceof BoundaryError && result.failure.error,
+            "UnsafePath",
+          );
+        }
+        assert.equal(await Deno.readTextFile(`${outside}/sentinel`), "safe");
+      },
+    );
+  },
+});
+Deno.test({
+  name:
+    "failed package builds clean staging and do not claim receipt ownership",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ locations, packageResult, reconcile, writeManifest }) => {
+        await Deno.writeTextFile(
+          `${locations.stateDir}/source/.env`,
+          "must not package",
+        );
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+
+        const result = await packageResult();
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(
+            result.failure instanceof BoundaryError && result.failure.error,
+            "PackageInvalid",
+          );
+        }
+        assert.deepEqual(await directoryNames(locations.packageDir), []);
+        const receipt = JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        );
+        assert.deepEqual(receipt.packages, {});
+      },
+    );
   },
 });
 Deno.test({
