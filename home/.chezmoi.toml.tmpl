@@ -1,7 +1,6 @@
 {{- $email := promptStringOnce . "email" "Email for you" -}}
 {{- $emailWork := promptStringOnce . "emailWork" "Email for Canva" -}}
 {{- $signingKey := promptStringOnce . "signingKey" "Your commit-signing key (e.g. public ssh/gpg key)" -}}
-{{- $privateSkillsRepo := promptStringOnce . "privateSkillsRepo" "Private skills repo (or empty)" -}}
 {{- $npmWorkRegistry := promptStringOnce . "npmWorkRegistry" "Work npm registry (or empty)" -}}
 {{- $openCodeWorkPlugin := promptStringOnce . "openCodeWorkPlugin" "OpenCode work plugin (or empty)" -}}
 {{- $openCodeWorkPluginLocalPath := promptStringOnce . "openCodeWorkPluginLocalPath" "OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)" -}}
@@ -30,7 +29,6 @@
   bwsIdExaApiKey = "5db599ed-4498-4f0a-b18d-b42b004cc9ac"
   bwsIdPushbulletAccessToken = "d6904136-a33f-4259-9355-b467007b53cc"
   bwsIdOpencodeApiKey = "155eca67-0b36-4907-8bf6-b484007ea888"
-  privateSkillsRepo = {{ $privateSkillsRepo | quote }}
   npmWorkRegistry = {{ $npmWorkRegistry | quote }}
   openCodeWorkPlugin = {{ $openCodeWorkPlugin | quote }}
   openCodeWorkPluginLocalPath = {{ $openCodeWorkPluginLocalPath | quote }}

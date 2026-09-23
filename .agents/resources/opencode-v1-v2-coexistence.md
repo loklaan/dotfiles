@@ -120,6 +120,11 @@ The MCP endpoint is translated from the same
 `mcp-servers-opencode-mcpproxy-json-tmpl` shared template V1 consumes, so the
 URL stays single-sourced.
 
+Both configs also register the same local `references.effect-v4` path. Mise
+owns the checksum-pinned source tree and its stable pointer; neither OpenCode
+version clones the repository or copies the corpus into its config/cache tree.
+Only the alias, resolved path, and concise description enter agent context.
+
 Two deliberate omissions:
 
 - **No plugins.** V2 uses a new plugin API and does not load V1 plugins. Both

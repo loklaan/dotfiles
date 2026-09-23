@@ -1,0 +1,79 @@
+skillLifecycleDefaults:
+  sources:
+    repository:
+      id: repository
+      kind: repository
+      path: "{homeDir}/.local/share/dotfiles/skills"
+      items:
+        - id: lochy:agent:authoring
+          package: true
+        - id: lochy:agent:costs
+          package: true
+        - id: lochy:agent:extract
+          package: true
+        - id: lochy:agent:workflows
+          package: true
+        - id: lochy:challenge
+          package: true
+        - id: lochy:coding:effect-ts
+          package: true
+        - id: lochy:coding:errors
+          package: true
+        - id: lochy:coding:frontend-design
+          package: true
+        - id: lochy:coding:judge
+          package: true
+        - id: lochy:coding:shell
+          package: true
+        - id: lochy:compress
+          package: true
+        - id: lochy:env:architecture
+          package: true
+        - id: lochy:env:autonomous
+          package: true
+        - id: lochy:env:coding
+          package: true
+        - id: lochy:env:devil
+          package: true
+        - id: lochy:handoff
+          package: true
+        - id: lochy:patch
+          package: true
+        - id: lochy:paydown
+          package: true
+        - id: lochy:pm
+          package: true
+        - id: lochy:productionise-vibe-tools
+          package: true
+        - id: lochy:prompts
+          package: true
+        - id: lochy:sweep
+          package: true
+        - id: lochy:tmux-panes
+          package: true
+        - id: lochy:writing
+          package: true
+    public-architecture:
+      id: public-architecture
+      kind: archive
+      path: "{homeDir}/.local/share/dotfiles/skills/lochy:coding:architecture"
+      url: https://github.com/mattpocock/skills/archive/3cca18b368ae95cdbdebbff572ccafa662551015.tar.gz
+      stripComponents: 4
+      include:
+        - "*/skills/engineering/improve-codebase-architecture/**"
+      lock:
+        algorithm: sha256
+        checksum: 47650b9424a4156417f35985c7439b2d05a8968b29cd8b2d4006dd3bee01cdcb
+        contentDigest: ae17dfe032ceae470b938a043e46552e5e6c2fde5e132adf358619d60ee43027
+        ref: 3cca18b368ae95cdbdebbff572ccafa662551015
+      transforms:
+        - kind: frontmatter-name
+          from: improve-codebase-architecture
+          to: lochy:coding:architecture
+        - kind: logical-directory-rename
+          from: improve-codebase-architecture
+          to: lochy:coding:architecture
+      items:
+        - id: lochy:coding:architecture
+          directory: .
+          package: true

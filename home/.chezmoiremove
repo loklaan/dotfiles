@@ -9,3 +9,5 @@
 .local/lib/tmux-resurrect-code-agents/track.sh
 .local/lib/tmux-resurrect-code-agents/cleanup.sh
 .local/lib/tmux-resurrect-code-agents/agents/claude.sh
+.local/bin/df-prewarm
+.local/bin/df-llm-shim

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=mise,git,brew,chezmoi,df-effect-v4-reference,opencode-tokenizer-check,notify,/usr/libexec/PlistBuddy --allow-net=models.dev --allow-read --allow-write --allow-env --allow-sys=uid
 
 // drift — version-drift detection for the dotfiles fleet (Deno + Effect v4).
 //
@@ -14,7 +14,7 @@
 // CALLSITE CONTRACTS (do not break):
 //   - mise tasks `drift:check` / `drift:notify` run `drift check` / `drift notify`
 //     (config.toml.tmpl). drift:notify depends on drift:check.
-//   - LaunchAgent io.lochlan.dotfiles.drift runs `mise run drift:notify` daily.
+//   - Pitchfork daemon df-drift-notify runs `mise run drift:notify` daily.
 //   - dotfiles-setup reads drift.json: {checked_at, tools:[{name,installed,
 //     latest,behind,source}]}.
 //
@@ -45,7 +45,7 @@ import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 // suite hermetic — same pattern as df-task-chezmoi-update and
 // opencode-tokenizer-check.
 
-// Soft-failing scan→cache primitives, shared with df-prewarm. See
+// Soft-failing scan→cache primitives. See
 // ~/.local/lib/df-cache.ts (chezmoi: home/private_dot_local/lib/df-cache.ts).
 import {
   ensureDir,
@@ -150,10 +150,9 @@ const spawnNotifyDetached = (
   });
 
 // ===========================================================================
-// Small process/fs helpers now live in ~/.local/lib/df-cache.ts (imported
-// above) and are shared with df-prewarm. They are all SOFT — they swallow
-// their own failures so callers stay total (every checker returns [] rather
-// than throwing).
+// Small process/fs helpers live in ~/.local/lib/df-cache.ts (imported above).
+// They are all SOFT — they swallow their own failures so callers stay total
+// (every checker returns [] rather than throwing).
 // ===========================================================================
 
 // ===========================================================================
@@ -192,6 +191,53 @@ class MiseChecker extends Context.Service<MiseChecker, {
         });
       }).pipe(Effect.orElseSucceed(() => [])),
   }));
+}
+
+// The Effect source reference is installed by a mise task rather than the HTTP
+// backend because every HTTP tool contributes a bin path. Keep it in the same
+// normalized drift report while preserving that data-only boundary.
+class EffectReferenceChecker extends Context.Service<EffectReferenceChecker, {
+  readonly tools: () => Effect.Effect<
+    ReadonlyArray<DriftTool>,
+    never,
+    CheckerEnv
+  >;
+}>()("drift/EffectReferenceChecker") {
+  static readonly layer = Layer.succeed(EffectReferenceChecker)(
+    EffectReferenceChecker.of({
+      tools: () =>
+        Effect.gen(function* () {
+          if (!(yield* hasCommand("df-effect-v4-reference"))) {
+            return [{
+              name: "effect-v4-reference",
+              installed: "helper missing",
+              latest: "4.0.0-rc.112",
+              behind: 1,
+              source: "mise:effect-v4:install",
+            }];
+          }
+          const result = yield* run("df-effect-v4-reference", ["status"]);
+          const parsed = parseJson(result.stdout);
+          const status = typeof parsed === "object" && parsed !== null
+            ? parsed as Record<string, unknown>
+            : {};
+          const state = typeof status.state === "string"
+            ? status.state
+            : "unavailable";
+          const version = typeof status.version === "string"
+            ? status.version
+            : "4.0.0-rc.112";
+          if (result.ok && state === "current") return [];
+          return [{
+            name: "effect-v4-reference",
+            installed: state,
+            latest: version,
+            behind: 1,
+            source: "mise:effect-v4:install",
+          }];
+        }).pipe(Effect.orElseSucceed(() => [])),
+    }),
+  );
 }
 
 // ===========================================================================
@@ -589,25 +635,34 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 
 const runCheck = Effect.gen(function* () {
   const mise = yield* MiseChecker;
+  const effectReference = yield* EffectReferenceChecker;
   const cask = yield* CaskChecker;
   const dotfiles = yield* DotfilesChecker;
   const omo = yield* OmoChecker;
   const tokenizer = yield* OpencodeTokenizerChecker;
 
   // Independent checkers run concurrently; each already soft-fails to [].
-  const [miseTools, caskTools, repoTools, omoTools, tokenizerTools] =
-    yield* Effect.all([
-      mise.tools(),
-      cask.tools(),
-      dotfiles.tools(),
-      omo.tools(),
-      tokenizer.tools(),
-    ], { concurrency: "unbounded" });
+  const [
+    miseTools,
+    effectReferenceTools,
+    caskTools,
+    repoTools,
+    omoTools,
+    tokenizerTools,
+  ] = yield* Effect.all([
+    mise.tools(),
+    effectReference.tools(),
+    cask.tools(),
+    dotfiles.tools(),
+    omo.tools(),
+    tokenizer.tools(),
+  ], { concurrency: "unbounded" });
 
   const report: DriftReport = {
     checked_at: rfc3339Now(),
     tools: [
       ...miseTools,
+      ...effectReferenceTools,
       ...caskTools,
       ...repoTools,
       ...omoTools,
@@ -625,6 +680,7 @@ const runCheck = Effect.gen(function* () {
   );
 }).pipe(
   Effect.provide(MiseChecker.layer),
+  Effect.provide(EffectReferenceChecker.layer),
   Effect.provide(CaskChecker.layer),
   Effect.provide(DotfilesChecker.layer),
   Effect.provide(OmoChecker.layer),

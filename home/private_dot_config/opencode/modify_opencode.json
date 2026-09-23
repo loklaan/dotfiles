@@ -19,6 +19,10 @@
 {{- $config := $base -}}
 {{- $config = $config | setValueAtPath "mcp" $mcpServers -}}
 {{- $config = $config | setValueAtPath "instructions" $instructions -}}
+{{- $config = $config | setValueAtPath "references.effect-v4" (dict
+      "path" (joinPath .chezmoi.homeDir ".local/share/mise/effect-v4-reference/current")
+      "description" "Effect v4 APIs, migrations, examples, source, and tests"
+) -}}
 
 {{- /* Register plugins: oh-my-openagent@latest + the @canva work plugin.
       OpenCode installs plugins with npm; npm resolves the @canva depot scope

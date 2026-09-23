@@ -15,7 +15,7 @@ import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
 import { Path } from "npm:effect@4.0.0-rc.112/Path";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
 // @effect/platform-node is imported dynamically in import.meta.main only, and
-// via SUBMODULE paths. Dynamic keeps `deno test` zero-flag offline; submodules
+// via SUBMODULE paths. Dynamic keeps `deno test` permission-free; submodules
 // keep --allow-env scopeable, because the bare package index re-exports
 // unstable/cluster/ShardingConfig, which enumerates process.env at load.
 //
@@ -93,7 +93,7 @@ if (import.meta.main) {
 
 // === Tests ===============================================================
 // deno test --allow-env --allow-read deno-effect-tool.template.ts
-// Offline unit tests must pass with ZERO permission flags:
+// Permission-free unit tests must pass with ZERO permission flags:
 //   deno test deno-effect-tool.template.ts
 
 const decodeEcho = Schema.decodeUnknownSync(EchoResult);

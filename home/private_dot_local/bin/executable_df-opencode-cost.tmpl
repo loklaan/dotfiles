@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=zsh,ssh --allow-env=HOME,MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-read
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=zsh,ssh --allow-env=HOME,PATH,SSH_AUTH_SOCK,MSGPACKR_NATIVE_ACCELERATION_DISABLED,NODE_V8_COVERAGE --allow-read
 
 // df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
 // Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0-rc.112
@@ -11,10 +11,26 @@
 // into their parent repo, folds devbox ~/work/<repo> into ~/dev/canva/<repo>,
 // and renders a heatmap table with per-host + per-worktree granularity.
 
-import { Console, Effect, Result, Schema } from "npm:effect@4.0.0-rc.112";
+import {
+  Console,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  PlatformError,
+  Result,
+  Schema,
+  Sink,
+  Stream,
+} from "npm:effect@4.0.0-rc.112";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import {
+  ChildProcess,
+  ChildProcessSpawner,
+} from "npm:effect@4.0.0-rc.112/unstable/process";
+import { TestClock } from "npm:effect@4.0.0-rc.112/testing";
 // @effect/platform-node imported dynamically in import.meta.main only (msgpackr
-// reads process.env at load, needing --allow-env; keeps `deno test` hermetic).
+// reads one named env var at load; keeps `deno test` hermetic).
 
 // Hosts baked in from chezmoi data at apply time. Empty on machines that did not
 // answer the prompt — the tool prints guidance instead of silently doing nothing.
@@ -41,6 +57,28 @@ const SessionRow = Schema.Struct({
 const HostPayload = Schema.Array(SessionRow);
 const decodePayload = Schema.decodeUnknownEffect(HostPayload);
 type SessionRow = typeof SessionRow.Type;
+
+const HOST_QUERY_TIMEOUT_SECONDS = 60;
+const MAX_STDOUT_BYTES = 1024 * 1024;
+const MAX_STDERR_BYTES = 64 * 1024;
+
+class OutputOverflow extends Schema.TaggedError<OutputOverflow>()(
+  "OutputOverflow",
+  {
+    stream: Schema.Literals(["stdout", "stderr"]),
+    limitBytes: Schema.Number,
+  },
+) {}
+
+type ChildEnvironment = Record<string, string | undefined>;
+const childEnvironment = Effect.sync(() => {
+  const environment: ChildEnvironment = {};
+  for (const key of ["HOME", "PATH", "SSH_AUTH_SOCK"] as const) {
+    const value = Deno.env.get(key);
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
+});
 
 // --- Window parsing ------------------------------------------------------
 // Absolute date (YYYY-MM-DD / ISO) or relative span N[dwm] back from now.
@@ -94,7 +132,11 @@ const remoteCommand = (
   return `deno eval ${JSON.stringify(snippet)}`;
 };
 
-const spawn = (host: string, script: string): Promise<Deno.CommandOutput> => {
+const hostCommand = (
+  host: string,
+  script: string,
+  environment: ChildEnvironment = {},
+): ChildProcess.Command => {
   const [cmd, args] = host === "local" ? ["zsh", ["-lc", script]] : ["ssh", [
     "-o",
     "BatchMode=yes",
@@ -103,30 +145,136 @@ const spawn = (host: string, script: string): Promise<Deno.CommandOutput> => {
     host,
     `zsh -lc ${JSON.stringify(script)}`,
   ]];
-  return new Deno.Command(cmd as string, {
-    args: args as string[],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  return ChildProcess.make(cmd, args, {
+    env: environment,
+    extendEnv: false,
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
+    forceKillAfter: "5 seconds",
+  });
 };
+
+type CommandOutput = {
+  readonly success: boolean;
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+};
+
+type OutputBuffer = {
+  readonly last: OutputChunk | null;
+  readonly bytes: number;
+};
+type OutputChunk = {
+  readonly value: Uint8Array;
+  readonly previous: OutputChunk | null;
+};
+const decoder = new TextDecoder();
+const collectOutput = (
+  stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
+  streamName: "stdout" | "stderr",
+  limitBytes: number,
+): Effect.Effect<string, PlatformError.PlatformError | OutputOverflow> =>
+  stream.pipe(
+    Stream.runFoldEffect(
+      (): OutputBuffer => ({ last: null, bytes: 0 }),
+      (buffer, chunk) => {
+        const bytes = buffer.bytes + chunk.byteLength;
+        return bytes > limitBytes
+          ? Effect.fail(new OutputOverflow({ stream: streamName, limitBytes }))
+          : Effect.succeed(
+            chunk.byteLength === 0 ? buffer : {
+              last: { value: chunk, previous: buffer.last },
+              bytes,
+            },
+          );
+      },
+    ),
+    Effect.map((buffer) => {
+      const bytes = new Uint8Array(buffer.bytes);
+      let chunk = buffer.last;
+      let offset = buffer.bytes;
+      while (chunk !== null) {
+        offset -= chunk.value.byteLength;
+        bytes.set(chunk.value, offset);
+        chunk = chunk.previous;
+      }
+      return decoder.decode(bytes);
+    }),
+  );
+
+const runHostCommand = (
+  host: string,
+  script: string,
+  environment: ChildEnvironment = {},
+): Effect.Effect<
+  CommandOutput,
+  BoxFailure,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      hostCommand(host, script, environment),
+    );
+    const output = yield* Effect.all({
+      stdout: collectOutput(handle.stdout, "stdout", MAX_STDOUT_BYTES),
+      stderr: collectOutput(handle.stderr, "stderr", MAX_STDERR_BYTES),
+      code: handle.exitCode,
+    }, { concurrency: "unbounded" });
+    const code = Number(output.code);
+    return {
+      success: code === 0,
+      code,
+      stdout: output.stdout,
+      stderr: output.stderr,
+    };
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError((cause) => {
+      if (cause instanceof OutputOverflow) {
+        const action = cause.stream === "stdout"
+          ? "; narrow the date window"
+          : "; inspect host shell or SSH diagnostics";
+        return new BoxFailure({
+          host,
+          detail:
+            `${cause.stream} exceeded ${cause.limitBytes}-byte limit${action}`,
+        });
+      }
+      return new BoxFailure({ host, detail: `spawn failed: ${String(cause)}` });
+    }),
+    Effect.timeoutOrElse({
+      duration: `${HOST_QUERY_TIMEOUT_SECONDS} seconds`,
+      orElse: () =>
+        Effect.fail(
+          new BoxFailure({
+            host,
+            detail:
+              `query timed out after ${HOST_QUERY_TIMEOUT_SECONDS} seconds; retry or narrow the date window`,
+          }),
+        ),
+    }),
+  );
 
 type HostRows = { host: string; rows: readonly SessionRow[] };
 
 const collectHost = Effect.fn("collectHost")(
-  function* (host: string, script: string) {
-    const out = yield* Effect.tryPromise({
-      try: () => spawn(host, script),
-      catch: (e) =>
-        new BoxFailure({ host, detail: `spawn failed: ${String(e)}` }),
-    });
-    const stderr = new TextDecoder().decode(out.stderr).trim();
+  function* (
+    host: string,
+    script: string,
+    environment: ChildEnvironment = {},
+  ) {
+    const out = yield* runHostCommand(host, script, environment);
+    const stderr = out.stderr.trim();
     if (!out.success) {
       return yield* new BoxFailure({
         host,
         detail: stderr || `exited ${out.code}`,
       });
     }
-    const rawOut = new TextDecoder().decode(out.stdout);
+    const rawOut = out.stdout;
     const start = rawOut.lastIndexOf("[");
     const raw = start >= 0 ? rawOut.slice(start).trim() : rawOut.trim();
     const parsed = yield* Effect.try({
@@ -412,9 +560,10 @@ const costCommand = Command.make(
       }
 
       const script = remoteCommand(sinceMs, untilMs, basis);
+      const environment = yield* childEnvironment;
       const results = yield* Effect.forEach(
         hosts,
-        (h) => Effect.result(collectHost(h, script)),
+        (h) => Effect.result(collectHost(h, script, environment)),
         { concurrency: opts.concurrency },
       );
       const ok: HostRows[] = [];
@@ -464,6 +613,51 @@ if (import.meta.main) {
 
 // === Tests (offline, zero-flag: deno test executable_df-opencode-cost.tmpl) ==
 if (!import.meta.main) {
+  type MockProcess = {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly exitCode: number;
+    readonly hangs?: boolean;
+    readonly acquired?: Deferred.Deferred<void>;
+  };
+  const encoder = new TextEncoder();
+  const mockProcessLayer = (
+    fixture: MockProcess,
+    commands: ChildProcess.Command[],
+    onRelease: () => void = () => {},
+  ) =>
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        commands.push(command);
+        const stdout = encoder.encode(fixture.stdout);
+        const stderr = encoder.encode(fixture.stderr);
+        return Effect.acquireRelease(
+          Effect.gen(function* () {
+            if (fixture.acquired !== undefined) {
+              yield* Deferred.succeed(fixture.acquired, undefined);
+            }
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              stdin: Sink.drain,
+              stdout: fixture.hangs ? Stream.never : Stream.make(stdout),
+              stderr: fixture.hangs ? Stream.never : Stream.make(stderr),
+              all: fixture.hangs ? Stream.never : Stream.make(stdout, stderr),
+              exitCode: fixture.hangs ? Effect.never : Effect.succeed(
+                ChildProcessSpawner.ExitCode(fixture.exitCode),
+              ),
+              isRunning: Effect.succeed(fixture.hangs === true),
+              kill: () => Effect.void,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+          () => Effect.sync(onRelease),
+        );
+      }),
+    );
+
   Deno.test("parseWhen: relative spans", () => {
     const now = 1_000_000_000_000;
     if (parseWhen("30d", now) !== now - 30 * 86400000) throw new Error("30d");
@@ -532,6 +726,265 @@ if (!import.meta.main) {
     }
     if (Math.abs(grand.cost - 28.77) > 0.001) {
       throw new Error(`grand ${grand.cost}`);
+    }
+  });
+
+  Deno.test("collectHost: local and SSH argv pass through the process spawner", async () => {
+    const commands: ChildProcess.Command[] = [];
+    const payload = JSON.stringify([{
+      dir: "/Users/test/dev/example",
+      cost: 1,
+      input: 2,
+      output: 3,
+    }]);
+    const layer = mockProcessLayer(
+      { stdout: payload, stderr: "", exitCode: 0 },
+      commands,
+    );
+    const script = `printf '%s\n' "quoted value"`;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* collectHost("local", script);
+        yield* collectHost("box.example", script);
+      }).pipe(Effect.provide(layer)),
+    );
+
+    const [local, remote] = commands;
+    if (local?._tag !== "StandardCommand") {
+      throw new Error("local command did not reach the process spawner");
+    }
+    if (
+      local.command !== "zsh" ||
+      JSON.stringify(local.args) !== JSON.stringify(["-lc", script])
+    ) {
+      throw new Error(
+        `unexpected local argv: ${local.command} ${JSON.stringify(local.args)}`,
+      );
+    }
+    if (
+      local.options.stdin !== "inherit" || local.options.stdout !== "pipe" ||
+      local.options.stderr !== "pipe" ||
+      local.options.forceKillAfter !== "5 seconds"
+    ) {
+      throw new Error(
+        `unexpected process options: ${JSON.stringify(local.options)}`,
+      );
+    }
+    if (remote?._tag !== "StandardCommand") {
+      throw new Error("SSH command did not reach the process spawner");
+    }
+    const expectedRemoteArgs = [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=15",
+      "box.example",
+      `zsh -lc ${JSON.stringify(script)}`,
+    ];
+    if (
+      remote.command !== "ssh" ||
+      JSON.stringify(remote.args) !== JSON.stringify(expectedRemoteArgs)
+    ) {
+      throw new Error(
+        `unexpected SSH argv: ${remote.command} ${JSON.stringify(remote.args)}`,
+      );
+    }
+  });
+
+  Deno.test("hostCommand: supplies only the explicit child environment", () => {
+    const environment = {
+      HOME: "/home/test",
+      PATH: "/usr/bin:/bin",
+      SSH_AUTH_SOCK: "/tmp/agent.sock",
+    };
+    const commandBuilder: (
+      host: string,
+      script: string,
+      environment?: Readonly<Record<string, string | undefined>>,
+    ) => ChildProcess.Command = hostCommand;
+    const command = commandBuilder("local", "query", environment);
+    if (command._tag !== "StandardCommand") {
+      throw new Error("local query did not produce a standard command");
+    }
+    if (
+      command.options.extendEnv !== false ||
+      JSON.stringify(command.options.env) !== JSON.stringify(environment)
+    ) {
+      throw new Error(
+        `unexpected child environment: ${JSON.stringify(command.options)}`,
+      );
+    }
+  });
+
+  Deno.test("collectHost: whole query timeout returns BoxFailure context", async () => {
+    let released = false;
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const acquired = yield* Deferred.make<void>();
+        const fiber = yield* Effect.result(collectHost("slow-box", "query"))
+          .pipe(
+            Effect.provide(mockProcessLayer(
+              {
+                stdout: "",
+                stderr: "",
+                exitCode: 0,
+                hangs: true,
+                acquired,
+              },
+              [],
+              () => {
+                released = true;
+              },
+            )),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Deferred.await(acquired);
+        yield* TestClock.adjust(`${HOST_QUERY_TIMEOUT_SECONDS} seconds`);
+        if (fiber.pollUnsafe() === undefined) {
+          yield* Fiber.interrupt(fiber);
+          throw new Error("query remained active after its duration limit");
+        }
+        const result = yield* Fiber.join(fiber);
+        if (
+          Result.isSuccess(result) ||
+          result.failure.detail !==
+            `query timed out after ${HOST_QUERY_TIMEOUT_SECONDS} seconds; retry or narrow the date window`
+        ) {
+          throw new Error(
+            `unexpected timeout result: ${JSON.stringify(result)}`,
+          );
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+    if (!released) {
+      throw new Error("timeout did not close the spawned process scope");
+    }
+  });
+
+  Deno.test("collectHost: stdout and stderr enforce independent byte limits", async () => {
+    const stdoutFailure = await Effect.runPromise(
+      collectHost("stdout-box", "query").pipe(
+        Effect.flip,
+        Effect.provide(mockProcessLayer({
+          stdout: "x".repeat(MAX_STDOUT_BYTES + 1),
+          stderr: "",
+          exitCode: 0,
+        }, [])),
+      ),
+    );
+    if (
+      stdoutFailure.detail !==
+        `stdout exceeded ${MAX_STDOUT_BYTES}-byte limit; narrow the date window`
+    ) {
+      throw new Error(`unexpected stdout overflow: ${stdoutFailure.detail}`);
+    }
+
+    const stderrFailure = await Effect.runPromise(
+      collectHost("stderr-box", "query").pipe(
+        Effect.flip,
+        Effect.provide(mockProcessLayer({
+          stdout: "",
+          stderr: "x".repeat(MAX_STDERR_BYTES + 1),
+          exitCode: 1,
+        }, [])),
+      ),
+    );
+    if (
+      stderrFailure.detail !==
+        `stderr exceeded ${MAX_STDERR_BYTES}-byte limit; inspect host shell or SSH diagnostics`
+    ) {
+      throw new Error(`unexpected stderr overflow: ${stderrFailure.detail}`);
+    }
+  });
+
+  Deno.test("collectHost: stderr and exit code retain BoxFailure detail", async () => {
+    const stderrFailure = await Effect.runPromise(
+      collectHost("stderr-box", "query").pipe(
+        Effect.flip,
+        Effect.provide(mockProcessLayer({
+          stdout: "ignored",
+          stderr: "permission denied\n",
+          exitCode: 17,
+        }, [])),
+      ),
+    );
+    if (
+      stderrFailure.host !== "stderr-box" ||
+      stderrFailure.detail !== "permission denied"
+    ) {
+      throw new Error(
+        `unexpected stderr failure: ${JSON.stringify(stderrFailure)}`,
+      );
+    }
+
+    const exitFailure = await Effect.runPromise(
+      collectHost("exit-box", "query").pipe(
+        Effect.flip,
+        Effect.provide(mockProcessLayer({
+          stdout: "ignored",
+          stderr: "",
+          exitCode: 23,
+        }, [])),
+      ),
+    );
+    if (exitFailure.host !== "exit-box" || exitFailure.detail !== "exited 23") {
+      throw new Error(
+        `unexpected exit failure: ${JSON.stringify(exitFailure)}`,
+      );
+    }
+  });
+
+  Deno.test("collectHost: spawn failures retain their BoxFailure cause", async () => {
+    const cause = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "missing-command",
+    });
+    const layer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.fail(cause)),
+    );
+    const failure = await Effect.runPromise(
+      collectHost("missing-box", "query").pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      ),
+    );
+    const expected = `spawn failed: ${String(cause)}`;
+    if (failure.host !== "missing-box" || failure.detail !== expected) {
+      throw new Error(`unexpected spawn failure: ${JSON.stringify(failure)}`);
+    }
+  });
+
+  Deno.test("collectHost: interruption closes the spawned process scope", async () => {
+    let released = false;
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const acquired = yield* Deferred.make<void>();
+        const fiber = yield* collectHost("slow-box", "query").pipe(
+          Effect.provide(mockProcessLayer(
+            {
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              hangs: true,
+              acquired,
+            },
+            [],
+            () => {
+              released = true;
+            },
+          )),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(acquired);
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+    if (!released) {
+      throw new Error("interruption did not close the spawned process scope");
     }
   });
 }

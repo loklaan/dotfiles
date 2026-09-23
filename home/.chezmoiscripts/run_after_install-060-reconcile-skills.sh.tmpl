@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Normalize TMPDIR (strip trailing slash for consistent path construction)
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+# Source shared logging library and setup session logging
+# shellcheck disable=SC1091
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")" "skills"
+
+#/ Usage:
+#/   run_after_install-060-reconcile-skills.sh [OPTIONS]
+#/
+#/ Description:
+#/   Reconciles individual registry links and independently managed providers.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+reconcile_stderr_file=""
+cleanup_skill_reconcile_temp() {
+  [ -z "${reconcile_stderr_file:-}" ] || rm -f -- "$reconcile_stderr_file"
+}
+trap cleanup_skill_reconcile_temp EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+main() {
+  bl_parse_help "$@"
+
+  local manifest="$HOME/.config/dotfiles/skill-lifecycle.json"
+  if [ ! -f "$manifest" ]; then
+    log_skip "Skills are disabled because no manifest was projected"
+    return 0
+  fi
+  if ! command -v df-skills >/dev/null 2>&1; then
+    fatal "Cannot reconcile skills: df-skills is not installed"
+  fi
+
+  local raw status source_count source_names provider_count
+  reconcile_stderr_file="$(mktemp "${TMPDIR}/df-skills-reconcile.XXXXXX")"
+
+  raw="$(df-skills reconcile --manifest "$manifest" 2>"$reconcile_stderr_file")" || status=$?
+  status="${status:-0}"
+  if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+    printf '%s\n' "$raw" >> "$BASH_LOGGING_FILE"
+    cat "$reconcile_stderr_file" >> "$BASH_LOGGING_FILE"
+  fi
+  if [ "$status" -ne 0 ]; then
+    log_fail "Skill reconciliation failed (exit $status)"
+    log_warn_cont "Run: df-skills reconcile --manifest $manifest"
+    return "$status"
+  fi
+
+  if ! source_count="$(printf '%s' "$raw" | jq -er '.sources | length' 2>/dev/null)" ||
+    ! source_names="$(printf '%s' "$raw" | jq -er '.sources | keys | join(", ")' 2>/dev/null)" ||
+    ! provider_count="$(printf '%s' "$raw" | jq -er '.providers | length' 2>/dev/null)" ||
+    ! printf '%s' "$raw" | jq -e '(.reconcileHealthy | type == "boolean") and (.registry.healthy | type == "boolean") and (.packages.healthy | type == "boolean")' >/dev/null 2>&1; then
+    log_fail "Skill reconciliation returned malformed JSON"
+    log_warn_cont "Run: df-skills reconcile --manifest $manifest"
+    return 1
+  fi
+  if ! printf '%s' "$raw" | jq -e '(.reconcileHealthy == true) and (.registry.healthy != false)' >/dev/null 2>&1; then
+    log_fail "Skill reconciliation reported a failure"
+    log_warn_cont "Run: df-skills reconcile --manifest $manifest"
+    return 1
+  fi
+
+  log_ok "Reconciled: $source_count sources"
+  [ "$source_count" -eq 0 ] || log_cont "$source_names"
+  if [ "$provider_count" -gt 0 ]; then
+    log_detail "Providers: $provider_count"
+  fi
+  log_detail "Registry healthy; package drift deferred to packaging"
+}
+
+main "$@"

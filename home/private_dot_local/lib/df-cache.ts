@@ -1,6 +1,5 @@
-// df-cache — soft-failing scan→cache primitives for the dotfiles tools
-// (df-drift, df-prewarm), built on CANONICAL Effect v4 platform services
-// rather than hand-rolled Deno.* wrappers.
+// df-cache — soft-failing scan→cache primitives for df-drift, built on
+// CANONICAL Effect v4 platform services rather than hand-rolled Deno.* wrappers.
 //
 // WHY canonical: Deno's node-compat runs the @effect/platform-node layers
 // (they bind node:fs / node:child_process), so there is no reason to
@@ -21,7 +20,7 @@
 // Effect v4 import paths verified against effect@4.0.0-rc.112 and
 // @effect/platform-node@4.0.0-rc.112.
 
-import { Effect } from "npm:effect@4.0.0-rc.112";
+import { Effect, Stream } from "npm:effect@4.0.0-rc.112";
 import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
 import {
   ChildProcess,
@@ -44,33 +43,26 @@ export interface RunResult {
 // permission denied) is reported as ok:false, code:127 — the same shape the
 // previous Deno.Command wrapper returned, so df-drift's checkers are unchanged.
 //
-// stdout and stderr are captured independently (callers like the gh-auth probe
-// need stderr, where gh writes its status). Each capture and the exit code
-// soft-fail independently; any defect collapses into the benign ok:false result.
+// stdout and stderr are captured independently from one scoped child. Both
+// streams and the exit code are awaited concurrently so neither pipe can block
+// the other.
 export const run = (
   cmd: string,
   args: readonly string[],
 ): Effect.Effect<RunResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const command = ChildProcess.make(cmd, [...args]);
-
-    const stdout = yield* spawner.string(command).pipe(
-      Effect.orElseSucceed(() => ""),
-    );
-    const combined = yield* spawner
-      .string(command, { includeStderr: true })
-      .pipe(Effect.orElseSucceed(() => stdout));
-    const stderr = combined.startsWith(stdout)
-      ? combined.slice(stdout.length)
-      : combined;
-    const code = yield* spawner.exitCode(command).pipe(
-      Effect.map((c) => Number(c)),
-      Effect.orElseSucceed(() => 127),
-    );
-
-    return { ok: code === 0, code, stdout, stderr };
-  }).pipe(
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(ChildProcess.make(cmd, [...args]));
+      const [stdout, stderr, exitCode] = yield* Effect.all([
+        Stream.mkString(Stream.decodeText(child.stdout)),
+        Stream.mkString(Stream.decodeText(child.stderr)),
+        child.exitCode,
+      ], { concurrency: 3 });
+      const code = Number(exitCode);
+      return { ok: code === 0, code, stdout, stderr };
+    }),
+  ).pipe(
     Effect.orElseSucceed((): RunResult => ({
       ok: false,
       code: 127,

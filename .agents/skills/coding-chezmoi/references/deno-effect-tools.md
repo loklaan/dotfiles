@@ -43,7 +43,7 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
   # RIGHT
   #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=terminal-notifier,osascript,notify-send
   ```
-- Deno version: **2.8.1** (pinned in
+- Deno version: **2.9.5** (pinned in
   `home/private_dot_config/mise/config.toml.tmpl`)
 - Minimal grants: only add permissions the tool actually uses
 
@@ -140,8 +140,8 @@ persistent `MM` on `~/.local/bin/deno.lock` that can stall `mise run update`.
 `frozen: true` removes Deno's write trigger entirely while still verifying
 integrity, so chezmoi's managed copy stays byte-stable — no race.
 
-> **Freeze only honours the nested object form.** In Deno 2.8.x, `deno run`
-> reads the freeze from `"lock": { "frozen": true }` ONLY. The flat
+> **Freeze only honours the nested object form.** With the pinned Deno 2.9.5,
+> `deno run` reads the freeze from `"lock": { "frozen": true }` ONLY. The flat
 > `"frozen": true` top-level key and the `DENO_FROZEN` env var are silently
 > ignored for `deno run` (verified empirically — both let the lock get
 > rewritten). Do not "simplify" the config to the flat form.
@@ -202,6 +202,26 @@ deno check --config deno.json home/private_dot_local/bin/executable_<tool>
 deno test  --config deno.json home/private_dot_local/bin/executable_<tool>   # zero flags
 ```
 
+Zero Deno permission flags prove that test code needs no runtime capabilities;
+they do not prove that dependency resolution stayed offline. With Deno 2.9.5,
+deny networking at the OS boundary while keeping the Deno command
+permission-free:
+
+```bash
+# macOS
+sandbox-exec -p '(version 1) (deny network*) (allow default)' \
+  deno test --config deno.json home/private_dot_local/bin/executable_<tool>
+
+# Linux (util-linux; requires unprivileged user namespaces)
+unshare --user --map-root-user --net \
+  deno test --config deno.json home/private_dot_local/bin/executable_<tool>
+```
+
+Both commands deny network access before Deno resolves the module graph. A warm
+cache passes; a missing dependency fails instead of being downloaded. If Linux
+disables unprivileged user namespaces, run the same zero-permission Deno command
+in an existing container or CI sandbox with networking disabled.
+
 `.tmpl` tools cannot be checked in place — Go template syntax is not valid TS.
 Render them into a mirror of the deployed layout first, so their `../lib/*.ts`
 imports still resolve:
@@ -248,7 +268,7 @@ if (import.meta.main) {
 ```
 
 **Do NOT** statically import `NodeRuntime`, `NodeFileSystem`, `NodePath`, or
-`NodeServices` at file top level — this breaks the zero-flag offline test rule.
+`NodeServices` at file top level — this breaks the zero-permission test rule.
 
 **Do NOT** use `npm:@effect/platform@4.0.0-rc.112` — that package is
 unresolvable at this pin. Use `npm:effect@4.0.0-rc.112/FileSystem` and
@@ -412,20 +432,31 @@ The submodule rule above only removes the first:
    key in `--allow-env` does NOT help: a tool with
    `--allow-env=PUSHBULLET_ACCESS_TOKEN` still dies on
    `Config.redacted("PUSHBULLET_ACCESS_TOKEN")`.
-3. **Every `ChildProcessSpawner` spawn.** Deno's node `child_process.spawn` shim
-   builds the child env with `Deno.env.toObject()` in `normalizeSpawnArguments`.
-   Passing `env` explicitly does not avoid it — `resolveEnvironment` spreads
-   `process.env` one line earlier. Raw `Deno.Command` does NOT enumerate.
+3. **A `ChildProcessSpawner` spawn with its default `extendEnv: true`.** In
+   Effect `4.0.0-rc.112`, the Node spawn shim inherits the environment and
+   enumerates `process.env`, so Deno requires blanket `--allow-env`.
 
-**The rule:** narrow `--allow-env` ONLY when a tool reads no Effect `Config`,
-never spawns through `ChildProcessSpawner`, and never calls
-`Deno.env.toObject()` itself. Everything else takes a blanket `--allow-env` — it
-is a description of what the tool genuinely does, not a shortcut.
+**Named-environment exception, verified for Effect `4.0.0-rc.112`:** a canonical
+`ChildProcessSpawner` can use named grants when every spawned command sets
+`extendEnv: false` and passes an explicit `env` record. Read only the named
+variables needed to build that record. `df-opencode-cost` is the verified
+pattern: its shebang grants `HOME`, `PATH`, and `SSH_AUTH_SOCK`; it reads them
+with `Deno.env.get`; and `hostCommand` passes them to `ChildProcess.make` with
+`extendEnv: false`. It does not use raw `Deno.Command`.
 
-Today the narrow set is exactly `df-coder-url`, `df-json-escape` (its only
-`ChildProcessSpawner` use is a dying test layer) and `df-opencode-cost` (raw
-`Deno.Command`). Both remaining `Deno.env.toObject()` callers — `df-setup` and
-`df-orca-serve` — are blanket by their own code.
+This exception is valid only when no other execution path reads or enumerates
+the environment. A default `Config` provider, `Deno.env.toObject()`,
+`process.env` enumeration, or any spawn that keeps `extendEnv: true` still
+requires blanket `--allow-env`.
+
+**The rule:** use named `--allow-env=<key>` grants only after checking every
+environment access and every child command. Otherwise use blanket `--allow-env`;
+it describes the tool's real capability, not a shortcut.
+
+Today the narrow set is `df-coder-url`, `df-json-escape` (its only
+`ChildProcessSpawner` use is a dying test layer), and `df-opencode-cost`. Both
+remaining `Deno.env.toObject()` callers, `df-setup` and `df-orca-serve`, are
+blanket by their own code.
 
 Check a tool against the rule before narrowing:
 
@@ -433,17 +464,20 @@ Check a tool against the rule before narrowing:
 grep -nE 'Config\.(string|redacted|integer|option)\(|ChildProcessSpawner|Deno\.env\.toObject' <file>
 ```
 
-An empty result means it can be narrow. A hit on ANY of the three means blanket.
+An empty result means it can be narrow. A hit on `Config.*` or
+`Deno.env.toObject()` means blanket. For `ChildProcessSpawner`, inspect every
+command: named grants are safe only with explicit `env` plus `extendEnv: false`.
 Beware the latent case: `--help` often returns before the first `Config` read or
-spawn, so a narrowed tool can look fine and fail on its real path — exercise the
+spawn, so a narrowed tool can look fine and fail on its real path. Exercise the
 work path, not just `--help`.
 
 Scoping the `Config` reads IS possible via `ConfigProvider.fromEnvRecord` (built
 from named `Deno.env.get` calls) layered at the entry point, but it silently
 hides any key not in the record, so a future `Config` read returns empty instead
 of failing. Not adopted; noted as the option if the grants ever matter more than
-that risk. The spawner enumeration has no fix short of abandoning
-`ChildProcessSpawner` for raw `Deno.Command`, which §9 mandates against.
+that risk. For a child that needs only a known environment subset, use the
+`extendEnv: false` pattern above; §9 still mandates `ChildProcessSpawner` over
+raw `Deno.Command`.
 
 > **TODO — drop `MSGPACKR_NATIVE_ACCELERATION_DISABLED` once
 > `effect@4.0.0-rc.113` ships.** `msgpackr` is already gone from
@@ -806,8 +840,10 @@ itEffect(
 
 Rules:
 
-- **Offline tests** run unconditionally — `deno test <file>` with no flags must
-  pass
+- **Permission-free tests** run unconditionally — `deno test <file>` with no
+  flags must pass
+- **Offline verification** wraps that zero-permission command in the OS network
+  sandbox from §2; a dependency-cache flag is not a network boundary
 - **Integration tests** gated on `hasEnv("KEY")` — never fail in CI without
   credentials
 - **Destructive tests** double-gated on two env vars
@@ -883,7 +919,7 @@ globalThis.addEventListener("error", (event) => {
 ```
 
 The Deno-native `globalThis` listeners are sufficient — **do NOT add
-`process.on(...)`**. Validated under Deno 2.8.1: these listeners catch both
+`process.on(...)`**. Validated under Deno 2.9.5: these listeners catch both
 Deno-native AND node-compat-routed escapes (unhandled rejections +
 `process.nextTick` throws). `event.preventDefault()` suppresses Deno's default
 crash so our `Deno.exit(1)` controls the exit code; adding `process.on` would
@@ -914,10 +950,11 @@ import {
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
-**Permissions**: every spawn goes through `ChildProcessSpawner`, which
-enumerates the environment (see §4's env rule), so these tools take a blanket
-`--allow-env` alongside their `--allow-run=<cmd>` grants. They do NOT need
-`--allow-ffi` (§4e).
+**Permissions**: a command using the default `extendEnv: true` needs blanket
+`--allow-env` alongside its `--allow-run=<cmd>` grants. For Effect
+`4.0.0-rc.112`, a command with `extendEnv: false` and an explicit `env` record
+can use named grants when the tool has no other environment enumeration, as
+`df-opencode-cost` proves. They do NOT need `--allow-ffi` (§4e).
 
 `ChildProcess.make` takes a template (`` `git status` ``), `({opts})`-tag, or
 `(bin, args, opts)`. Spawner methods: `.string(cmd)` (stdout, fails on nonzero),

@@ -6,13 +6,28 @@
 // `drift-json --refresh-upstream` is the only network path.
 // Effect v4 import paths verified against effect@4.0.0-rc.112.
 
-import { Console, Effect, Schema } from "npm:effect@4.0.0-rc.112";
+import {
+  Console,
+  Effect,
+  Fiber,
+  Schedule,
+  Schema,
+} from "npm:effect@4.0.0-rc.112";
 import * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
 import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.112/unstable/process";
 import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientResponse,
+} from "npm:effect@4.0.0-rc.112/unstable/http";
+import { TestClock } from "npm:effect@4.0.0-rc.112/testing";
 import { resolveRepoRoot } from "../lib/df-source.ts";
 
-type Deps = FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
+type Deps =
+  | FileSystem.FileSystem
+  | ChildProcessSpawner.ChildProcessSpawner
+  | HttpClient.HttpClient;
 
 // Subcommand bodies return a process exit code; the CLI turns it into an exit.
 const exitWith = (code: number): Effect.Effect<never> =>
@@ -43,6 +58,9 @@ const EXTERNAL_PATH = "home/.chezmoiexternals/opencode.toml.tmpl";
 
 const UPSTREAM_README_URL =
   `https://raw.githubusercontent.com/IgorWarzocha/Opencode-Context-Analysis-Plugin/${EXPECTED_UPSTREAM_COMMIT}/README.md`;
+const UPSTREAM_ATTEMPT_TIMEOUT = "10 seconds";
+const UPSTREAM_TOTAL_TIMEOUT = "25 seconds";
+const UPSTREAM_RETRIES = 1;
 
 // Qwen3 decision, verified 2026-06-16:
 // - HF API for Qwen/Qwen3-32B shows tokenizer.json, tokenizer_config.json, and
@@ -186,15 +204,23 @@ interface Finding {
   readonly message: string;
 }
 
-interface AliasManifest {
-  readonly transformers: Record<string, string>;
-  readonly providers: Record<string, string>;
-  readonly families: ReadonlyArray<readonly [string, string]>;
-}
+const AliasManifest = Schema.Struct({
+  _comment: Schema.optionalKey(Schema.String),
+  transformers: Schema.Record(Schema.String, Schema.String),
+  providers: Schema.Record(Schema.String, Schema.String),
+  families: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+});
+type AliasManifest = typeof AliasManifest.Type;
+const AliasManifestJson = Schema.fromJsonString(AliasManifest);
+
+class UpstreamRefreshError
+  extends Schema.TaggedError<UpstreamRefreshError>()("UpstreamRefreshError", {
+    retryable: Schema.Boolean,
+    cause: Schema.Unknown,
+  }) {}
 
 interface SourceBundle {
   readonly aliases: AliasManifest;
-  readonly aliasesRaw: string;
   readonly registrySource: string;
   readonly setupScript: string;
   readonly externalSource: string;
@@ -315,31 +341,7 @@ function specKey(spec: TokenizerSpec): string {
 // Source checks.
 // ============================================================================
 
-function parseAliases(raw: string): AliasManifest {
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-  const transformers = asStringRecord(parsed.transformers);
-  const providers = asStringRecord(parsed.providers);
-  const families = Array.isArray(parsed.families)
-    ? parsed.families.flatMap((
-      pair,
-    ): ReadonlyArray<readonly [string, string]> =>
-      Array.isArray(pair) && typeof pair[0] === "string" &&
-        typeof pair[1] === "string"
-        ? [[pair[0], pair[1]]]
-        : []
-    )
-    : [];
-  return { transformers, providers, families };
-}
-
-function asStringRecord(value: unknown): Record<string, string> {
-  if (typeof value !== "object" || value === null) return {};
-  const out: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === "string") out[key] = item;
-  }
-  return out;
-}
+const parseAliases = Schema.decodeUnknownEffect(AliasManifestJson);
 
 function checkResolutionLock(aliases: AliasManifest): ReadonlyArray<Finding> {
   const findings: Finding[] = [];
@@ -361,22 +363,16 @@ function checkResolutionLock(aliases: AliasManifest): ReadonlyArray<Finding> {
   return findings;
 }
 
-function checkAliasComment(aliasesRaw: string): ReadonlyArray<Finding> {
-  const parsed = JSON.parse(aliasesRaw) as Record<string, unknown>;
-  return typeof parsed._comment === "string" &&
-      parsed._comment.includes("families[]")
-    ? []
-    : [{
-      severity: "warning",
-      name: "opencode.tokenizer.alias-comment",
-      installed: typeof parsed._comment === "string"
-        ? parsed._comment
-        : "missing",
-      expected: "top-level _comment documenting families[] precedence",
-      source: "opencode-tokenizer:aliases",
-      message:
-        "tokenizer aliases file lacks the local precedence warning comment",
-    }];
+function checkAliasComment(aliases: AliasManifest): ReadonlyArray<Finding> {
+  return aliases._comment?.includes("families[]") ? [] : [{
+    severity: "warning",
+    name: "opencode.tokenizer.alias-comment",
+    installed: aliases._comment ?? "missing",
+    expected: "top-level _comment documenting families[] precedence",
+    source: "opencode-tokenizer:aliases",
+    message:
+      "tokenizer aliases file lacks the local precedence warning comment",
+  }];
 }
 
 function checkVendorPins(setupScript: string): ReadonlyArray<Finding> {
@@ -512,26 +508,60 @@ function checkExternalStamp(externalSource: string): ReadonlyArray<Finding> {
   }];
 }
 
-async function checkUpstreamReadme(): Promise<ReadonlyArray<Finding>> {
-  try {
-    const response = await fetch(UPSTREAM_README_URL);
-    if (!response.ok) return [];
-    const text = await response.text();
+const checkUpstreamReadme = (): Effect.Effect<
+  ReadonlyArray<Finding>,
+  never,
+  HttpClient.HttpClient
+> =>
+  Effect.gen(function* () {
+    const http = yield* HttpClient.HttpClient;
+    const text = yield* http.get(UPSTREAM_README_URL).pipe(
+      Effect.flatMap((response) =>
+        HttpClientResponse.filterStatusOk(response).pipe(
+          Effect.mapError((cause) =>
+            new UpstreamRefreshError({
+              retryable: response.status === 408 || response.status === 429 ||
+                response.status >= 500,
+              cause,
+            })
+          ),
+          Effect.flatMap((ok) =>
+            ok.text.pipe(
+              Effect.mapError((cause) =>
+                new UpstreamRefreshError({ retryable: true, cause })
+              ),
+            )
+          ),
+        )
+      ),
+      Effect.timeout(UPSTREAM_ATTEMPT_TIMEOUT),
+      Effect.mapError((cause) =>
+        cause instanceof UpstreamRefreshError
+          ? cause
+          : new UpstreamRefreshError({ retryable: true, cause })
+      ),
+      Effect.retry({
+        times: UPSTREAM_RETRIES,
+        schedule: Schedule.exponential("100 millis"),
+        while: (error) => error.retryable,
+      }),
+      Effect.timeout(UPSTREAM_TOTAL_TIMEOUT),
+    );
     const expectedLine =
       `npm install js-tiktoken@${KNOWN_UPSTREAM_TIKTOKEN_RANGE} @huggingface/transformers@${KNOWN_UPSTREAM_TRANSFORMERS_RANGE}`;
-    return text.includes(expectedLine) ? [] : [{
-      severity: "warning",
-      name: "opencode.tokenizer.upstream-dependency-line",
-      installed: "changed-or-missing",
-      expected: expectedLine,
-      source: "opencode-tokenizer:upstream-network",
-      message:
-        `upstream dependency guidance at ${EXPECTED_UPSTREAM_COMMIT} no longer matches the recorded tokenizer constraints`,
-    }];
-  } catch {
-    return [];
-  }
-}
+    const findings: ReadonlyArray<Finding> = text.includes(expectedLine)
+      ? []
+      : [{
+        severity: "warning",
+        name: "opencode.tokenizer.upstream-dependency-line",
+        installed: "changed-or-missing",
+        expected: expectedLine,
+        source: "opencode-tokenizer:upstream-network",
+        message:
+          `upstream dependency guidance at ${EXPECTED_UPSTREAM_COMMIT} no longer matches the recorded tokenizer constraints`,
+      }];
+    return findings;
+  }).pipe(Effect.orElseSucceed(() => []));
 
 function findingToDriftTool(finding: Finding): DriftTool {
   return {
@@ -546,7 +576,7 @@ function findingToDriftTool(finding: Finding): DriftTool {
 function runAllChecks(bundle: SourceBundle): ReadonlyArray<Finding> {
   return [
     ...checkResolutionLock(bundle.aliases),
-    ...checkAliasComment(bundle.aliasesRaw),
+    ...checkAliasComment(bundle.aliases),
     ...checkVendorPins(bundle.setupScript),
     ...checkModuleShape(bundle.registrySource),
     ...checkCommentIgnoredByRegistry(bundle.registrySource),
@@ -558,28 +588,27 @@ function runAllChecks(bundle: SourceBundle): ReadonlyArray<Finding> {
 // Filesystem / CLI.
 // ============================================================================
 
-const readTextFile = (path: string): Effect.Effect<string, Error> =>
-  Effect.tryPromise({
-    try: () => Deno.readTextFile(path),
-    catch: (cause) => new Error(`failed to read ${path}: ${String(cause)}`),
+const readTextFile = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
   });
 
-const loadSources = (repoRoot: string): Effect.Effect<SourceBundle, Error> =>
+const loadSources = (repoRoot: string) =>
   Effect.gen(function* () {
     const aliasesRaw = yield* readTextFile(`${repoRoot}/${ALIASES_PATH}`);
     const registrySource = yield* readTextFile(`${repoRoot}/${REGISTRY_PATH}`);
     const setupScript = yield* readTextFile(`${repoRoot}/${SETUP_SCRIPT_PATH}`);
     const externalSource = yield* readTextFile(`${repoRoot}/${EXTERNAL_PATH}`);
     return {
-      aliases: parseAliases(aliasesRaw),
-      aliasesRaw,
+      aliases: yield* parseAliases(aliasesRaw),
       registrySource,
       setupScript,
       externalSource,
     };
   });
 
-const checkCommand = (repoRoot: string): Effect.Effect<number> =>
+const checkCommand = (repoRoot: string) =>
   Effect.gen(function* () {
     const bundle = yield* loadSources(repoRoot);
     const findings = runAllChecks(bundle);
@@ -597,27 +626,46 @@ const checkCommand = (repoRoot: string): Effect.Effect<number> =>
     }
     return findings.some((finding) => finding.severity === "error") ? 1 : 0;
   }).pipe(
-    Effect.catch((error: Error) =>
-      Console.error(String(error)).pipe(Effect.as(1))
-    ),
+    Effect.catch((error) => Console.error(String(error)).pipe(Effect.as(1))),
   );
 
 const driftJsonCommand = (
   repoRoot: string,
   refreshUpstream: boolean,
-): Effect.Effect<number> =>
+) =>
   Effect.gen(function* () {
-    const bundle = yield* loadSources(repoRoot);
-    const localFindings = runAllChecks(bundle);
-    const networkFindings = refreshUpstream
-      ? yield* Effect.promise(() => checkUpstreamReadme())
-      : [];
+    const localFindings = yield* loadSources(repoRoot).pipe(
+      Effect.map(runAllChecks),
+      Effect.catch((error) =>
+        Effect.succeed<ReadonlyArray<Finding>>([
+          Schema.isSchemaError(error)
+            ? {
+              severity: "error",
+              name: "opencode.tokenizer.aliases-schema",
+              installed: error.message,
+              expected: "valid tokenizer aliases JSON",
+              source: "opencode-tokenizer:aliases",
+              message:
+                "tokenizer aliases JSON does not match the required schema",
+            }
+            : {
+              severity: "error",
+              name: "opencode.tokenizer.local-source-read",
+              installed: String(error),
+              expected: "readable tokenizer guard source files",
+              source: "opencode-tokenizer:local-filesystem",
+              message: "tokenizer guard could not read its local source files",
+            },
+        ])
+      ),
+    );
+    const networkFindings = refreshUpstream ? yield* checkUpstreamReadme() : [];
     const tools = [...localFindings, ...networkFindings].map((finding) =>
       encodeDriftTool(findingToDriftTool(finding))
     );
     yield* Console.log(JSON.stringify(tools, null, 2));
     return 0;
-  }).pipe(Effect.catch(() => Console.log("[]").pipe(Effect.as(0))));
+  });
 
 // Repo files resolve against the repo root, never the process cwd, so the
 // deployed tool works from any directory.
@@ -633,10 +681,10 @@ const refreshUpstreamFlag = Flag.boolean("refresh-upstream").pipe(
   Flag.withDefault(false),
 );
 
-const withRepoRoot = <A>(
+const withRepoRoot = <A, R>(
   override: string,
-  use: (repoRoot: string) => Effect.Effect<A>,
-): Effect.Effect<A | number, never, Deps> =>
+  use: (repoRoot: string) => Effect.Effect<A, never, R>,
+): Effect.Effect<A | number, never, Deps | R> =>
   resolveRepoRoot(override).pipe(
     Effect.flatMap(use),
     Effect.catchTag("SourceRootError", (e) =>
@@ -691,6 +739,7 @@ if (import.meta.main) {
   // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,
   // NodeCrypto, NodePath, NodeStdio and NodeTerminal.
   Command.run(tokenizerCommand, { version: "0.0.0" }).pipe(
+    Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
@@ -792,6 +841,180 @@ if (!import.meta.main) {
         .length,
       1,
     );
+  });
+
+  Deno.test("filesystem adapter: loadSources reads every source through FileSystem", async () => {
+    const aliasesRaw = JSON.stringify({
+      transformers: { "claude-opus-4": "Xenova/claude-tokenizer" },
+      providers: {},
+      families: [["claude", "Xenova/claude-tokenizer"]],
+    });
+    const sources: Readonly<Record<string, string>> = {
+      [`/repo/${ALIASES_PATH}`]: aliasesRaw,
+      [`/repo/${REGISTRY_PATH}`]: "registry fixture",
+      [`/repo/${SETUP_SCRIPT_PATH}`]: "setup fixture",
+      [`/repo/${EXTERNAL_PATH}`]: "external fixture",
+    };
+    const reads: string[] = [];
+    const filesystem = FileSystem.makeNoop({
+      readFileString: (path) => {
+        reads.push(path);
+        return Effect.succeed(sources[path] ?? "");
+      },
+    });
+
+    const bundle = await Effect.runPromise(
+      loadSources("/repo").pipe(
+        Effect.provideService(FileSystem.FileSystem, filesystem),
+      ),
+    );
+
+    assertEq(bundle.registrySource, "registry fixture");
+    assertEq(reads.length, 4);
+  });
+
+  Deno.test("aliases boundary: malformed structured JSON is rejected by Schema", async () => {
+    const exit = await Effect.runPromiseExit(
+      parseAliases(JSON.stringify({
+        transformers: { claude: 42 },
+        providers: {},
+        families: [],
+      })),
+    );
+    assertEq(exit._tag, "Failure");
+  });
+
+  Deno.test("drift JSON: malformed aliases emit an explicit local-state finding", async () => {
+    const sources: Readonly<Record<string, string>> = {
+      [`/repo/${ALIASES_PATH}`]: JSON.stringify({
+        transformers: { claude: 42 },
+        providers: {},
+        families: [],
+      }),
+      [`/repo/${REGISTRY_PATH}`]: "registry fixture",
+      [`/repo/${SETUP_SCRIPT_PATH}`]: "setup fixture",
+      [`/repo/${EXTERNAL_PATH}`]: "external fixture",
+    };
+    const filesystem = FileSystem.makeNoop({
+      readFileString: (path) => Effect.succeed(sources[path] ?? ""),
+    });
+    const http = HttpClient.make(() => Effect.die("unexpected HTTP request"));
+    const output: unknown[] = [];
+    const testConsole: Console.Console = Object.assign(Object.create(console), {
+      log: (...args: ReadonlyArray<unknown>) => output.push(...args),
+    });
+
+    const code = await Effect.runPromise(
+      driftJsonCommand("/repo", false).pipe(
+        Effect.provideService(FileSystem.FileSystem, filesystem),
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provideService(Console.Console, testConsole),
+      ),
+    );
+    const tools = Schema.decodeUnknownSync(
+      Schema.fromJsonString(Schema.Array(DriftTool)),
+    )(String(output[0]));
+
+    assertEq(code, 0);
+    assertEq(tools.length, 1);
+    assertEq(tools[0]?.name, "opencode.tokenizer.aliases-schema");
+    assertEq(tools[0]?.source, "opencode-tokenizer:aliases");
+    assertEq((tools[0]?.installed.length ?? 0) > 0, true);
+    assertEq(tools[0]?.latest, "valid tokenizer aliases JSON");
+  });
+
+  Deno.test("HTTP adapter: transient status retries once and then inspects the response", async () => {
+    let attempts = 0;
+    const client = HttpClient.make((request) => {
+      attempts += 1;
+      const status = attempts === 1 ? 503 : 200;
+      const body = attempts === 1 ? "unavailable" : "changed guidance";
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(body, { status })),
+      );
+    });
+
+    const findings = await Effect.runPromise(
+      checkUpstreamReadme().pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    );
+
+    assertEq(findings.length, 1);
+    assertEq(attempts, 2);
+  });
+
+  Deno.test("HTTP adapter: permanent status is not retried", async () => {
+    let attempts = 0;
+    const client = HttpClient.make((request) => {
+      attempts += 1;
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response("not found", { status: 404 }),
+        ),
+      );
+    });
+
+    const findings = await Effect.runPromise(
+      checkUpstreamReadme().pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    );
+
+    assertEq(findings.length, 0);
+    assertEq(attempts, 1);
+  });
+
+  Deno.test("HTTP adapter: failing 200 body retries once and then succeeds", async () => {
+    let attempts = 0;
+    const client = HttpClient.make((request) => {
+      attempts += 1;
+      const body = attempts === 1
+        ? new ReadableStream<Uint8Array>({
+          pull: (controller) => controller.error(new Error("body failed")),
+        })
+        : `npm install js-tiktoken@${KNOWN_UPSTREAM_TIKTOKEN_RANGE} @huggingface/transformers@${KNOWN_UPSTREAM_TRANSFORMERS_RANGE}`;
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200 }),
+        ),
+      );
+    });
+
+    const findings = await Effect.runPromise(
+      checkUpstreamReadme().pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
+    );
+
+    assertEq(findings.length, 0);
+    assertEq(attempts, 2);
+  });
+
+  Deno.test("HTTP adapter: timeout is bounded and soft-fails after one retry", async () => {
+    let attempts = 0;
+    const client = HttpClient.make(() => {
+      attempts += 1;
+      return Effect.never;
+    });
+    const effect: Effect.Effect<ReadonlyArray<Finding>> = checkUpstreamReadme()
+      .pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+
+    const findings = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(effect);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("30 seconds");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    assertEq(findings.length, 0);
+    assertEq(attempts, 2);
   });
 }
 

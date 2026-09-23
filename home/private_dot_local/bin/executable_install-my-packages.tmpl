@@ -365,6 +365,9 @@ EOF
 
   log_detail "Running 'mise upgrade'"
   run_quiet mise upgrade -y
+
+  log_detail "Installing the mise-owned Effect v4 reference"
+  run_quiet mise run effect-v4:install
 }
 
 main "$@"

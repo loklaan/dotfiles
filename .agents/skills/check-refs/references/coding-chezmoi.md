@@ -70,3 +70,21 @@ The skill lives at `.agents/skills/coding-chezmoi/` with reference files in
 2. Report any listed paths that don't resolve to existing files.
 
 **Rule ID:** `key-files-exist`
+
+### 6. Skill runtime cutover
+
+**Sources:** `home/.chezmoidata/runtime-tiers.yaml`, skill hooks,
+`home/private_dot_local/bin/executable_df-setup.tmpl`, `readme.md`, and
+`.agents/resources/system-model.md`.
+
+**Procedure:**
+1. Verify the runtime-tier manifest contains exactly one Deno skill-management
+   runnable: `home/private_dot_local/bin/executable_df-skills`.
+2. Verify no sibling TypeScript module tree or second skill-management
+   executable exists outside that single source file.
+3. Verify the reconcile hook, package/observe hook, doctor actions, README, and
+   system-model implementation references invoke or name `df-skills`.
+4. Verify the package hook retains package failure, runs observe regardless, and
+   returns nonzero after diagnostics.
+
+**Rule ID:** `skill-runtime-cutover-synced`

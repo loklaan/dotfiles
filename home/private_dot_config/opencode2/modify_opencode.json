@@ -35,6 +35,10 @@
      `beta` dist-tag). V2 auto-installs compatible non-major updates by default,
      which would fight that, so keep it off. */ -}}
 {{- $config = $config | setValueAtPath "autoupdate" false -}}
+{{- $config = $config | setValueAtPath "references.effect-v4" (dict
+      "path" (joinPath .chezmoi.homeDir ".local/share/mise/effect-v4-reference/current")
+      "description" "Effect v4 APIs, migrations, examples, source, and tests"
+) -}}
 
 {{- /* Snapshots: mirror the V1 behaviour of disabling them on Coder boxes when
      the profile opts out. V1's field is `snapshot`; V2's is `snapshots`. */ -}}

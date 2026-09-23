@@ -1,31 +1,101 @@
-# Dormant — methodology folded into lochy:writing/references/doc-coauthoring.md
-# [".agents/skills/doc-coauthoring"]
-#     type = "archive"
-#     url = "https://github.com/anthropics/skills/archive/refs/heads/main.tar.gz"
-#     exact = true
-#     stripComponents = 3
-#     include = ["*/skills/doc-coauthoring/**"]
+{{- $root := . -}}
+{{- $defaults := dig "skillLifecycleDefaults" (dict) . -}}
+{{- $defaultSources := dig "sources" (dict) $defaults -}}
+{{- $localSources := dig "skillSources" (dict) . -}}
+{{- if not (kindIs "map" $defaultSources) -}}{{- fail "skillLifecycleDefaults.sources must be an object" -}}{{- end -}}
+{{- if not (kindIs "map" $localSources) -}}{{- fail "skillSources must be an object" -}}{{- end -}}
+{{- $profileCatalog := dig "profiles" (dict) . -}}
+{{- $profile := dig "machineProfile" "personal" . -}}
+{{- if or (not (kindIs "string" $profile)) (not (hasKey $profileCatalog $profile)) -}}{{- fail (printf "machineProfile %q is unknown" $profile) -}}{{- end -}}
+{{- $sources := dict -}}
+{{- range $name, $source := $defaultSources -}}{{- $_ := set $sources $name $source -}}{{- end -}}
+{{- range $name, $source := $localSources -}}
+{{-   if hasKey $sources $name -}}{{- fail (printf "skillSources.%s conflicts with a repository default" $name) -}}{{- end -}}
+{{-   $_ := set $sources $name $source -}}
+{{- end -}}
+{{- $seenIds := dict -}}
+{{- $store := joinPath $root.chezmoi.homeDir ".local/share/dotfiles/skills" -}}
+{{- range $entryName := keys $sources | sortAlpha -}}
+{{-   $source := get $sources $entryName -}}
+{{-   if not (kindIs "map" $source) -}}{{- fail (printf "skillSources.%s must be an object" $entryName) -}}{{- end -}}
+{{-   $id := dig "id" $entryName $source -}}
+{{-   if or (not (kindIs "string" $id)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._-]*$" $id)) -}}{{- fail (printf "skillSources.%s.id must be a safe ASCII ID" $entryName) -}}{{- end -}}
+{{-   $idKey := lower $id -}}
+{{-   if hasKey $seenIds $idKey -}}{{- fail (printf "skill source id %q is duplicated" $id) -}}{{- end -}}
+{{-   $_ := set $seenIds $idKey true -}}
+{{-   $kind := dig "kind" "" $source -}}
+{{-   if not (has $kind (list "archive" "filesystem" "git" "repository")) -}}{{- fail (printf "skillSources.%s.kind %q is unsupported" $entryName $kind) -}}{{- end -}}
+{{-   $platforms := dig "platforms" (list) $source -}}
+{{-   $profiles := dig "profiles" (list) $source -}}
+{{-   if not (kindIs "slice" $platforms) -}}{{- fail (printf "skillSources.%s.platforms must be an array" $entryName) -}}{{- end -}}
+{{-   if not (kindIs "slice" $profiles) -}}{{- fail (printf "skillSources.%s.profiles must be an array" $entryName) -}}{{- end -}}
+{{-   range $platform := $platforms -}}
+{{-     if not (has $platform (list "darwin" "linux")) -}}{{- fail (printf "skillSources.%s.platforms contains unsupported platform %q" $entryName $platform) -}}{{- end -}}
+{{-   end -}}
+{{-   range $sourceProfile := $profiles -}}
+{{-     if or (not (kindIs "string" $sourceProfile)) (not (hasKey $profileCatalog $sourceProfile)) -}}{{- fail (printf "skillSources.%s.profiles contains unknown profile %q" $entryName $sourceProfile) -}}{{- end -}}
+{{-   end -}}
+{{-   $path := dig "path" "" $source -}}
+{{-   if not (kindIs "string" $path) -}}{{- fail (printf "skillSources.%s.path must be a string" $entryName) -}}{{- end -}}
+{{-   $path = replace "{chezmoiSourceDir}" $root.chezmoi.sourceDir $path -}}
+{{-   $path = replace "{homeDir}" $root.chezmoi.homeDir $path -}}
+{{-   if or (not (hasPrefix "/" $path)) (contains "\\" $path) (contains "//" $path) (hasSuffix "/" $path) (regexMatch "(^|/)\\.{1,2}(/|$)" $path) (regexMatch "[\\p{Cc}\\p{Cf}{}]" $path) -}}{{- fail (printf "skillSources.%s.path must be an absolute lexically safe path" $entryName) -}}{{- end -}}
+{{-   if and (eq $kind "repository") (ne $path $store) (not (hasPrefix (printf "%s/" $store) $path)) -}}{{- $kind = "filesystem" -}}{{- end -}}
+{{-   $active := and (or (eq (len $platforms) 0) (has $root.chezmoi.os $platforms)) (or (eq (len $profiles) 0) (has $profile $profiles)) -}}
+{{-   if and $active (has $kind (list "archive" "git")) -}}
+{{-     if and (ne $path $store) (not (hasPrefix (printf "%s/" $store) $path)) -}}{{- fail (printf "skillSources.%s.path must be within the chezmoi-owned skill store" $entryName) -}}{{- end -}}
+{{-     $url := dig "url" "" $source -}}
+{{-     $lock := dig "lock" (dict) $source -}}
+{{-     if or (not (kindIs "string" $url)) (eq $url "") (regexMatch "[\\p{Cc}\\p{Cf}{}]" $url) -}}{{- fail (printf "skillSources.%s.url must be a non-empty safe string" $entryName) -}}{{- end -}}
+{{-     if not (kindIs "map" $lock) -}}{{- fail (printf "skillSources.%s.lock must be an object" $entryName) -}}{{- end -}}
+{{-     if eq $kind "archive" -}}
+{{-       if not (hasPrefix "https://" $url) -}}{{- fail (printf "skillSources.%s.url must use https" $entryName) -}}{{- end -}}
+{{-       if ne (dig "algorithm" "" $lock) "sha256" -}}{{- fail (printf "skillSources.%s.lock.algorithm must be sha256" $entryName) -}}{{- end -}}
+{{-       $checksum := dig "checksum" "" $lock -}}
+{{-       $ref := dig "ref" "" $lock -}}
+{{-       if not (regexMatch "^[a-f0-9]{64}$" $checksum) -}}{{- fail (printf "skillSources.%s.lock.checksum must be a lowercase SHA-256 digest" $entryName) -}}{{- end -}}
+{{-       if not (regexMatch "^[a-f0-9]{40}$" $ref) -}}{{- fail (printf "skillSources.%s.lock.ref must be an immutable lowercase commit" $entryName) -}}{{- end -}}
+{{-       if not (contains $ref $url) -}}{{- fail (printf "skillSources.%s.url must contain lock.ref" $entryName) -}}{{- end -}}
+{{-       $stripComponents := dig "stripComponents" 0 $source -}}
+{{-       if or (not (or (kindIs "int" $stripComponents) (kindIs "int64" $stripComponents) (kindIs "uint64" $stripComponents))) (lt $stripComponents 0) -}}{{- fail (printf "skillSources.%s.stripComponents must be a non-negative integer" $entryName) -}}{{- end -}}
+{{-       $include := dig "include" (list) $source -}}
+{{-       if not (kindIs "slice" $include) -}}{{- fail (printf "skillSources.%s.include must be an array" $entryName) -}}{{- end -}}
+{{-       range $includePath := $include -}}
+{{-         if or (not (kindIs "string" $includePath)) (eq $includePath "") (hasPrefix "/" $includePath) (contains "\\" $includePath) (contains "//" $includePath) (hasSuffix "/" $includePath) (regexMatch "(^|/)\\.{1,2}(/|$)" $includePath) (regexMatch "[\\p{Cc}\\p{Cf}{}]" $includePath) -}}{{- fail (printf "skillSources.%s.include entries must be safe relative archive patterns" $entryName) -}}{{- end -}}
+{{-       end }}
 
-# Matt Pocock's improve-codebase-architecture skill.
-[".agents/skills/improve-codebase-architecture"]
+[{{ trimPrefix (printf "%s/" $root.chezmoi.homeDir) (joinPath $store ".inputs" $id) | quote }}]
     type = "archive"
-    url = "https://github.com/mattpocock/skills/archive/refs/heads/main.tar.gz"
+    url = {{ $url | quote }}
     exact = true
-    stripComponents = 4
-    include = ["*/skills/engineering/improve-codebase-architecture/**"]
+    stripComponents = {{ $stripComponents }}
+{{-       if gt (len $include) 0 }}
+    include = {{ $include | toJson }}
+{{-       end }}
+    checksum.sha256 = {{ $checksum | quote }}
+{{-     else -}}
+{{-       $ref := dig "ref" "" $lock -}}
+{{-       if or (not (kindIs "string" $ref)) (eq $ref "") (regexMatch "[\\p{Cc}\\p{Cf}{}]" $ref) -}}{{- fail (printf "skillSources.%s.lock.ref must be a non-empty safe string" $entryName) -}}{{- end -}}
+{{-       $refPolicy := dig "refPolicy" "" $lock -}}
+{{-       if not (has $refPolicy (list "branch" "commit" "tag")) -}}{{- fail (printf "skillSources.%s.lock.refPolicy must be branch, commit, or tag" $entryName) -}}{{- end -}}
+{{-       $revision := dig "revision" "" $lock -}}
+{{-       if not (regexMatch "^[a-f0-9]{40}$" $revision) -}}{{- fail (printf "skillSources.%s.lock.revision must be an immutable lowercase commit" $entryName) -}}{{- end -}}
+{{-       if and (eq $refPolicy "commit") (or (not (regexMatch "^[a-f0-9]{40}$" $ref)) (ne $ref $revision)) -}}{{- fail (printf "skillSources.%s.lock.ref must equal lock.revision for commit policy" $entryName) -}}{{- end -}}
+{{-       $target := trimPrefix (printf "%s/" $root.chezmoi.homeDir) $path }}
 
-{{- if ne "" .privateSkillsRepo }}
-
-# Private skills repo — cloned to a staging location, then symlinked into
-# ~/.agents/skills/ by run_after_install-060-link-private-skills.sh.
-# We stage here rather than targeting .agents/skills/ directly because
-# chezmoi's git-repo external maps a whole repo to a single directory,
-# and skills need to be individual sibling directories under .agents/skills/.
-[".local/share/private-claude-skills"]
+[{{ $target | quote }}]
     type = "git-repo"
-    url = {{ .privateSkillsRepo | quote }}
+    url = {{ $url | quote }}
     refreshPeriod = "168h"
-    [".local/share/private-claude-skills".pull]
-        args = ["--ff-only"]
-
+{{-       if eq $refPolicy "commit" }}
+    [{{ $target | quote }}.clone]
+        args = ["--revision", {{ $revision | quote }}]
+{{-       else }}
+    [{{ $target | quote }}.clone]
+        args = ["--branch", {{ $ref | quote }}]
+{{-       end }}
+    [{{ $target | quote }}.pull]
+        args = ["--ff-only", "origin", {{ ternary $revision $ref (eq $refPolicy "commit") | quote }}]
+{{-     end -}}
+{{-   end -}}
 {{- end }}

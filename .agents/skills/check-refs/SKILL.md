@@ -1,9 +1,9 @@
 ---
 name: check-refs
 description: >-
-  Verify referential integrity across this dotfiles repo. Checks external
-  archive allowlists against upstream repos, validates reference files against
-  directory structures, and audits rule files for drift from implementation.
+  Verify referential integrity across this dotfiles repo. Checks pinned
+  reference artifacts, validates reference files against directory structures,
+  and audits rule files for drift from implementation.
   Use when asked to check, verify, or validate references.
 disable-model-invocation: true
 context: fork
@@ -12,9 +12,9 @@ allowed-tools: Bash,Read,Glob,Grep,WebFetch
 
 # Reference Integrity Checks
 
-Verify that chezmoiexternal allowlists stay in sync with upstream repos,
-that reference files accurately describe local directory structures, and
-that rule files reflect the actual codebase conventions.
+Verify that pinned artifacts agree with upstream provenance, that reference
+files accurately describe local directory structures, and that rule files
+reflect the actual codebase conventions.
 
 ## Prerequisites
 
@@ -32,8 +32,8 @@ the output of `github-token` as a Bearer token.
 ### Effect v4 docs
 
 See [references/effect-v4-docs.md](references/effect-v4-docs.md) for the full
-procedure. Checks the effect-smol external archive allowlist and the
-v4-patterns.md reference file.
+procedure. Checks the mise-owned Effect source artifact, both OpenCode
+registrations, and the v4-patterns.md reference file.
 
 ### coding-chezmoi skill accuracy
 

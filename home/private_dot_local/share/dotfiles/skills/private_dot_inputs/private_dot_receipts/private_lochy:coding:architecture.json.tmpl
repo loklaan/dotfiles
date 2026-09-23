@@ -1,0 +1,9 @@
+{{- $source := index .skillLifecycleDefaults.sources "public-architecture" -}}
+{
+  "schema": 1,
+  "sourceId": {{ $source.id | quote }},
+  "algorithm": {{ $source.lock.algorithm | quote }},
+  "checksum": {{ $source.lock.checksum | quote }},
+  "contentDigest": {{ $source.lock.contentDigest | quote }},
+  "ref": {{ $source.lock.ref | quote }}
+}

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,tput,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env --allow-sys=networkInterfaces
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env --allow-sys=networkInterfaces,uid
 
 // cw — Coder Workspaces CLI (Deno + Effect v4). Public surface: the
 // subcommands (`connect`, `tmux`, `fleet`, `migrate`), the bare workspace
@@ -51,9 +51,25 @@ const TMUX_DEFAULT_SESSION = "main-session";
 // Usage text
 // ============================================================================
 
+const helpColour = (colour: string, value: string): string =>
+  Deno.stdout.isTerminal() ? `${colour}${value}\x1b[0m` : value;
+const localPortHelp = helpColour("\x1b[36m", "LOCAL PORT");
+const localDestinationHelp = helpColour(
+  "\x1b[36m",
+  "LOCAL HOST:PORT",
+);
+const remotePortHelp = helpColour("\x1b[35m", "REMOTE PORT");
+const remoteDestinationHelp = helpColour(
+  "\x1b[35m",
+  "REMOTE HOST:PORT",
+);
+
 const TOP_USAGE = `Usage:
   cw <subcommand> [args...]
-  cw <workspace> [mode] [directory]    (shorthand for \`cw connect ...\`)
+  cw [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
+     [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
+     <workspace> [mode] [directory]
+                                         (shorthand for \`cw connect ...\`)
 
 Description:
   One-stop CLI for Coder dev boxes. Connect to a single workspace, fan a
@@ -76,11 +92,17 @@ Examples:
   cw migrate
 
 Options:
-  --help    Display this message (or \`cw <subcommand> --help\` for a subcommand)
+  -L, --local-forward PORT:HOST:PORT
+      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
+  -R, --remote-forward PORT:HOST:PORT
+      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+  --help                           Display this message
 `;
 
 const CONNECT_USAGE = `Usage:
-  cw connect <workspace> [mode] [directory]
+  cw connect [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
+             [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
+             <workspace> [mode] [directory]
 
 Description:
   Connect to a Coder workspace in various modes. Built-in modes handle
@@ -94,6 +116,12 @@ Arguments:
                available on the coder box (cursor, intellij, code-server)
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
+Options:
+  -L, --local-forward PORT:HOST:PORT
+      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
+  -R, --remote-forward PORT:HOST:PORT
+      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+
 Examples:
   cw connect for-tasks                # SSH into for-tasks
   cw connect for-tasks tmux           # Attach to the persistent tmux session
@@ -103,10 +131,14 @@ Examples:
   cw connect for-tasks code-server    # Open code-server in browser
   cw connect for-tasks claude         # SSH + Claude Code
   cw connect for-prs ccyolo           # YOLO mode
+  cw connect --local-forward 3000:127.0.0.1:3000 for-tasks   # Mac:3000 → workspace:3000
+  cw connect --remote-forward 3845:127.0.0.1:3845 for-tasks  # workspace:3845 → Mac:3845
 `;
 
 const TMUX_USAGE = `Usage:
-  cw tmux <workspace> [directory]
+  cw tmux [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
+          [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
+          <workspace> [directory]
 
 Description:
   Attach to the persistent \`${TMUX_DEFAULT_SESSION}\` tmux session on a Coder
@@ -123,7 +155,11 @@ Arguments:
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
 Options:
-  --help       Display this message
+  -L, --local-forward PORT:HOST:PORT
+      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
+  -R, --remote-forward PORT:HOST:PORT
+      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+  --help                           Display this message
 
 Examples:
   cw tmux for-tasks
@@ -254,6 +290,15 @@ _cw() {
 
   case "$sub" in
     connect)
+      if [[ "$words[CURRENT]" == -* ]]; then
+        _describe 'option' '(
+           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
+           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+        )'
+        return
+      fi
       case $CURRENT in
         3) _cw_workspaces ;;
         4) _cw_modes "$words[3]" ;;
@@ -261,6 +306,15 @@ _cw() {
       esac
       ;;
     tmux)
+      if [[ "$words[CURRENT]" == -* ]]; then
+        _describe 'option' '(
+           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
+           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+        )'
+        return
+      fi
       case $CURRENT in
         3) _cw_workspaces ;;
         4) _message 'remote directory path (optional)' ;;
@@ -287,7 +341,14 @@ _cw() {
       _describe 'shell' '(zsh:zsh completion)'
       ;;
     *)
-      if [[ $CURRENT -eq 2 ]]; then
+      if [[ "$words[CURRENT]" == -* ]]; then
+        _describe 'option' '(
+           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
+           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+        )'
+      elif [[ $CURRENT -eq 2 ]]; then
         _describe 'subcommand' subcommands
         _cw_workspaces
       elif [[ $CURRENT -eq 3 ]]; then
@@ -647,6 +708,29 @@ const tmuxRemoteCommand = (directory: string): string => {
 const usesSshTerminal = (mode: string): boolean =>
   ["ssh", "claude", "ccyolo", "tmux"].includes(mode);
 
+const remoteForwardMessage = (forward: string): string => {
+  const match = /^([^:]+):(.+):([^:]+)$/.exec(forward);
+  return match === null
+    ? `🔌  Forwarding remote port ${forward}`
+    : `🔌  Forwarding remote port ${match[1]} → ${match[2]}:${match[3]}`;
+};
+
+const localForwardMessage = (forward: string): string => {
+  const match = /^([^:]+):(.+):([^:]+)$/.exec(forward);
+  return match === null
+    ? `🔌  Forwarding local port ${forward}`
+    : `🔌  Forwarding local port ${match[1]} → workspace ${match[2]}:${
+      match[3]
+    }`;
+};
+
+interface ConnectForwards {
+  readonly local: ReadonlyArray<string>;
+  readonly remote: ReadonlyArray<string>;
+}
+
+const noConnectForwards: ConnectForwards = { local: [], remote: [] };
+
 interface ConnectEnv {
   readonly log: boolean;
   readonly preflight: boolean;
@@ -762,6 +846,8 @@ echo "GPG_SOCKET:${"${gpg_socket}"}"
       }
     }
 
+    // Copy public identities for tools that require a key file without forwarding
+    // SSH_AUTH_SOCK, which would let remote processes use the local agent.
     const sshAdd = yield* runChild("ssh-add", ["-L"], {
       stdout: "piped",
       stderr: "null",
@@ -801,6 +887,7 @@ fi
 const connectCommand = (
   args: ReadonlyArray<string>,
   env: ConnectEnv = defaultConnectEnv,
+  forwards: ConnectForwards = noConnectForwards,
 ) =>
   Effect.gen(function* () {
     if (args[0] === "--help") {
@@ -833,6 +920,28 @@ const connectCommand = (
     const sshOpts = usesSshTerminal(mode)
       ? yield* coderPreflight(env, host)
       : [];
+    const localForwardOpts = forwards.local.flatMap((forward) => [
+      "-L",
+      forward,
+    ]);
+    const remoteForwardOpts = forwards.remote.flatMap((forward) => [
+      "-R",
+      forward,
+    ]);
+    const hasRequestedForwards = forwards.local.length > 0 ||
+      forwards.remote.length > 0;
+    const forwardFailureOpts = hasRequestedForwards
+      ? ["-o", "ExitOnForwardFailure=yes"]
+      : [];
+    const diagnoseSshFailure = env.diagnostics && !hasRequestedForwards;
+    if (env.log) {
+      for (const forward of forwards.local) {
+        yield* logInfo(localForwardMessage(forward));
+      }
+      for (const forward of forwards.remote) {
+        yield* logInfo(remoteForwardMessage(forward));
+      }
+    }
 
     switch (mode) {
       case "ssh": {
@@ -841,7 +950,10 @@ const connectCommand = (
           : `cd ${shellQuote(directory)} && /usr/bin/zsh -l`;
         const res = yield* runChild("ssh", [
           "-tt",
+          ...forwardFailureOpts,
           ...sshOpts,
+          ...localForwardOpts,
+          ...remoteForwardOpts,
           host,
           remote,
         ], {
@@ -850,7 +962,7 @@ const connectCommand = (
           stdout: "inherit",
           stderr: "inherit",
         });
-        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
+        yield* diagnoseConnectFailure(ws, res.code, diagnoseSshFailure);
         return res.code;
       }
       case "tmux": {
@@ -860,7 +972,10 @@ const connectCommand = (
         // remote `tmux`.
         const res = yield* runChild("ssh", [
           "-tt",
+          ...forwardFailureOpts,
           ...sshOpts,
+          ...localForwardOpts,
+          ...remoteForwardOpts,
           host,
           remoteZshCommand(tmuxRemoteCommand(directory)),
         ], {
@@ -869,7 +984,7 @@ const connectCommand = (
           stdout: "inherit",
           stderr: "inherit",
         });
-        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
+        yield* diagnoseConnectFailure(ws, res.code, diagnoseSshFailure);
         return res.code;
       }
       case "vscode": {
@@ -896,7 +1011,10 @@ const connectCommand = (
           : `cd ${shellQuote(directory)} && ${base}`;
         const res = yield* runChild("ssh", [
           "-tt",
+          ...forwardFailureOpts,
           ...sshOpts,
+          ...localForwardOpts,
+          ...remoteForwardOpts,
           host,
           "/usr/bin/zsh",
           "-lc",
@@ -907,12 +1025,19 @@ const connectCommand = (
           stdout: "inherit",
           stderr: "inherit",
         });
-        yield* diagnoseConnectFailure(ws, res.code, env.diagnostics);
+        yield* diagnoseConnectFailure(ws, res.code, diagnoseSshFailure);
         return res.code;
       }
       default: {
+        if (directory !== "") {
+          yield* logError(
+            `Coder's generic app opener cannot accept a remote path; use vscode for path-aware opening or open ${mode} and select ${directory} manually`,
+          );
+          return 2;
+        }
+        const appArgs = ["open", "app", ws, mode];
         yield* logInfo(`Opening ${mode}: ${ws}`);
-        const res = yield* runChild("coder", ["open", "app", ws, mode], {
+        const res = yield* runChild("coder", appArgs, {
           detached: true,
           stdin: "inherit",
           stdout: "inherit",
@@ -1607,14 +1732,46 @@ const migrateCommand = (
 // ============================================================================
 
 const connectHelpFlag = Flag.boolean("help").pipe(Flag.withDefault(false));
+const localForwardFlag = Flag.string("local-forward").pipe(
+  Flag.withAlias("L"),
+  Flag.withMetavar("PORT:HOST:PORT"),
+  Flag.withDescription(
+    `Listen: ${localPortHelp} → ${remoteDestinationHelp}`,
+  ),
+  Flag.atMost(Number.MAX_SAFE_INTEGER),
+);
+const remoteForwardFlag = Flag.string("remote-forward").pipe(
+  Flag.withAlias("R"),
+  Flag.withMetavar("PORT:HOST:PORT"),
+  Flag.withDescription(
+    `Listen: ${remotePortHelp} → ${localDestinationHelp}`,
+  ),
+  Flag.atMost(Number.MAX_SAFE_INTEGER),
+);
 const connectArgs = Argument.string("connect-arg").pipe(Argument.variadic());
-const connectCli = Command.make(
-  "connect",
-  { help: connectHelpFlag, args: connectArgs },
-  ({ help, args }) =>
-    help
-      ? writeStdout(CONNECT_USAGE).pipe(Effect.andThen(exitWith(0)))
-      : connectCommand(args).pipe(Effect.flatMap(exitWith)),
+const makeConnectCli = <A, E, R>(
+  handler: (
+    args: ReadonlyArray<string>,
+    forwards: ConnectForwards,
+  ) => Effect.Effect<A, E, R>,
+) =>
+  Command.make(
+    "connect",
+    {
+      help: connectHelpFlag,
+      localForwards: localForwardFlag,
+      remoteForwards: remoteForwardFlag,
+      args: connectArgs,
+    },
+    ({ help, localForwards, remoteForwards, args }) =>
+      help
+        ? writeStdout(CONNECT_USAGE).pipe(Effect.andThen(exitWith(0)))
+        : handler(args, { local: localForwards, remote: remoteForwards }),
+  );
+const connectCli = makeConnectCli((args, forwards) =>
+  connectCommand(args, defaultConnectEnv, forwards).pipe(
+    Effect.flatMap(exitWith),
+  )
 );
 
 const fleetCli = makeFleetCli((options) =>
@@ -1632,13 +1789,19 @@ const tmuxDirectory = Argument.string("directory").pipe(
 );
 
 const makeTmuxCli = <A, E, R>(
-  handler: (workspace: string, directory: string) => Effect.Effect<A, E, R>,
+  handler: (
+    workspace: string,
+    directory: string,
+    forwards: ConnectForwards,
+  ) => Effect.Effect<A, E, R>,
 ) =>
   Command.make("tmux", {
     help: tmuxHelpFlag,
+    localForwards: localForwardFlag,
+    remoteForwards: remoteForwardFlag,
     workspace: tmuxWorkspace,
     directory: tmuxDirectory,
-  }, ({ help, workspace, directory }) => {
+  }, ({ help, localForwards, remoteForwards, workspace, directory }) => {
     if (help) return writeStdout(TMUX_USAGE).pipe(Effect.andThen(exitWith(0)));
     const name = Option.getOrElse(workspace, () => "");
     if (name === "") {
@@ -1647,11 +1810,18 @@ const makeTmuxCli = <A, E, R>(
         Effect.andThen(exitWith(1)),
       );
     }
-    return handler(name, directory);
+    return handler(name, directory, {
+      local: localForwards,
+      remote: remoteForwards,
+    });
   });
 
-const tmuxCli = makeTmuxCli((workspace, directory) =>
-  connectCommand([workspace, "tmux", directory]).pipe(
+const tmuxCli = makeTmuxCli((workspace, directory, forwards) =>
+  connectCommand(
+    [workspace, "tmux", directory],
+    defaultConnectEnv,
+    forwards,
+  ).pipe(
     Effect.flatMap(exitWith),
   )
 );
@@ -1689,10 +1859,12 @@ const cwCli = Command.make(
   "cw",
   {
     help: rootHelpFlag,
+    localForwards: localForwardFlag,
+    remoteForwards: remoteForwardFlag,
     workspace: rootWorkspace,
     connectArgs: rootConnectArgs,
   },
-  ({ help, workspace, connectArgs }) => {
+  ({ help, localForwards, remoteForwards, workspace, connectArgs }) => {
     const workspaceName = Option.getOrElse(workspace, () => "");
     if (help || workspaceName === "help") {
       return writeStdout(TOP_USAGE).pipe(Effect.andThen(exitWith(0)));
@@ -1700,7 +1872,11 @@ const cwCli = Command.make(
     if (workspaceName === "") {
       return writeStdout(TOP_USAGE).pipe(Effect.andThen(exitWith(1)));
     }
-    return connectCommand([workspaceName, ...connectArgs]).pipe(
+    return connectCommand(
+      [workspaceName, ...connectArgs],
+      defaultConnectEnv,
+      { local: localForwards, remote: remoteForwards },
+    ).pipe(
       Effect.flatMap(exitWith),
     );
   },
@@ -1713,6 +1889,50 @@ const cwCli = Command.make(
 ]));
 
 const cliConfig = CliConfig.make({ builtIns: [] });
+interface TerminalRuntime {
+  readonly isTerminal: () => boolean;
+  readonly consoleSize: () => {
+    readonly columns: number;
+    readonly rows: number;
+  };
+  readonly write: (value: Uint8Array) => void;
+}
+
+const DEFAULT_TERMINAL_SIZE = { columns: 80, rows: 24 } as const;
+const denoTerminalRuntime: TerminalRuntime = {
+  isTerminal: () => Deno.stdout.isTerminal(),
+  consoleSize: () => Deno.consoleSize(),
+  write: (value) => {
+    Deno.stdout.writeSync(value);
+  },
+};
+
+const detectTerminalSize = (runtime: TerminalRuntime) => {
+  if (!runtime.isTerminal()) return DEFAULT_TERMINAL_SIZE;
+  try {
+    return runtime.consoleSize();
+  } catch {
+    return DEFAULT_TERMINAL_SIZE;
+  }
+};
+
+const nativeCliTerminalLayer = (
+  runtime: TerminalRuntime = denoTerminalRuntime,
+) =>
+  Layer.succeed(
+    Terminal.Terminal,
+    Terminal.make({
+      columns: Effect.sync(() => detectTerminalSize(runtime).columns),
+      rows: Effect.sync(() => detectTerminalSize(runtime).rows),
+      readInput: Effect.die("terminal input unavailable"),
+      readLine: Effect.die("terminal input unavailable"),
+      display: (value) =>
+        Effect.sync(() => {
+          runtime.write(text.encode(value));
+        }),
+    }),
+  );
+
 const cliTerminalLayer = Layer.succeed(
   Terminal.Terminal,
   Terminal.make({
@@ -1756,205 +1976,24 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  const command = Deno.args[0];
-  const serviceFree = command === undefined || command === "--help" ||
-    command === "help" ||
-    (command === "connect" && Deno.args[1] === "--help") ||
-    (command === "tmux" && Deno.args[1] === "--help") ||
-    (command === "fleet" && Deno.args[1] === "--help") ||
-    (command === "migrate" && Deno.args[1] === "--help") ||
-    command === "completion";
-  const commandProgram = Command.run(cwCli, {
-    version: "0.0.0",
-    renderErrors: false,
-  }).pipe(Effect.provideService(CliConfig.CliConfig, cliConfig));
-  const serviceFreeProgram = commandProgram.pipe(
-    Effect.provide(cliNoopLayer(Deno.args)),
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
   );
-  const runtimeLayer = Effect.promise(async () => {
-    const childProcess = await import("node:child_process");
-    const fs = await import("node:fs/promises");
-    const nodeFileSystemLayer = fileSystemLayerNoop({
-      makeDirectory: (path, options) =>
-        Effect.tryPromise({
-          try: () =>
-            fs.mkdir(path, {
-              recursive: options?.recursive,
-              mode: options?.mode,
-            }),
-          catch: (cause) => cause as never,
-        }).pipe(Effect.asVoid),
-      readFileString: (path, encoding = "utf8") =>
-        Effect.tryPromise({
-          try: () =>
-            fs.readFile(path, { encoding: encoding as BufferEncoding }),
-          catch: (cause) => cause as never,
-        }),
-      stat: (path) =>
-        Effect.tryPromise({
-          try: () => fs.stat(path),
-          catch: (cause) => cause as never,
-        }).pipe(Effect.map((stat) => stat as never)),
-      writeFileString: (path, content) =>
-        Effect.tryPromise({
-          try: () => fs.writeFile(path, content),
-          catch: (cause) => cause as never,
-        }).pipe(Effect.asVoid),
-    });
-    const nodeChildProcessLayer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (!ChildProcess.isStandardCommand(command)) {
-            return yield* Effect.fail(
-              new Error("piped commands are unsupported") as never,
-            );
-          }
-          const stdin = command.options.stdin ?? "pipe";
-          const stdout = command.options.stdout ?? "pipe";
-          const stderr = command.options.stderr ?? "pipe";
-          const stdio = [
-            stdin === "inherit"
-              ? "inherit"
-              : stdin === "ignore"
-              ? "ignore"
-              : "pipe",
-            stdout === "inherit"
-              ? "inherit"
-              : stdout === "ignore"
-              ? "ignore"
-              : "pipe",
-            stderr === "inherit"
-              ? "inherit"
-              : stderr === "ignore"
-              ? "ignore"
-              : "pipe",
-          ];
-          const child = childProcess.spawn(
-            command.command,
-            [...command.args],
-            {
-              cwd: command.options.cwd,
-              detached: command.options.detached,
-              env: command.options.extendEnv === false
-                ? command.options.env as NodeJS.ProcessEnv | undefined
-                : { ...process.env, ...command.options.env },
-              shell: command.options.shell,
-              stdio: stdio as never,
-            },
-          ) as unknown as {
-            readonly pid?: number;
-            readonly exitCode: number | null;
-            readonly stdin: NodeJS.WritableStream | null;
-            readonly stdout: NodeJS.ReadableStream | null;
-            readonly stderr: NodeJS.ReadableStream | null;
-            once(
-              event: "exit",
-              listener: (code: number | null) => void,
-            ): void;
-            once(event: "error", listener: () => void): void;
-            kill(signal?: NodeJS.Signals): boolean;
-            unref(): void;
-            ref(): void;
-          };
-          if (typeof stdin !== "string" && child.stdin !== null) {
-            // A broken stdin pipe (remote shell closes its end before we
-            // finish writing) surfaces as an async 'error' event on the
-            // stream, separately from the write() callback. An unhandled
-            // 'error' on a Node stream throws as an uncaught exception
-            // ("write EPIPE"), so attach a swallowing listener — the write
-            // callback below already resolves EPIPE/closed-stream cleanly.
-            child.stdin.on("error", () => {});
-            yield* (stdin as Stream.Stream<Uint8Array>).pipe(
-              Stream.runForEach((chunk) =>
-                Effect.promise(() =>
-                  new Promise<void>((resolve, reject) => {
-                    child.stdin!.write(
-                      chunk,
-                      (error?: Error | null) => {
-                        if (!error) return resolve();
-                        const code = (error as NodeJS.ErrnoException)?.code;
-                        if (
-                          code === "EPIPE" ||
-                          code === "ERR_STREAM_DESTROYED" ||
-                          code === "ERR_STREAM_WRITE_AFTER_END"
-                        ) {
-                          return resolve();
-                        }
-                        reject(error);
-                      },
-                    );
-                  })
-                )
-              ),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  try {
-                    child.stdin?.end();
-                  } catch {
-                    // already closed
-                  }
-                }),
-              ),
-              Effect.catchCause(() => Effect.void),
-              Effect.forkChild,
-            );
-          }
-          const exitCode = Effect.promise(() =>
-            new Promise<number>((resolve) => {
-              child.once("exit", (code) => resolve(code ?? 1));
-              child.once("error", () => resolve(127));
-            })
-          ).pipe(Effect.map(ChildProcessSpawner.ExitCode));
-          const outputStream = (stream: NodeJS.ReadableStream | null) =>
-            stream === null ? Stream.empty : Stream.fromAsyncIterable(
-              stream as AsyncIterable<Uint8Array>,
-              (cause) => cause as never,
-            );
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(child.pid ?? 0),
-            exitCode,
-            isRunning: Effect.sync(() => child.exitCode === null),
-            kill: (options) =>
-              Effect.sync(() =>
-                void child.kill(options?.killSignal ?? "SIGTERM")
-              ),
-            stdin: Sink.drain,
-            stdout: outputStream(child.stdout),
-            stderr: outputStream(child.stderr),
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-            unref: Effect.sync(() => {
-              child.unref();
-              return Effect.sync(() => child.ref());
-            }),
-          });
-        })
-      ),
-    );
-    return Layer.mergeAll(
-      nodeChildProcessLayer,
-      nodeFileSystemLayer,
-      pathLayer,
-      cliSupportLayer(Deno.args),
-    );
-  });
-  const program = serviceFree ? serviceFreeProgram : runtimeLayer.pipe(
-    Effect.flatMap((runtimeLayer) =>
-      commandProgram.pipe(Effect.provide(runtimeLayer))
-    ),
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
   );
-  Effect.runPromiseExit(program).then(
-    (exit) => {
-      if (exit._tag === "Success") Deno.exit(0);
-      console.error(exit.cause);
-      Deno.exit(1);
-    },
-  ).catch((err) => {
-    console.error(err);
-    Deno.exit(1);
-  });
+  Command.run(cwCli, { version: "0.0.0" }).pipe(
+    Effect.catchTags({
+      ShowHelp: () => exitWith(1),
+      UserError: () => exitWith(1),
+    }),
+    Effect.provideService(CliConfig.CliConfig, cliConfig),
+    Effect.provide(Layer.mergeAll(
+      NodeServices.layer,
+      nativeCliTerminalLayer(),
+    )),
+    NodeRuntime.runMain,
+  );
 }
 
 // ============================================================================
@@ -1988,9 +2027,28 @@ const parseTmuxCli = async (
   argv: ReadonlyArray<string>,
 ): Promise<string | null> => {
   let parsed: string | null = null;
-  const testCli = makeTmuxCli((workspace, directory) =>
+  const testCli = makeTmuxCli((workspace, directory, _remoteForwards) =>
     Effect.sync(() => {
       parsed = `${workspace}\u0000${directory}`;
+    })
+  );
+  const exit = await Effect.runPromiseExit(
+    Command.runWith(testCli, { version: "0.0.0", renderErrors: false })(argv)
+      .pipe(
+        Effect.provideService(CliConfig.CliConfig, cliConfig),
+        Effect.provide(cliNoopLayer([])),
+      ),
+  );
+  return exit._tag === "Success" ? parsed : null;
+};
+
+const parseConnectCli = async (
+  argv: ReadonlyArray<string>,
+): Promise<ConnectForwards | null> => {
+  let parsed: ConnectForwards | null = null;
+  const testCli = makeConnectCli((_args, forwards) =>
+    Effect.sync(() => {
+      parsed = forwards;
     })
   );
   const exit = await Effect.runPromiseExit(
@@ -2067,6 +2125,107 @@ class MockChildProcessSpawner {
 }
 
 if (!import.meta.main) {
+  Deno.test({
+    name: "runtime allow-run excludes tput",
+    ignore: Deno.permissions.querySync({
+      name: "read",
+      path: new URL(import.meta.url),
+    }).state !== "granted",
+    fn: async () => {
+      const source = await Deno.readTextFile(new URL(import.meta.url));
+      const shebang = source.split("\n", 1)[0];
+      const allowRun = /--allow-run=([^ ]+)/.exec(shebang)?.[1].split(",") ??
+        [];
+      assertEq(allowRun.includes("tput"), false);
+    },
+  });
+
+  Deno.test("terminal size defaults without a stdout TTY", () => {
+    const size = detectTerminalSize({
+      isTerminal: () => false,
+      consoleSize: () => {
+        throw new Error("consoleSize must not run for a non-TTY");
+      },
+      write: () => undefined,
+    });
+    assertEq(size.columns, 80);
+    assertEq(size.rows, 24);
+  });
+
+  Deno.test("terminal size defaults when consoleSize fails", () => {
+    const size = detectTerminalSize({
+      isTerminal: () => true,
+      consoleSize: () => {
+        throw new Error("console size unavailable");
+      },
+      write: () => undefined,
+    });
+    assertEq(size.columns, 80);
+    assertEq(size.rows, 24);
+  });
+
+  Deno.test("native terminal layer overrides an existing terminal service", async () => {
+    const dimensions = await Effect.runPromise(
+      Effect.gen(function* () {
+        const terminal = yield* Terminal.Terminal;
+        return [yield* terminal.columns, yield* terminal.rows] as const;
+      }).pipe(
+        Effect.provide(Layer.mergeAll(
+          cliTerminalLayer,
+          nativeCliTerminalLayer({
+            isTerminal: () => true,
+            consoleSize: () => ({ columns: 132, rows: 43 }),
+            write: () => undefined,
+          }),
+        )),
+      ),
+    );
+    assertEq(dimensions[0], 132);
+    assertEq(dimensions[1], 43);
+  });
+
+  Deno.test("native terminal layer re-reads dimensions after resize", async () => {
+    let columns = 80;
+    let rows = 24;
+    const dimensions = await Effect.runPromise(
+      Effect.gen(function* () {
+        const terminal = yield* Terminal.Terminal;
+        const before = [yield* terminal.columns, yield* terminal.rows] as const;
+        columns = 47;
+        rows = 19;
+        const after = [yield* terminal.columns, yield* terminal.rows] as const;
+        return { before, after };
+      }).pipe(
+        Effect.provide(nativeCliTerminalLayer({
+          isTerminal: () => true,
+          consoleSize: () => ({ columns, rows }),
+          write: () => undefined,
+        })),
+      ),
+    );
+    assertEq(dimensions.before.join("x"), "80x24");
+    assertEq(dimensions.after.join("x"), "47x19");
+  });
+
+  Deno.test("native terminal layer preserves CJK output", async () => {
+    const output: Uint8Array[] = [];
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const terminal = yield* Terminal.Terminal;
+        yield* terminal.display("接続 → 工作区\n");
+      }).pipe(
+        Effect.provide(nativeCliTerminalLayer({
+          isTerminal: () => true,
+          consoleSize: () => ({ columns: 80, rows: 24 }),
+          write: (value) => output.push(value),
+        })),
+      ),
+    );
+    const rendered = output[0];
+    if (rendered === undefined) throw new Error("terminal wrote no output");
+    assertEq(new TextDecoder().decode(rendered), "接続 → 工作区\n");
+  });
+
   Deno.test("fleet CLI preserves options and task args", async () => {
     let parsed: FleetOptions | undefined;
     const testCli = makeFleetCli((options) =>
@@ -2154,6 +2313,201 @@ if (!import.meta.main) {
     assertEq(ssh.options?.stdout, "inherit");
     assertEq(ssh.options?.stderr, "inherit");
     assertEq(ssh.options?.detached, true);
+    assertEq(
+      ssh.args.join("\u0000"),
+      ["-tt", "coder.box", "/usr/bin/zsh -l"].join("\u0000"),
+    );
+  });
+
+  Deno.test("connect ssh requires requested forwards to bind", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    await Effect.runPromise(
+      connectCommand(
+        ["box"],
+        offlineConnectEnv,
+        {
+          local: ["3000:127.0.0.1:3000"],
+          remote: ["3845:127.0.0.1:3845", "9000:localhost:9001"],
+        },
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    const ssh = spawner.calls[1];
+    assertEq(
+      ssh.args.join("\u0000"),
+      [
+        "-tt",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-L",
+        "3000:127.0.0.1:3000",
+        "-R",
+        "3845:127.0.0.1:3845",
+        "-R",
+        "9000:localhost:9001",
+        "coder.box",
+        "/usr/bin/zsh -l",
+      ].join("\u0000"),
+    );
+  });
+
+  Deno.test("connect ssh returns a requested forwarding bind failure", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      {
+        code: 255,
+        stdout: "",
+        stderr: "bind [127.0.0.1]:3000: Address already in use\n",
+      },
+    ]);
+    const code = await Effect.runPromise(
+      connectCommand(
+        ["box"],
+        { ...offlineConnectEnv, diagnostics: true },
+        { local: ["3000:127.0.0.1:3000"], remote: [] },
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    assertEq(code, 255);
+    assertEq(spawner.calls.length, 2);
+  });
+
+  Deno.test("connect claude requires requested forwards to bind", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    await Effect.runPromise(
+      connectCommand(
+        ["box", "claude"],
+        offlineConnectEnv,
+        { local: [], remote: ["3845:127.0.0.1:3845"] },
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    const ssh = spawner.calls[1];
+    assertEq(
+      ssh.args.join("\u0000"),
+      [
+        "-tt",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-R",
+        "3845:127.0.0.1:3845",
+        "coder.box",
+        "/usr/bin/zsh",
+        "-lc",
+        "claude",
+      ].join("\u0000"),
+    );
+  });
+
+  Deno.test("connect generic app rejects a requested directory", async () => {
+    const directory = "--project o'brien;$(touch nope)";
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+    ]);
+    const code = await Effect.runPromise(
+      connectCommand(["box", "cursor", directory], offlineConnectEnv).pipe(
+        Effect.provide(spawner.layer),
+      ) as Effect.Effect<number>,
+    );
+    assertEq(code, 2);
+    assertEq(spawner.calls.length, 1);
+    assertEq(spawner.calls[0].cmd, "coder");
+    assertEq(spawner.calls[0].args.join("\u0000"), "list\u0000-o\u0000json");
+  });
+
+  Deno.test("connect VS Code forwards the requested path as one argv", async () => {
+    const directory = "/home/coder/dev/o'brien project;$(touch nope)";
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    await Effect.runPromise(
+      connectCommand(["box", "vscode", directory], offlineConnectEnv).pipe(
+        Effect.provide(spawner.layer),
+      ) as Effect.Effect<number>,
+    );
+    const open = spawner.calls[1];
+    assertEq(open.cmd, "coder");
+    assertEq(
+      open.args.join("\u0000"),
+      ["open", "vscode", "--generate-token", "box", directory].join(
+        "\u0000",
+      ),
+    );
+  });
+
+  Deno.test("connect CLI collects repeated local and remote forward options", async () => {
+    const forwards = await parseConnectCli([
+      "-L",
+      "3000:127.0.0.1:3000",
+      "--remote-forward",
+      "3845:127.0.0.1:3845",
+      "-R",
+      "9000:localhost:9001",
+      "--local-forward",
+      "4000:localhost:4000",
+      "box",
+    ]);
+    assertEq(
+      forwards?.local.join("\u0000"),
+      "3000:127.0.0.1:3000\u00004000:localhost:4000",
+    );
+    assertEq(
+      forwards?.remote.join("\u0000"),
+      "3845:127.0.0.1:3845\u00009000:localhost:9001",
+    );
+  });
+
+  Deno.test("local forwards print their direction through the workspace", () => {
+    assertEq(
+      localForwardMessage("3000:127.0.0.1:3000"),
+      "🔌  Forwarding local port 3000 → workspace 127.0.0.1:3000",
+    );
+  });
+
+  Deno.test("remote forwards print their direction", () => {
+    assertEq(
+      remoteForwardMessage("3845:127.0.0.1:3845"),
+      "🔌  Forwarding remote port 3845 → 127.0.0.1:3845",
+    );
   });
 
   Deno.test("connect tmux mode attaches through a remote login zsh", async () => {
@@ -2258,6 +2612,19 @@ if (!import.meta.main) {
   Deno.test("zsh completion offers tmux as a subcommand and a mode", () => {
     assertEq(ZSH_COMPLETION.includes("'tmux:"), true);
     assertEq(/^\s*tmux\)$/m.test(ZSH_COMPLETION), true);
+  });
+
+  Deno.test("zsh completion offers every forwarding flag spelling", () => {
+    for (
+      const option of [
+        "-L:Listen:",
+        "--local-forward:Listen:",
+        "-R:Listen:",
+        "--remote-forward:Listen:",
+      ]
+    ) {
+      assertEq(ZSH_COMPLETION.includes(option), true);
+    }
   });
 
   Deno.test("dead-datapath hint fires only when split confirmed", () => {
