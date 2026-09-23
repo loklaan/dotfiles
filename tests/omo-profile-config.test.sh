@@ -27,6 +27,23 @@ GPTISH_CATEGORIES=$(cat <<'JSON'
 JSON
 )
 
+GPTISH_AGENTS=$(cat <<'JSON'
+{
+  "sisyphus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "hephaestus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "oracle": {"model": "openai/gpt-6-sol", "reasoning": "xhigh"},
+  "prometheus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
+  "metis": {"model": "openai/gpt-6-astra", "reasoning": "max"},
+  "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
+  "atlas": {"model": "openai/gpt-6-luna", "reasoning": "low"},
+  "sisyphus-junior": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "librarian": {"model": "openai/gpt-6-luna", "reasoning": "low"},
+  "explore": {"model": "openai/gpt-6-luna", "reasoning": "low"},
+  "multimodal-looker": {"model": "openai/gpt-6-sol", "reasoning": "low"}
+}
+JSON
+)
+
 CLAUDEISH_CATEGORIES=$(cat <<'JSON'
 {
   "unspecified-high": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
@@ -41,6 +58,23 @@ CLAUDEISH_CATEGORIES=$(cat <<'JSON'
 JSON
 )
 
+CLAUDEISH_AGENTS=$(cat <<'JSON'
+{
+  "sisyphus": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
+  "hephaestus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "oracle": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
+  "prometheus": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "xhigh"},
+  "metis": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "max"},
+  "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
+  "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
+  "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
+  "librarian": {"model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "reasoning": "off"},
+  "explore": {"model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "reasoning": "off"},
+  "multimodal-looker": {"model": "openai/gpt-6-sol", "reasoning": "low"}
+}
+JSON
+)
+
 jq -e '.profiles.work.agent_tiers == ["gptish", "claudeish"]' "$PROFILES" >/dev/null ||
   fail "work tiers are not exactly gptish and claudeish"
 jq -e '(.profiles.work | has("default") or has("cheap")) | not' "$PROFILES" >/dev/null ||
@@ -48,9 +82,15 @@ jq -e '(.profiles.work | has("default") or has("cheap")) | not' "$PROFILES" >/de
 jq -e --argjson expected "$GPTISH_CATEGORIES" \
   '.profiles.work.gptish.categories == $expected' "$PROFILES" >/dev/null ||
   fail "gptish categories do not match the requested mapping"
+jq -e --argjson expected "$GPTISH_AGENTS" \
+  '.profiles.work.gptish.agents == $expected' "$PROFILES" >/dev/null ||
+  fail "gptish agents do not match the role-fitting mapping"
 jq -e --argjson expected "$CLAUDEISH_CATEGORIES" \
   '.profiles.work.claudeish.categories == $expected' "$PROFILES" >/dev/null ||
   fail "claudeish categories do not match the requested mapping"
+jq -e --argjson expected "$CLAUDEISH_AGENTS" \
+  '.profiles.work.claudeish.agents == $expected' "$PROFILES" >/dev/null ||
+  fail "claudeish agents do not match the role-fitting mapping"
 jq -e '
   .profiles.work.model == "amazon-bedrock/global.anthropic.claude-opus-5" and
   (.profiles.work.provider_block["amazon-bedrock"].whitelist | index("global.anthropic.claude-opus-5-5")) != null and
@@ -106,8 +146,10 @@ assert_omo_categories() {
   local expected
   expected=$(jq -c --arg tier "$tier" '.profiles.work[$tier].categories' "$PROFILES")
   render_omo "$requested" | jq -e --argjson expected "$expected" \
-    '.["[opencode]"].categories == $expected' >/dev/null ||
-    fail "OMO tier selection failed for ${requested}"
+    '.["[opencode]"].categories == $expected' >/dev/null || fail "OMO category selection failed for ${requested}"
+  expected=$(jq -c --arg tier "$tier" '.profiles.work[$tier].agents' "$PROFILES")
+  render_omo "$requested" | jq -e --argjson expected "$expected" \
+    '.["[opencode]"].agents == $expected' >/dev/null || fail "OMO agent selection failed for ${requested}"
 }
 
 assert_sidecar_profile default gptish
