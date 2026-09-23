@@ -15,9 +15,9 @@ bash tests/omo-profile-config.test.sh
 
 `omo-profile-config.test.sh` validates the source profile table and renders both
 modify templates with temporary data, sidecar, and destination paths. It covers
-tier names, exact category routing, Bedrock model
-registration, legacy tier migration, and invalid-value fallback without running
-`chezmoi apply` or writing managed targets under `$HOME`.
+tier names, exact agent/category routing, Bedrock model registration, legacy
+tier migration, and invalid-value fallback without running `chezmoi apply` or
+writing managed targets under `$HOME`.
 
 ## tmux-resurrect-code-agents
 
