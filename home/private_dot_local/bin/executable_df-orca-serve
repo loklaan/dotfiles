@@ -18,13 +18,13 @@ import {
   Option,
   Scope,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.112/Path";
+} from "npm:effect@4.0.0-rc.117";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Path } from "npm:effect@4.0.0-rc.117/Path";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // ============================================================================
 // Constants and domain types
@@ -175,7 +175,7 @@ const filterStderrStream = (
 // Pure path/env helpers
 // ============================================================================
 
-const homeDir = Config.string("HOME").pipe(Config.withDefault(""));
+const homeDir = Config.String("HOME").pipe(Config.withDefault(""));
 
 export const deriveAppImageVersion = (miseOrcaPath: string): string | null => {
   const match = miseOrcaPath.match(/http-orca\/([^/]+)\//);
@@ -720,8 +720,8 @@ if (import.meta.main) {
   });
 
   const [NodeRuntime, NodeServices] = await Promise.all([
-    import("npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"),
-    import("npm:@effect/platform-node@4.0.0-rc.112/NodeServices"),
+    import("npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"),
+    import("npm:@effect/platform-node@4.0.0-rc.117/NodeServices"),
   ]);
   let interruptedStatus: ProcessStatus | null = null;
   const main = Effect.gen(function* () {

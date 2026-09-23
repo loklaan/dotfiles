@@ -63,7 +63,7 @@
 {{- /* Pushbullet MCP: local single-file Deno server. Only registered when the
        access token resolves from Bitwarden, since the server is useless without
        it; a missing token therefore omits the server rather than registering a
-       broken one. The token is passed via env (read by Config.redacted). The
+       broken one. The token is passed via env (read by Config.Redacted). The
        deno invocation lives in the script's shebang, so we exec it directly. */ -}}
 {{- if ne "" $pushbulletToken -}}
 {{-   $servers = append $servers (dict

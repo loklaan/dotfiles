@@ -1,8 +1,8 @@
-#!/usr/bin/env -S deno run --allow-env=MSGPACKR_NATIVE_ACCELERATION_DISABLED --allow-read
+#!/usr/bin/env -S deno run --allow-read
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Config,
@@ -10,18 +10,14 @@ import {
   Effect,
   Layer,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.112/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Path } from "npm:effect@4.0.0-rc.117/Path";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 // @effect/platform-node is imported dynamically in import.meta.main only, and
 // via SUBMODULE paths. Dynamic keeps `deno test` permission-free; submodules
 // keep --allow-env scopeable, because the bare package index re-exports
 // unstable/cluster/ShardingConfig, which enumerates process.env at load.
-//
-// TODO: drop MSGPACKR_NATIVE_ACCELERATION_DISABLED from the shebang once a
-// release after effect@4.0.0-rc.112 ships without msgpackr (already removed on
-// Effect-TS/effect main).
 
 // --- Domain types --------------------------------------------------------
 class MyServiceError
@@ -43,7 +39,7 @@ class MyService extends Context.Service<MyService, {
     Effect.gen(function* () {
       // Config reads are deferred to Effect execution time — never call
       // Deno.env.get() directly (throws without --allow-env at module load).
-      const prefix = yield* Config.string("MY_SERVICE_PREFIX").pipe(
+      const prefix = yield* Config.String("MY_SERVICE_PREFIX").pipe(
         Config.withDefault("echo: "),
       );
 
@@ -63,24 +59,28 @@ class MyService extends Context.Service<MyService, {
 }
 
 // --- CLI command definition (top-level safe — no platform-node import) ---
-const verbose = Flag.boolean("verbose").pipe(Flag.withAlias("v"));
+const verbose = Flag.Boolean("verbose").pipe(Flag.withAlias("v"));
 
-const myCommand = Command.make("my-tool", { verbose }, ({ verbose: _v }) =>
-  Effect.gen(function* () {
-    const svc = yield* MyService;
-    const result = yield* svc.echo(Deno.args[1] ?? "hello");
-    yield* Effect.sync(() => console.log(result.message));
-  }).pipe(Effect.provide(MyService.layer)));
+const myCommand = Command.make(
+  "my-tool",
+  { verbose },
+  ({ verbose: _v }) =>
+    Effect.gen(function* () {
+      const svc = yield* MyService;
+      const result = yield* svc.echo(Deno.args[1] ?? "hello");
+      yield* Effect.sync(() => console.log(result.message));
+    }).pipe(Effect.provide(MyService.layer)),
+);
 
 // --- Entry point ---------------------------------------------------------
 if (import.meta.main) {
   // NodeServices.layer already merges FileSystem, Path, Stdio, Terminal,
   // Crypto and ChildProcessSpawner, so it is the only layer to provide.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
 
   Command.run(myCommand, {

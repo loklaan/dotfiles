@@ -1,6 +1,7 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --no-prompt --allow-read --allow-write --allow-env --allow-sys=uid --allow-run=deno,/bin/kill
 
 import {
+  ByteSize,
   Config,
   ConfigProvider,
   Console,
@@ -15,19 +16,19 @@ import {
   Schema,
   type Scope,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Path as PathService } from "npm:effect@4.0.0-rc.112/Path";
+} from "npm:effect@4.0.0-rc.117";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Path as PathService } from "npm:effect@4.0.0-rc.117/Path";
 import {
   CliConfig,
   Command,
   Flag,
   GlobalFlag,
-} from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 import { parse as parseYaml } from "jsr:@std/yaml@1";
 
 const { Array: List, optionalKey: Optional, Literal: Tag, makeFilter: rule } =
@@ -493,9 +494,7 @@ export const parseSkill = Effect.fn(function* (text: string) {
     catch: (cause) => fault("SkillInvalid", "sources", cause),
   }).pipe(
     Effect.flatMap((value) =>
-      Schema.decodeUnknownEffect(SkillMetadata)(value, {
-        onExcessProperty: "preserve",
-      }).pipe(
+      Schema.decodeUnknownEffect(SkillMetadata)(value).pipe(
         Effect.mapError((cause) => fault("SkillInvalid", "sources", cause)),
       )
     ),
@@ -685,7 +684,7 @@ const childEnvironment = Effect.gen(function* () {
   const entries = yield* Effect.forEach(
     environmentKeys,
     (key) =>
-      Config.string(key).pipe(
+      Config.String(key).pipe(
         Config.withDefault(""),
         Effect.map((value) => [key, value] as const),
       ),
@@ -811,7 +810,7 @@ const resolveExecutable = Effect.fn(function* (
 ) {
   const fs = yield* FileSystem;
   const path = yield* PathService;
-  const captured = yield* Config.string("DF_SKILLS_PINS").pipe(
+  const captured = yield* Config.String("DF_SKILLS_PINS").pipe(
     Config.withDefault(""),
   );
   const pins = captured
@@ -827,7 +826,7 @@ const resolveExecutable = Effect.fn(function* (
     }
     return { path: name, digest };
   }
-  const search = yield* Config.string("PATH");
+  const search = yield* Config.String("PATH");
   for (
     const directory of search.split(":").filter((part) => part.startsWith("/"))
   ) {
@@ -1486,7 +1485,7 @@ const permissionGate = (
     const grants = runPaths(paths);
     const permission = (command: string) =>
       Deno.permissions.querySync({ name: "run", command }).state === "granted";
-    const captured = yield* Config.string("DF_SKILLS_PINS").pipe(
+    const captured = yield* Config.String("DF_SKILLS_PINS").pipe(
       Config.withDefault(""),
     );
     if (captured || !permission(Deno.execPath())) {
@@ -2650,11 +2649,11 @@ function* inspectState(active: Active, locations: Locations) {
   return { plan, observation };
 }
 const flags = {
-  manifest: Flag.string("manifest").pipe(Flag.withDefault("")),
-  stateDir: Flag.string("state-dir").pipe(Flag.withDefault("")),
-  skillsPath: Flag.string("skills-path").pipe(Flag.withDefault("")),
-  packageDir: Flag.string("package-dir").pipe(Flag.withDefault("")),
-  reference: Flag.string("reference").pipe(Flag.withDefault("")),
+  manifest: Flag.String("manifest").pipe(Flag.withDefault("")),
+  stateDir: Flag.String("state-dir").pipe(Flag.withDefault("")),
+  skillsPath: Flag.String("skills-path").pipe(Flag.withDefault("")),
+  packageDir: Flag.String("package-dir").pipe(Flag.withDefault("")),
+  reference: Flag.String("reference").pipe(Flag.withDefault("")),
 };
 export const graphicalPlatform = (
   platform: string,
@@ -2662,8 +2661,8 @@ export const graphicalPlatform = (
   wayland: string,
 ) => platform !== "linux" || Boolean(display || wayland);
 const graphical = Effect.all([
-  Config.string("DISPLAY").pipe(Config.withDefault("")),
-  Config.string("WAYLAND_DISPLAY").pipe(Config.withDefault("")),
+  Config.String("DISPLAY").pipe(Config.withDefault("")),
+  Config.String("WAYLAND_DISPLAY").pipe(Config.withDefault("")),
 ]).pipe(
   Effect.map(([display, wayland]) =>
     graphicalPlatform(Deno.build.os, display, wayland)
@@ -2673,8 +2672,8 @@ const run = (command: string, input: Locations) =>
   Effect.gen(function* () {
     const home = input.manifest && input.stateDir && input.skillsPath
       ? ""
-      : yield* Config.string("HOME");
-    const state = yield* Config.string("XDG_STATE_HOME").pipe(
+      : yield* Config.String("HOME");
+    const state = yield* Config.String("XDG_STATE_HOME").pipe(
       Config.withDefault(`${home}/.local/state`),
     );
     const locations = {
@@ -2771,10 +2770,10 @@ if (import.meta.main) {
   });
   try {
     const NodeRuntime = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+      "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
     );
     const NodeServices = await import(
-      "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
     );
     const output: string[] = [];
     const config = ConfigProvider.fromEnvRecord(
@@ -2828,11 +2827,11 @@ if (import.meta.main) {
 // deno test --config deno.json --allow-read=. --allow-run=chezmoi home/private_dot_local/bin/executable_df-skills
 
 import { strict as assert } from "node:assert";
-import { Fiber, Option, Sink } from "npm:effect@4.0.0-rc.112";
-import * as TestFileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
-import * as TestPath from "npm:effect@4.0.0-rc.112/Path";
-import * as TestPlatformError from "npm:effect@4.0.0-rc.112/PlatformError";
-import { TestClock } from "npm:effect@4.0.0-rc.112/testing";
+import { Fiber, Option, Sink } from "npm:effect@4.0.0-rc.117";
+import * as TestFileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
+import * as TestPath from "npm:effect@4.0.0-rc.117/Path";
+import * as TestPlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
+import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
 
 const hash = "a".repeat(64);
 const limits = { timeoutSeconds: 30, maxOutputBytes: 4096 };
@@ -3352,7 +3351,7 @@ Deno.test("receipt loader refuses symlink drift with a zero-permission filesyste
           Effect.succeed({
             type: "File",
             mode: 0o600,
-            size: TestFileSystem.Size(10),
+            size: ByteSize.bytes(10),
             dev: 1,
             mtime: none,
             atime: none,

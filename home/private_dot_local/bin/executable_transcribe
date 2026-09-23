@@ -17,7 +17,7 @@
 //   -l/--language      source language code, or "auto" (default en)
 //   --no-timestamps    print plain text only
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.112. The CLI,
+// Effect v4 import paths verified against effect@4.0.0-rc.117. The CLI,
 // process, and platform-node submodules live under the `unstable/` path prefix
 // (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
 // transcript on stdout stays clean and copy-pasteable.
@@ -34,42 +34,30 @@ import {
   Layer,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import { TestClock } from "npm:effect@4.0.0-rc.112/testing";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
-// `@effect/platform-node` is imported LAZILY (runtime dynamic import in the
-// CLI entrypoint) rather than at the top level. Its dependency chain pulls in
-// `msgpackr`, which reads environment variables at module-load time and would
-// crash a zero-permission `deno test` run the instant the module graph loads.
-// The specifier is assembled at runtime so Deno's test runner cannot eagerly
-// preload it, keeping the in-file tests hermetic. The real CLI loads it on the
-// `import.meta.main` path only.
 type NodePlatform = {
   readonly NodeRuntime:
-    typeof import("npm:@effect/platform-node@4.0.0-rc.112").NodeRuntime;
+    typeof import("npm:@effect/platform-node@4.0.0-rc.117").NodeRuntime;
   readonly NodeServices:
-    typeof import("npm:@effect/platform-node@4.0.0-rc.112").NodeServices;
+    typeof import("npm:@effect/platform-node@4.0.0-rc.117").NodeServices;
 };
 
-const PLATFORM_NODE_SPECIFIER = ["npm:@effect", "platform-node@4.0.0-rc.112"]
-  .join("/");
-
 const loadNodePlatform = (): Promise<NodePlatform> =>
-  import(PLATFORM_NODE_SPECIFIER) as Promise<NodePlatform>;
+  import("npm:@effect/platform-node@4.0.0-rc.117") as Promise<NodePlatform>;
 
 // `@huggingface/transformers` is imported LAZILY (dynamic import inside the
 // Transcriber) rather than at the top level. Its dependency chain
-// (onnxruntime -> msgpackr) reads environment variables at module-load time,
-// which would crash a zero-permission `deno test` run the instant the module
-// graph is loaded. Deno eagerly preloads dynamic imports with a static string
-// specifier, so the specifier is assembled at runtime to stay opaque to the
-// graph analyzer — keeping the in-file tests hermetic while the real CLI still
-// loads transformers on first use.
+// includes native runtime dependencies that require the CLI's broad runtime
+// permissions. Deno eagerly preloads dynamic imports with a static string
+// specifier, so the specifier stays opaque to the graph analyzer and the
+// in-file tests remain hermetic.
 type Pipeline = (
   audio: Float32Array,
   options: {
@@ -427,17 +415,17 @@ const renderPlain = (text: string) => Console.log(text.trim());
 // groups, and renders.
 // ===========================================================================
 
-const modelFlag = Flag.string("model").pipe(
+const modelFlag = Flag.String("model").pipe(
   Flag.withAlias("m"),
   Flag.withDescription("HF model id, e.g. openai/whisper-large-v3"),
 );
 
-const inputFlag = Flag.string("input").pipe(
+const inputFlag = Flag.String("input").pipe(
   Flag.withAlias("i"),
   Flag.withDescription("Path to audio or video file"),
 );
 
-const chunkSecondsFlag = Flag.float("chunk-seconds").pipe(
+const chunkSecondsFlag = Flag.Finite("chunk-seconds").pipe(
   Flag.withAlias("c"),
   Flag.withDescription(
     "Target duration of each output chunk in seconds (default: 3.0)",
@@ -445,13 +433,13 @@ const chunkSecondsFlag = Flag.float("chunk-seconds").pipe(
   Flag.withDefault(3.0),
 );
 
-const deviceFlag = Flag.choice("device", ["webgpu", "wasm", "cpu"]).pipe(
+const deviceFlag = Flag.Literals("device", ["webgpu", "wasm", "cpu"]).pipe(
   Flag.withAlias("d"),
   Flag.withDescription("Compute device (default: webgpu)"),
   Flag.withDefault("webgpu" as DeviceChoice),
 );
 
-const languageFlag = Flag.string("language").pipe(
+const languageFlag = Flag.String("language").pipe(
   Flag.withAlias("l"),
   Flag.withDescription(
     "Source language code (default: en). Use 'auto' to let the model detect.",
@@ -459,7 +447,7 @@ const languageFlag = Flag.string("language").pipe(
   Flag.withDefault("en"),
 );
 
-const noTimestampsFlag = Flag.boolean("no-timestamps").pipe(
+const noTimestampsFlag = Flag.Boolean("no-timestamps").pipe(
   Flag.withDescription("Print plain text only, no timestamps"),
   Flag.withDefault(false),
 );
@@ -529,8 +517,6 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Load the Node platform lazily so importing this file (under the test
-  // runner) never pulls in msgpackr's env-touching load-time code.
   loadNodePlatform().then(({ NodeRuntime, NodeServices }) => {
     // All concerns (CLI, child process, Transcriber) provided as one runtime.
     const MainLayer = Layer.mergeAll(

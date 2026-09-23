@@ -19,10 +19,8 @@
 // bash original. The PUSHBULLET_ACCESS_TOKEN has full account access, so it is
 // held as Redacted and never logged.
 //
-// @effect/platform-node (NodeRuntime/NodeStdio) is imported lazily inside the
-// `mcp` branch: it transitively loads msgpackr, which reads process.env at module
-// load and throws NotCapable without --allow-env, breaking flag-free `deno test`.
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// @effect/platform-node (NodeRuntime/NodeStdio) is imported on live paths only.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Config,
@@ -33,18 +31,16 @@ import {
   Redacted,
   Runtime,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
+} from "npm:effect@4.0.0-rc.117";
 // NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
-// `mcp` branch and the env-gated annotation test — it transitively loads
-// msgpackr, which reads process.env at module load and throws NotCapable
-// without --allow-env, breaking flag-free `deno test`.
+// `mcp` branch and its annotation test.
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.112/unstable/http";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117/unstable/http";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -140,39 +136,39 @@ export const resolveNotifyAction = (
     ? { kind: "help", code: 0 }
     : { kind: "options", options: { ...flags, message } };
 
-const titleFlag = Flag.string("title").pipe(
+const titleFlag = Flag.String("title").pipe(
   Flag.withDescription('Notification title (default: "Notification")'),
   Flag.withDefault("Notification"),
 );
-const subtitleFlag = Flag.string("subtitle").pipe(
+const subtitleFlag = Flag.String("subtitle").pipe(
   Flag.withDescription("Subtitle (macOS / terminal-notifier only)"),
   Flag.withDefault(""),
 );
-const iconFlag = Flag.string("icon").pipe(
+const iconFlag = Flag.String("icon").pipe(
   Flag.withDescription("Absolute path to icon image (.png / .icns)"),
   Flag.withDefault(""),
 );
-const senderFlag = Flag.string("sender").pipe(
+const senderFlag = Flag.String("sender").pipe(
   Flag.withDescription("Bundle id to send as (macOS)"),
   Flag.withDefault(""),
 );
-const executeFlag = Flag.string("execute").pipe(
+const executeFlag = Flag.String("execute").pipe(
   Flag.withDescription("Shell command run when the banner is clicked (macOS)"),
   Flag.withDefault(""),
 );
-const openFlag = Flag.string("open").pipe(
+const openFlag = Flag.String("open").pipe(
   Flag.withDescription("URL opened when the banner is clicked (macOS)"),
   Flag.withDefault(""),
 );
-const groupFlag = Flag.string("group").pipe(
+const groupFlag = Flag.String("group").pipe(
   Flag.withDescription("Coalescing id: a new notify replaces the prior one"),
   Flag.withDefault(""),
 );
-const ignoreDndFlag = Flag.boolean("ignore-dnd").pipe(
+const ignoreDndFlag = Flag.Boolean("ignore-dnd").pipe(
   Flag.withDescription("Deliver even while Do Not Disturb is active"),
   Flag.withDefault(false),
 );
-const messageArg = Argument.string("message").pipe(
+const messageArg = Argument.String("message").pipe(
   Argument.withDescription("Notification body"),
   Argument.optional,
 );
@@ -390,7 +386,7 @@ class Pushbullet extends Context.Service<Pushbullet, {
       // once a tool that actually talks to Pushbullet is invoked. A missing
       // token then surfaces as a PushbulletError (a proper MCP tool error)
       // instead of aborting the server launch.
-      const authedClient = Config.redacted("PUSHBULLET_ACCESS_TOKEN").pipe(
+      const authedClient = Config.Redacted("PUSHBULLET_ACCESS_TOKEN").pipe(
         Effect.map((token) =>
           httpClient.pipe(
             HttpClient.mapRequest((request) =>
@@ -475,13 +471,10 @@ class Pushbullet extends Context.Service<Pushbullet, {
   ).pipe(Layer.provide(FetchHttpClient.layer));
 }
 
-// MCP tools/toolkit/server layer are built lazily — they pull `unstable/ai`
-// (and thus msgpackr) which reads process.env at module load. Constructing them
-// inside this async builder keeps flag-free `deno test` clean; the builder is
-// only called from the `mcp` branch (and the env-gated annotation test).
+// MCP tools/toolkit/server layer are built lazily on the MCP path.
 const buildMcp = async () => {
   const { McpProtocol, McpServer, Tool, Toolkit } = await import(
-    "npm:effect@4.0.0-rc.112/unstable/ai"
+    "npm:effect@4.0.0-rc.117/unstable/ai"
   );
 
   const SendNotification = Tool.make("send_notification", {
@@ -635,14 +628,10 @@ const buildMcp = async () => {
 // ===========================================================================
 
 // The `mcp` subcommand and the default notification surface are separate
-// commands so the CLI owns dispatch. Both keep their platform-node import lazy:
-// it loads msgpackr, which reads process.env at module load and throws
-// NotCapable without --allow-env, and keeping it out of the module graph is what
-// lets flag-free `deno test` pass. buildMcp() lazily imports `unstable/ai` for
-// the same reason.
+// commands so the CLI owns dispatch. Both keep their platform-node import lazy.
 const runMcpServer = Effect.gen(function* () {
   const NodeStdio = yield* Effect.promise(() =>
-    import("npm:@effect/platform-node@4.0.0-rc.112/NodeStdio")
+    import("npm:@effect/platform-node@4.0.0-rc.117/NodeStdio")
   );
   const { ServerLayer } = yield* Effect.promise(() => buildMcp());
 
@@ -722,10 +711,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
 
   // The stdio RPC protocol interrupts the main fiber when the client closes
@@ -1057,12 +1046,8 @@ Deno.test("PushResult decodes a real /v2/pushes response", () => {
   }
 });
 
-// Gated on --allow-env: buildMcp() lazily imports `unstable/ai`, which loads
-// msgpackr (reads process.env at module load). Skipped on flag-free runs.
 Deno.test({
-  name:
-    "tool annotations encode the intended MCP permission hints [needs --allow-env]",
-  ignore: Deno.permissions.querySync({ name: "env" }).state !== "granted",
+  name: "tool annotations encode the intended MCP permission hints",
   fn: async () => {
     const { Tool, SendNotification, ListNotificationDevices } =
       await buildMcp();
@@ -1096,7 +1081,7 @@ Deno.test({
 itEffect(
   "Config injection reads PUSHBULLET_ACCESS_TOKEN as a Redacted value [needs token]",
   Effect.gen(function* () {
-    const token = yield* Config.redacted("PUSHBULLET_ACCESS_TOKEN");
+    const token = yield* Config.Redacted("PUSHBULLET_ACCESS_TOKEN");
     yield* assert(
       Redacted.isRedacted(token),
       "token did not resolve to a Redacted value",

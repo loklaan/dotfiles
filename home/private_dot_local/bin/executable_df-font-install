@@ -18,9 +18,7 @@
 //
 // PERMISSIONS (minimal):
 //   --allow-run=fc-cache  spawn fc-cache (presence probe + the real run)
-//   --allow-env           HOME (font dir) + the single
-//                         MSGPACKR_NATIVE_ACCELERATION_DISABLED that
-//                         @effect/platform-node's msgpackr reads at module load
+//   --allow-env           HOME (font dir) + child-process env inheritance
 //   --allow-read          stat the font directory
 // Argument parsing and `--help` are owned by effect/unstable/cli, which reads
 // argv through the Stdio service in NodeServices.layer, so they need the same
@@ -40,7 +38,7 @@
 // Logging: `info`/`warning` use Effect's native logger (`Effect.logInfo`/
 // `Effect.logWarning`) inside the Effect programs; the entrypoint's fatal paths
 // use a small local `fatal` helper that prints "fatal <msg>" to stderr and exits
-// 1. Effect v4 import paths verified against effect@4.0.0-rc.112.
+// 1. Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Config,
@@ -53,12 +51,12 @@ import {
   Stdio,
   Stream,
   Terminal,
-} from "npm:effect@4.0.0-rc.112";
-import { Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -170,7 +168,7 @@ class FontInstallFatalError extends Data.TaggedError("FontInstallFatalError")<{
 /** `$HOME/.local/share/fonts` — Effect so importing the module never reads env. */
 const fontDirPath: Effect.Effect<string, Config.ConfigError> = Effect.gen(
   function* () {
-    const home = yield* Config.string("HOME").pipe(Config.withDefault(""));
+    const home = yield* Config.String("HOME").pipe(Config.withDefault(""));
     return `${home}/.local/share/fonts`;
   },
 );
@@ -360,10 +358,10 @@ if (import.meta.main) {
   // Submodule paths, not the bare package index — see the header note on
   // --allow-env.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   const loggerLayer = await makeLoggerLayer();
   Command.run(command, { version: "0.0.0" }).pipe(

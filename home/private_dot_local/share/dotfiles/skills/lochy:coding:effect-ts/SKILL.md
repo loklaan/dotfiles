@@ -46,8 +46,8 @@ If resolution is unavailable, state which declared version you are targeting.
 Do not describe uncompiled imports as verified.
 
 **The Effect docs MCP tools serve v3 content only.** Do not use them for v4
-work. `@effect-v4` is pinned to `effect@4.0.0-rc.112` at upstream commit
-`2600f62f4532026928454dcea8d1c48557b3f942`; inspect its guidance, migrations,
+work. `@effect-v4` is pinned to `effect@4.0.0-rc.117` at upstream commit
+`14a3f140095fdebbff9162944fe7d4ea83e054e6`; inspect its guidance, migrations,
 examples, source, and tests only when the task needs them.
 
 Attach the reference root as `@effect-v4`, then use read/search tools against

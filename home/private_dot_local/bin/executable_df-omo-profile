@@ -35,9 +35,8 @@
 //
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
 // `import.meta.main` block, never at module top level, and as the NodeRuntime and
-// NodeServices SUBMODULE paths rather than the bare package. Its graph pulls in
-// msgpackr, which reads `MSGPACKR_NATIVE_ACCELERATION_DISABLED` at module-load
-// time, and the package index re-exports unstable/cluster/ShardingConfig, whose
+// NodeServices SUBMODULE paths rather than the bare package. The package index
+// re-exports unstable/cluster/ShardingConfig, whose
 // `ConfigProvider.fromEnv` call ENUMERATES `process.env` — an enumeration Deno
 // cannot scope, so loading it demands a blanket `--allow-env`. Deferring the
 // import keeps `deno test` runnable with ZERO permission flags: the tests only
@@ -59,12 +58,12 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
-import { Argument, Command } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { Argument, Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
@@ -518,7 +517,7 @@ const listCli = Command.make(
 
 // A bare positional keeps the documented `df-omo-profile <name>` form. The
 // parser rejects a second positional with exit 1, so arity needs no guard here.
-const profileArg = Argument.string("profile").pipe(
+const profileArg = Argument.String("profile").pipe(
   Argument.withDescription("profile to switch to"),
   Argument.optional,
 );
@@ -555,15 +554,14 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Dynamic import: @effect/platform-node's graph reads process.env at load time
-  // (via msgpackr), which would force --allow-env onto `deno test`. Loading it
-  // only here keeps the test surface permission-free. Submodule paths, not the
+  // Loading @effect/platform-node only here keeps the test surface free of the
+  // live Node runtime. Submodule paths, not the
   // bare package index — see the IMPORTANT note in the header.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(profileCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

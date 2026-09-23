@@ -23,7 +23,7 @@
 //
 // The four checkers are Effect services so they compose and are individually
 // testable; each yields ReadonlyArray<DriftTool> and never fails the pipeline.
-// Effect v4 import paths verified against effect@4.0.0-rc.112.
+// Effect v4 import paths verified against effect@4.0.0-rc.117.
 
 import {
   Console,
@@ -32,18 +32,15 @@ import {
   Layer,
   Logger,
   Schema,
-} from "npm:effect@4.0.0-rc.112";
+} from "npm:effect@4.0.0-rc.117";
 import {
   FetchHttpClient,
   HttpClient,
-} from "npm:effect@4.0.0-rc.112/unstable/http";
-import { Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117/unstable/http";
+import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 // NOTE: @effect/platform-node (NodeRuntime, NodeServices) is imported
-// DYNAMICALLY in the import.meta.main block below, never statically. It
-// transitively loads msgpackr, which reads process.env at module load and throws
-// NotCapable under `deno test` (zero-flag). Dynamic import keeps the offline
-// suite hermetic — same pattern as df-task-chezmoi-update and
-// opencode-tokenizer-check.
+// DYNAMICALLY in the import.meta.main block below, never statically. This keeps
+// the offline suite from initializing the live Node runtime.
 
 // Soft-failing scan→cache primitives. See
 // ~/.local/lib/df-cache.ts (chezmoi: home/private_dot_local/lib/df-cache.ts).
@@ -61,8 +58,8 @@ import {
   touchFile,
   writeTextFile,
 } from "../lib/df-cache.ts";
-import type * as FileSystem from "npm:effect@4.0.0-rc.112/FileSystem";
-import type * as Process from "npm:effect@4.0.0-rc.112/unstable/process";
+import type * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
+import type * as Process from "npm:effect@4.0.0-rc.117/unstable/process";
 
 // Requirement carried by every checker because the shared primitives run on
 // the canonical Effect platform services. Satisfied once at the top by
@@ -211,7 +208,7 @@ class EffectReferenceChecker extends Context.Service<EffectReferenceChecker, {
             return [{
               name: "effect-v4-reference",
               installed: "helper missing",
-              latest: "4.0.0-rc.112",
+              latest: "4.0.0-rc.117",
               behind: 1,
               source: "mise:effect-v4:install",
             }];
@@ -226,7 +223,7 @@ class EffectReferenceChecker extends Context.Service<EffectReferenceChecker, {
             : "unavailable";
           const version = typeof status.version === "string"
             ? status.version
-            : "4.0.0-rc.112";
+            : "4.0.0-rc.117";
           if (result.ok && state === "current") return [];
           return [{
             name: "effect-v4-reference",
@@ -805,12 +802,15 @@ the OpenCode tokenizer resolver into one report.
 Each sub-checker soft-fails to an empty list, so a broken checker drops its
 own source and the others still report.`;
 
-const loggerLayer = Logger.layer([Logger.consolePretty({ stderr: true })]);
+const loggerLayer = Layer.merge(
+  Logger.layer([Logger.consolePretty()]),
+  Layer.succeed(Logger.LogToStderr, true),
+);
 
-// An omitted `Flag.boolean` fails as a missing required flag rather than
+// An omitted `Flag.Boolean` fails as a missing required flag rather than
 // resolving to `false`, so every boolean flag needs an explicit fallback. The
 // daily cron job runs a bare `df-drift notify`, which depends on that fallback.
-const forceFlag = Flag.boolean("force").pipe(
+const forceFlag = Flag.Boolean("force").pipe(
   Flag.withDescription("ignore the 24h debounce"),
   Flag.withDefault(false),
 );
@@ -872,14 +872,12 @@ if (import.meta.main) {
     Deno.exit(1);
   });
 
-  // Dynamic import keeps `deno test` permission-free: @effect/platform-node
-  // transitively loads msgpackr, which reads process.env at module load. Only
-  // the live CLI path pays that cost; the offline suite never imports it.
+  // Dynamic import keeps the live Node runtime out of `deno test`.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(driftCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

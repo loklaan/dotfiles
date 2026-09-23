@@ -46,14 +46,14 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.112";
-import { Path } from "npm:effect@4.0.0-rc.112/Path";
-import { FileSystem } from "npm:effect@4.0.0-rc.112/FileSystem";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.112/unstable/cli";
+} from "npm:effect@4.0.0-rc.117";
+import { Path } from "npm:effect@4.0.0-rc.117/Path";
+import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
+import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.112/unstable/process";
+} from "npm:effect@4.0.0-rc.117/unstable/process";
 
 const fatal = (msg: string): never => {
   console.error(`fatal ${msg}`);
@@ -248,7 +248,7 @@ const fileExists = (path: string) =>
 const hasCommand = (cmd: string) =>
   Effect.gen(function* () {
     if (cmd.includes("/")) return yield* fileExists(cmd);
-    const pathEnv = yield* Config.string("PATH").pipe(Config.withDefault(""));
+    const pathEnv = yield* Config.String("PATH").pipe(Config.withDefault(""));
     const path = yield* Path;
     for (const dir of pathEnv.split(":")) {
       if (dir !== "" && (yield* fileExists(path.join(dir, cmd)))) return true;
@@ -566,7 +566,7 @@ const discoverCandidates = (
         const workspaces = yield* listWorkspaces(filter);
         collected.push(...coderCandidates(workspaces));
       } else {
-        const home = yield* Config.string("HOME").pipe(
+        const home = yield* Config.String("HOME").pipe(
           Config.withDefault(""),
           Effect.orElseSucceed(() => ""),
         );
@@ -873,15 +873,15 @@ const reportLine = (r: Result): string =>
 // Command
 // ============================================================================
 
-const sourcesFlag = Flag.string("sources").pipe(Flag.withDefault(""));
-const filterFlag = Flag.string("filter").pipe(Flag.withDefault(DEFAULT_FILTER));
-const parallelFlag = Flag.integer("parallel").pipe(Flag.withDefault(4));
-// An omitted `Flag.boolean` fails as a missing required flag rather than
+const sourcesFlag = Flag.String("sources").pipe(Flag.withDefault(""));
+const filterFlag = Flag.String("filter").pipe(Flag.withDefault(DEFAULT_FILTER));
+const parallelFlag = Flag.Int("parallel").pipe(Flag.withDefault(4));
+// An omitted `Flag.Boolean` fails as a missing required flag rather than
 // resolving to `false`, so every boolean flag needs an explicit fallback.
-const replaceFlag = Flag.boolean("replace").pipe(Flag.withDefault(false));
-const dryRunFlag = Flag.boolean("dry-run").pipe(Flag.withDefault(false));
-const jsonFlag = Flag.boolean("json").pipe(Flag.withDefault(false));
-const helpArg = Argument.string("ignored").pipe(Argument.optional);
+const replaceFlag = Flag.Boolean("replace").pipe(Flag.withDefault(false));
+const dryRunFlag = Flag.Boolean("dry-run").pipe(Flag.withDefault(false));
+const jsonFlag = Flag.Boolean("json").pipe(Flag.withDefault(false));
+const helpArg = Argument.String("ignored").pipe(Argument.optional);
 
 const run = (options: Options) =>
   Effect.gen(function* () {
@@ -999,10 +999,10 @@ if (import.meta.main) {
   // process.env, and Deno cannot scope an enumeration — loading it would force a
   // blanket --allow-env in place of the shebang's three named variables.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.112/NodeServices"
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(command, { version: "0.1.0" }).pipe(
     Effect.provide(NodeServices.layer),
