@@ -67,7 +67,13 @@ function resolveStateDir(env: Record<string, string | undefined>): string {
 // The ONE normal form for claim.start, mirrored by tcsa_normalise_ws in
 // state-dir.sh. `ps -o lstart=` pads inconsistently across platforms, so
 // writer and reader agree on a normal form rather than on raw bytes.
-export function normaliseWhitespace(text: string): string {
+//
+// NOT exported, deliberately. opencode's legacy loader calls EVERY export of a
+// plugin module as a plugin factory (plugin/index.ts: getLegacyPlugins). An
+// exported helper gets invoked with the plugin context, throws, and takes the
+// whole module down with it: `text.replace is not a function`. The only export
+// this file may have is TmuxResurrect; plugin.test.ts enforces that.
+function normaliseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
