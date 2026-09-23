@@ -1,0 +1,13 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* Installers append to ~/.zshrc. chezmoi owns only the marked section, so
+       apply never prompts and appended lines survive outside it. The managed
+       body lives in .chezmoitemplates/zshrc-body.
+
+       adopt: before this was a modify_ template the file WAS the body, with no
+       markers. On first apply that copy is stripped rather than kept, or the
+       whole file would be sourced twice. */ -}}
+{{- includeTemplate "marked-section-tmpl" (dict
+      "existing" .chezmoi.stdin
+      "body" (includeTemplate "zshrc-body" .)
+      "target" "~/.zshrc"
+      "adopt" true) -}}
