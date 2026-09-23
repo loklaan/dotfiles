@@ -102,6 +102,11 @@
 {{-   $sc := include $sidecar | fromJson -}}
 {{-   if hasKey $sc "profile" -}}
 {{-     $requested := index $sc "profile" -}}
+{{-     if eq $requested "default" -}}
+{{-       $requested = "gptish" -}}
+{{-     else if eq $requested "cheap" -}}
+{{-       $requested = "claudeish" -}}
+{{-     end -}}
 {{-     if and (ne "" $requested) (has $requested $tiers) -}}
 {{-       $effective = $requested -}}
 {{-     end -}}

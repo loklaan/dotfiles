@@ -590,12 +590,12 @@ const assert = (cond: boolean, msg: string) => {
 
 Deno.test("Sidecar decodes tier state with all fields", () => {
   const decoded = decodeSidecar({
-    profile: "cheap",
-    availableTiers: ["default", "cheap"],
+    profile: "claudeish",
+    availableTiers: ["gptish", "claudeish"],
   });
   assert(Option.isSome(decoded), "expected a successful decode");
   if (Option.isSome(decoded)) {
-    assert(decoded.value.profile === "cheap", "profile field did not decode");
+    assert(decoded.value.profile === "claudeish", "profile did not decode");
     assert(
       decoded.value.availableTiers !== undefined &&
         decoded.value.availableTiers.length === 2,
