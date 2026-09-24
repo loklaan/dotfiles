@@ -15,6 +15,7 @@
        - "_migrations"       OMO writes (migration ledger); preserved
        - "legacy_migrations" OMO writes; preserved
        - anything else OMO adds later at top level: preserved
+       - retired "codegraph" key: removed, matching OMO's migration cleanup
 
      JSONC note: OMO writes a leading `// OMO configuration` comment. chezmoi's
      fromJson cannot parse comments, so we strip whole-line // comments before
@@ -67,32 +68,6 @@
         "max_parallel_members" 4
         "max_members" 8)) -}}
 
-{{- /* --- CodeGraph: keep the work monorepo out of the index ---
-
-     CodeGraph indexes a project into a SQLite graph and keeps a daemon
-     watching it. The work monorepo is far too large for that: the watcher
-     blows its 50k directory cap (so the index is only partially live
-     anyway), and a wedged write transaction leaves the WAL unable to
-     checkpoint. Observed on a devbox: a 14G codegraph.db with a 208G
-     codegraph.db-wal beside it, which filled /home/coder to 100%.
-
-     `excluded_roots` is matched with pathIsWithin() against the realpath of
-     the workspace, so this covers the whole subtree, and `~`-relative roots
-     resolve per-machine. Harmless on machines where the path is absent —
-     which is why both known checkout locations are listed unconditionally:
-     `~/work/canva` on the Coder devboxes, `~/dev/canva/canva` on macbooks.
-
-     Top-level (not "[opencode]"): codegraph gating is harness-agnostic. */ -}}
-{{- $cg := dict -}}
-{{- if hasKey $existing "codegraph" -}}
-{{-   $cg = index $existing "codegraph" -}}
-{{- end -}}
-{{- $roots := list -}}
-{{- if hasKey $cg "excluded_roots" -}}
-{{-   $roots = index $cg "excluded_roots" -}}
-{{- end -}}
-{{- $cg = set $cg "excluded_roots" (concat $roots (list "~/work/canva" "~/dev/canva/canva") | uniq | sortAlpha) -}}
-
 {{- /* --- Tier selection: sidecar profile (if valid) else first tier --- */ -}}
 {{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
 {{- $tiers := $p.agent_tiers -}}
@@ -123,9 +98,8 @@
 {{- end -}}
 
 {{- /* Write the block back; preserve all OMO-owned top-level keys. */ -}}
-{{- $out := $existing -}}
+{{- $out := omit $existing "codegraph" -}}
 {{- $out = set $out "[opencode]" $block -}}
-{{- $out = set $out "codegraph" $cg -}}
 {{- if not (hasKey $out "$schema") -}}
 {{-   $out = set $out "$schema" "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json" -}}
 {{- end -}}
