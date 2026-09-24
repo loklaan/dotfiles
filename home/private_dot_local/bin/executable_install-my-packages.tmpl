@@ -175,8 +175,6 @@ main() {
        "logitune"
        "smart-mcp-proxy/mcpproxy/mcpproxy"
        "notion"
-       "stablyai/orca/orca"
-       "paseo"
        "private-internet-access"
        "qlcolorcode"
        "qlimagesize"
@@ -197,8 +195,7 @@ main() {
 
   {{ $taps := list
        "peonping/tap"
-       "smart-mcp-proxy/mcpproxy"
-       "stablyai/orca" -}}
+       "smart-mcp-proxy/mcpproxy" -}}
 
   # Homebrew 6+ refuses to load formulae/casks from non-official taps unless
   # they are explicitly trusted (gated by HOMEBREW_REQUIRE_TAP_TRUST). Trust
@@ -260,16 +257,9 @@ EOF
   # Distro-specific package name divergence:
   # - Ubuntu/Debian provides notify-send via the `libnotify-bin` package
   # - Alpine + RHEL/Fedora provide it via `libnotify`
-  # FUSE2 (needed for AppImage execution; orca's runtime mode on Linux):
-  # - Ubuntu 22.04 / Debian 12: `libfuse2`
-  # - Ubuntu 24.04+: `libfuse2t64` (t64 is the time_t-64bit transition variant)
-  # - Alpine: `fuse`
-  # - RHEL/Fedora: `fuse-libs`
-  # Apt's name is version-dependent so we pick at runtime; see the apt branch
-  # below. The other distros have stable names.
   {{ $pkgsAptExtra := list "libnotify-bin" -}}
-  {{ $pkgsApkExtra := list "libnotify" "fuse" -}}
-  {{ $pkgsYumExtra := list "libnotify" "fuse-libs" -}}
+  {{ $pkgsApkExtra := list "libnotify" -}}
+  {{ $pkgsYumExtra := list "libnotify" -}}
 
   packages=$(cat <<EOF
 {{ range ($pkgs | sortAlpha | uniq) -}}
@@ -321,22 +311,6 @@ EOF
 {{ end -}}
 EOF
 )
-      # FUSE2 package name varies by Ubuntu version. Probe apt-cache for both
-      # candidates and pick whichever is available. Skip if neither is found
-      # (rare; we'd want to know).
-      fuse_pkg=""
-      for candidate in libfuse2t64 libfuse2; do
-        if apt-cache show "$candidate" >/dev/null 2>&1; then
-          fuse_pkg="$candidate"
-          break
-        fi
-      done
-      if [ -n "$fuse_pkg" ]; then
-        apt_extra="$apt_extra \"$fuse_pkg\""
-        log_detail "FUSE2 package resolved to: $fuse_pkg"
-      else
-        log_warn "Missing libfuse2/libfuse2t64 — AppImages may fail to run"
-      fi
       log_detail "Running 'apt-get install'"
       apt_update_advisory $Sudo apt-get -qq -o Dpkg::Use-Pty=0 update
       run_apt_quiet bash -c "$Sudo apt-get -qq -o Dpkg::Use-Pty=0 install --no-install-recommends -y $(echo "$packages $apt_extra" | xargs)"

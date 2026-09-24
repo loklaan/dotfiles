@@ -9,8 +9,6 @@
 {{- $workForkRemote := promptStringOnce . "workForkRemote" "Work fork remote URL for this dotfiles repo (or empty)" -}}
 {{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
 {{- $machineProfile := promptStringOnce . "machineProfile" "Machine profile (work|personal)" "personal" -}}
-{{- $paseoDaemon := promptBoolOnce . "paseoDaemon" "Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
-{{- $orcaServer := promptBoolOnce . "orcaServer" "Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)" false -}}
 {{- $openCodeServer := promptBoolOnce . "openCodeServer" "Run opencode serve as a pitchfork daemon?" false -}}
 {{- $codeServer := promptBoolOnce . "codeServer" "Run code-server on this machine?" false -}}
 {{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
@@ -37,8 +35,6 @@
   workForkRemote = {{ $workForkRemote | quote }}
   openCodeCostHosts = {{ $openCodeCostHosts | quote }}
   machineProfile = {{ $machineProfile | quote }}
-  paseoDaemon = {{ $paseoDaemon }}
-  orcaServer = {{ $orcaServer }}
   openCodeServer = {{ $openCodeServer }}
   codeServer = {{ $codeServer }}
   mcpproxyGate = {{ $mcpproxyGate }}

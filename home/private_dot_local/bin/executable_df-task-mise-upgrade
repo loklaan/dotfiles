@@ -59,10 +59,8 @@ const fatal = (msg: string): never => {
 
 const DESCRIPTION =
   `Runs \`mise upgrade\` to refresh tools whose pin is \`latest\`.
-  Tools with explicit version pins (e.g. orca via .orcaVersion in chezmoi
-  data, paseo via .paseoVersion) are unaffected — bump those in
-  home/.chezmoi.toml.tmpl and re-apply chezmoi to drive their upgrade
-  lifecycle.
+  Tools with explicit version pins are unaffected; update those pins
+  separately to change their versions.
 
   Hoisted out of mise.toml so the task body lives next to other
   dotfiles-task-* scripts and is debuggable in isolation.`;

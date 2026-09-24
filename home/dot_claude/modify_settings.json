@@ -61,8 +61,8 @@
 {{- /* Entry identity within an event is the matcher, and an ABSENT matcher is
        identical to an empty one. Claude Code only gives `matcher` meaning for
        the tool events (PreToolUse/PostToolUse); for everything else third-party
-       writers legitimately omit the key — Orca, for instance, writes
-       matcher-less SessionStart/Stop/UserPromptSubmit entries.
+       writers legitimately omit the key — desktop agent wrappers, for instance,
+       write matcher-less SessionStart/Stop/UserPromptSubmit entries.
 
        Normalising is not cosmetic. chezmoi renders templates with
        missingkey=error, so a bare `.matcher` on a matcher-less entry aborts the

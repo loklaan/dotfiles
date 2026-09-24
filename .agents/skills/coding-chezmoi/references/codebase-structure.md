@@ -50,11 +50,11 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .jetbrainsLicenseServer           // JetBrains license server URL
 ```
 
-### Adding a new data-variable key (fleet-poisoning hazard)
+### Adding a new data-variable key (fleet apply hazard)
 
 A new `[data]` key only lands in a machine's cached config (`~/.config/chezmoi/chezmoi.toml`) when `chezmoi init` re-runs the `.chezmoi.toml.tmpl` prompts. `chezmoi apply` alone does NOT seed it. So on any box whose cache predates the key — every already-provisioned box in the fleet — a template that reads the key with a bare `{{ .newKey }}` **aborts the entire `chezmoi apply`** with `map has no entry for key "newKey"`.
 
-This is a fleet-poisoning change: because `chezmoi apply` runs upstream of the source-pull (`mise run update` does `mise:upgrade` → apply → then `chezmoi:update` pulls), a box that fails apply on the missing key can never reach a follow-up commit that would fix it. It deadlocks, and manual `git fetch + reset --hard origin/main` on each box is the only recovery.
+This can interrupt an apply on any box whose cache predates the key. `mise run update` runs the source update before apply: `df-task-chezmoi-update` fetches and fast-forwards the source, then applies it. A later source fix can therefore reach the box on its next update, but the guard still prevents a transient apply failure.
 
 **Rule: any new template reference to a data key MUST guard against the key being absent, in the SAME commit that introduces the reference:**
 
@@ -131,13 +131,11 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 |---|---|
 | `skills` | reconcile skills (060) and package/observe eligible skills (070) |
 | `packages` | install-050 + install-my-packages |
+| `cache` | ephemeral-cache (049) |
 | `tmux` | tmux-continuum-boot (054) |
 | `peon-ping` | setup-peon-ping (055) |
 | `mcpproxy` | mcpproxy-daemon (056) |
-| `paseo` | paseo-daemon (057) |
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
-| `orca` | orca-server (059) |
-| `drift` | drift-notifier (061) |
 | `opencode` | opencode-serve (063) |
 | `code-server` | code-server (064) |
 | `auth` | opencode-auth (065) |
@@ -146,6 +144,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
 | `omo` | cleanup-legacy-omo-config (069) |
+| `retire` | retire-orca-paseo-drift (062, transitional) |
 | `opencode2` | opencode2 (071) |
 | `fonts` | install-fonts (100) |
 | `completions` | install-zsh-completions (100) |

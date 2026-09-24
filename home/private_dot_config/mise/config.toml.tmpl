@@ -10,20 +10,10 @@
 {{ if eq .chezmoi.os "linux" -}}
 "github:smart-mcp-proxy/mcpproxy-go" = { version = "0.59.0", exe = "mcpproxy" }
 {{ end -}}
-{{ if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) -}}
-"npm:@getpaseo/cli" = "0.1.101"
-{{ end -}}
 # usage — jdx's CLI shell-completion runtime. Required by pitchfork's
 # `completion` subcommand; kept next to pitchfork since they're paired.
 usage = "5.1.0"
 "github:jdx/pitchfork" = { version = "2.22.0", exe = "pitchfork" }
-{{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
-# orca on Linux: AppImage via http: backend. mise downloads, makes executable,
-# and symlinks into ~/.local/share/mise/installs/http-orca/<version>/orca.
-# `df-orca-serve` wrapper points there. Pitchfork supervises the daemon lifecycle.
-# (macOS uses the Homebrew cask, not mise — see install-my-packages.tmpl.)
-"http:orca" = { version = "1.4.186", url = "https://github.com/stablyai/orca/releases/download/v{{ "{{version}}" }}/orca-linux.AppImage", bin = "orca" }
-{{ end -}}
 {{ if and (eq .chezmoi.os "linux") (dig "codeServer" false .) -}}
 "npm:code-server" = "latest"
 {{ end -}}
@@ -112,23 +102,6 @@ run = "df-task-chezmoi-apply"
 description = "Pull source repo + apply (TTY-aware non-interactive fallback)"
 hide = true
 run = "df-task-chezmoi-update"
-
-{{ if eq .chezmoi.os "darwin" -}}
-# ── Drift detection (macOS only) ─────────────────────────────────────────────
-# Surfaces version drift across managed tools without firing notifications on
-# Coder boxes (which are non-interactive). Linux drift is visible by SSHing
-# into the box and running df-setup.
-
-[tasks."drift:check"]
-description = "Aggregate version drift into ~/.cache/dotfiles/drift.json"
-run = "df-drift check"
-
-[tasks."drift:notify"]
-description = "Surface drift via macOS notification (debounced 24h)"
-depends = ["drift:check"]
-run = "df-drift notify"
-
-{{ end -}}
 
 # ── Hooks ────────────────────────────────────────────────────────────────────
 # No postinstall hook here. A `postinstall = { task = "chezmoi:apply" }` hook

@@ -1,14 +1,13 @@
-// df-cache — soft-failing scan→cache primitives for df-drift, built on
-// CANONICAL Effect v4 platform services rather than hand-rolled Deno.* wrappers.
+// Shared soft-failing process and filesystem primitives for Deno tools, built
+// on canonical Effect v4 platform services rather than Deno.* wrappers.
 //
 // WHY canonical: Deno's node-compat runs the @effect/platform-node layers
 // (they bind node:fs / node:child_process), so there is no reason to
 // reimplement FileSystem / process. Callers provide NodeServices.layer once.
 //
 // WHAT we keep: the SOFT contract. Every helper swallows its own failure via
-// Effect.orElseSucceed and returns a benign value (false / null / "" / void /
-// RunResult{ok:false}), so a checker returns [] rather than throwing and the
-// aggregate cache is always written, possibly empty.
+// Effect.orElseSucceed and returns a benign value (false / null / RunResult
+// with ok:false), so callers can decide how to handle unavailable resources.
 //
 // REQUIREMENTS: helpers that touch the filesystem carry `FileSystem` in their
 // Effect requirement type; `run` carries `ChildProcessSpawner`. They are NEVER
@@ -31,7 +30,7 @@ import {
 // Process
 // ===========================================================================
 
-export interface RunResult {
+interface RunResult {
   readonly ok: boolean;
   readonly code: number;
   readonly stdout: string;
@@ -41,7 +40,7 @@ export interface RunResult {
 // Run a command, capturing stdout/stderr/exit code via the canonical
 // ChildProcessSpawner. Never fails: a spawn failure (binary missing,
 // permission denied) is reported as ok:false, code:127 — the same shape the
-// previous Deno.Command wrapper returned, so df-drift's checkers are unchanged.
+// previous Deno.Command wrapper returned.
 //
 // stdout and stderr are captured independently from one scoped child. Both
 // streams and the exit code are awaited concurrently so neither pipe can block
@@ -99,47 +98,6 @@ export const fileExists = (
     return yield* fs.exists(path);
   }).pipe(Effect.orElseSucceed(() => false));
 
-export const readTextFile = (
-  path: string,
-): Effect.Effect<string | null, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(path);
-  }).pipe(Effect.orElseSucceed(() => null));
-
-// Age in seconds of a file, via mtime. null when missing/unstattable or when
-// the platform reports no mtime (Info.mtime is Option<Date> in v4).
-export const fileAgeSeconds = (
-  path: string,
-): Effect.Effect<number | null, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const info = yield* fs.stat(path);
-    if (info.mtime._tag === "None") return null;
-    return Math.floor((Date.now() - info.mtime.value.getTime()) / 1000);
-  }).pipe(Effect.orElseSucceed(() => null));
-
-export const ensureDir = (
-  path: string,
-): Effect.Effect<void, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.makeDirectory(path, { recursive: true });
-  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
-
-export const writeTextFile = (
-  path: string,
-  content: string,
-): Effect.Effect<void, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(path, content);
-  }).pipe(Effect.asVoid, Effect.orElseSucceed(() => undefined));
-
-export const touchFile = (
-  path: string,
-): Effect.Effect<void, never, FileSystem.FileSystem> => writeTextFile(path, "");
-
 // ===========================================================================
 // Misc (pure — no requirements, run permission-free)
 // ===========================================================================
@@ -152,18 +110,3 @@ export const parseJson = (text: string | null): unknown => {
     return null;
   }
 };
-
-// Effect ships no JSONC parser (its CLI `json` format is a bare JSON.parse), and
-// OMO writes ~/.omo/omo.jsonc with a `// OMO configuration` header. Strips only
-// whole-line // comments, so `//` inside a string value (a URL) is preserved.
-export const parseJsonc = (text: string | null): unknown => {
-  if (text === null) return null;
-  const stripped = text
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
-  return parseJson(stripped);
-};
-
-export const rfc3339Now = (): string =>
-  new Date().toISOString().replace(/\.\d{3}Z$/, "Z");

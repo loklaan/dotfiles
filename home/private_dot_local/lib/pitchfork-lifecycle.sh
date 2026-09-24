@@ -5,8 +5,7 @@
 #|                                                                            |
 #| One implementation of "resolve pitchfork, restart a daemon, confirm it took, |
 #| probe its port" for the chezmoi scripts that manage Pitchfork daemons:      |
-#| df-drift-notify, df-opencode-serve, df-orca-server, df-code-server,        |
-#| df-mcpproxy.                                                               |
+#| df-opencode-serve, df-code-server, df-mcpproxy.                             |
 #|                                                                            |
 #| Usage:                                                                     |
 #|   source "${HOME}/.local/lib/bash-logging.sh"                             |
@@ -63,18 +62,16 @@ pf_stop() {
 }
 
 # Start a daemon, then confirm the supervisor actually took it. Reports the
-# start with an overridable message (a scheduled daemon is "Registered ... to
-# run daily at 09:30", not "Started"); stays silent on a successful confirm and
+# start with an overridable message; stays silent on a successful confirm and
 # warns only when the supervisor does not report the daemon.
 #
 # Boot-enabling is done HERE rather than left to callers, because a caller that
 # forgets it fails invisibly: `pitchfork start` auto-spawns the supervisor, so
 # the daemon comes up and the apply looks clean — it just never survives a
-# reboot. That gap shipped. `pf_ensure_supervisor` was only ever called by the
-# macOS-only drift notifier, so on Linux boxes pitchfork was never boot-enabled
-# and EVERY daemon's liveness silently depended on a successful `chezmoi apply`
-# at boot. Starting a daemon and wanting it to persist are the same intent, so
-# they belong in one place.
+# reboot. That gap shipped: Linux boxes were never boot-enabled, and EVERY
+# daemon's liveness silently depended on a successful `chezmoi apply` at boot.
+# Starting a daemon and wanting it to persist are the same intent, so they
+# belong in one place.
 pf_start() {
   local daemon="$1"
   local message="${2:-Started ${daemon} daemon}"
@@ -149,29 +146,13 @@ pf_ensure_supervisor() {
 }
 
 # A supervisor left running from an older Pitchfork keeps serving after mise
-# upgrades the CLI, and a pre-2.19.0 supervisor ignores `cron` outright — so a
-# scheduled daemon registers fine and simply never fires. Pitchfork reports the
-# mismatch as a WARN on stderr of any command; relay it with the remedy rather
-# than restarting the supervisor from here, which would kill live daemons.
+# upgrades the CLI. Pitchfork reports the mismatch as a WARN on stderr of any
+# command; relay it with the remedy rather than restarting the supervisor from
+# here, which would kill live daemons.
 pf_warn_if_supervisor_stale() {
   if "$PITCHFORK_BIN" list 2>&1 >/dev/null | grep -q 'differs from supervisor version'; then
-    log_warn "Pitchfork supervisor is older than the CLI — scheduled daemons are likely ignored"
+    log_warn "Pitchfork supervisor version differs from the CLI"
     log_warn_cont "Restart it with: pitchfork supervisor start --force"
-    return 1
-  fi
-}
-
-# Is the installed pitchfork new enough for the `cron` daemon field? Releases
-# before 2.19.0 accept it in config and silently never fire. Quiet on success.
-pf_verify_cron_capable() {
-  local min="2.19.0"
-  local ver lowest
-  ver=$("$PITCHFORK_BIN" --version 2>/dev/null | awk '{print $NF}')
-  lowest=$(printf '%s\n%s\n' "$ver" "$min" | sort -V | head -1)
-
-  if [ "$lowest" != "$min" ] && [ "$ver" != "$min" ]; then
-    log_warn "Pitchfork ${ver} predates cron support (needs >= ${min});"
-    log_warn_cont "scheduled daemons will NOT fire. Run: mise install"
     return 1
   fi
 }

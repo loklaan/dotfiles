@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,{{ .chezmoi.homeDir }}/.local/bin/df-effect-v4-reference,{{ .chezmoi.homeDir }}/.local/bin/df-skills{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "systemctl" }},systemctl{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "dpkg-query" }},dpkg-query{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }}{{ if lookPath "pgrep" }},pgrep{{ end }} --allow-read --allow-env --allow-net=api.github.com
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,{{ .chezmoi.homeDir }}/.local/bin/df-effect-v4-reference,{{ .chezmoi.homeDir }}/.local/bin/df-skills{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }}{{ if lookPath "pgrep" }},pgrep{{ end }} --allow-read --allow-env
 
 // deno-fmt-ignore-file
 // df-setup — dotfiles health-check doctor (Deno + Effect v4).
@@ -33,21 +33,6 @@ const bwsTokenPath: Effect.Effect<string> = Effect.gen(function* () {
 // GitHub auth token is present on all machines (personal and work) in this
 // repo's Bitwarden project.
 const BWS_PROBE_SECRET_ID = "{{ dig "bwsIdGithubAuthToken" "" . }}";
-
-const DriftTool = Schema.Struct({
-  name: Schema.String,
-  installed: Schema.String,
-  latest: Schema.String,
-  source: Schema.String,
-});
-type DriftTool = typeof DriftTool.Type;
-
-const DriftReport = Schema.Struct({
-  checked_at: Schema.String,
-  tools: Schema.Array(DriftTool),
-});
-type DriftReport = typeof DriftReport.Type;
-const decodeDriftReport = Schema.decodeUnknownSync(DriftReport);
 
 type BwsState = "ok" | "missing" | "invalid-auth" | "invalid-unknown";
 type ProbeResult =
@@ -462,75 +447,6 @@ const checkBwsToken: Effect.Effect<ProbeResult, never, DoctorServices> = Effect.
   return { state: "invalid-unknown", exitCode: 2 } as const;
 });
 
-{{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
-
-const checkPaseoDaemon: Effect.Effect<
-  boolean,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = run("systemctl", [
-  "--user",
-  "is-active",
-  "--quiet",
-  "paseo-daemon.service",
-]).pipe(Effect.map((result) => result.ok));
-{{- end }}
-
-{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
-
-interface OrcaVersionState {
-  readonly installed: string;
-  readonly latest: string;
-}
-
-// orca runs as a Pitchfork daemon (df-orca-server), not a systemd unit. The
-// install script (run_after_install-059-orca-server) starts it via
-// `pitchfork start df-orca-server`. `pitchfork status` exits 0 and prints
-// `Status: running` for a live daemon, so we match that explicitly rather
-// than trusting exit code alone (a stopped/failed daemon still exits 0).
-const checkOrcaServer: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
-  const pitchfork = (yield* hasCommand("pitchfork"))
-    ? "pitchfork"
-    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
-  if (pitchfork === "") return false;
-  const result = yield* run(pitchfork, ["status", "df-orca-server"]);
-  return result.ok && /Status:\s*running/.test(result.stdout);
-});
-
-// Returns "<installed>|<latest>" — values may be empty on failure.
-// Latest is best-effort (network + GitHub API); failures yield empty string.
-const orcaVersionState: Effect.Effect<OrcaVersionState, never, DoctorServices> = Effect.gen(function* () {
-  let installed = "";
-  let latest = "";
-
-  // Installed version from mise (http: backend installs orca-linux.AppImage
-  // into ~/.local/share/mise/installs/http-orca/<version>/). Falls back to
-  // dpkg-query for any boxes still on the legacy .deb install.
-  if (yield* hasCommand("mise")) {
-    const result = yield* run("mise", ["current", "orca"]);
-    installed = result.ok ? result.stdout.trim() : "";
-  }
-  if (installed === "" && (yield* hasCommand("dpkg-query"))) {
-    const result = yield* run("dpkg-query", ["-W", "-f=${Version}", "orca-ide"]);
-    installed = result.ok ? result.stdout.trim() : "";
-  }
-  if (yield* hasCommand("curl")) {
-    const result = yield* run("curl", [
-      "-fsSL",
-      "--max-time",
-      "3",
-      "https://api.github.com/repos/stablyai/orca/releases/latest",
-    ]);
-    const match = result.ok
-      ? result.stdout.match(/"tag_name": *"v{0,1}([^"]*)"/)
-      : null;
-    latest = match?.[1] ?? "";
-  }
-
-  return { installed, latest };
-});
-{{- end }}
-
 {{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
 const checkOpencodeServe: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
@@ -655,44 +571,6 @@ const printStatus = (
       print("white", ["dim"], `    Missing: ${formatMissingList(workMissing)}`);
     }
 {{- end }}
-{{- if and (eq .chezmoi.os "linux") (dig "paseoDaemon" false .) }}
-
-    printPlain();
-
-    if (yield* checkPaseoDaemon) {
-      print("green", [], "  ✓ paseo daemon");
-      print("white", ["dim"], "    Listening on :6767 — port-forward from a macbook to connect");
-    } else {
-      print("yellow", [], "  ✗ paseo daemon");
-      print("white", ["dim"], "    Opted in but not running. Run: systemctl --user status paseo-daemon");
-    }
-{{- end }}
-{{- if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) }}
-
-    printPlain();
-
-    const orcaState = yield* orcaVersionState;
-    const orcaActive = yield* checkOrcaServer;
-
-    if (orcaActive) {
-      if (orcaState.installed !== "") {
-        print("green", [], `  ✓ orca server (v${orcaState.installed})`);
-      } else {
-        print("green", [], "  ✓ orca server");
-      }
-      print("white", ["dim"], `    Latest upstream: ${orcaState.latest || "unknown"}`);
-      if (
-        orcaState.installed !== "" && orcaState.latest !== "" &&
-        orcaState.installed !== orcaState.latest
-      ) {
-        print("yellow", [], "    ↑ Upstream ahead. Bump http:orca version in home/private_dot_config/mise/config.toml.tmpl, then chezmoi apply.");
-      }
-      print("white", ["dim"], "    Pairing URL: pitchfork logs df-orca-server --raw | grep -oE 'orca://pair#[^[:space:]]+' | tail -1");
-    } else {
-      print("yellow", [], "  ✗ orca server");
-      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-orca-server (logs: pitchfork logs df-orca-server)");
-    }
-{{- end }}
 {{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
     printPlain();
@@ -783,51 +661,12 @@ const printStatus = (
     }
 {{- end }}
 
-    // ── Drift report (read-only view of last drift:check) ─────────
     yield* printEffectReferenceHealth();
-
-    printPlain();
-    const home = yield* Config.String("HOME").pipe(Config.withDefault(""), Effect.orElseSucceed(() => ""));
-    const driftCache = `${home}/.cache/dotfiles/drift.json`;
-    if ((yield* fileExists(driftCache)) && (yield* hasCommand("jq"))) {
-      const parsed = parseJson(yield* readTextFile(driftCache));
-      const drift = decodeDrift(parsed);
-      const driftCount = drift.tools.length;
-      if (driftCount === 0) {
-        print("green", [], "  ✓ Tool drift (no tools behind)");
-        print("white", ["dim"], `    Last checked: ${drift.checked_at}`);
-      } else {
-        print("yellow", [], `  ⚠ Tool drift (${driftCount} behind)`);
-        for (const tool of drift.tools) {
-          print("white", ["dim"], `    ${tool.name}: ${tool.installed} → ${tool.latest} [${tool.source}]`);
-        }
-{{- if eq .chezmoi.os "darwin" }}
-        print("white", ["dim"], "    Refresh: mise run drift:check  ·  Update everything: mise run update");
-{{- else }}
-        print("white", ["dim"], "    Refresh: mise run drift:check (manual on Linux; no scheduled notifier)");
-{{- end }}
-      }
-    } else {
-      print("white", ["dim"], "  ⋯ Tool drift (no cache)");
-{{- if eq .chezmoi.os "darwin" }}
-      print("white", ["dim"], "    Run: mise run drift:check (also runs daily via Pitchfork cron daemon df-drift-notify)");
-{{- else }}
-      print("white", ["dim"], "    Run: mise run drift:check");
-{{- end }}
-    }
 
     yield* printLifecycleHealth();
 
     printPlain();
   });
-
-const decodeDrift = (parsed: unknown): DriftReport => {
-  try {
-    return decodeDriftReport(parsed);
-  } catch {
-    return { checked_at: "", tools: [] };
-  }
-};
 
 const printEffectReferenceHealth = (): Effect.Effect<
   void,
