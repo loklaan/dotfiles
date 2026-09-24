@@ -18,7 +18,7 @@ Verified against the Bedrock converse API on 2026-03-01. Baseline message
 overhead: **7 tokens**. All token counts below have the overhead subtracted.
 
 - **Calibration model:** `global.anthropic.claude-haiku-4-5-20251001-v1:0`
-- **Calibration date:** 2026-03-14
+- **Calibration date:** 2026-03-14 (real skill files re-measured 2026-09-24)
 
 To recalibrate, send each file's content as a single user message via the
 Bedrock converse API. Subtract the baseline overhead (7 tokens) from the
@@ -70,13 +70,13 @@ for the check procedure.
 
 | File                    | Lines | Chars | Words | Tokens | c/t  | /3.5 drift |
 |-------------------------|------:|------:|------:|-------:|-----:|-----------:|
-| writing-skills.md       |   491 | 25064 |  3245 |   5860 | 4.28 |     +22.2% |
-| writing-rules.md        |   122 |  3579 |   456 |    896 | 3.99 |     -14.0% |
-| writing-subagents.md    |   453 | 19203 |  2640 |   4501 | 4.27 |     +21.9% |
-| agent:authoring SKILL.md|    30 |  1318 |   127 |    363 | 3.63 |      +3.9% |
-| check-refs SKILL.md     |   154 |  5021 |   639 |   1464 | 3.43 |      -2.0% |
-| coding-chezmoi.md       |    72 |  2459 |   307 |    706 | 3.48 |      -0.5% |
-| effect-v4-docs.md       |    86 |  3569 |   425 |   1069 | 3.33 |      -4.4% |
+| writing-skills.md       |   562 | 30780 |  4243 |   7553 | 4.08 |     +16.4% |
+| writing-rules.md        |   122 |  3575 |   476 |    918 | 3.89 |     +11.3% |
+| writing-subagents.md    |   452 | 19164 |  2642 |   4503 | 4.26 |     +21.6% |
+| agent:authoring SKILL.md|    39 |  2349 |   225 |    634 | 3.71 |      +5.9% |
+| check-refs SKILL.md     |   154 |  4996 |   637 |   1454 | 3.44 |      -1.8% |
+| coding-chezmoi.md       |   100 |  3856 |   471 |   1117 | 3.45 |      -1.4% |
+| effect-v4-docs.md       |    54 |  2354 |   269 |    718 | 3.28 |      -6.3% |
 
 ### Key observations
 

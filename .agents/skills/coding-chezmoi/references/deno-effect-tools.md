@@ -255,20 +255,23 @@ module cannot enumerate `process.env` at module load:
 
 ```typescript
 if (import.meta.main) {
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
 }
 ```
 
-**Do NOT** statically import `NodeRuntime`, `NodeFileSystem`, `NodePath`, or
-`NodeServices` at file top level — this breaks the zero-permission test rule.
+`NodeServices.layer` already provides the FileSystem and Path services, so do
+not provide separate Node filesystem or path layers. **Do NOT** statically
+import `NodeRuntime` or `NodeServices` at file top level: this breaks the
+zero-permission test rule.
 
 **Do NOT** use `npm:@effect/platform@4.0.0-rc.117` — that package is
 unresolvable at this pin. Use `npm:effect@4.0.0-rc.117/FileSystem` and
@@ -834,37 +837,74 @@ Rules:
 
 ## 7. Mise Lint Convention
 
-The lint task derives its file list from the runtime-tier manifest
-(`home/.chezmoidata/runtime-tiers.yaml`) — NOT a hand-maintained list in
-`.mise.toml`. A `python3 -c yaml.safe_load` one-liner selects every runnable
-whose `lang` is `deno` and feeds those paths to `deno fmt`/`deno lint`:
+The runtime-tier manifest (`home/.chezmoidata/runtime-tiers.yaml`) is the source
+of truth for runnable files. `executable_df-lint-runtimes` is its only parser,
+so `.mise.toml` has no second YAML implementation and no PyYAML dependency. Its
+`list-deno` subcommand prints the manifest's Deno runnable paths as a
+space-separated list for the format and lint commands.
 
 ```toml
 # .mise.toml
 [tasks."lint:runtimes"]
 description = "Check every runnable is in the runtime-tier manifest with matching lang"
-run = "deno run --allow-read --allow-env home/private_dot_local/bin/executable_df-lint-runtimes"
+run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes"
+
+[tasks."lint:list-deno"]
+description = "Print the manifest's deno runnables (space-separated)"
+hide = true
+run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes list-deno"
+
+[tasks."lint:tmpl"]
+description = "Type-check and lint the templated deno tools via a chezmoi render"
+run = """
+set -eu
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin" "$tmp/lib"
+cp home/private_dot_local/lib/*.ts "$tmp/lib/"
+cp deno.json deno.lock "$tmp/"
+for src in $(mise run lint:list-deno); do
+  case "$src" in
+    *.tmpl) ;;
+    *) continue ;;
+  esac
+  name=$(basename "$src" .tmpl)
+  name=${name#executable_}
+  chezmoi cat "$HOME/.local/bin/$name" > "$tmp/bin/$name"
+done
+deno lint --rules-exclude=no-import-prefix --ext=ts "$tmp"/bin/*
+for f in "$tmp"/bin/*; do
+  deno check --config "$tmp/deno.json" "$f"
+done
+"""
 
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
-depends = ["lint:runtimes"]
+depends = ["lint:runtimes", "lint:tmpl"]
 run = [
-  """deno fmt --ext=ts --check $(python3 -c "import yaml; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno fmt --ext=ts --check $(mise run lint:list-deno)",
   "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",
-  """deno lint --rules-exclude=no-import-prefix --ext=ts $(python3 -c "import yaml; data=yaml.safe_load(open('home/.chezmoidata/runtime-tiers.yaml')); print(' '.join(r['path'] for r in data['runtimeTiers']['runnables'] if r.get('lang')=='deno'))")""",
+  "deno lint --rules-exclude=no-import-prefix --ext=ts $(mise run lint:list-deno)",
 ]
 ```
 
-- **Register, don't list** — add new tools to `runtime-tiers.yaml` (path +
-  `tier` + `lang: deno`), not to `.mise.toml`. The `lint:runtimes` dependency
-  FAILS the lint run if a runnable on disk is missing from the manifest, so an
-  unregistered tool is caught immediately.
-- **`no-import-prefix` is excluded repo-wide** — the inline `npm:` specifier
-  convention (no `deno.json` import map) trips this rule; the lint task disables
-  it via `--rules-exclude=no-import-prefix`.
-- Run with `mise run lint`.
-- `deno fmt`/`deno lint` skip files that don't exist yet — safe to register a
-  future name in the manifest before the file lands.
+- **`lint:runtimes`** checks that every runnable on disk is registered, each
+  manifest `lang` matches the shebang-derived language, and no bootstrap-tier
+  script has a Deno shebang. Add a new tool to `runtime-tiers.yaml` with its
+  path, tier, and `lang: deno`, rather than adding it to `.mise.toml`.
+- **`lint:list-deno`** is hidden because it exists only to feed the other tasks.
+  Run `mise run lint:list-deno` to inspect the derived list.
+- **`lint:tmpl`** renders each manifest-listed `.tmpl` Deno tool through chezmoi
+  into a temporary deployed-layout mirror so relative `../lib/*.ts` imports
+  resolve, then type-checks and lints the rendered files. `deno fmt` and
+  `deno lint` silently skip `.tmpl` source files, which is why this task is
+  separate. It deliberately does not format-check rendered templates: rendering
+  depends on machine data, while type-checking and linting are
+  width-independent.
+- **`lint`** runs the runtime and template checks, format-checks the
+  manifest-derived Deno list and this guide, then lints that list. It excludes
+  `no-import-prefix` because the repository uses inline `npm:` specifiers rather
+  than a `deno.json` import map. Run `mise run lint`.
 
 ---
 
