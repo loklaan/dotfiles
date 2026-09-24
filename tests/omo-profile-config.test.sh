@@ -125,9 +125,10 @@ render_sidecar() {
 
 render_omo() {
   local requested=$1
+  local existing=${2:-'{}'}
   jq -n --arg profile "$requested" '{profile: $profile}' \
     > "$TEST_HOME/.config/opencode/.omo-profile.json"
-  printf '{}\n' |
+  printf '%s\n' "$existing" |
     chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
       --override-data-file "$DATA" --with-stdin -f "$OMO_TEMPLATE"
 }
@@ -162,5 +163,39 @@ assert_omo_categories cheap claudeish
 assert_omo_categories gptish gptish
 assert_omo_categories claudeish claudeish
 assert_omo_categories unrelated gptish
+
+fresh=$(render_omo gptish)
+jq -e 'has("codegraph") | not' <<< "$fresh" >/dev/null ||
+  fail "invalid OMO config: retired top-level codegraph emitted on fresh render"
+
+existing=$(cat <<'JSON'
+{
+  "codegraph": {"excluded_roots": ["~/projects/keep"]},
+  "$schema": "https://example.invalid/omo.schema.json",
+  "_migrations": ["existing-migration"],
+  "legacy_migrations": {"completed": true},
+  "[opencode]": {
+    "disabled_agents": ["oracle"],
+    "disabled_skills": ["example-skill"]
+  }
+}
+JSON
+)
+migrated=$(render_omo gptish "$existing")
+jq -e 'has("codegraph") | not' <<< "$migrated" >/dev/null ||
+  fail "invalid OMO config: retired top-level codegraph survived existing excluded_roots"
+jq -e --argjson input "$existing" '
+  .["$schema"] == $input["$schema"] and
+  ._migrations == $input._migrations and
+  .legacy_migrations == $input.legacy_migrations
+' <<< "$migrated" >/dev/null || fail "unrelated OMO top-level metadata was not preserved"
+jq -e --argjson input "$existing" '
+  .["[opencode]"].disabled_agents == $input["[opencode]"].disabled_agents and
+  .["[opencode]"].disabled_skills == $input["[opencode]"].disabled_skills
+' <<< "$migrated" >/dev/null || fail "user-owned [opencode] fields were not preserved"
+
+second=$(render_omo gptish "$migrated")
+jq -e --argjson first "$migrated" '. == $first and (has("codegraph") | not)' <<< "$second" >/dev/null ||
+  fail "OMO render reintroduced codegraph or changed on second render"
 
 printf 'PASS: OMO profile source and migration contract\n'
