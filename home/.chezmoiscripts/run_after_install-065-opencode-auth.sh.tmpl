@@ -66,7 +66,7 @@ merge_auth_json() {
   # *resolution* for actual API calls does not read this file — it uses
   # options.apiKey in config (see modify_opencode.json). auth.json is kept
   # well-formed for `opencode auth list` and other providers regardless.
-  jq --arg key "$api_key" \
+  jq -S --arg key "$api_key" \
     '."opencode" = { type: "api", key: $key } | ."opencode-go" = { type: "api", key: $key }' \
     "$tmp_file" > "${tmp_file}.merged" \
     && mv "${tmp_file}.merged" "$tmp_file"
