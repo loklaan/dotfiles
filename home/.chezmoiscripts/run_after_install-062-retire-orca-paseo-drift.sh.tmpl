@@ -79,6 +79,14 @@ retire_pitchfork() {
 remove_drift_cache() {
   remove_path "${HOME}/.cache/dotfiles/drift.json"
   remove_path "${HOME}/.cache/dotfiles/.drift-login-shown"
+
+  # Pre-df-drift generation of the tool, never chezmoi-managed. "drift" is a
+  # generic name, so only remove it when it identifies itself as ours.
+  local legacy_drift="${HOME}/.local/bin/drift"
+  if [ -f "$legacy_drift" ] \
+    && grep -qF 'version-drift detection for the dotfiles fleet' "$legacy_drift" 2>/dev/null; then
+    remove_path "$legacy_drift"
+  fi
 }
 
 {{ if eq .chezmoi.os "linux" -}}
