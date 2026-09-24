@@ -106,7 +106,7 @@ runtimeTiers:
       tier: runtime
       lang: deno
 
-    # --- home/.chezmoiscripts (24) ---
+    # --- home/.chezmoiscripts (23) ---
     #
     # POLICY: The post-050 chezmoiscripts (056 and above) are INTENTIONALLY
     # tier:runtime / lang:bash — this is deliberate policy, NOT a conversion backlog.
@@ -126,9 +126,6 @@ runtimeTiers:
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_after_install-060-reconcile-skills.sh.tmpl
-      tier: runtime
-      lang: bash
-    - path: home/.chezmoiscripts/run_after_install-062-retire-orca-paseo-drift.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_after_install-070-pack-claude-skills.sh.tmpl
