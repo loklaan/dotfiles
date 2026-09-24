@@ -454,9 +454,9 @@ environment access and every child command. Otherwise use blanket `--allow-env`;
 it describes the tool's real capability, not a shortcut.
 
 Today the narrow set is `df-coder-url`, `df-json-escape` (its only
-`ChildProcessSpawner` use is a dying test layer), and `df-opencode-cost`. Both
-remaining `Deno.env.toObject()` callers, `df-setup` and `df-orca-serve`, are
-blanket by their own code.
+`ChildProcessSpawner` use is a dying test layer), and `df-opencode-cost`. There
+are currently no direct `Deno.env.toObject()` callers among the managed Deno
+CLIs.
 
 Check a tool against the rule before narrowing:
 
@@ -483,16 +483,14 @@ Diagnosing: `NotCapable: Requires env access to "X"` names the variable — add
 `X`. An UNNAMED `NotCapable: Requires env access` means something enumerated;
 find and remove that import instead of widening the grant.
 
-**Exemption — transparent passthrough wrappers.** `df-orca-serve` does NOT
-declare its arguments, and must not be "fixed" to. Its whole job is to forward
-whatever it is given verbatim to `orca serve`, inspecting the args only for
-`--help` (which it forwards, so the user sees orca's own serve help). Declaring
-`Flag`s here would mean enumerating another program's entire flag surface and
-re-breaking every time orca adds one, and a strict parse would reject the
-`--pairing-address <addr> --json` that the `df-orca-server` Pitchfork daemon
-passes. A wrapper whose surface IS another binary's surface is the one shape
-this section does not fit. Any NEW tool claiming this exemption needs the same
-property: it consumes nothing and forwards everything.
+**Forwarding wrappers still declare their own surface.** `cw fleet` declares its
+own flags, including `--include-local`, `--filter`, `--parallel`, and
+`--dry-run`, then captures the delegated command tail with
+`Argument.String("mise-task").pipe(Argument.variadic())` in `fleetTaskArgs`
+(`home/private_dot_local/bin/executable_cw`). It passes that tail unchanged to
+the child through `runChild("mise", ["run", task, ...args], ...)`. This keeps
+the wrapper's options discoverable while allowing the child command's arguments
+to evolve independently. No tool is exempt from declaring its own surface.
 
 ---
 

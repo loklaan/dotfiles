@@ -189,7 +189,7 @@ Options:
 Examples:
   cw fleet update                          # \`mise run update\` on every running box
   cw fleet --include-local update          # me first, then every box
-  cw fleet --local-only drift:check        # local convergence only
+  cw fleet --local-only lint               # local convergence only
   cw fleet --filter '.[] | select(.name == "for-tasks-1") | .name' update
   cw fleet --dry-run update                # preview the fan-out
 

@@ -64,7 +64,7 @@ url = "https://github.com/{owner}/{repo}/releases/download/{tag}/..."
 
 ### 3. Mise tools
 
-**File:** `home/private_dot_config/mise/config.toml`
+**File:** `home/private_dot_config/mise/config.toml.tmpl`
 
 **Procedure:**
 

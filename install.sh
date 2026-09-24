@@ -153,8 +153,6 @@ main() {
   config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
   config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
   config_machine_profile="$(chezmoi execute-template "{{ .machineProfile }}" 2>/dev/null || echo "personal")"
-  config_paseo_daemon="$(chezmoi execute-template "{{ .paseoDaemon }}" 2>/dev/null || echo "false")"
-  config_orca_server="$(chezmoi execute-template "{{ .orcaServer }}" 2>/dev/null || echo "false")"
   config_opencode_server="$(chezmoi execute-template "{{ .openCodeServer }}" 2>/dev/null || echo "false")"
   config_code_server="$(chezmoi execute-template "{{ .codeServer }}" 2>/dev/null || echo "false")"
   config_mcpproxy_gate="$(chezmoi execute-template "{{ .mcpproxyGate }}" 2>/dev/null || echo "true")"
@@ -212,8 +210,6 @@ main() {
     --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
     --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
     --promptString="Machine profile (work|personal)=${config_machine_profile}" \
-    --promptBool="Run paseo daemon on this machine? (typically yes on Coder boxes, no on macbooks)=${config_paseo_daemon}" \
-    --promptBool="Run orca server on this machine? (typically yes on Coder boxes, no on macbooks)=${config_orca_server}" \
     --promptBool="Run opencode serve as a pitchfork daemon?=${config_opencode_server}" \
     --promptBool="Run code-server on this machine?=${config_code_server}" \
     --promptBool="Run mcpproxy on this machine?=${config_mcpproxy_gate}" \

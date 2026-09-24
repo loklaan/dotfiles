@@ -111,7 +111,7 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 
 ## Secret Management
 
-Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates read the token and call `bitwardenSecrets` to resolve secret values during `chezmoi apply`.
+Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates call the `bws-get-or-empty` wrapper with a secret ID and token-file path to resolve secret values during `chezmoi apply`.
 
 See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
 
@@ -342,14 +342,8 @@ Effect v4 documentation and source are deliberately outside this skill
 lifecycle. The hidden `effect-v4:install` mise task installs one checksum-pinned
 upstream tree at `~/.local/share/mise/effect-v4-reference/current`; OpenCode 1
 and 2 advertise that same local directory as `@effect-v4` and read files only
-when requested. `df-setup` and `mise run drift:check` report a missing or stale
-artifact. The reference never enters a skill/config tree or executable PATH.
-
-## Agent Orchestration
-
-Agent sessions running across machines (macbooks + Coder dev boxes) are reached via two complementary tools: **orca** (desktop SSH client, auto-discovers Coder hosts from `~/.ssh/config`) and **paseo** (daemon-per-host on Coder boxes via systemd, desktop/mobile clients on macbooks). The paseo daemon is opt-in per machine via a chezmoi prompt — default off, real opt-out by reapplying with the flag flipped.
-
-See `.agents/rules/agent-orchestration.md` for the network model, process model, server model, and operating runbook.
+when requested. `df-setup` reports a missing or stale artifact. The reference
+never enters a skill/config tree or executable PATH.
 
 ## Code Projects
 

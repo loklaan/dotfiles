@@ -5,8 +5,8 @@
 // scripts in a `chezmoi apply` use. Without a shared module every TS tool that
 // prints into the same apply output re-derives the ANSI/prefix handling, so
 // changing a prefix — or dropping colour when stdout is not a TTY — means
-// editing install-my-completions, install-my-packages, df-font-install, cw,
-// df-drift-update, df-orca-serve and df-setup one by one.
+// editing install-my-completions, install-my-packages, df-font-install, cw
+// and df-setup one by one.
 //
 // This module is the single TS source of truth. It MUST stay behaviourally
 // identical to bash-logging.sh:
@@ -80,7 +80,7 @@ export const note = (message: string): void => info(`→ ${message}`);
 // --- Effect integration ----------------------------------------------------
 // Tools built on Effect log through Effect.logInfo / Effect.logWarning. This
 // layer renders those at the same shape as the direct helpers above, so a tool
-// can use either without the output drifting. The caller bakes any glyph into
+// can use either without the output diverging. The caller bakes any glyph into
 // the message (prefer the direct helpers for our own lines).
 //
 // Kept as a factory (not a top-level Logger.make call) so importing this module

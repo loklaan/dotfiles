@@ -1,32 +1,4 @@
 #:schema https://pitchfork.jdx.dev/schema.json
-{{ if and (eq .chezmoi.os "linux") (dig "orcaServer" false .) -}}
-{{- /* CODER_WORKSPACE_NAME is the canonical workspace identifier on Coder
-       boxes, set by the Coder agent in /run/coder/agent.conf. We extract it
-       at chezmoi-render time so Pitchfork gets a baked-in pairing address — no
-       runtime shell parsing, no risk of leaking sibling secrets from agent.conf
-       (e.g. CODER_AGENT_TOKEN) into the orca process.
-
-       LOAD-BEARING: the pairing address MUST be <workspace>.coder. Do NOT
-       "simplify" this to $(hostname).coder — on a Coder box $(hostname) is the
-       container/pod id, not the workspace name, so Coder Connect's <ws>.coder
-       DNS would not resolve it and every paired client would fail to connect. */ -}}
-{{- $agentConf := "" -}}
-{{- if stat "/run/coder/agent.conf" -}}
-{{-   $agentConf = include "/run/coder/agent.conf" -}}
-{{- end -}}
-{{- $workspaceName := $agentConf | regexFind `CODER_WORKSPACE_NAME="[^"]+"` | regexFind `[^"]+"$` | trimSuffix `"` -}}
-{{- if eq "" $workspaceName -}}
-{{-   fail "orcaServer = true but CODER_WORKSPACE_NAME could not be resolved from /run/coder/agent.conf" -}}
-{{- end -}}
-[daemons.df-orca-server]
-run = "df-orca-serve --pairing-address {{ $workspaceName }}.coder --json"
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
-retry = true
-boot_start = true
-ready_delay = 2
-{{- end }}
-
 {{- if dig "openCodeServer" false . -}}
 {{- /* When nginxProxy is enabled, daemons bind to loopback on the internal
       port and nginx reverse-proxies the external port. When disabled, daemons
@@ -75,37 +47,4 @@ env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/b
 retry = true
 boot_start = true
 ready_delay = 2
-{{- end }}
-
-{{- if eq .chezmoi.os "darwin" }}
-{{- /* Drift notifier — macOS only. Replaces the launchd calendar agent
-       (io.lochlan.dotfiles.drift). Pitchfork's `cron` field (schema
-       PitchforkTomlCron, verified against pitchfork 2.14.0) gives the daily
-       schedule the old note wrongly claimed pitchfork lacked.
-
-       run: the real mise binary (NOT a shim — mise has no self-shim), same as
-       the retired plist's ProgramArguments. `drift:notify` depends on
-       `drift:check`, so the whole scan→cache→notify chain fires from one entry.
-
-       cron: pitchfork uses a 6-FIELD cron expression (second minute hour day
-       month weekday), NOT the standard 5-field crontab. "0 30 9 * * *" =
-       sec 0, min 30, hour 9 → daily 09:30 local. A 5-field "30 9 * * *" would
-       be MISPARSED (30 = seconds), so the leading 0 is load-bearing. retrigger
-       = "finish" so a slow run (drift:check can hit the network) never overlaps
-       itself. immediate = false so it does NOT fire on supervisor boot /
-       chezmoi apply — matching the old plist's RunAtLoad=false (no notification
-       storm on every apply).
-
-       DND / visibility caveat that motivated this feature: the notification is
-       delivered with --ignore-dnd + --sender + --execute (see df-drift's
-       runNotify), so it now pierces the default Focus schedule and is
-       clickable. The scheduler swap alone does NOT fix visibility — that was a
-       delivery bug (scheduled DND silently dropped low-trust CLI banners); the
-       delivery flags are the actual fix. Cron shares launchd's limitation that
-       a fire while the machine is asleep is missed, not queued. */ -}}
-[daemons.df-drift-notify]
-run = "{{ .chezmoi.homeDir }}/.local/bin/mise run drift:notify"
-cron = { schedule = "0 30 9 * * *", retrigger = "finish", immediate = false }
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" }
 {{- end }}

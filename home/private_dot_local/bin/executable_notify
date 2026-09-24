@@ -91,9 +91,9 @@ Options:
 
 Examples:
   notify "Build complete"
-  notify --title "dotfiles" --subtitle "drift" --icon ~/icon.png "3 tools behind"
-  notify --title "dotfiles" --subtitle "3 tools behind" --ignore-dnd \\
-    --group dotfiles-drift --execute "df-drift-update" "click to update"
+  notify --title "dotfiles" --subtitle "build" --icon ~/icon.png "tests passed"
+  notify --title "dotfiles" --subtitle "deploy finished" --ignore-dnd \\
+    --group dotfiles-deploy --execute "open -a Terminal" "click to view"
   notify mcp
 
 Exit codes:
@@ -242,7 +242,7 @@ const terminalNotifierArgs = (o: NotifyOptions): string[] => {
   if (o.icon) args.push("-contentImage", o.icon);
   if (o.sender) args.push("-sender", o.sender);
   // A group id coalesces repeat alerts: a new one replaces the prior banner
-  // for the same id rather than stacking. Wanted for a daily drift nag.
+  // for the same id rather than stacking. Useful for recurring notifications.
   if (o.group) args.push("-group", o.group);
   // Click actions. -open (URL) and -execute (shell command) are mutually
   // usable, but a caller sets at most one; -execute wins if both are present
@@ -250,7 +250,7 @@ const terminalNotifierArgs = (o: NotifyOptions): string[] => {
   if (o.execute) args.push("-execute", o.execute);
   else if (o.open) args.push("-open", o.open);
   // Deliver even while Do Not Disturb / a Focus mode is active. This is the
-  // whole point for the drift nag: the default DND schedule blanket-suppresses
+  // Useful when the default DND schedule blanket-suppresses
   // low-trust CLI senders, so without this the banner never appears.
   if (o.ignoreDnd) args.push("-ignoreDnD");
   return args;
@@ -823,18 +823,18 @@ Deno.test("resolveNotifyAction: bare message keeps defaults", () => {
   eq(r.options.ignoreDnd, false, "ignoreDnd defaults false");
 });
 
-Deno.test("resolveNotifyAction: drift callsite shape", () => {
+Deno.test("resolveNotifyAction: dotfiles callsite shape", () => {
   const r = resolveNotifyAction(
     flags({
       title: "dotfiles",
-      subtitle: "3 tools behind",
+      subtitle: "deploy finished",
       icon: "/x/icon.png",
     }),
     "mise, deno",
   );
   if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.title, "dotfiles", "title");
-  eq(r.options.subtitle, "3 tools behind", "subtitle");
+  eq(r.options.subtitle, "deploy finished", "subtitle");
   eq(r.options.icon, "/x/icon.png", "icon");
   eq(r.options.message, "mise, deno", "message");
 });
@@ -843,18 +843,18 @@ Deno.test("resolveNotifyAction: action flags carry through", () => {
   const r = resolveNotifyAction(
     flags({
       sender: "com.apple.Terminal",
-      execute: "df-drift-update",
+      execute: "open -a Terminal",
       open: "https://example.com",
-      group: "dotfiles-drift",
+      group: "dotfiles-deploy",
       ignoreDnd: true,
     }),
     "click me",
   );
   if (r.kind !== "options") throw new Error("expected options");
   eq(r.options.sender, "com.apple.Terminal", "sender");
-  eq(r.options.execute, "df-drift-update", "execute");
+  eq(r.options.execute, "open -a Terminal", "execute");
   eq(r.options.open, "https://example.com", "open");
-  eq(r.options.group, "dotfiles-drift", "group");
+  eq(r.options.group, "dotfiles-deploy", "group");
   eq(r.options.ignoreDnd, true, "ignoreDnd");
   eq(r.options.message, "click me", "message");
 });
@@ -905,15 +905,15 @@ Deno.test("terminalNotifierArgs: includes only set options", () => {
   );
 });
 
-Deno.test("terminalNotifierArgs: group + execute + ignore-dnd (drift shape)", () => {
+Deno.test("terminalNotifierArgs: group + execute + ignore-dnd", () => {
   eq(
     terminalNotifierArgs(opts({
       title: "dotfiles",
-      subtitle: "3 tools behind",
+      subtitle: "deploy finished",
       sender: "com.mitchellh.ghostty",
       message: "mise, deno",
-      group: "dotfiles-drift",
-      execute: "df-drift-update",
+      group: "dotfiles-deploy",
+      execute: "open -a Terminal",
       ignoreDnd: true,
     })),
     [
@@ -922,16 +922,16 @@ Deno.test("terminalNotifierArgs: group + execute + ignore-dnd (drift shape)", ()
       "-title",
       "dotfiles",
       "-subtitle",
-      "3 tools behind",
+      "deploy finished",
       "-sender",
       "com.mitchellh.ghostty",
       "-group",
-      "dotfiles-drift",
+      "dotfiles-deploy",
       "-execute",
-      "df-drift-update",
+      "open -a Terminal",
       "-ignoreDnD",
     ],
-    "drift dispatch argv",
+    "grouped dispatch argv",
   );
 });
 
