@@ -144,7 +144,6 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
 | `omo` | cleanup-legacy-omo-config (069) |
-| `retire` | retire-orca-paseo-drift (062, transitional) |
 | `opencode2` | opencode2 (071) |
 | `fonts` | install-fonts (100) |
 | `completions` | install-zsh-completions (100) |
