@@ -52,11 +52,21 @@ The skill lives at `.agents/skills/coding-chezmoi/` with reference files in
 **Source:** `references/coding-patterns.md`, "Bitwarden Secrets Guard" section.
 
 **Procedure:**
-1. Grep all `.tmpl` files for `bitwardenSecrets` calls.
-2. Verify the documented guard pattern (`stat .bwsTokenPath`, `include`,
-   `trim`, 2-argument `bitwardenSecrets` call) matches the actual pattern
-   used in templates.
-3. Report if the documented pattern has diverged from any usage site.
+1. Grep `home/` (templates, including extensionless `modify_*` files) for
+   `bws-get-or-empty`. Every template that resolves a secret must go through
+   this soft-fail wrapper.
+2. At each template usage site, verify the documented guard pattern:
+   `lookPath "bws"` and `stat .bwsTokenPath` gate reading the token,
+   `stat $bwsGet` gates the call, and the call is
+   `output $bwsGet <secret-id> .bwsTokenPath | trim` — the token-file PATH is
+   passed, never the token value.
+3. Flag any use of a `bwsId*` variable outside such a wrapper call (other than
+   its definition in `home/.chezmoi.toml.tmpl`), and any legacy
+   `bitwardenSecrets` call.
+4. Shell scripts that call the wrapper directly (for example
+   `run_after_install-065-opencode-auth.sh.tmpl`) must also pass the token-file
+   path as the second argument.
+5. Report if the documented pattern has diverged from any usage site.
 
 **Rule ID:** `bws-pattern-synced`
 

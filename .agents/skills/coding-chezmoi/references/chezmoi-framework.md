@@ -137,12 +137,30 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 
 ```
 .chezmoitemplates/
-├── git-config-tmpl                        ← No .tmpl suffix
-├── hooks-json-tmpl                        ← No .tmpl suffix
-├── mcp-servers-claude-json-tmpl           ← No .tmpl suffix
-├── mcp-servers-codex-toml-tmpl            ← No .tmpl suffix
-└── mcp-servers-opencode-mcpproxy-json-tmpl ← No .tmpl suffix
+├── git-config-tmpl
+├── hooks-json-tmpl
+├── marked-section-tmpl
+├── mcp-servers-claude-json-tmpl
+├── mcp-servers-codex-toml-tmpl
+├── mcp-servers-opencode-mcpproxy-json-tmpl
+├── opencode-tokenizer-aliases-json
+├── opencode-tokenizer-registry-mjs
+├── zprofile-body
+└── zshrc-body
 ```
+
+| Partial | Purpose | Direct includer(s) |
+| --- | --- | --- |
+| `git-config-tmpl` | Managed Git include section for personal and work configuration. | `home/private_dot_config/private_git/modify_config` |
+| `hooks-json-tmpl` | Shared Claude notification and session-start hook definitions. | `home/dot_claude/modify_settings.json`, `home/Library/Application Support/Otter/claude-code-user/modify_settings.json` |
+| `marked-section-tmpl` | Shared marked-section merge for `modify_` templates. It replaces the managed region and preserves content outside it. | `home/private_dot_config/private_git/modify_config`, `home/modify_private_dot_zprofile`, `home/modify_private_dot_zshrc` |
+| `mcp-servers-claude-json-tmpl` | Claude-format definition of the local MCP proxy server. | `home/modify_dot_claude.json`, `home/Library/Application Support/Claude/modify_claude_desktop_config.json` |
+| `mcp-servers-codex-toml-tmpl` | Codex TOML definition of the local MCP proxy server. | None currently. |
+| `mcp-servers-opencode-mcpproxy-json-tmpl` | OpenCode-format definition of the local MCP proxy server. | `home/private_dot_config/opencode/modify_opencode.json`, `home/private_dot_config/opencode2/modify_opencode.json` |
+| `opencode-tokenizer-aliases-json` | Tokenizer aliases, provider defaults, and ordered model-family mappings for the OpenCode plugin patch. | `home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl` |
+| `opencode-tokenizer-registry-mjs` | Patched tokenizer registry module that resolves model tokenizers for the OpenCode plugin. | `home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl` |
+| `zprofile-body` | Managed `~/.zprofile` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zprofile` |
+| `zshrc-body` | Managed `~/.zshrc` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zshrc` |
 
 Usage:
 
