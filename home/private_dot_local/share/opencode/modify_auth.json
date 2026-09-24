@@ -1,0 +1,37 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* Auth placeholders for @canva/opencode-plugin-llmproxy. Only rendered on
+       work machines — .chezmoiignore skips this file on every other profile.
+
+       A modify_ template, not a plain file: other writers own other keys here.
+       run_after_install-065-opencode-auth writes the opencode/opencode-go API
+       keys on Linux, and `opencode auth login` may add more. A plain file made
+       every apply either prompt ("has changed since chezmoi last wrote it") or
+       wipe those keys. Only the keys below are chezmoi's; the rest is kept.
+
+       opencode only invokes a plugin's auth.loader for providers that have an
+       entry in auth.json (provider.ts: `if (!stored) continue`). Without these
+       placeholders the plugin loads but never wires up its proxy transport,
+       and the provider vanishes (`Provider not found: openai`).
+
+       VPN (no CODER env):
+         The plugin fetches a bearer token via `otter` and injects it in place
+         of the "llmproxy" placeholder key.
+
+       Coder devbox (CODER=true):
+         The plugin uses AWS IMDS credentials with SigV4 signing instead of
+         a bearer token. A placeholder key here breaks that path — opencode
+         picks it up and bypasses SigV4 — so amazon-bedrock is actively
+         REMOVED on Coder, not merely left unset.
+
+       google + openai route through the proxy in both modes (mTLS on Coder,
+       VPN endpoint elsewhere), and both need the placeholder. */ -}}
+{{- $auth := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $placeholder := dict "type" "api" "key" "llmproxy" -}}
+{{- if eq "" (env "CODER") -}}
+{{-   $_ := set $auth "amazon-bedrock" $placeholder -}}
+{{- else -}}
+{{-   $_ := unset $auth "amazon-bedrock" -}}
+{{- end -}}
+{{- $_ := set $auth "google" $placeholder -}}
+{{- $_ := set $auth "openai" $placeholder -}}
+{{ toPrettyJson $auth | trim }}

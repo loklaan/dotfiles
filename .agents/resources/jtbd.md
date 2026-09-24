@@ -106,7 +106,7 @@ path for the environment, and a real model call returns a response.
 **Why it matters:** Versions and config can all look right while auth silently
 fails. The only true test is a round-trip model call.
 
-**Background (see `home/private_dot_local/share/opencode/auth.json.tmpl`):** auth
+**Background (see `home/private_dot_local/share/opencode/modify_auth.json`):** auth
 routes through `@canva/opencode-plugin-llmproxy`, with two modes:
 - **Coder box** (`CODER=true`): AWS IMDS credentials + SigV4 signing. The
   `amazon-bedrock` auth.json entry is **omitted** on Coder (a placeholder key
