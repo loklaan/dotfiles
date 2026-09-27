@@ -35,7 +35,6 @@ done.commit
 **/.claude/worktrees/
 **/.sisyphus/
 **/.omo/
-**/.codegraph/
 **/AGENTS.local.md
 **/.cursor/rules.local.md
 
