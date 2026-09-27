@@ -39,8 +39,15 @@ typeset -g _TERM_RESTORE_CMD=""
 #| the system reset string (tput rs2) emits these raw too.
 #| Preserves scrollback (no clear), unlike `reset`.
 #|
+#| Leaving the alternate screen is literal too, NOT `tput rmcup`.
+#| Its 1049l restores the saved cursor even when already on the
+#| primary screen (tmux, and Ghostty following xterm), so the
+#| cursor jumps to wherever the last full-screen app started and
+#| the next prompt lands on the command's output, clearing it.
+#| DECSC/DECRC (ESC 7 / ESC 8) around it make that a no-op there.
+#|
 _term_restore_emit() {
-  tput rmcup 2>/dev/null  # leave alternate screen buffer
+  printf '\e7\e[?1049l\e8'  # leave alternate screen, cursor kept (see above)
   tput rmkx 2>/dev/null   # exit keypad-transmit mode
   tput cnorm 2>/dev/null  # show cursor
   tput sgr0 2>/dev/null   # reset colours / attributes
@@ -53,17 +60,53 @@ _term_restore_emit() {
 #|
 #| True when the command line launched a remote/full-screen
 #| session whose abrupt exit can leave the terminal dirty. Matches
-#| the program word, tolerating leading env assignments.
+#| the program word, tolerating leading env assignments. cw counts
+#| only when it attaches the terminal, so `cw --help` stays quiet.
 #|
 _term_restore_is_remote_launcher() {
-  local cmd="$1" word
-  for word in ${(z)cmd}; do
-    [[ "$word" == *=* ]] && continue   # skip leading VAR=val assignments
-    case "${word:t}" in
-      ssh|cw|mosh|et|sshrc|autossh) return 0 ;;
+  local -a words=("${(@Q)${(z)1}}")
+  while [[ "${words[1]}" == *=* ]]; do shift words; done  # skip leading VAR=val assignments
+  case "${words[1]:t}" in
+    cw) _term_restore_cw_attaches "${(@)words[2,-1]}" ;;
+    ssh|mosh|et|sshrc|autossh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+#|------------------------------------------------------------|#
+#| _term_restore_cw_attaches
+#|
+#| True when cw's arguments hand the terminal to a workspace:
+#| `tmux`, or `connect` / a bare workspace in an SSH terminal
+#| mode (usesSshTerminal in cw). Help, fleet, migrate, completion
+#| and app modes like vscode never do. Parsing stops at the first
+#| shell operator, so `cw --help | less` still reads as help.
+#|
+_term_restore_cw_attaches() {
+  local -a pos
+  local arg mode skip=""
+  for arg in "$@"; do
+    if [[ -n "$skip" ]]; then
+      skip=""
+      continue
+    fi
+    case "$arg" in
+      *[\;\&\|\<\>]*) break ;;                           # end of the cw command
+      --help|-h) return 1 ;;
+      -L|-R|--local-forward|--remote-forward) skip=1 ;;  # value is the next word
+      -*) ;;
+      *) pos+=("$arg") ;;
     esac
-    return 1   # first real word decided it
   done
+  case "${pos[1]}" in
+    ''|help|fleet|migrate|completion) return 1 ;;
+    tmux) [[ -n "${pos[2]}" ]]; return ;;
+    connect) [[ -n "${pos[2]}" ]] || return 1; mode="${pos[3]:-ssh}" ;;
+    *) mode="${pos[2]:-ssh}" ;;
+  esac
+  case "$mode" in
+    ssh|tmux|claude|ccyolo) return 0 ;;
+  esac
   return 1
 }
 

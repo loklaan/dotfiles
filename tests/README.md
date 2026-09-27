@@ -9,6 +9,7 @@ Run everything:
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
+zsh tests/terminal-restore.test.zsh
 ```
 
 ## OMO profile config
@@ -18,6 +19,18 @@ modify templates with temporary data, sidecar, and destination paths. It covers
 tier names, exact agent/category routing, Bedrock model registration, legacy
 tier migration, and invalid-value fallback without running `chezmoi apply` or
 writing managed targets under `$HOME`.
+
+## Terminal restore
+
+`terminal-restore.test.zsh` guards the precmd hook in
+`home/private_dot_config/private_zsh/init/terminal-restore.zsh`. It checks
+which command lines trigger a restore (cw only when it attaches a terminal),
+then runs the hook in panes of a private tmux server. A restore after a clean
+exit must not move the cursor, even when an earlier full-screen app left a
+saved cursor at the top. A restore after a dropped session must leave the
+alternate screen and turn mouse reporting off. `TERM_RESTORE_HOOK=<file>` runs
+it against another revision of the hook. The terminal checks are skipped when
+`tmux` is not on `PATH`.
 
 ## tmux-resurrect-code-agents
 
