@@ -37,6 +37,8 @@ packages_dir="${cache_dir}/packages"
 log_step "Refreshing OpenCode plugin cache"
 
 # tcs_bust_opencode_plugin <packages_dir> <sanitized-spec-dir>
+tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@beta"
+# Retired spec: OMO moved from @latest to @beta. No-op once cleared.
 tcs_bust_opencode_plugin "$packages_dir" "oh-my-openagent@latest"
 {{- if and (eq "" $llmproxyLocal) (eq $machineProfile "work") }}
 tcs_bust_opencode_plugin "$packages_dir" "@canva/opencode-plugin-llmproxy@latest"

@@ -14,18 +14,19 @@
 
        PR #4305 has since landed (the package now exposes a ./tui subpath
        export). BUT the correct TUI plugin spec is the PACKAGE spec
-       "oh-my-openagent@latest", NOT the "oh-my-openagent/tui" subpath:
+       (e.g. "oh-my-openagent@beta"), NOT the "oh-my-openagent/tui" subpath:
        opencode installs the configured package spec BEFORE resolving the TUI
        export, so a bare subpath entry is reported unresolvable because OpenCode
        installs the configured package spec before resolving the TUI export.
        Using the package spec lets opencode
        install it, then resolve the ./tui export from it. We therefore register
-       "oh-my-openagent@latest" and strip any legacy bare-subpath entries. */ -}}
-{{- $omoTuiPlugin := "oh-my-openagent@latest" -}}
+       the same spec as modify_opencode.json and strip any other OMO entry
+       (legacy bare subpaths, or a previous dist-tag such as @latest). */ -}}
+{{- $omoTuiPlugin := "oh-my-openagent@beta" -}}
 {{- $plugins := default (list) (get $config "plugin") -}}
 {{- $cleaned := list -}}
 {{- range $p := $plugins -}}
-{{-   if and (ne $p "oh-my-openagent/tui") (ne $p "oh-my-opencode/tui") -}}
+{{-   if not (or (hasPrefix "oh-my-openagent" $p) (hasPrefix "oh-my-opencode" $p)) -}}
 {{-     $cleaned = append $cleaned $p -}}
 {{-   end -}}
 {{- end -}}

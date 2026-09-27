@@ -79,19 +79,19 @@ real OMO health regression (ast-grep `sg` unavailable).
 **Background:** opencode loads plugins from a private cache
 (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux). The cache
 is sticky — a chezmoi bridge script clears the opencode-owned package cache so
-opencode reinstalls `oh-my-openagent@latest` on next launch. See
+opencode reinstalls `oh-my-openagent@beta` on next launch. See
 `agent-orchestration.md` § Plugin Versioning.
 
 **Validation:**
 1. **Plugins are registered:** `jq -c .plugin ~/.config/opencode/opencode.json`
-   includes `oh-my-openagent@latest` (and `@canva/opencode-plugin-llmproxy` on
+   includes `oh-my-openagent@beta` (and `@canva/opencode-plugin-llmproxy` on
    work machines / Coder boxes).
 2. **Agents are loaded:** `opencode agent list` includes the Sisyphus primary
    (output starts with `Sisyphus - ultraworker (primary)`).
    - PASS: Sisyphus present. Empty/erroring list is a FAIL.
 3. **Plugin cache materialises after opencode launch:**
-   - macOS: `jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
-   - Linux: `jq -r .version ~/.cache/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
+   - macOS: `jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@beta/node_modules/oh-my-openagent/package.json`
+   - Linux: `jq -r .version ~/.cache/opencode/packages/oh-my-openagent@beta/node_modules/oh-my-openagent/package.json`
    - PASS: prints a version. Missing package means opencode did not reinstall the configured plugin.
 4. **ast-grep resolves** (the original regression): `ast-grep --version` succeeds.
    - PASS: `ast-grep --version` prints a version.

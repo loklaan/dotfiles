@@ -67,11 +67,11 @@ opencode already owns plugin installation. The bridge must not install `oh-my-op
 
 Instead, the bridge removes only opencode's cached package directories on every apply:
 
-- `packages/oh-my-openagent@latest/`
+- `packages/oh-my-openagent@beta/`
 - `packages/@canva/opencode-plugin-llmproxy@latest/`
 - legacy `packages/@canva/opencode-plugin-llmproxy/`
 
-On the next opencode launch, opencode's embedded bun reinstalls the configured `@latest` plugin spec. Chezmoi does not probe plugin versions or install plugins itself; it only invalidates the sticky cache.
+On the next opencode launch, opencode's embedded bun reinstalls the configured plugin spec (`@beta` for OMO, `@latest` for llmproxy). Chezmoi does not probe plugin versions or install plugins itself; it only invalidates the sticky cache.
 
 `opencode plugin <module>` exists as a first-class CLI command but doesn't fit the bridge use case: it mutates `~/.config/opencode/opencode.json` (which chezmoi owns) and updates `packages/<spec>/` rather than forcing opencode to re-resolve an already-configured `@latest` plugin. Use cache busting instead.
 
@@ -88,19 +88,19 @@ chezmoi apply
 
 Both plugins are opencode-owned:
 
-- **omo** is always cache-busted because it is configured as `oh-my-openagent@latest` in opencode.
+- **omo** is always cache-busted because it is configured as `oh-my-openagent@beta` in opencode.
 - **llmproxy** is cache-busted on work-profile machines when no local dist path overrides it.
 
 Both flow through the same `tcs_bust_opencode_plugin` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
 
 ### Upgrade ritual
 
-`chezmoi apply` clears opencode plugin cache directories. Restart opencode after the apply so opencode reinstalls and loads the current `@latest` packages.
+`chezmoi apply` clears opencode plugin cache directories. Restart opencode after the apply so opencode reinstalls and loads the current dist-tagged packages.
 
 Verify OMO after opencode has launched at least once:
 
 ```bash
-jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json
+jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@beta/node_modules/oh-my-openagent/package.json
 opencode agent list
 ```
 
@@ -139,7 +139,7 @@ cw <workspace>
 ```
 
 **Upgrade OMO plugin (every machine):**
-1. `chezmoi apply` clears the cached `oh-my-openagent@latest` package directory.
+1. `chezmoi apply` clears the cached `oh-my-openagent@beta` package directory.
 2. Restart opencode so it reinstalls the configured plugin.
 3. Run `opencode agent list` to verify the Sisyphus primary agent is present.
 
