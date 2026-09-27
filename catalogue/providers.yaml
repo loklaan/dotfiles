@@ -1,0 +1,42 @@
+# Publication facts for everything `df-skills export` writes into a catalogue
+# export. The export reads this file from the repo root; chezmoi never applies it.
+#
+# Each key is a provider id:
+# - `authored`: every repository skill and every rule in home/dot_agents/exact_rules
+# - an archive source id from home/.chezmoidata/skill-lifecycle.yaml
+# - the `provider` named by a setup in catalogue/setups/
+#
+# `permission` is the basis for redistributing the provider's content. A
+# third-party attestation is the owner's statement, and is never independently
+# legally verified. `notices` are files under catalogue/notices/<id>/ that travel
+# with every item from that provider.
+providers:
+  authored:
+    label: Authored skills and rules
+    upstreamUrl: https://github.com/loklaan/dotfiles
+    permission:
+      _tag: AuthoredByPublisher
+
+  public-architecture:
+    label: Matt Pocock — improve-codebase-architecture
+    upstreamUrl: https://github.com/mattpocock/skills
+    permission:
+      _tag: UserAttestedSeparatePermission
+      attestation: >-
+        The owner states they hold separate permission to redistribute this
+        approved third-party skill. The upstream repository licence is not the
+        stated basis, and non-commercial use is explicitly not the rationale.
+      independentlyLegallyVerified: false
+    notices:
+      - LICENSE
+
+  omo-setup:
+    label: OhMyOpenCode setup information
+    upstreamUrl: https://www.npmjs.com/package/oh-my-openagent
+    permission:
+      _tag: UserAttestedSeparatePermission
+      attestation: >-
+        The owner attests permission to describe this setup and link to its
+        official installation. No harness content, skill copy or archive is
+        distributed under this basis.
+      independentlyLegallyVerified: false
