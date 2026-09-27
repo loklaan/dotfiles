@@ -204,12 +204,12 @@
                         "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
                     },
                     "librarian": {
-                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
-                        "reasoning": "off"
+                        "model": "openai/gpt-6-luna-fast",
+                        "reasoning": "max"
                     },
                     "explore": {
-                        "model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0",
-                        "reasoning": "off"
+                        "model": "openai/gpt-6-luna-fast",
+                        "reasoning": "high"
                     },
                     "multimodal-looker": {
                         "model": "openai/gpt-6-sol",

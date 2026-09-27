@@ -68,8 +68,8 @@ CLAUDEISH_AGENTS=$(cat <<'JSON'
   "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
   "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
   "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
-  "librarian": {"model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "reasoning": "off"},
-  "explore": {"model": "amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "reasoning": "off"},
+  "librarian": {"model": "openai/gpt-6-luna-fast", "reasoning": "max"},
+  "explore": {"model": "openai/gpt-6-luna-fast", "reasoning": "high"},
   "multimodal-looker": {"model": "openai/gpt-6-sol", "reasoning": "low"}
 }
 JSON
