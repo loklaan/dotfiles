@@ -2807,6 +2807,768 @@ function* inspectState(active: Active, locations: Locations) {
   };
   return { plan, observation };
 }
+// === Catalogue export =====================================================
+// `df-skills export --out <dir>` writes the publishable catalogue: every skill
+// and rule the repository itself declares, the curated setups in
+// catalogue/setups/, and the provider facts in catalogue/providers.yaml, as
+// finished files plus a manifest. The repository defaults in
+// home/.chezmoidata/skill-lifecycle.yaml are the allow-list: machine-local
+// skillSources are never exported. Applied state is exported only after
+// `chezmoi verify` confirms it matches the source, and archive skills only after
+// their acquisition matches the declared lock.
+export const catalogueFormat = "dotfiles-catalogue/v1";
+const version = "0.3.0";
+const LifecycleItem = Schema.Union([
+  Id,
+  Schema.Struct({ id: Id, directory: Schema.optional(Schema.String) }),
+]);
+const LifecycleSource = Schema.Struct({
+  id: Schema.optional(Id),
+  kind: Schema.Literals(["repository", "archive", "git", "filesystem"]),
+  path: Schema.String,
+  items: List(LifecycleItem),
+  lock: Schema.optional(Archive.fields.lock),
+  transforms: Schema.optional(List(Transform)),
+});
+export const LifecycleDefaults = Schema.Struct({
+  skillLifecycleDefaults: Schema.Struct({
+    sources: Schema.Record(Schema.String, LifecycleSource),
+  }),
+});
+const NonEmpty = Schema.String.check(Schema.isMinLength(1));
+const HttpsUrl = text(/^https:\/\/[^\s\p{Cc}]+$/u);
+const JsonObject = Schema.Record(Schema.String, Schema.Json);
+const Segment = text(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+export const CatalogueProviders = Schema.Struct({
+  providers: Schema.Record(
+    Id,
+    Schema.Struct({
+      label: NonEmpty,
+      upstreamUrl: HttpsUrl,
+      permission: JsonObject,
+      notices: Schema.optional(List(Segment)),
+    }),
+  ),
+});
+export const SetupFrontmatter = Schema.Struct({
+  name: Id,
+  provider: Id,
+  opencodePlugin: Schema.optional(text(/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/)),
+  summary: NonEmpty,
+  prerequisites: Schema.NonEmptyArray(NonEmpty),
+  upstreamLinks: Schema.NonEmptyArray(Schema.Struct({
+    label: NonEmpty,
+    url: HttpsUrl,
+    purpose: Schema.Literals([
+      "inspect-source",
+      "official-setup",
+      "documentation",
+    ]),
+  })),
+  attribution: Schema.Struct({
+    distributor: NonEmpty,
+    authorship: JsonObject,
+    licence: JsonObject,
+  }),
+});
+type ExportFile = {
+  readonly path: string;
+  readonly sha256: string;
+  readonly mode: "0644" | "0755";
+  readonly bytes: number;
+};
+type Staged = ExportFile & { readonly content: Uint8Array };
+const exportFault = (error: string, message: string, cause?: unknown) =>
+  fault([error, message], "export", cause);
+export const expandLifecyclePath = (
+  value: string,
+  home: string,
+  repoRoot: string,
+) =>
+  value.replaceAll("{homeDir}", home).replaceAll(
+    "{chezmoiSourceDir}",
+    `${repoRoot}/home`,
+  );
+export const exportMode = (mode: number): ExportFile["mode"] =>
+  mode & 0o111 ? "0755" : "0644";
+// A registered plugin names the package bare, with a version or dist-tag, or
+// as a local path; only the first two count as the package being registered.
+export const pluginRegistered = (plugins: unknown, name: string) =>
+  Array.isArray(plugins) && plugins.some((spec) =>
+    typeof spec === "string" &&
+    (spec === name || spec.startsWith(`${name}@`))
+  );
+// Paragraphs under each `## ` heading become one official setup step. Line
+// breaks inside a paragraph are soft wraps, so they collapse to spaces.
+export const parseSetupDocument = Effect.fn(function* (document: string) {
+  if (!document.startsWith("---\n")) {
+    return yield* exportFault(
+      "SetupInvalid",
+      "Setup must open with frontmatter",
+    );
+  }
+  const closing = document.indexOf("\n---\n", 4);
+  if (closing < 0) {
+    return yield* exportFault(
+      "SetupInvalid",
+      "Setup frontmatter is not closed",
+    );
+  }
+  const frontmatter = yield* Effect.try({
+    try: () => parseYaml(document.slice(4, closing)),
+    catch: (cause) =>
+      exportFault("SetupInvalid", "Setup frontmatter is not YAML", cause),
+  }).pipe(
+    Effect.flatMap((value) =>
+      decodeContract(SetupFrontmatter, value).pipe(
+        Effect.mapError((cause) =>
+          exportFault(
+            "SetupInvalid",
+            "Setup frontmatter fields are invalid",
+            cause,
+          )
+        ),
+      )
+    ),
+  );
+  const sections = document.slice(closing + 5).split(/^## /m);
+  if (sections[0].trim() !== "") {
+    return yield* exportFault(
+      "SetupInvalid",
+      "Setup body must contain only `## ` step sections",
+    );
+  }
+  const steps = sections.slice(1).map((section) => {
+    const [title, ...rest] = section.split("\n");
+    return {
+      title: title.trim(),
+      detail: rest.join("\n").trim().split(/\n\s*\n/).map((paragraph) =>
+        paragraph.replace(/\s*\n\s*/g, " ")
+      ).join("\n\n"),
+    };
+  });
+  if (steps.length === 0 || steps.some((step) => !step.title || !step.detail)) {
+    return yield* exportFault(
+      "SetupInvalid",
+      "Setup needs at least one step, each with a title and a detail",
+    );
+  }
+  return { frontmatter, steps };
+});
+// Only a directory holding a catalogue manifest may be replaced, so a mistyped
+// --out can never delete unrelated content.
+export const exportTargetOwned = (manifest: string | null) => {
+  if (manifest === null) return false;
+  try {
+    const value: unknown = JSON.parse(manifest);
+    return typeof value === "object" && value !== null &&
+      (value as { format?: unknown }).format === catalogueFormat;
+  } catch {
+    return false;
+  }
+};
+export const outsideProtectedRoots = (
+  out: string,
+  protectedRoots: readonly string[],
+) =>
+  protectedRoots.every((root) =>
+    out !== root && !out.startsWith(`${root}/`) && !root.startsWith(`${out}/`)
+  );
+// Export is operator-invoked, never a lifecycle hook, so it may run chezmoi
+// itself; provider commands still cannot (see Executable). The PATH entry is
+// run as found, so a version-manager shim keeps its own dispatch.
+const tool = Effect.fn(function* (name: "chezmoi" | "git") {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const search = yield* Config.String("PATH");
+  for (
+    const directory of search.split(":").filter((part) => part.startsWith("/"))
+  ) {
+    const physicalDirectory = yield* fs.realPath(directory).pipe(absent);
+    if (physicalDirectory === null) continue;
+    const candidate = path.join(directory, name);
+    const info = yield* fs.stat(candidate).pipe(absent);
+    if (info?.type === "File" && (info.mode & 0o111)) {
+      const resolved = yield* fs.realPath(candidate);
+      if (!executableTargetAllowed(path.dirname(physicalDirectory), resolved)) {
+        return yield* fault("UnsafePath", "export");
+      }
+      return candidate;
+    }
+  }
+  return yield* exportFault("NotFound", `${name} is not on PATH`);
+});
+const runTool = (argv: [string, ...string[]], timeoutSeconds = 60) =>
+  execute({ argv, timeoutSeconds, maxOutputBytes: 1048576 }, "export");
+const stagedFile = Effect.fn(function* (
+  path: string,
+  content: Uint8Array,
+  mode: number,
+) {
+  return {
+    path,
+    content,
+    sha256: yield* digestBytes(content),
+    mode: exportMode(mode),
+    bytes: content.length,
+  } satisfies Staged;
+});
+// Files of a verified tree, optionally with a transformed SKILL.md. Bytes are
+// re-hashed against the snapshot so a tree changing mid-export is refused.
+const treeFiles = Effect.fn(function* (
+  root: string,
+  frontmatter?: string,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const snapshot = yield* snapshotTree(root, frontmatter);
+  const files: Staged[] = [];
+  for (const entry of snapshot.entries) {
+    if (entry.kind !== "file") continue;
+    const content = entry.relative === "SKILL.md" && frontmatter !== undefined
+      ? new TextEncoder().encode(frontmatter)
+      : yield* fs.readFile(path.join(root, entry.relative));
+    const file = yield* stagedFile(entry.relative, content, entry.mode);
+    if (file.sha256 !== entry.digest) {
+      return yield* exportFault(
+        "SourceChanged",
+        `${root} changed while it was being exported; retry`,
+      );
+    }
+    files.push(file);
+  }
+  return files;
+});
+type ExportItem = {
+  readonly kind: "skill" | "rule";
+  readonly name: string;
+  readonly provider: string;
+  readonly path: string;
+  readonly files: readonly Staged[];
+  readonly transforms: readonly Schema.Json[];
+};
+const resolveExportRoot = Effect.fn(function* (override: string) {
+  const path = yield* PathService;
+  if (override) return path.resolve(override);
+  const source = (yield* runTool([yield* tool("chezmoi"), "source-path"]))
+    .trim();
+  return (yield* runTool([
+    yield* tool("git"),
+    "-C",
+    source,
+    "rev-parse",
+    "--show-toplevel",
+  ])).trim();
+});
+const readRepoText = Effect.fn(function* (repoRoot: string, relative: string) {
+  const fs = yield* FileSystem;
+  const target = `${repoRoot}/${relative}`;
+  if ((yield* physical(target, "File")) === null) {
+    return yield* exportFault("NotFound", `${relative} is missing`);
+  }
+  return yield* decodeText(yield* fs.readFile(target));
+});
+const readYaml = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  repoRoot: string,
+  relative: string,
+) =>
+  readRepoText(repoRoot, relative).pipe(
+    Effect.flatMap((document) =>
+      Effect.try({
+        try: () => parseYaml(document),
+        catch: (cause) =>
+          exportFault("ContractInvalid", `${relative} is not YAML`, cause),
+      })
+    ),
+    Effect.flatMap((value) =>
+      Schema.decodeUnknownEffect(schema)(value).pipe(
+        Effect.mapError((cause) =>
+          exportFault(
+            "ContractInvalid",
+            `${relative} fields are invalid`,
+            cause,
+          )
+        ),
+      )
+    ),
+  );
+const collectSkills = Effect.fn(function* (
+  repoRoot: string,
+  home: string,
+) {
+  const lifecycle = yield* readYaml(
+    LifecycleDefaults,
+    repoRoot,
+    "home/.chezmoidata/skill-lifecycle.yaml",
+  );
+  const store = `${home}/.local/share/dotfiles/skills`;
+  const items: ExportItem[] = [];
+  const verifyTargets: string[] = [];
+  const archiveProviders: Array<{ id: string; ref: string; checksum: string }> =
+    [];
+  for (
+    const [key, source] of Object.entries(
+      lifecycle.skillLifecycleDefaults.sources,
+    ).toSorted(([left], [right]) => left < right ? -1 : 1)
+  ) {
+    const sourceId = source.id ?? key;
+    const base = expandLifecyclePath(source.path, home, repoRoot);
+    if (source.kind === "repository") {
+      for (const entry of source.items) {
+        const id = typeof entry === "string" ? entry : entry.id;
+        const directory = typeof entry === "string"
+          ? id
+          : entry.directory ?? id;
+        const target = directory === "." ? base : `${base}/${directory}`;
+        if ((yield* parseSkill(yield* skillText(target))).name !== id) {
+          return yield* fault("SkillInvalid", "export");
+        }
+        verifyTargets.push(target);
+        items.push({
+          kind: "skill",
+          name: id,
+          provider: "authored",
+          path: `skills/${id}`,
+          files: yield* treeFiles(target),
+          transforms: [],
+        });
+      }
+      continue;
+    }
+    if (source.kind !== "archive" || !source.lock) {
+      return yield* exportFault(
+        "ExportUnsupported",
+        `Repository source ${sourceId} is ${source.kind}; export supports repository and archive sources`,
+      );
+    }
+    archiveProviders.push({
+      id: sourceId,
+      ref: source.lock.ref,
+      checksum: source.lock.checksum,
+    });
+    for (const entry of source.items) {
+      const id = typeof entry === "string" ? entry : entry.id;
+      const directory = typeof entry === "string" ? id : entry.directory ?? id;
+      const suffix = directory === "." ? "" : `/${directory}`;
+      const archive = {
+        id,
+        input: `${store}/.inputs/${sourceId}${suffix}`,
+        target: `${base}${suffix}`,
+        package: false,
+        lock: source.lock,
+        transforms: source.transforms ?? [],
+      };
+      const prepared = yield* prepareArchive(archive);
+      const original = yield* skillText(archive.input);
+      const transformed = prepared.frontmatter ?? original;
+      const names = archive.transforms.filter((transform) =>
+        transform.kind === "frontmatter-name"
+      );
+      items.push({
+        kind: "skill",
+        name: id,
+        provider: sourceId,
+        path: `skills/${id}`,
+        files: yield* treeFiles(archive.input, transformed),
+        transforms: yield* Effect.forEach(
+          names,
+          (transform) =>
+            Effect.gen(function* () {
+              return {
+                kind: transform.kind,
+                from: transform.from,
+                to: transform.to,
+                inputSha256: yield* digestBytes(original),
+                outputSha256: yield* digestBytes(transformed),
+              };
+            }),
+        ),
+      });
+    }
+  }
+  return { items, verifyTargets, archiveProviders };
+});
+const collectRules = Effect.fn(function* (repoRoot: string, home: string) {
+  const fs = yield* FileSystem;
+  const names = (yield* fs.readDirectory(
+    `${repoRoot}/home/dot_agents/exact_rules`,
+  )).filter((name) => name.endsWith(".md")).toSorted();
+  const items: ExportItem[] = [];
+  const verifyTargets: string[] = [];
+  for (const file of names) {
+    if (!Schema.is(Segment)(file)) {
+      return yield* exportFault(
+        "ExportUnsupported",
+        `Rule source ${file} uses chezmoi attributes; export supports plain rule files`,
+      );
+    }
+    const target = `${home}/.agents/rules/${file}`;
+    const info = yield* physical(target, "File");
+    if (info === null) {
+      return yield* exportFault(
+        "NotFound",
+        `${target} is missing; apply it first`,
+      );
+    }
+    const content = yield* fs.readFile(target);
+    const name = (yield* parseSkill(yield* decodeText(content))).name;
+    verifyTargets.push(target);
+    items.push({
+      kind: "rule",
+      name,
+      provider: "authored",
+      path: `rules/${file}`,
+      files: [yield* stagedFile(file, content, info.mode)],
+      transforms: [],
+    });
+  }
+  return { items, verifyTargets };
+});
+const collectSetups = Effect.fn(function* (repoRoot: string, home: string) {
+  const fs = yield* FileSystem;
+  const directory = `${repoRoot}/catalogue/setups`;
+  const files = ((yield* fs.readDirectory(directory).pipe(absent)) ?? [])
+    .filter((name) => name.endsWith(".md")).toSorted();
+  const setups: Array<Record<string, Schema.Json>> = [];
+  let plugins: unknown = undefined;
+  for (const file of files) {
+    const relative = `catalogue/setups/${file}`;
+    const { frontmatter, steps } = yield* parseSetupDocument(
+      yield* readRepoText(repoRoot, relative),
+    );
+    if (frontmatter.opencodePlugin !== undefined) {
+      if (plugins === undefined) {
+        const rendered = yield* runTool([
+          yield* tool("chezmoi"),
+          "cat",
+          `${home}/.config/opencode/opencode.json`,
+        ]);
+        plugins = yield* Effect.try({
+          try: () => (JSON.parse(rendered) as { plugin?: unknown }).plugin,
+          catch: (cause) =>
+            exportFault(
+              "ContractInvalid",
+              "Rendered OpenCode config is not JSON",
+              cause,
+            ),
+        });
+      }
+      if (!pluginRegistered(plugins, frontmatter.opencodePlugin)) {
+        return yield* exportFault(
+          "SetupStale",
+          `${relative} describes OpenCode plugin ${frontmatter.opencodePlugin}, which the rendered OpenCode config does not register`,
+        );
+      }
+    }
+    setups.push({
+      name: frontmatter.name,
+      provider: frontmatter.provider,
+      summary: frontmatter.summary,
+      prerequisites: [...frontmatter.prerequisites],
+      officialSetup: steps,
+      upstreamLinks: frontmatter.upstreamLinks.map((link) => ({ ...link })),
+      distributor: frontmatter.attribution.distributor,
+      authorship: frontmatter.attribution.authorship,
+      licence: frontmatter.attribution.licence,
+      declaredIn: relative,
+    });
+  }
+  return setups;
+});
+const sourceRevision = Effect.fn(function* (repoRoot: string) {
+  const git = yield* tool("git");
+  const commit = (yield* runTool([git, "-C", repoRoot, "rev-parse", "HEAD"]))
+    .trim();
+  yield* decodeContract(Revision, commit);
+  const status = yield* runTool([
+    git,
+    "-C",
+    repoRoot,
+    "status",
+    "--porcelain=v1",
+  ]);
+  const main = (yield* execute({
+    argv: [
+      git,
+      "-C",
+      repoRoot,
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      "refs/remotes/origin/main",
+    ],
+    timeoutSeconds: 30,
+    maxOutputBytes: 4096,
+    acceptFailure: true,
+  }, "export")).trim();
+  return { commit, clean: status.trim() === "", onRemoteMain: main === commit };
+});
+// `chezmoi verify` is read-only: it exits non-zero when any target differs
+// from what the source renders, which is the drift an export must refuse.
+const verifyApplied = Effect.fn(function* (targets: readonly string[]) {
+  yield* runTool([yield* tool("chezmoi"), "verify", "--", ...targets], 300)
+    .pipe(
+      Effect.mapError((cause) =>
+        cause.error === "CommandFailed"
+          ? exportFault(
+            "ExportDrift",
+            "Applied skills or rules differ from the chezmoi source; review with chezmoi diff, then apply before exporting",
+            cause,
+          )
+          : cause
+      ),
+    );
+});
+const collectProviders = Effect.fn(function* (
+  repoRoot: string,
+  commit: string,
+  archives: ReadonlyArray<{ id: string; ref: string; checksum: string }>,
+  used: ReadonlySet<string>,
+) {
+  const fs = yield* FileSystem;
+  const declared = (yield* readYaml(
+    CatalogueProviders,
+    repoRoot,
+    "catalogue/providers.yaml",
+  )).providers;
+  for (const id of used) {
+    if (!(id in declared)) {
+      return yield* exportFault(
+        "ProviderUndeclared",
+        `catalogue/providers.yaml has no entry for provider ${id}`,
+      );
+    }
+  }
+  const providers: Array<Record<string, Schema.Json>> = [];
+  const notices: Staged[] = [];
+  for (
+    const [id, entry] of Object.entries(declared).toSorted(([l], [r]) =>
+      l < r ? -1 : 1
+    )
+  ) {
+    if (!used.has(id)) {
+      return yield* exportFault(
+        "ProviderUnused",
+        `catalogue/providers.yaml declares ${id}, which no exported item or setup uses; remove it`,
+      );
+    }
+    const archive = archives.find((candidate) => candidate.id === id);
+    const listed: ExportFile[] = [];
+    for (const name of entry.notices ?? []) {
+      const source = `${repoRoot}/catalogue/notices/${id}/${name}`;
+      const info = yield* physical(source, "File");
+      if (info === null) {
+        return yield* exportFault(
+          "NotFound",
+          `Notice ${id}/${name} is missing`,
+        );
+      }
+      const file = yield* stagedFile(
+        `notices/${id}/${name}`,
+        yield* fs.readFile(source),
+        0o644,
+      );
+      notices.push(file);
+      listed.push({ ...file, path: name });
+    }
+    providers.push({
+      id,
+      label: entry.label,
+      upstreamUrl: entry.upstreamUrl,
+      revision: archive?.ref ?? commit,
+      resolvedFrom: archive ? "pinned-archive" : "repository-commit",
+      ...(archive ? { checksum: archive.checksum } : {}),
+      permission: entry.permission,
+      notices: listed.map(({ path, sha256, mode, bytes }) => ({
+        path,
+        sha256,
+        mode,
+        bytes,
+      })),
+    });
+  }
+  return { providers, notices };
+});
+const writeStage = Effect.fn(function* (
+  stage: string,
+  files: ReadonlyArray<Staged>,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  for (const file of files) {
+    const target = path.join(stage, file.path);
+    yield* fs.makeDirectory(path.dirname(target), {
+      recursive: true,
+      mode: 0o755,
+    });
+    yield* fs.writeFile(target, file.content, {
+      flag: "wx",
+      mode: file.mode === "0755" ? 0o755 : 0o644,
+    });
+  }
+});
+// Stages the whole export beside --out, then swaps it in with renames. The
+// previous export stays in place until the new one is complete.
+const publishExport = Effect.fn(function* (
+  out: string,
+  files: ReadonlyArray<Staged>,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const parent = path.dirname(out);
+  if ((yield* physical(parent, "Directory")) === null) {
+    return yield* exportFault("NotFound", `${parent} does not exist`);
+  }
+  const existing = yield* fs.stat(out).pipe(absent);
+  if (existing !== null) {
+    const manifest = existing.type === "Directory"
+      ? yield* fs.readFileString(path.join(out, "manifest.json")).pipe(
+        Effect.orElseSucceed(() => null),
+      )
+      : null;
+    if (!exportTargetOwned(manifest)) {
+      return yield* exportFault(
+        "ExportTargetUnowned",
+        `${out} exists and is not a catalogue export; choose an empty path`,
+      );
+    }
+  }
+  yield* Effect.acquireUseRelease(
+    fs.makeTempDirectory({
+      directory: parent,
+      prefix: `.${path.basename(out)}.export-`,
+    }),
+    (stage) =>
+      Effect.gen(function* () {
+        yield* fs.chmod(stage, 0o755);
+        yield* writeStage(stage, files);
+        const previous = `${stage}.previous`;
+        if (existing !== null) yield* fs.rename(out, previous);
+        yield* fs.rename(stage, out).pipe(
+          Effect.tapError(() =>
+            existing !== null
+              ? fs.rename(previous, out).pipe(Effect.ignore)
+              : Effect.void
+          ),
+        );
+        if (existing !== null) {
+          yield* fs.remove(previous, { recursive: true });
+        }
+      }),
+    (stage) => fs.remove(stage, { recursive: true }).pipe(Effect.ignore),
+  );
+});
+const exportFlags = {
+  out: Flag.String("out").pipe(
+    Flag.withDescription("directory to write the catalogue export into"),
+  ),
+  repoRoot: Flag.String("repo-root").pipe(
+    Flag.withDescription(
+      "dotfiles repo root (default: derived from chezmoi source-path)",
+    ),
+    Flag.withDefault(""),
+  ),
+};
+const runExport = (
+  input: { readonly out: string; readonly repoRoot: string },
+) =>
+  Effect.gen(function* () {
+    const path = yield* PathService;
+    if (yield* Config.String("CHEZMOI").pipe(Config.withDefault(""))) {
+      return yield* exportFault(
+        "ExportNested",
+        "Run export directly, not from a chezmoi script: it reads chezmoi state that the running chezmoi holds locked",
+      );
+    }
+    const home = yield* Config.String("HOME");
+    const out = path.resolve(input.out);
+    const repoRoot = yield* resolveExportRoot(input.repoRoot);
+    yield* decodeContract(Path, out);
+    yield* decodeContract(Path, repoRoot);
+    if (
+      out === home || home.startsWith(`${out}/`) ||
+      !outsideProtectedRoots(out, [
+        repoRoot,
+        `${home}/.agents`,
+        `${home}/.local/share/dotfiles`,
+      ])
+    ) {
+      return yield* exportFault(
+        "ExportTargetUnowned",
+        "--out must not overlap the dotfiles repo, the skill store or the agent registry",
+      );
+    }
+    const skills = yield* collectSkills(repoRoot, home);
+    const rules = yield* collectRules(repoRoot, home);
+    yield* verifyApplied([...skills.verifyTargets, ...rules.verifyTargets]);
+    const setups = yield* collectSetups(repoRoot, home);
+    const items = [...skills.items, ...rules.items];
+    const names = items.map((item) => `${item.kind}:${item.name}`);
+    if (!unique(names)) {
+      return yield* exportFault(
+        "SkillCollision",
+        "Exported item names collide",
+      );
+    }
+    const revision = yield* sourceRevision(repoRoot);
+    const used = new Set([
+      ...items.map((item) => item.provider),
+      ...setups.map((setup) => String(setup.provider)),
+    ]);
+    const { providers, notices } = yield* collectProviders(
+      repoRoot,
+      revision.commit,
+      skills.archiveProviders,
+      used,
+    );
+    const manifest = {
+      format: catalogueFormat,
+      exporter: { tool: "df-skills", version },
+      source: revision,
+      providers,
+      items: items.map((item) => ({
+        kind: item.kind,
+        name: item.name,
+        provider: item.provider,
+        path: item.path,
+        files: item.files.map(({ path, sha256, mode, bytes }) => ({
+          path,
+          sha256,
+          mode,
+          bytes,
+        })),
+        transforms: [...item.transforms],
+      })),
+      setups,
+    };
+    const staged = [
+      ...items.flatMap((item) =>
+        item.kind === "rule"
+          ? item.files.map((file) => ({ ...file, path: item.path }))
+          : item.files.map((file) => ({
+            ...file,
+            path: `${item.path}/${file.path}`,
+          }))
+      ),
+      ...notices,
+      yield* stagedFile(
+        "manifest.json",
+        new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`),
+        0o644,
+      ),
+    ];
+    yield* publishExport(out, staged);
+    yield* Console.log(JSON.stringify({
+      out,
+      commit: revision.commit,
+      clean: revision.clean,
+      skills: skills.items.length,
+      rules: rules.items.length,
+      setups: setups.length,
+    }));
+    Deno.exitCode = 0;
+  }).pipe(guarded("export"));
 const flags = {
   manifest: Flag.String("manifest").pipe(Flag.withDefault("")),
   stateDir: Flag.String("state-dir").pipe(Flag.withDefault("")),
@@ -2902,9 +3664,12 @@ const run = (command: string, input: Locations) =>
   });
 const cli = Command.make("df-skills").pipe(
   Command.withSubcommands(
-    ["plan", "observe", "reconcile", "package"].map((name) =>
-      Command.make(name, flags, (input) => run(name, input))
-    ),
+    [
+      ...["plan", "observe", "reconcile", "package"].map((name) =>
+        Command.make(name, flags, (input) => run(name, input))
+      ),
+      Command.make("export", exportFlags, runExport),
+    ],
   ),
 );
 const report = ({ error, message, boundary }: Failure) => {
@@ -2932,7 +3697,7 @@ if (import.meta.main) {
     const output: string[] = [];
     const config = ConfigProvider.fromEnvRecord(
       Object.fromEntries(
-        [...environmentKeys, "DF_SKILLS_PINS"].map((
+        [...environmentKeys, "DF_SKILLS_PINS", "CHEZMOI"].map((
           key,
         ) => [
           key,
@@ -2943,7 +3708,7 @@ if (import.meta.main) {
         ]),
       ),
     );
-    Command.run(cli, { version: "0.2.0", renderErrors: false }).pipe(
+    Command.run(cli, { version, renderErrors: false }).pipe(
       Effect.provide(
         CliConfig.layer({ builtIns: [GlobalFlag.Help, GlobalFlag.Version] }),
       ),
@@ -4435,3 +5200,114 @@ const renderArchitectureReceipt = async (template: Uint8Array): Promise<string> 
 Deno.test({ name: "public architecture lock agrees with the verified archive tree", ignore: !architectureIntegration, fn: async () => { const catalog = Schema.decodeUnknownSync(ArchitectureCatalog)(parseYaml(await Deno.readTextFile(architectureCatalogPath))), source = catalog.skillLifecycleDefaults.sources["public-architecture"], transformedFiles = architectureTransformedEntries.filter((entry) => entry.kind === "file").map(({ relative, digest, mode }) => ({ relative, digest, mode })); assert.equal(await architectureDigest(JSON.stringify(architectureRawFiles)), architectureIdentity.rawContentDigest); assert.equal(await architectureDigest(JSON.stringify(transformedFiles)), architectureIdentity.transformedContentDigest); assert.equal(await architectureDigest(JSON.stringify([[architectureIdentity.itemId, architectureIdentity.transformedContentDigest]])), architectureIdentity.lockContentDigest); assert.equal(await architectureDigest(JSON.stringify(architectureTransformedEntries)), architectureIdentity.transformedOwnershipDigest); assert.deepEqual(source.lock, { algorithm: "sha256", checksum: architectureIdentity.checksum, contentDigest: architectureIdentity.lockContentDigest, ref: architectureIdentity.ref }); assert.ok(source.url.includes(architectureIdentity.ref)); } });
 // deno-fmt-ignore
 Deno.test({ name: "public architecture acquisition receipt is deterministic and lock-derived", ignore: !architectureIntegration, fn: async () => { const catalog = Schema.decodeUnknownSync(ArchitectureCatalog)(parseYaml(await Deno.readTextFile(architectureCatalogPath))), source = catalog.skillLifecycleDefaults.sources["public-architecture"], template = await Deno.readFile(architectureReceiptPath), first = await renderArchitectureReceipt(template), second = await renderArchitectureReceipt(template), receipt = Schema.decodeUnknownSync(ArchitectureReceipt)(JSON.parse(first)); assert.equal(first, second); assert.deepEqual(receipt, { schema: 1, sourceId: source.id, algorithm: source.lock.algorithm, checksum: source.lock.checksum, contentDigest: source.lock.contentDigest, ref: source.lock.ref }); } });
+
+// --- Catalogue export -------------------------------------------------------
+const setupDocument = (body: string, extra = "") =>
+  `---\nname: demo\nprovider: demo-setup\n${extra}summary: A demo setup\nprerequisites:\n  - A host\nupstreamLinks:\n  - label: Home\n    url: https://example.com/\n    purpose: official-setup\nattribution:\n  distributor: example.com\n  authorship:\n    _tag: AuthorUnknown\n    reason: none declared\n  licence:\n    _tag: LicenceUnknown\n    reason: none distributed\n---\n${body}`;
+Deno.test("export setup steps come from headed sections with soft-wrapped paragraphs", async () => {
+  const parsed = await Effect.runPromise(parseSetupDocument(setupDocument(
+    "\n## Install it\n\nRun the\ninstaller.\n\nThen restart.\n\n## Check it\n\nOpen the app.\n",
+    "opencodePlugin: demo-plugin\n",
+  )));
+  assert.equal(parsed.frontmatter.opencodePlugin, "demo-plugin");
+  assert.deepEqual(parsed.steps, [
+    { title: "Install it", detail: "Run the installer.\n\nThen restart." },
+    { title: "Check it", detail: "Open the app." },
+  ]);
+});
+Deno.test("export setup documents without steps or with stray prose are refused", async () => {
+  for (
+    const document of [
+      setupDocument("\n"),
+      setupDocument("Intro prose\n\n## Step\n\nDetail.\n"),
+      setupDocument("\n## Title only\n"),
+      "name: demo\n",
+      setupDocument("\n## Step\n\nDetail.\n", "unexpected: field\n").replace(
+        "provider: demo-setup\n",
+        "",
+      ),
+    ]
+  ) {
+    const result = await Effect.runPromise(
+      parseSetupDocument(document).pipe(Effect.result),
+    );
+    assert.equal(result._tag, "Failure");
+  }
+});
+Deno.test("export plugin check matches the package, its versions and tags only", () => {
+  assert.ok(pluginRegistered(["oh-my-openagent@beta"], "oh-my-openagent"));
+  assert.ok(pluginRegistered(["oh-my-openagent"], "oh-my-openagent"));
+  assert.ok(!pluginRegistered(["oh-my-openagent-extra"], "oh-my-openagent"));
+  assert.ok(!pluginRegistered(["/path/oh-my-openagent"], "oh-my-openagent"));
+  assert.ok(!pluginRegistered("oh-my-openagent", "oh-my-openagent"));
+  assert.ok(!pluginRegistered(undefined, "oh-my-openagent"));
+});
+Deno.test("export replaces only directories that hold a catalogue manifest", () => {
+  assert.ok(exportTargetOwned(JSON.stringify({ format: catalogueFormat })));
+  assert.ok(!exportTargetOwned(JSON.stringify({ format: "other/v1" })));
+  assert.ok(!exportTargetOwned("not json"));
+  assert.ok(!exportTargetOwned(null));
+});
+Deno.test("export output may not overlap protected roots in either direction", () => {
+  const roots = ["/home/u/.agents", "/home/u/dotfiles"];
+  assert.ok(outsideProtectedRoots("/home/u/viewer/managed", roots));
+  assert.ok(!outsideProtectedRoots("/home/u/.agents", roots));
+  assert.ok(!outsideProtectedRoots("/home/u/.agents/skills", roots));
+  assert.ok(!outsideProtectedRoots("/home/u", roots));
+  assert.ok(outsideProtectedRoots("/home/u/.agents-export", roots));
+});
+Deno.test("export expands lifecycle path placeholders and normalises file modes", () => {
+  assert.equal(
+    expandLifecyclePath("{homeDir}/store", "/home/u", "/repo"),
+    "/home/u/store",
+  );
+  assert.equal(
+    expandLifecyclePath("{chezmoiSourceDir}/x", "/home/u", "/repo"),
+    "/repo/home/x",
+  );
+  assert.equal(exportMode(0o600), "0644");
+  assert.equal(exportMode(0o700), "0755");
+});
+// deno-fmt-ignore
+const catalogueIntegration = [architectureCatalogPath, new URL("catalogue/", architectureRepoRoot)].every((path) => Deno.permissions.querySync({ name: "read", path }).state === "granted");
+Deno.test({
+  name:
+    "repository catalogue declares every exported provider and parses its setups",
+  ignore: !catalogueIntegration,
+  fn: async () => {
+    const read = (relative: string) =>
+      Deno.readTextFile(new URL(relative, architectureRepoRoot));
+    const lifecycle = Schema.decodeUnknownSync(LifecycleDefaults)(
+      parseYaml(await read("home/.chezmoidata/skill-lifecycle.yaml")),
+    );
+    const declared = Schema.decodeUnknownSync(CatalogueProviders)(
+      parseYaml(await read("catalogue/providers.yaml")),
+    ).providers;
+    const used = new Set(["authored"]);
+    for (
+      const [key, source] of Object.entries(
+        lifecycle.skillLifecycleDefaults.sources,
+      )
+    ) {
+      assert.ok(["repository", "archive"].includes(source.kind));
+      if (source.kind === "archive") used.add(source.id ?? key);
+    }
+    for await (
+      const entry of Deno.readDir(
+        new URL("catalogue/setups/", architectureRepoRoot),
+      )
+    ) {
+      if (!entry.name.endsWith(".md")) continue;
+      const setup = await Effect.runPromise(
+        parseSetupDocument(await read(`catalogue/setups/${entry.name}`)),
+      );
+      used.add(setup.frontmatter.provider);
+    }
+    assert.deepEqual([...used].toSorted(), Object.keys(declared).toSorted());
+    for (const [id, provider] of Object.entries(declared)) {
+      for (const notice of provider.notices ?? []) {
+        assert.ok((await read(`catalogue/notices/${id}/${notice}`)).length > 0);
+      }
+    }
+  },
+});
