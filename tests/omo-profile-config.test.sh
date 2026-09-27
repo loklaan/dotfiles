@@ -51,9 +51,9 @@ CLAUDEISH_CATEGORIES=$(cat <<'JSON'
   "ultrabrain": {"model": "openai/gpt-6-astra", "reasoning": "max"},
   "deep": {"model": "openai/gpt-6-astra", "reasoning": "high"},
   "quick": {"model": "openai/gpt-6-luna", "reasoning": "low"},
-  "visual-engineering": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "max"},
-  "artistry": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "max"},
-  "writing": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "low"}
+  "visual-engineering": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
+  "artistry": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
+  "writing": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "high"}
 }
 JSON
 )
@@ -63,8 +63,8 @@ CLAUDEISH_AGENTS=$(cat <<'JSON'
   "sisyphus": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "hephaestus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
   "oracle": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
-  "prometheus": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "xhigh"},
-  "metis": {"model": "amazon-bedrock/global.anthropic.claude-fable-5-1", "reasoning": "max"},
+  "prometheus": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
+  "metis": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
   "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
   "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},

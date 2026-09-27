@@ -160,16 +160,16 @@
                         "reasoning": "low"
                     },
                     "visual-engineering": {
-                        "model": "amazon-bedrock/global.anthropic.claude-fable-5-1",
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
                         "reasoning": "max"
                     },
                     "artistry": {
-                        "model": "amazon-bedrock/global.anthropic.claude-fable-5-1",
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
                         "reasoning": "max"
                     },
                     "writing": {
-                        "model": "amazon-bedrock/global.anthropic.claude-fable-5-1",
-                        "reasoning": "low"
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+                        "reasoning": "high"
                     }
                 },
                 "agents": {
@@ -186,11 +186,11 @@
                         "reasoning": "max"
                     },
                     "prometheus": {
-                        "model": "amazon-bedrock/global.anthropic.claude-fable-5-1",
-                        "reasoning": "xhigh"
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
+                        "reasoning": "max"
                     },
                     "metis": {
-                        "model": "amazon-bedrock/global.anthropic.claude-fable-5-1",
+                        "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
                         "reasoning": "max"
                     },
                     "momus": {
