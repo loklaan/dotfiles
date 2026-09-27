@@ -127,12 +127,13 @@ routes through `@canva/opencode-plugin-llmproxy`, with two modes:
 2. **A real model call succeeds** (the authoritative gate):
    `opencode run --model <provider/model> "reply with the single word: pong"`
    returns a response containing text (no auth/SigV4/token error).
-   - Use a **whitelisted** model ID in full form — the bedrock whitelist lives in
-     `home/private_dot_config/opencode/modify_opencode.json` (e.g.
-     `amazon-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0` is the cheap
-     option). A short/unlisted ID like `…/claude-haiku-4-5` returns an
-     `UnknownError` server-side error that is NOT an auth failure — don't
-     misread it as one.
+   - Use a **whitelisted** model ID in full form — the bedrock whitelist is the
+     work profile's `provider_block["amazon-bedrock"].whitelist` in
+     `home/.chezmoidata/profiles.json` (e.g.
+     `amazon-bedrock/global.anthropic.claude-sonnet-5` is a cheap option). A
+     short/unlisted ID like `…/anthropic.claude-sonnet-5` returns an
+     `UnknownError` server-side error followed by `Model not found … Did you
+     mean …?` — that is NOT an auth failure, don't misread it as one.
    - PASS: a coherent response (e.g. `pong`). A `401`/`403`/SigV4/`otter` token
      error is a FAIL with the error captured.
 3. **llmproxy plugin present** where expected:
