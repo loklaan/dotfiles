@@ -3,8 +3,8 @@
 `chezmoi apply` writes rendered templates into `$HOME`. Templates branch on
 `lookPath`, so an apply with a truncated `PATH` does not fail. It silently
 renders different, wrong files and installs them. tmux's `default-shell`
-collapses from `/opt/homebrew/bin/zsh` to `/bin/zsh`; every Deno shebang loses
-the tools missing from its `--allow-run=` allowlist.
+collapses from `/opt/homebrew/bin/zsh` to `/bin/zsh`, and every other
+`lookPath`-gated template renders a degraded variant.
 
 ## Permission
 

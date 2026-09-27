@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=chezmoi --allow-read --allow-write --allow-env
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-write --allow-env
 
 // df-omo-profile (Deno + Effect v4). Switches the oh-my-openagent (omo) cost
 // profile without a full `chezmoi apply`. Profiles trade model quality for token
@@ -85,25 +85,7 @@ const USAGE = `Usage:
 
 // Rendered in the DESCRIPTION block of `df-omo-profile --help`.
 const DESCRIPTION =
-  `Switches the oh-my-openagent (omo) cost profile without a full
-\`chezmoi apply\`. Profiles trade model quality for token cost while
-preserving each agent's personality family (Claude-likes stay
-Claude-likes, GPT stays GPT, Gemini stays Gemini).
-
-Single source of truth: a dotfiles-owned sidecar
-(~/.config/opencode/.omo-profile.json) holds \`profile\` (the active tier)
-and \`availableTiers\` (the valid names). Tier state lives outside OMO's
-config, whose strict schema rejects unknown keys. This tool reads and
-writes the sidecar directly.
-
-Mechanism: this tool writes \`profile\` in the sidecar, then runs a
-TARGETED \`chezmoi apply\` on just ~/.omo/omo.jsonc so the new models
-land immediately. The profile table is the source of truth in the chezmoi
-template; a later full \`chezmoi apply\` re-derives the same result — the
-switch survives.
-
-omo reads its config once per session, so START A NEW opencode SESSION
-for the switch to take effect.`;
+  "Show or switch the omo cost profile. Start a new opencode session after switching.";
 
 // --------------------------------------------------------------------------
 // Errors — one cause per error, structured, never information-hiding.

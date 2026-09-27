@@ -19,7 +19,7 @@
 // REQUIREMENTS: `resolveRepoRoot` carries `FileSystem` (it verifies the root is
 // a directory) and `ChildProcessSpawner` (the `chezmoi` and `git` probes).
 // Nothing runs at import, so importing this module under `deno test` stays
-// permission-free. Callers need --allow-run=chezmoi,git.
+// permission-free. Callers need unscoped --allow-run (it spawns chezmoi and git).
 //
 // Effect v4 import paths verified against effect@4.0.0-rc.117.
 

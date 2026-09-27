@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=ps,tmux --allow-read --allow-write --allow-env --allow-sys=uid
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-write --allow-env --allow-sys=uid
 
 // df-agent-state — survey and (gated) reap per-pane code-agent session state.
 //

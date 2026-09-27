@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run=coder,ssh,ssh-add,gpgconf,gpg,mise,jq,rsync,scp,du,/opt/homebrew/opt/ncurses/bin/infocmp --allow-net --allow-read --allow-write --allow-env --allow-sys=networkInterfaces,uid
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-write --allow-env --allow-sys=networkInterfaces,uid
 
 // cw — Coder Workspaces CLI (Deno + Effect v4). Public surface: the
 // subcommands (`connect`, `tmux`, `fleet`, `migrate`), the bare workspace

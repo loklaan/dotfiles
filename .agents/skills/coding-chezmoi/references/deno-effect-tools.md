@@ -35,14 +35,35 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
   `~/.local/share/mise/shims` on `PATH`, so `deno` still resolves to the
   mise-managed version without coupling global tools to the caller cwd's
   `.mise.toml` trust state.
-- **No wildcard `--allow-run`** — always explicit binary allowlists:
+- **A tool that spawns through `ChildProcessSpawner` takes unscoped
+  `--allow-run` plus `--no-prompt`:**
   ```bash
-  # WRONG
-  #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run
-
-  # RIGHT
-  #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run --allow-run=terminal-notifier,osascript,notify-send
+  #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-env
   ```
+  Effect's Node spawner starts every child in its own process group (`detached`
+  defaults to true off Windows) and manages that group with
+  `process.kill(-pgid, signal)`: SIGTERM then SIGKILL on interrupt or timeout, a
+  straggler sweep after a clean exit, a group SIGTERM after a failed exit. Deno
+  2.9.5 permits a negative-pid `process.kill` / `Deno.kill` ONLY under unscoped
+  `--allow-run`. A named allowlist, even one containing `kill`, denies it. The
+  spawner then falls back to killing only the direct child, so grandchildren are
+  orphaned. Because the child's group is not the terminal's foreground group,
+  terminal Ctrl-C never reaches them either.
+- **This does not widen the real trust boundary.** Per the
+  [Deno security model](https://docs.deno.com/runtime/fundamentals/security/),
+  any `--allow-run` bypasses the sandbox: a subprocess runs with the user's full
+  privileges, not the Deno grant. These tools also hold blanket `--allow-env`
+  and `--allow-read`, and often `--allow-write` over `$HOME`, where their
+  allowlisted binaries live. A named allowlist only limited which binaries they
+  launch directly. Treat every tool with `--allow-run` as `--allow-all` when you
+  review it.
+- `--no-prompt` keeps a missing grant a fast `NotCapable` failure. Without it,
+  an unattended run on a TTY hangs on a permission prompt.
+- Keep a scoped `--allow-run=<bins>` only for tools that never use
+  `ChildProcessSpawner`, such as `notify`, which uses raw `Deno.Command` with no
+  process-group management. `df-effect-v4-reference` is also exempt: it
+  relaunches itself with per-operation grants, so its narrow first-stage grant
+  is the design.
 - Deno version: **2.9.5** (pinned in
   `home/private_dot_config/mise/config.toml.tmpl`)
 - Minimal grants: only add permissions the tool actually uses
@@ -568,7 +589,8 @@ const myCommand = Command.make("my-tool", { repoRoot: repoRootFlag }, (
 - Precedence: `--repo-root` flag > `CHEZMOI_SOURCE_DIR` (chezmoi exports it for
   its own scripts) > `chezmoi source-path`.
 - Flag name is **`--repo-root`** everywhere, for one vocabulary across tools.
-- Shebang needs `--allow-run=chezmoi,git` (the resolver shells out to both).
+- Shebang needs unscoped `--allow-run` (the resolver spawns `chezmoi` and `git`
+  through `ChildProcessSpawner`; see §1).
 - Failure is a typed `SourceRootError`, never a silent cwd fallback.
 
 **`chezmoi source-path` is NOT the repo root.** `.chezmoiroot` sets the chezmoi
@@ -847,12 +869,12 @@ space-separated list for the format and lint commands.
 # .mise.toml
 [tasks."lint:runtimes"]
 description = "Check every runnable is in the runtime-tier manifest with matching lang"
-run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes"
+run = "deno run -q --no-prompt --allow-read --allow-env --allow-run home/private_dot_local/bin/executable_df-lint-runtimes"
 
 [tasks."lint:list-deno"]
 description = "Print the manifest's deno runnables (space-separated)"
 hide = true
-run = "deno run -q --allow-read --allow-env --allow-ffi --allow-run=chezmoi,git home/private_dot_local/bin/executable_df-lint-runtimes list-deno"
+run = "deno run -q --no-prompt --allow-read --allow-env --allow-run home/private_dot_local/bin/executable_df-lint-runtimes list-deno"
 
 [tasks."lint:tmpl"]
 description = "Type-check and lint the templated deno tools via a chezmoi render"
@@ -970,7 +992,7 @@ import {
 ```
 
 **Permissions**: a command using the default `extendEnv: true` needs blanket
-`--allow-env` alongside its `--allow-run=<cmd>` grants. For Effect
+`--allow-env` alongside the unscoped `--allow-run` that §1 requires. For Effect
 `4.0.0-rc.117`, a command with `extendEnv: false` and an explicit `env` record
 can use named grants when the tool has no other environment enumeration, as
 `df-opencode-cost` proves. They do NOT need `--allow-ffi` (§4e).

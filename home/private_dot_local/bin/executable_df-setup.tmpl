@@ -1,4 +1,4 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --allow-run=tput,{{ .chezmoi.homeDir }}/.local/bin/df-effect-v4-reference,{{ .chezmoi.homeDir }}/.local/bin/df-skills{{ if lookPath "bws" }},bws{{ end }}{{ if lookPath "mise" }},mise{{ end }}{{ if lookPath "pitchfork" }},pitchfork{{ end }}{{ if lookPath "curl" }},curl{{ end }}{{ if lookPath "gh" }},gh{{ end }}{{ if lookPath "chezmoi" }},chezmoi{{ end }}{{ if lookPath "hostname" }},hostname{{ end }}{{ if lookPath "pgrep" }},pgrep{{ end }} --allow-read --allow-env
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-env
 
 // deno-fmt-ignore-file
 // df-setup — dotfiles health-check doctor (Deno + Effect v4).
