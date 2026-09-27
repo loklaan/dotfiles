@@ -13,16 +13,17 @@ setup_session_logging "$(basename "$0")" "opencode2"
 #/   run_after_install-071-opencode2.sh
 #/
 #/ Description:
-#/   Installs and refreshes the OpenCode 2 beta CLI (`opencode2`) into a private
-#/   npm prefix that only the ~/.local/bin/opencode2 wrapper reads.
+#/   Installs and refreshes the OpenCode 2 CLI (`opencode2`) into a private npm
+#/   prefix that only the ~/.local/bin/opencode2 wrapper reads.
 #/
 #/   OpenCode 2 is a SEPARATE binary from OpenCode 1 and is designed to run
-#/   alongside it (https://opencode.ai/v2/docs/migrate-v1). It is published as
-#/   @opencode-ai/cli on the `beta` dist-tag. mise cannot manage it: mise's npm
-#/   backend resolves `latest` to the 1.18.x line (OpenCode 1's package) and its
-#/   ls-remote does not list the 0.0.0-beta-* builds at all, so a mise [tools]
-#/   entry would install the wrong package. We install it here instead, tracking
-#/   the `beta` tag rather than pinning, because the beta ships near-daily.
+#/   alongside it (https://opencode.ai/v2/docs/migrate-v1). Stable 2.x releases
+#/   are published as @opencode/cli on the `latest` dist-tag. The earlier beta
+#/   package (@opencode-ai/cli, 0.0.0-beta-*) is superseded: the Canva work
+#/   plugin requires @opencode/plugin ^2.0.18 and refuses to load on a beta host,
+#/   which also leaves a running service with stale Bedrock credentials. An
+#/   existing beta install is migrated: its service is stopped, the session
+#/   database is backed up to opencode2.db.pre-stable, and the package removed.
 #/
 #/   Installing into a private prefix (not a mise shim, not a global npm prefix)
 #/   is load-bearing: mise shims sit AHEAD of ~/.local/bin on $PATH, so a shim
@@ -43,10 +44,12 @@ setup_session_logging "$(basename "$0")" "opencode2"
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
 
-readonly PACKAGE="@opencode-ai/cli"
-readonly DIST_TAG="beta"
+readonly PACKAGE="@opencode/cli"
+readonly DIST_TAG="latest"
+readonly LEGACY_PACKAGE="@opencode-ai/cli"
 readonly PREFIX="${HOME}/.local/share/opencode2"
-readonly PACKAGE_JSON="${PREFIX}/lib/node_modules/@opencode-ai/cli/package.json"
+readonly PACKAGE_JSON="${PREFIX}/lib/node_modules/${PACKAGE}/package.json"
+readonly DATABASE="${HOME}/.local/share/opencode/opencode2.db"
 
 parse_args() {
   while [ "$#" -gt 0 ]; do
@@ -70,9 +73,9 @@ installed_version() {
 }
 
 # The platform binary lives in an optionalDependency; postinstall.mjs copies it
-# over the stub at bin/opencode2.exe. Without it the wrapper execs a stub.
+# over the stub in bin/. Without it the wrapper execs a stub.
 select_platform_binary() {
-  local package_dir="${PREFIX}/lib/node_modules/@opencode-ai/cli"
+  local package_dir="${PREFIX}/lib/node_modules/${PACKAGE}"
 
   if [ ! -f "${package_dir}/postinstall.mjs" ]; then
     log_warn "postinstall.mjs missing — platform binary not selected (opencode2 may not run)"
@@ -92,9 +95,10 @@ select_platform_binary() {
 # Stopping it is the fix — the next client launch starts a fresh one.
 #
 # Bounded and best-effort because this runs inside `chezmoi apply`. The pkill
-# pattern is the full install path so a V1 `opencode` process can never match.
+# pattern is the full install path so a V1 `opencode` process can never match;
+# it covers both the stable and the legacy beta package layouts.
 stop_stale_service() {
-  local pattern="${PREFIX}/lib/node_modules/@opencode-ai/cli/bin/opencode2.exe"
+  local pattern="${PREFIX}/lib/node_modules/@opencode(-ai)?/cli/bin/opencode2?\.exe"
 
   pgrep -f "$pattern" >/dev/null 2>&1 || return 0
 
@@ -115,6 +119,27 @@ stop_stale_service() {
   log_detail "Stopped previous background service"
 }
 
+# One-time move off the beta package: stop its service before touching the
+# database, keep a copy of the database, then remove the package so its
+# `opencode2` bin link does not collide with the stable package's.
+migrate_legacy_beta() {
+  [ -d "${PREFIX}/lib/node_modules/${LEGACY_PACKAGE}" ] || return 0
+
+  stop_stale_service
+
+  if [ -f "$DATABASE" ] && [ ! -e "${DATABASE}.pre-stable" ]; then
+    local suffix
+    for suffix in "" "-wal" "-shm"; do
+      [ -f "${DATABASE}${suffix}" ] && cp -p "${DATABASE}${suffix}" "${DATABASE}.pre-stable${suffix}"
+    done
+    log_detail "Backed up OpenCode 2 beta database to ${DATABASE}.pre-stable"
+  fi
+
+  npm uninstall --global --prefix "$PREFIX" --no-audit --no-fund --loglevel=error \
+    "$LEGACY_PACKAGE" >/dev/null 2>&1 || log_warn "Could not remove ${LEGACY_PACKAGE}"
+  log_detail "Removed legacy ${LEGACY_PACKAGE} beta"
+}
+
 main() {
   parse_args "$@"
 
@@ -122,7 +147,7 @@ main() {
     return 0
   fi
 
-  log_step "Updating OpenCode 2 beta CLI"
+  log_step "Updating OpenCode 2 CLI"
 
   local available
   available=$(npm view "${PACKAGE}@${DIST_TAG}" version 2>/dev/null || true)
@@ -147,6 +172,7 @@ main() {
   fi
 
   mkdir -p "$PREFIX"
+  migrate_legacy_beta
 
   if ! npm install --global --prefix "$PREFIX" --ignore-scripts \
     --no-audit --no-fund --loglevel=error "${PACKAGE}@${available}" >/dev/null 2>&1; then

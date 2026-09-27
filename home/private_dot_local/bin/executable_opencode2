@@ -12,7 +12,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 #/   opencode2 [<opencode2 args>...]
 #/
 #/ Description:
-#/   Transparent wrapper around the OpenCode 2 beta CLI that keeps its state
+#/   Transparent wrapper around the OpenCode 2 CLI that keeps its state
 #/   fully separate from OpenCode 1. All arguments are forwarded untouched.
 #/
 #/   Separation is required because OpenCode 2 deliberately reads OpenCode 1's
