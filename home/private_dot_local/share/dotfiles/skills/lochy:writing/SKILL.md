@@ -43,9 +43,9 @@ For Slack DMs, help channel replies, stakeholder updates, and thread responses. 
 
 ### Pull Request Descriptions
 
-For GitHub PR descriptions — feature work, bug fixes, hookups, and operational changes. See [pull-requests.md](references/pull-requests.md) for structure, calibration rules, and examples.
+For GitHub PR titles and descriptions — feature work, bug fixes, hookups, and operational changes. See [pull-requests.md](references/pull-requests.md) for gathering, titles, structure, rules, calibration, and examples.
 
-**Tone shift:** slightly more casual than Slack comms. Self-deprecating, honest about unknowns, concise. Opens with "Hey folks," (or variant), leads with *what* and *why*, never *how*.
+**Tone shift:** slightly more casual than Slack comms. Self-deprecating, honest about unknowns, concise. Opens with "Hey folks, this ..." (or variant), leads with *what* and *why*, then only the decisions a reviewer can't get from the diff. Draft only — never create or edit the PR unless asked.
 
 ### Documentation & Long-form
 
