@@ -175,11 +175,13 @@ chezmoi files, Git sources are chezmoi externals at locked revisions, and archiv
 sources are exact checksum-pinned raw inputs. `df-skills` does not fetch or reset
 those sources and never recursively invokes chezmoi from an apply hook.
 
-`df-skills` reconciles the resolved manifest after materialization. It owns only
-the child links and derived archive trees recorded in its private mode-0600
-receipt. `~/.agents/skills` remains a physical mixed-owner directory; unknown
-siblings and changed foreign links are preserved. A desired collision is an
-actionable boundary, not permission to claim the whole registry.
+`df-skills` reconciles the resolved manifest after materialization. The
+registry is authoritative: `~/.agents/skills` converges to exactly the declared
+child links, recorded with the derived archive trees in a private mode-0600
+receipt, and undeclared children are removed without following links. Claude
+Code's own `synced` and `.trash` children, where it keeps the skills it
+downloads from claude.ai through `~/.claude/skills`, are the exception:
+reconciliation leaves them alone and a manifest cannot claim them.
 
 Provider filesystem targets stay in their native storage and are never copied
 or deleted. Command providers and workflow packs have no filesystem projection.

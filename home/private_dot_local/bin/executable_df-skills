@@ -149,6 +149,11 @@ const Archive = Struct({
 }, ({ input, target }) =>
   input !== target && !input.startsWith(`${target}/`) &&
   !target.startsWith(`${input}/`));
+// ~/.claude/skills is this registry. Claude Code downloads the skills enabled
+// on claude.ai into its `synced` child and retires them through `.trash`, so
+// those children are Claude Code's: reconciliation never removes them and a
+// manifest cannot claim them.
+const claudeCodeChildren = new Set(["synced", ".trash"]);
 export const Manifest = Struct({
   schema: Tag(2),
   registry: Struct({ ownership: Tag("authoritative") }),
@@ -158,7 +163,10 @@ export const Manifest = Struct({
 }, ({ providers, links, archives }) =>
   unique(providers.map(({ id }) => id)) &&
   unique([...links, ...archives, ...providers.flatMap(({ items }) => items)]
-    .map(({ id }) => id)));
+    .map(({ id }) => id)) &&
+  ![...links, ...archives].some(({ id }) =>
+    claudeCodeChildren.has(id.toLowerCase())
+  ));
 export type Manifest = typeof Manifest.Type;
 const empty: Manifest = {
   schema: 2,
@@ -2281,7 +2289,8 @@ const reconcileFiles = (locations: Locations) =>
       else statuses[id] = issue([result.failure.error, result.failure.message]);
     }
     const desiredById = new Map(desired.map((entry) => [entry.id, entry]));
-    const names = liveNames.toSorted();
+    const names = liveNames.filter((name) => !claudeCodeChildren.has(name))
+      .toSorted();
     for (const name of names) {
       const live = yield* registryEntry(locations.skillsPath, name, names);
       if (live === null) continue;
@@ -2691,7 +2700,9 @@ function* inspectState(active: Active, locations: Locations) {
       : (yield* fs.readDirectory(locations.skillsPath)).toSorted();
     const desiredIds = new Set(files.map((entry) => entry.id));
     for (const name of names) {
-      if (!desiredIds.has(name)) links.removes.push(name);
+      if (!desiredIds.has(name) && !claudeCodeChildren.has(name)) {
+        links.removes.push(name);
+      }
     }
     for (const { id, desired, owned } of linkItems) {
       if (registryChecks.has(id)) continue;
@@ -3913,6 +3924,8 @@ const manifestCases: ReadonlyArray<readonly [string, unknown]> = [
   ["archives.0.target", "/inputs/archive/derived"],
   ["archives.0.lock.checksum", "no"],
   ["archives.0.lock.checksum", hash + "\n"],
+  ["links.1.id", "synced"],
+  ["archives.0.id", "Synced"],
 ];
 const receiptCases: readonly [string, unknown][] = [
   ["schema", 0],
@@ -5322,6 +5335,35 @@ Deno.test({
       );
       assert.deepEqual(result.plan.links.removes, ["unknown"]);
       assert.equal((await Deno.lstat(unknown)).isDirectory, true);
+    });
+  },
+});
+Deno.test({
+  name: "authoritative registry leaves Claude Code's synced and trashed skills",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(async ({ locations, reconcile, run }) => {
+      const synced = `${locations.skillsPath}/synced/bucket/skill`;
+      await Deno.mkdir(synced, { recursive: true });
+      await Deno.writeTextFile(
+        `${synced}/SKILL.md`,
+        "---\nname: skill\ndescription: synced\n---\n",
+      );
+      await Deno.mkdir(`${locations.skillsPath}/.trash`);
+
+      await reconcile();
+
+      assert.deepEqual(await directoryNames(locations.skillsPath), [
+        ".trash",
+        "desired",
+        "synced",
+      ]);
+      const active = await run(Effect.gen(() => loadActive(locations)));
+      const result = await run(
+        Effect.gen(() => inspectState(active, locations)),
+      );
+      assert.deepEqual(result.plan.links.removes, []);
+      assert.equal(result.observation.healthy, true);
     });
   },
 });
