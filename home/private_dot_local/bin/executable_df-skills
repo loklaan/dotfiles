@@ -1393,6 +1393,57 @@ export const packageArchiveName = (logical: string) => {
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return safe && safe.length <= 64 ? `${safe}.zip` : null;
 };
+// Claude Desktop and claude.ai refuse a skill upload whose SKILL.md
+// frontmatter holds any other key. The set was found by trial against the
+// importer and matches the Agent Skills specification. The name rules
+// (lowercase letters, digits and hyphens, no reserved "claude") are
+// packageArchiveName's.
+const claudeFrontmatterKeys = new Set([
+  "name",
+  "description",
+  "license",
+  "allowed-tools",
+  "compatibility",
+  "metadata",
+]);
+// Renames the skill to its pack name and drops every other top-level key,
+// together with the indented or sequence lines that continue it. The result
+// must parse to accepted keys only, so an unusual layout fails the pack
+// instead of reaching Claude.
+export const claudeFrontmatter = Effect.fn(function* (
+  text: string,
+  from: string,
+  to: string,
+) {
+  const renamed = yield* renameFrontmatter(text, from, to);
+  const { closing } = yield* parseSkill(renamed);
+  const kept: string[] = [];
+  let keep = true;
+  for (const line of renamed.slice(4, closing).split("\n")) {
+    const key = /^([A-Za-z0-9_][A-Za-z0-9_.-]*)[ \t]*:(?:[ \t]|$)/.exec(line)
+      ?.[1];
+    if (key !== undefined) keep = claudeFrontmatterKeys.has(key);
+    if (keep) kept.push(line);
+  }
+  const projected = `---\n${kept.join("\n")}${renamed.slice(closing)}`;
+  const metadata = yield* parseSkill(projected);
+  const fields: unknown = yield* Effect.try({
+    try: () => parseYaml(projected.slice(4, metadata.closing)),
+    catch: (cause) => fault("PackageInvalid", "packages", cause),
+  });
+  if (
+    metadata.name !== to || typeof fields !== "object" || fields === null ||
+    !Object.keys(fields).every((key) => claudeFrontmatterKeys.has(key))
+  ) return yield* fault("PackageInvalid", "packages");
+  return projected;
+});
+// A pack's receipt digest covers its source content and this projection
+// revision. Bump the revision whenever claudeFrontmatter or the pack layout
+// changes: packs an earlier revision built then stop matching their receipt
+// and are replaced. Revision 1 receipts recorded the bare source digest.
+const claudePackProjection = 2;
+const packageContentDigest = (ownershipDigest: string) =>
+  digestBytes(JSON.stringify([claudePackProjection, ownershipDigest]));
 export const packageArchiveOwned = (
   packageDir: string,
   id: string,
@@ -1827,6 +1878,58 @@ const inspectFileEntry = Effect.fn(function* (entry: FileEntry) {
   return "input" in entry
     ? yield* prepareArchive(entry)
     : yield* inspectLinkTarget(entry);
+});
+// One verified skill as finished files: what `export` writes into a catalogue
+// and what `package` zips into a Claude pack. Every file is read at the path
+// and mode its snapshot recorded and must still match the recorded digest, so
+// both outputs are exactly the verified content. Archive skills are read from
+// their lock-verified input, with the transformed SKILL.md.
+type ExportFile = {
+  readonly path: string;
+  readonly sha256: string;
+  readonly mode: "0644" | "0755";
+  readonly bytes: number;
+};
+type Staged = ExportFile & { readonly content: Uint8Array };
+export const exportMode = (mode: number): ExportFile["mode"] =>
+  mode & 0o111 ? "0755" : "0644";
+const stagedFile = Effect.fn(function* (
+  path: string,
+  content: Uint8Array,
+  mode: number,
+) {
+  return {
+    path,
+    content,
+    sha256: yield* digestBytes(content),
+    mode: exportMode(mode),
+    bytes: content.length,
+  } satisfies Staged;
+});
+const exportedFiles = Effect.fn(function* (
+  prepared: Prepared,
+  boundary: string,
+) {
+  const fs = yield* FileSystem;
+  const path = yield* PathService;
+  const { entry, frontmatter, snapshot } = prepared;
+  const root = "input" in entry ? entry.input : entry.target;
+  const files: Staged[] = [];
+  for (const item of snapshot.entries) {
+    if (item.kind !== "file") continue;
+    const content = item.relative === "SKILL.md" && frontmatter !== undefined
+      ? new TextEncoder().encode(frontmatter)
+      : yield* fs.readFile(path.join(root, item.relative));
+    const file = yield* stagedFile(item.relative, content, item.mode);
+    if (file.sha256 !== item.digest) {
+      return yield* fault([
+        "SourceChanged",
+        `${root} changed while it was being read; retry`,
+      ], boundary);
+    }
+    files.push(file);
+  }
+  return files;
 });
 type LinkOwnership = typeof LinkReceipt.Type;
 const publicationOwnership = (prepared: Prepared): LinkOwnership =>
@@ -2296,6 +2399,8 @@ type PackageBuild = Readonly<{
   archive: string;
   safe: string;
 }>;
+// A Claude pack holds the skill's exported files under its pack name, with the
+// Claude frontmatter projection, stored uncompressed with fixed timestamps.
 const buildPackage = Effect.fn(function* (
   packageDir: string,
   build: PackageBuild,
@@ -2303,55 +2408,39 @@ const buildPackage = Effect.fn(function* (
 ) {
   const fs = yield* FileSystem;
   const path = yield* PathService;
+  if (
+    !build.prepared.snapshot.entries.every(({ relative }) =>
+      relative === "." || packageEntryAllowed(relative)
+    )
+  ) return yield* fault("PackageInvalid", "packages");
+  const files = yield* exportedFiles(build.prepared, "packages");
+  const skill = files.find((file) => file.path === "SKILL.md");
+  if (skill === undefined) return yield* fault("SkillMissing", "packages");
+  const frontmatter = yield* claudeFrontmatter(
+    yield* decodeText(skill.content),
+    build.entry.id,
+    build.safe,
+  );
   const stage = yield* fs.makeTempDirectoryScoped({
     directory: packageDir,
     prefix: `.df-skills-package-${build.entry.id}-`,
   });
-  const root = path.join(stage, build.safe);
-  yield* fs.makeDirectory(root, { mode: 0o700 });
-  const touched = [root], files: string[] = [];
-  const projected = yield* renameFrontmatter(
-    yield* skillText(build.entry.target),
-    build.entry.id,
-    build.safe,
-  );
-  for (const item of build.prepared.snapshot.entries) {
-    if (item.relative === ".") continue;
-    if (!packageEntryAllowed(item.relative)) {
-      return yield* fault("PackageInvalid", "packages");
-    }
-    const output = path.join(root, item.relative);
-    touched.push(output);
-    if (item.kind === "directory") {
-      yield* fs.makeDirectory(output, { mode: 0o700 });
-      continue;
-    }
-    const input = path.join(build.entry.target, item.relative);
-    const bytes = yield* fs.readFile(input);
-    if ((yield* digestBytes(bytes)) !== item.digest) {
-      return yield* fault("SourceChanged", "packages");
-    }
+  const epoch = new Date(1980, 0, 1);
+  const members: string[] = [];
+  for (const file of files) {
+    const member = `${build.safe}/${file.path}`;
+    const output = path.join(stage, member);
+    yield* fs.makeDirectory(path.dirname(output), {
+      recursive: true,
+      mode: 0o700,
+    });
     yield* fs.writeFile(
       output,
-      item.relative === "SKILL.md"
-        ? new TextEncoder().encode(projected)
-        : bytes,
-      { flag: "wx", mode: 0o600 },
+      file === skill ? new TextEncoder().encode(frontmatter) : file.content,
+      { flag: "wx", mode: file.mode === "0755" ? 0o700 : 0o600 },
     );
-    files.push(`${build.safe}/${item.relative}`);
-  }
-  if (!files.includes(`${build.safe}/SKILL.md`)) {
-    return yield* fault("SkillMissing", "packages");
-  }
-  const after = yield* inspectFileEntry(build.entry);
-  if (
-    after.snapshot.ownershipDigest !== build.prepared.snapshot.ownershipDigest
-  ) {
-    return yield* fault("SourceChanged", "packages");
-  }
-  const epoch = new Date(1980, 0, 1);
-  for (const target of touched.reverse()) {
-    yield* fs.utimes(target, epoch, epoch);
+    yield* fs.utimes(output, epoch, epoch);
+    members.push(member);
   }
   const archive = path.join(stage, build.archive);
   const command = (argv: [string, ...string[]]) => ({
@@ -2368,7 +2457,7 @@ const buildPackage = Effect.fn(function* (
       "-0",
       "-MM",
       archive,
-      ...files.toSorted(),
+      ...members.toSorted(),
     ]),
     "packages",
     stage,
@@ -2386,14 +2475,12 @@ const buildPackage = Effect.fn(function* (
     "packages",
     stage,
   );
-  const metadata = yield* parseSkill(
-    yield* execute(
-      command([tools.unzip, "-p", archive, `${build.safe}/SKILL.md`]),
-      "packages",
-      stage,
-    ),
+  const zipped = yield* execute(
+    command([tools.unzip, "-p", archive, `${build.safe}/SKILL.md`]),
+    "packages",
+    stage,
   );
-  if (metadata.name !== build.safe) {
+  if (zipped !== frontmatter) {
     return yield* fault("PackageInvalid", "packages");
   }
   const info = yield* physical(archive, "File");
@@ -2405,7 +2492,7 @@ const buildPackage = Effect.fn(function* (
     digest: yield* digestBytes(yield* fs.readFile(archive)),
   };
 });
-const reconcilePackages = (locations: Locations, headless = false) =>
+const reconcilePackages = (locations: Locations) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem;
     const path = yield* PathService;
@@ -2413,17 +2500,23 @@ const reconcilePackages = (locations: Locations, headless = false) =>
       recursive: true,
       mode: 0o700,
     });
-    yield* fs.makeDirectory(locations.packageDir, {
-      recursive: true,
-      mode: 0o700,
-    });
     yield* physical(locations.stateDir, "Directory", 0o700);
-    yield* physical(locations.packageDir, "Directory", 0o700);
+    // Created only when a pack is built, so a machine that packages nothing,
+    // such as Linux, never gains the directory.
+    let packageRoot = yield* physical(
+      locations.packageDir,
+      "Directory",
+      0o700,
+    );
     const lockPath = path.join(locations.stateDir, "operation.lock");
     yield* physical(lockPath, "File", 0o600);
     yield* (yield* OperationLock).acquire(lockPath);
     let recovered = false;
-    for (const name of yield* fs.readDirectory(locations.packageDir)) {
+    for (
+      const name of packageRoot === null
+        ? []
+        : yield* fs.readDirectory(locations.packageDir)
+    ) {
       if (!packageStageOwned(name)) continue;
       yield* physical(path.join(locations.packageDir, name), "Directory");
       yield* fs.remove(path.join(locations.packageDir, name), {
@@ -2494,7 +2587,9 @@ const reconcilePackages = (locations: Locations, headless = false) =>
       const live = liveEntry
         ? yield* digestBytes(yield* fs.readFile(liveEntry.target))
         : null;
-      const content = build.prepared.snapshot.ownershipDigest;
+      const content = yield* packageContentDigest(
+        build.prepared.snapshot.ownershipDigest,
+      );
       const action = packageAction(ownership, content, prior, live);
       if (action === "unchanged") continue;
       if (action !== "create" && action !== "replace") {
@@ -2505,6 +2600,13 @@ const reconcilePackages = (locations: Locations, headless = false) =>
           zip: (yield* resolveExecutable("zip", "packages")).path,
           unzip: (yield* resolveExecutable("unzip", "packages")).path,
         };
+      }
+      if (packageRoot === null) {
+        yield* fs.makeDirectory(locations.packageDir, {
+          recursive: true,
+          mode: 0o700,
+        });
+        packageRoot = yield* physical(locations.packageDir, "Directory", 0o700);
       }
       const staged = yield* buildPackage(locations.packageDir, build, tools);
       yield* fs.rename(staged.path, target);
@@ -2555,7 +2657,6 @@ const reconcilePackages = (locations: Locations, headless = false) =>
       changed: recovered || receiptChanged || packaged + removed > 0,
       packaged,
       removed,
-      headless,
     };
   }).pipe(Effect.scoped, guarded("packages"));
 function* inspectState(active: Active, locations: Locations) {
@@ -2709,16 +2810,18 @@ function* inspectState(active: Active, locations: Locations) {
         : null;
       const action = packageAction(
         ownership,
-        prepared.snapshot.ownershipDigest,
+        yield* packageContentDigest(prepared.snapshot.ownershipDigest),
         record,
         liveDigest,
       );
       if (action === "blocked") return issue("PackageChanged");
       packagePlan[packagePlanAction[action]].push(archive);
-      if (
-        action === "unchanged" &&
-        receipt.links[entry.id]?.contentDigest !== record?.contentDigest
-      ) return issue("PackageChanged");
+      const linked = receipt.links[entry.id];
+      const linkedPackage = linked &&
+        (yield* packageContentDigest(linked.contentDigest));
+      if (action === "unchanged" && linkedPackage !== record?.contentDigest) {
+        return issue("PackageChanged");
+      }
     }
     for (const entry of live) {
       if (!desiredArchives.has(entry.name)) {
@@ -2817,7 +2920,7 @@ function* inspectState(active: Active, locations: Locations) {
 // `chezmoi verify` confirms it matches the source, and archive skills only after
 // their acquisition matches the declared lock.
 export const catalogueFormat = "dotfiles-catalogue/v1";
-const version = "0.3.0";
+const version = "0.4.0";
 const LifecycleItem = Schema.Union([
   Id,
   Schema.Struct({ id: Id, directory: Schema.optional(Schema.String) }),
@@ -2871,13 +2974,6 @@ export const SetupFrontmatter = Schema.Struct({
     licence: JsonObject,
   }),
 });
-type ExportFile = {
-  readonly path: string;
-  readonly sha256: string;
-  readonly mode: "0644" | "0755";
-  readonly bytes: number;
-};
-type Staged = ExportFile & { readonly content: Uint8Array };
 const exportFault = (error: string, message: string, cause?: unknown) =>
   fault([error, message], "export", cause);
 export const expandLifecyclePath = (
@@ -2889,8 +2985,6 @@ export const expandLifecyclePath = (
     "{chezmoiSourceDir}",
     `${repoRoot}/home`,
   );
-export const exportMode = (mode: number): ExportFile["mode"] =>
-  mode & 0o111 ? "0755" : "0644";
 // A registered plugin names the package bare, with a version or dist-tag, or
 // as a local path; only the first two count as the package being registered.
 export const pluginRegistered = (plugins: unknown, name: string) =>
@@ -3000,45 +3094,6 @@ const tool = Effect.fn(function* (name: "chezmoi" | "git") {
 });
 const runTool = (argv: [string, ...string[]], timeoutSeconds = 60) =>
   execute({ argv, timeoutSeconds, maxOutputBytes: 1048576 }, "export");
-const stagedFile = Effect.fn(function* (
-  path: string,
-  content: Uint8Array,
-  mode: number,
-) {
-  return {
-    path,
-    content,
-    sha256: yield* digestBytes(content),
-    mode: exportMode(mode),
-    bytes: content.length,
-  } satisfies Staged;
-});
-// Files of a verified tree, optionally with a transformed SKILL.md. Bytes are
-// re-hashed against the snapshot so a tree changing mid-export is refused.
-const treeFiles = Effect.fn(function* (
-  root: string,
-  frontmatter?: string,
-) {
-  const fs = yield* FileSystem;
-  const path = yield* PathService;
-  const snapshot = yield* snapshotTree(root, frontmatter);
-  const files: Staged[] = [];
-  for (const entry of snapshot.entries) {
-    if (entry.kind !== "file") continue;
-    const content = entry.relative === "SKILL.md" && frontmatter !== undefined
-      ? new TextEncoder().encode(frontmatter)
-      : yield* fs.readFile(path.join(root, entry.relative));
-    const file = yield* stagedFile(entry.relative, content, entry.mode);
-    if (file.sha256 !== entry.digest) {
-      return yield* exportFault(
-        "SourceChanged",
-        `${root} changed while it was being exported; retry`,
-      );
-    }
-    files.push(file);
-  }
-  return files;
-});
 type ExportItem = {
   readonly kind: "skill" | "rule";
   readonly name: string;
@@ -3121,16 +3176,20 @@ const collectSkills = Effect.fn(function* (
           ? id
           : entry.directory ?? id;
         const target = directory === "." ? base : `${base}/${directory}`;
-        if ((yield* parseSkill(yield* skillText(target))).name !== id) {
-          return yield* fault("SkillInvalid", "export");
-        }
+        const prepared = yield* inspectFileEntry({
+          id,
+          target,
+          owner: "chezmoi",
+          source: { kind: "repository" },
+          package: false,
+        });
         verifyTargets.push(target);
         items.push({
           kind: "skill",
           name: id,
           provider: "authored",
           path: `skills/${id}`,
-          files: yield* treeFiles(target),
+          files: yield* exportedFiles(prepared, "export"),
           transforms: [],
         });
       }
@@ -3170,7 +3229,7 @@ const collectSkills = Effect.fn(function* (
         name: id,
         provider: sourceId,
         path: `skills/${id}`,
-        files: yield* treeFiles(archive.input, transformed),
+        files: yield* exportedFiles(prepared, "export"),
         transforms: yield* Effect.forEach(
           names,
           (transform) =>
@@ -3576,19 +3635,6 @@ const flags = {
   packageDir: Flag.String("package-dir").pipe(Flag.withDefault("")),
   reference: Flag.String("reference").pipe(Flag.withDefault("")),
 };
-export const graphicalPlatform = (
-  platform: string,
-  display: string,
-  wayland: string,
-) => platform !== "linux" || Boolean(display || wayland);
-const graphical = Effect.all([
-  Config.String("DISPLAY").pipe(Config.withDefault("")),
-  Config.String("WAYLAND_DISPLAY").pipe(Config.withDefault("")),
-]).pipe(
-  Effect.map(([display, wayland]) =>
-    graphicalPlatform(Deno.build.os, display, wayland)
-  ),
-);
 const run = (command: string, input: Locations) =>
   Effect.gen(function* () {
     const home = input.manifest && input.stateDir && input.skillsPath
@@ -3611,7 +3657,6 @@ const run = (command: string, input: Locations) =>
     };
     yield* validateLocations(locations).pipe(guarded("config"));
     const active = yield* loadActive(locations);
-    const headless = command === "package" && !(yield* graphical);
     const workerCode = yield* permissionGate(
       active,
       command === "package",
@@ -3622,7 +3667,7 @@ const run = (command: string, input: Locations) =>
       return;
     }
     if (command === "package") {
-      const result = yield* reconcilePackages(locations, headless);
+      const result = yield* reconcilePackages(locations);
       yield* Console.log(JSON.stringify(result));
       Deno.exitCode = 0;
       return;
@@ -4413,10 +4458,59 @@ Deno.test("package content rejects sensitive, VCS, escaping, and colliding entri
     false,
   );
 });
-Deno.test("sanitized package names and headless policy are explicit", () => {
+Deno.test("sanitized package names treat separators alike", () => {
   assert.equal(packageArchiveName("a:b"), packageArchiveName("a-b"));
-  assert.equal(graphicalPlatform("linux", "", ""), false);
-  assert.equal(graphicalPlatform("linux", ":0", ""), true);
+});
+Deno.test("claude pack frontmatter keeps only the keys Claude accepts", async () => {
+  const source = [
+    "---",
+    "name: lochy:demo",
+    "description: >-",
+    "  Demo skill: folded",
+    "  across lines.",
+    "disable-model-invocation: true",
+    "attribution:",
+    "  - https://example.invalid/a",
+    "context: fork",
+    "allowed-tools:",
+    "- Bash(git:*)",
+    "- Read",
+    "metadata:",
+    "  author: example",
+    "model: haiku",
+    "---",
+    "# Demo",
+    "",
+  ].join("\n");
+  assert.equal(
+    await Effect.runPromise(claudeFrontmatter(source, "lochy:demo", "demo")),
+    [
+      "---",
+      "name: demo",
+      "description: >-",
+      "  Demo skill: folded",
+      "  across lines.",
+      "allowed-tools:",
+      "- Bash(git:*)",
+      "- Read",
+      "metadata:",
+      "  author: example",
+      "---",
+      "# Demo",
+      "",
+    ].join("\n"),
+  );
+  for (
+    const [text, from] of [
+      [source, "lochy:other"],
+      ['---\nname: lochy:demo\n"attribution": quoted\n---\n', "lochy:demo"],
+    ]
+  ) {
+    const result = await Effect.runPromise(
+      claudeFrontmatter(text, from, "demo").pipe(Effect.result),
+    );
+    assert.equal(result._tag, "Failure");
+  }
 });
 Deno.test("reconcile exit permits explicit expected package drift only", () => {
   const healthy = { healthy: true, error: null, message: null };
@@ -4474,7 +4568,6 @@ type PackageResult = Readonly<{
   changed: boolean;
   packaged: number;
   removed: number;
-  headless: boolean;
 }>;
 type PackageInspection = Readonly<{
   plan: Readonly<{ packages: PackagePlan }>;
@@ -4487,7 +4580,6 @@ type RegistryFixtureContext = Readonly<{
   locations: Locations;
   inspect: () => Promise<PackageInspection>;
   package: () => Promise<PackageResult>;
-  packageHeadless: () => Promise<PackageResult>;
   packageResult: () => Promise<Result.Result<PackageResult, BoundaryCause>>;
   reconcile: () => Promise<unknown>;
   reconcileResult: () => Promise<Result.Result<unknown, BoundaryCause>>;
@@ -4567,7 +4659,6 @@ const withRegistryFixture = async (
           return yield* inspectState(active, locations);
         })),
       package: () => run(reconcilePackages(locations)),
-      packageHeadless: () => run(reconcilePackages(locations, true)),
       packageResult: () =>
         run(reconcilePackages(locations).pipe(Effect.result)),
       reconcile: () => run(reconcileFiles(locations)),
@@ -4614,8 +4705,27 @@ Deno.test({
   },
 });
 Deno.test({
+  name: "packaging with nothing to package leaves no package directory behind",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async ({ inspect, locations, package: packageSkills, reconcile }) => {
+        await reconcile();
+
+        const result = await packageSkills();
+
+        assert.deepEqual(result, { changed: false, packaged: 0, removed: 0 });
+        await assert.rejects(() => Deno.lstat(locations.packageDir));
+        const observed = await inspect();
+        assert.equal(observed.observation.packages.healthy, null);
+        assert.equal(observed.observation.healthy, true);
+      },
+    );
+  },
+});
+Deno.test({
   name:
-    "authoritative packages create on headless hosts and report unchanged on reapply",
+    "authoritative packages create their directory and report unchanged on reapply",
   ignore: !filesystemIntegration,
   fn: async () => {
     await withRegistryFixture(
@@ -4624,7 +4734,6 @@ Deno.test({
           inspect,
           locations,
           package: packageSkills,
-          packageHeadless,
           reconcile,
           writeManifest,
         },
@@ -4640,14 +4749,13 @@ Deno.test({
         });
         await assert.rejects(() => Deno.lstat(locations.packageDir));
 
-        const created = await packageHeadless();
+        const created = await packageSkills();
         const archive = `${locations.packageDir}/desired.zip`;
         const first = await Deno.lstat(archive);
         assert.deepEqual(created, {
           changed: true,
           packaged: 1,
           removed: 0,
-          headless: true,
         });
         const observed = await inspect();
         assert.deepEqual(observed.plan.packages, {
@@ -4664,7 +4772,6 @@ Deno.test({
           changed: false,
           packaged: 0,
           removed: 0,
-          headless: false,
         });
         assert.equal(second.ino, first.ino);
         assert.deepEqual(await directoryNames(locations.packageDir), [
@@ -4714,7 +4821,6 @@ Deno.test({
           changed: true,
           packaged: 1,
           removed: 0,
-          headless: false,
         });
         assert.notEqual(published.ino, changed.ino);
         const receipt = JSON.parse(
@@ -4773,6 +4879,63 @@ Deno.test({
   },
 });
 Deno.test({
+  name:
+    "claude packs zip the projected SKILL.md and replace packs of an earlier projection",
+  ignore: !filesystemIntegration,
+  fn: async () => {
+    await withRegistryFixture(
+      async (
+        {
+          inspect,
+          locations,
+          package: packageSkills,
+          reconcile,
+          run,
+          writeManifest,
+        },
+      ) => {
+        await Deno.writeTextFile(
+          `${locations.stateDir}/source/SKILL.md`,
+          "---\nname: desired\ndescription: fixture\nattribution:\n  - https://example.invalid\n---\n",
+        );
+        await writeManifest([fixtureLink(locations, true)]);
+        await reconcile();
+        await packageSkills();
+        const unzip = await run(resolveExecutable("unzip", "packages"));
+        assert.equal(
+          await run(execute({
+            argv: [
+              unzip.path,
+              "-p",
+              `${locations.packageDir}/desired.zip`,
+              "desired/SKILL.md",
+            ],
+            timeoutSeconds: 30,
+            maxOutputBytes: 4096,
+          }, "packages")),
+          "---\nname: desired\ndescription: fixture\n---\n",
+        );
+        const receipt = Schema.decodeUnknownSync(Receipt)(JSON.parse(
+          await Deno.readTextFile(`${locations.stateDir}/receipt.json`),
+        ));
+        await run(writeReceipt(locations.stateDir, {
+          ...receipt,
+          packages: {
+            desired: {
+              ...receipt.packages.desired,
+              contentDigest: receipt.links.desired.contentDigest,
+            },
+          },
+        }));
+        assert.deepEqual((await inspect()).plan.packages.replaces, [
+          "desired.zip",
+        ]);
+        assert.equal((await packageSkills()).packaged, 1);
+      },
+    );
+  },
+});
+Deno.test({
   name: "authoritative packages remove stale unreceipted archives",
   ignore: !filesystemIntegration,
   fn: async () => {
@@ -4824,13 +4987,11 @@ Deno.test({
           changed: true,
           packaged: 0,
           removed: 1,
-          headless: false,
         });
         assert.deepEqual(reapplied, {
           changed: false,
           packaged: 0,
           removed: 0,
-          headless: false,
         });
         await assert.rejects(() => Deno.lstat(archive));
         const receipt = JSON.parse(

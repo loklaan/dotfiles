@@ -16,7 +16,12 @@ setup_session_logging "$(basename "$0")" "skills"
 #/   run_after_install-070-pack-claude-skills.sh [OPTIONS]
 #/
 #/ Description:
-#/   Packages eligible canonical skills for Claude Desktop.
+#/   Packages eligible canonical skills as Claude Desktop ZIPs in
+#/   ~/.cache/claude-skill-packs, then observes skill health. Packs are built
+#/   only on macOS: Linux resolves every skill unpackaged, so this removes
+#/   packs an earlier apply built. When packs are created or replaced, opens
+#/   the directory in Finder so the new packs can be dragged into Claude
+#/   Desktop.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -41,10 +46,22 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Opens the pack directory in Finder so new packs can be dragged into Claude
+# Desktop. Packs exist only on macOS, and they are already in place, so a
+# failed open only warns.
+reveal_packages() {
+  local dir="$1"
+  [ "$(uname -s)" = "Darwin" ] || return 0
+  if ! open "$dir" >/dev/null 2>&1; then
+    log_warn "Could not open ${dir} in Finder"
+  fi
+}
+
 main() {
   bl_parse_help "$@"
 
   local manifest="$HOME/.config/dotfiles/skill-lifecycle.json"
+  local package_dir="$HOME/.cache/claude-skill-packs"
   if [ ! -f "$manifest" ]; then
     log_skip "Skill packaging is disabled because no manifest was projected"
     return 0
@@ -59,9 +76,9 @@ main() {
   package_stdout_file="$(mktemp "${TMPDIR}/df-skills-package-json.XXXXXX")"
   observe_stdout_file="$(mktemp "${TMPDIR}/df-skills-observe-json.XXXXXX")"
 
-  package_raw="$(df-skills package --manifest "$manifest" 2>"$package_stderr_file")" || package_status=$?
+  package_raw="$(df-skills package --manifest "$manifest" --package-dir "$package_dir" 2>"$package_stderr_file")" || package_status=$?
   printf '%s\n' "$package_raw" > "$package_stdout_file"
-  observe_raw="$(df-skills observe --manifest "$manifest" 2>"$observe_stderr_file")" || observe_status=$?
+  observe_raw="$(df-skills observe --manifest "$manifest" --package-dir "$package_dir" 2>"$observe_stderr_file")" || observe_status=$?
   printf '%s\n' "$observe_raw" > "$observe_stdout_file"
   if [ -n "${BASH_LOGGING_FILE:-}" ]; then
     cat "$package_stdout_file" "$package_stderr_file" "$observe_stdout_file" "$observe_stderr_file" >> "$BASH_LOGGING_FILE"
@@ -75,6 +92,10 @@ main() {
       log_skip "Packages unchanged"
     else
       log_ok "Packages updated: $(printf '%s' "$package_raw" | jq -er '.packaged' 2>/dev/null) packaged, $(printf '%s' "$package_raw" | jq -er '.removed' 2>/dev/null) removed"
+      if printf '%s' "$package_raw" | jq -e '.packaged > 0' >/dev/null 2>&1; then
+        log_note "${package_dir}/"
+        reveal_packages "$package_dir"
+      fi
     fi
   else
     log_fail "Skill packaging failed (exit $package_status)"

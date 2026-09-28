@@ -73,7 +73,7 @@ Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it 
 - `install.test.sh` — E2E Docker test for clean-environment validation
 - `home/` — all managed files and directories
 - `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
-- `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, packaging, and catalogue export (`df-skills export --out <dir>`)
+- `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, packaging, and catalogue export (`df-skills export --out <dir>`); Claude pack ZIPs and the catalogue share one verified skill-file reader (`exportedFiles`)
 - `catalogue/` — repo-root publication facts that chezmoi never applies: `setups/*.md` (curated setup entries, checked against the rendered OpenCode plugin list), `providers.yaml` (label, upstream and permission basis per provider), and `notices/<provider>/` (licence texts that travel with that provider's items)
 - `home/private_dot_local/share/dotfiles/skills/` — repository/Git/archive skill store acquired or materialized by chezmoi; `df-skills` owns only receipt-recorded derived archive trees and individual links in the mixed `~/.agents/skills/` registry
 - `home/.chezmoitemplates/zshrc-body` — zsh entry point; `home/modify_private_dot_zshrc` renders it as a marked section so installer-appended lines survive and apply never prompts (same for `zprofile-body`)

@@ -157,7 +157,7 @@ home/
 
 ## Code Agent Adoption
 
-Claude Code and OpenCode share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`) symlinking into it. Skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
+Claude Code and OpenCode share a vendor-neutral set of rules and [Agent Skills](https://agentskills.io) under `~/.agents/`, with vendor-specific paths (`~/.claude/`, `~/.config/opencode/`) symlinking into it. On macOS, skills are auto-packed into zips for reuse in Claude Chat, and are designed to port cleanly across vendors.
 
 <p align="center">
   <picture>
@@ -231,7 +231,7 @@ Repository targets are content-hashed during observation; they do not acquire a
 remote. Each item is a string ID or a table with `id`, `directory`, and
 `package`; the boolean is deliberately asymmetric: every selected item gets an
 individual registry link, while only `package = true` enters the archive
-inventory.
+inventory, and only on macOS: Linux resolves every item unpackaged.
 Use `directory = "."` when the source root is itself the selected skill.
 
 For provider-native content, declare `kind = "filesystem"`, an absolute native
@@ -326,7 +326,9 @@ observe. Reconcile deliberately ignores expected package drift through its
 `reconcileHealthy` result so packaging still runs. Package failure remains
 nonzero but does not suppress final observe diagnostics. `df-setup` decodes the
 same observe envelope and reports one actionable source, provider, registry,
-package, ownership, or reference boundary.
+package, ownership, or reference boundary. When packaging creates or replaces
+packs, apply opens `~/.cache/claude-skill-packs` in Finder so the new packs
+can be dragged into Claude Desktop.
 
 | Surface | Managed contract | Explicit exclusion |
 |---|---|---|
@@ -335,7 +337,7 @@ package, ownership, or reference boundary.
 | Git source | Chezmoi owns the stable checkout; observation verifies origin, ref, revision, and clean worktree | `df-skills` does not fetch or reset Git |
 | Provider filesystem | Individual registry link to a validated native target | Provider content is never copied or removed |
 | Vendor projections | Claude, OpenCode, and Otter skill paths select the physical registry | No vendor-specific copies or whole-registry ownership |
-| Packaging | Explicit eligible file-backed links have deterministic receipt-owned ZIP archives | Ineligible skills and command/pack runtime state are never archived |
+| Packaging | On macOS, explicit eligible file-backed links have deterministic receipt-owned ZIP archives, zipped from the same verified files as the catalogue export, with `SKILL.md` frontmatter reduced to the keys Claude accepts | Ineligible skills, Linux machines, and command/pack runtime state are never archived |
 | Provider/session/auth | Provider `observe` is bounded and read-only | Plugins, auth credentials, and session state are not lifecycle-managed |
 
 Effect v4 documentation and source are deliberately outside this skill
