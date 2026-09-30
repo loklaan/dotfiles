@@ -86,7 +86,7 @@ placeholder comments in the body. Most PRs need Overview only.
 | Section | When to use |
 |---|---|
 | `## Overview 📄` | Always. |
-| Decision bullets | When there are trade-offs, workarounds, or boundaries a reviewer should see. This is the core of the description, follow the guidance above to avoid writing noise. |
+| Decision bullets | When there are trade-offs, workarounds, or boundaries a reviewer should see. This is the core of the description, so follow the Rules below to avoid writing noise. |
 | `**Heads up**` / `**Security**` lead-in | A bold label and em dash leading a paragraph that calls out a risk, a side effect, or who should take a look. |
 | `P.s.` | Asides: naming decisions, deliberately unresolved questions, unverified edge cases. |
 | Links table | When a ticket, design, or thread exists (almost always). Sits at the end of Overview, after everything else in it. |

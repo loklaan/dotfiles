@@ -119,8 +119,6 @@
   (dict "match" "Stood IO" "replacement" "stdio" "isEnabled" true "id" "2DBAFB2E-46E7-4602-98B3-CB3034AC0E01")
   (dict "match" "STD IO" "replacement" "stdio" "isEnabled" true "id" "66A9871F-FAFE-4E79-9919-E9765D7FD075")
   (dict "match" "STD I/O" "replacement" "stdio" "isEnabled" true "id" "E5C439A3-7508-44B1-8F7B-DFA24476E7B6")
-  (dict "match" "quick page" "replacement" "QuickPage" "isEnabled" true "id" "78B68C96-EF8D-430E-A2AF-CEE9FD02B80E")
-  (dict "match" "quick pages" "replacement" "QuickPages" "isEnabled" true "id" "237D3A86-65C8-4824-99B8-FA47C0CE1A7D")
 -}}
 {{- $removals := list
   (dict "pattern" "er+" "isEnabled" true "id" "82E2DB3B-39D3-44C0-A416-5973CEB6FCDC")

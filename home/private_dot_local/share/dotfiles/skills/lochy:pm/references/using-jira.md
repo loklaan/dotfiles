@@ -156,8 +156,8 @@ customfield_10107={"value":"New Capability"}
 ```
 priority="Must have"
 labels="engineering"
-labels="engineering,ldk"
-labels="[engineering,ldk]"
+labels="engineering,frontend"
+labels="[engineering,frontend]"
 ```
 
 All three label shapes work; per-item quotes are stripped.

@@ -57,7 +57,7 @@ The `### Engineering actions taken` section is not optional — a board automati
 | `category` | Yes | One of: `KTLO`, `Efficiency`, `New Capability`, `Quality Improvements` (see guidance below) |
 | `parent` | No | Ticket key of the parent issue. Epic → higher-order goal may be a **link** rather than a parent (see [using-jira.md](using-jira.md)) |
 | `points` | No | Integer estimate. Team convention: 1 point = 1 day. Omit if genuinely unestimated — the board's `needs-refinement` label is correct to stick in that case |
-| `labels` | No | Array here; the tools take a comma-joined string (`labels="engineering,ldk"`) |
+| `labels` | No | Array here; the tools take a comma-joined string (`labels="engineering,frontend"`) |
 | `priority` | No | One of: `Must have`, `Should have`, `Nice to have`, `Someday` |
 
 #### Category of Work
