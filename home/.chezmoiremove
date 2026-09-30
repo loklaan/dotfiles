@@ -11,3 +11,16 @@
 .local/lib/tmux-resurrect-code-agents/agents/claude.sh
 .local/bin/df-prewarm
 .local/bin/df-llm-shim
+{{- /* Removing Codex support missed its agent module and the hook chezmoi
+       rendered into ~/.codex/hooks.json, which kept calling the track.sh above
+       on every Codex session start. chezmoi wrote that whole file, so remove
+       it only while it still matches the legacy render (whitespace aside); if
+       anyone has since added hooks of their own, leave the file alone. */}}
+.local/lib/tmux-resurrect-code-agents/agents/codex.sh
+{{- $codexHooks := joinPath .chezmoi.homeDir ".codex/hooks.json" }}
+{{- if stat $codexHooks }}
+{{-   $legacy := printf `{"hooks":{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"bash %s/.local/lib/tmux-resurrect-code-agents/track.sh codex"}]}]}}` .chezmoi.homeDir }}
+{{-   if eq (include $codexHooks | nospace) (nospace $legacy) }}
+.codex/hooks.json
+{{-   end }}
+{{- end }}
