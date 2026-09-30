@@ -9,6 +9,7 @@ Run everything:
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
+bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
 ```
 
@@ -19,6 +20,18 @@ modify templates with temporary data, sidecar, and destination paths. It covers
 tier names, exact agent/category routing, Bedrock model registration, legacy
 tier migration, and invalid-value fallback without running `chezmoi apply` or
 writing managed targets under `$HOME`.
+
+## Skill reconcile
+
+`skill-reconcile.test.sh` runs
+`run_after_install-060-reconcile-skills.sh.tmpl` against canned
+`df-skills reconcile` envelopes from a shim. It pins the envelope contract: a
+boundary's `healthy` is `true`, `false`, or `null`, and `null` means not
+observed, which counts as healthy. Linux renders packages as `null` because it
+builds no packs. A missing boundary or a non-boolean value is malformed. The
+script runs under a temporary `HOME` with the real `jq` binary linked ahead of
+any mise shim. `SKILL_RECONCILE_SCRIPT=<file>` runs it against another
+revision.
 
 ## Terminal restore
 

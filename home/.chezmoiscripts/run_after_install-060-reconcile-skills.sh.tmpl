@@ -58,10 +58,13 @@ main() {
     return "$status"
   fi
 
+  # Boundary health is true, false, or null: df-skills renders null for a
+  # boundary it did not observe (packages on Linux, which builds no packs) and
+  # counts it as healthy.
   if ! source_count="$(printf '%s' "$raw" | jq -er '.sources | length' 2>/dev/null)" ||
     ! source_names="$(printf '%s' "$raw" | jq -er '.sources | keys | join(", ")' 2>/dev/null)" ||
     ! provider_count="$(printf '%s' "$raw" | jq -er '.providers | length' 2>/dev/null)" ||
-    ! printf '%s' "$raw" | jq -e '(.reconcileHealthy | type == "boolean") and (.registry.healthy | type == "boolean") and (.packages.healthy | type == "boolean")' >/dev/null 2>&1; then
+    ! printf '%s' "$raw" | jq -e '(.reconcileHealthy | type == "boolean") and all(.registry, .packages; has("healthy") and (.healthy | type == "boolean" or type == "null"))' >/dev/null 2>&1; then
     log_fail "Skill reconciliation returned malformed JSON"
     log_warn_cont "Run: df-skills reconcile --manifest $manifest"
     return 1
