@@ -1,0 +1,7 @@
+{{- /* OpenCode 2 reads instructions only from AGENTS.md, so the shared rules
+     (chezmoi source: dot_agents/exact_rules) are concatenated here with
+     frontmatter stripped. */ -}}
+{{- range $rule := glob (joinPath .chezmoi.sourceDir "dot_agents/exact_rules/*.md") -}}
+{{ regexReplaceAll "(?s)\\A---.*?---[ \t]*\n" (include $rule) "" | trim }}
+
+{{ end -}}

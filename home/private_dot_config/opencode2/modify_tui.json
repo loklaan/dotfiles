@@ -1,0 +1,4 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $config := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $config = $config | setValueAtPath "plugin" (list "oh-my-opencode-slim@3.0.1") -}}
+{{ $config | toPrettyJson }}

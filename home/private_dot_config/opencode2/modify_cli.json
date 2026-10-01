@@ -1,0 +1,6 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $config := fromJson (default "{}" .chezmoi.stdin) -}}
+{{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/v2/cli.json" -}}
+{{- $config = $config | setValueAtPath "plugins" (list "oh-my-opencode-slim@3.0.1") -}}
+{{- $config = $config | setValueAtPath "session.thinking" "hide" -}}
+{{ $config | toPrettyJson }}

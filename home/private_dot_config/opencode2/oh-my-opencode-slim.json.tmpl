@@ -1,0 +1,4 @@
+{{- $p := index .profiles (dig "machineProfile" "personal" .) -}}
+{{- $config := dig "oh_my_opencode_slim" (dict) $p -}}
+{{- $config = set $config "$schema" "https://unpkg.com/oh-my-opencode-slim@3.0.1/oh-my-opencode-slim.schema.json" -}}
+{{ $config | toPrettyJson }}
