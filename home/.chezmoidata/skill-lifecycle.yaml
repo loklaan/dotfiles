@@ -59,15 +59,15 @@ skillLifecycleDefaults:
       id: public-architecture
       kind: archive
       path: "{homeDir}/.local/share/dotfiles/skills/lochy:coding:architecture"
-      url: https://github.com/mattpocock/skills/archive/3cca18b368ae95cdbdebbff572ccafa662551015.tar.gz
+      url: https://github.com/mattpocock/skills/archive/d81f3a183412e71a5b1e84ca21bc1a35eea03a60.tar.gz
       stripComponents: 4
       include:
         - "*/skills/engineering/improve-codebase-architecture/**"
       lock:
         algorithm: sha256
-        checksum: 47650b9424a4156417f35985c7439b2d05a8968b29cd8b2d4006dd3bee01cdcb
-        contentDigest: ae17dfe032ceae470b938a043e46552e5e6c2fde5e132adf358619d60ee43027
-        ref: 3cca18b368ae95cdbdebbff572ccafa662551015
+        checksum: c4196337dc2c690cf04edb44a614df4cedd314567d9ec776e799e45d611d28fc
+        contentDigest: 9643b5b160399a27fa33d4dcc79c5e5c3a642cc8b64327bff1a547a756eaa64b
+        ref: d81f3a183412e71a5b1e84ca21bc1a35eea03a60
       transforms:
         - kind: frontmatter-name
           from: improve-codebase-architecture
