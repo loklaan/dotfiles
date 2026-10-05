@@ -14,17 +14,17 @@
 // PERMISSIONS: --allow-run=mise (spawn mise) plus --allow-env for child-process
 // environment inheritance. NodeRuntime and NodeServices are
 // imported as SUBMODULE paths, never as the bare package, because the package
-// index re-exports unstable/cluster/ShardingConfig, which calls
+// index re-exports cluster/ShardingConfig, which calls
 // ConfigProvider.fromEnv at module-evaluation time and so ENUMERATES process.env —
 // an enumeration Deno cannot scope, forcing a blanket --allow-env. Argument
-// parsing and `--help` are owned by effect/unstable/cli, which reads argv through
+// parsing and `--help` are owned by effect/cli, which reads argv through
 // the Stdio service in NodeServices.layer, so they need the same grants as the
 // real upgrade path. The platform-node import is dynamic (import.meta.main path
 // only) to keep `deno test` hermetic and permission-free.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
 // exits 1); progress goes through df-log so the format matches every other
-// dotfiles tool. Effect v4 import paths verified against effect@4.0.0-rc.117.
+// dotfiles tool. Effect v4 import paths verified against effect@4.0.0.
 
 import {
   Data,
@@ -35,12 +35,9 @@ import {
   Stdio,
   Stream,
   Terminal,
-} from "npm:effect@4.0.0-rc.117";
-import { Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { Command } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 import { setTopic, step } from "../lib/df-log.ts";
 
 setTopic("mise");
@@ -166,10 +163,10 @@ if (import.meta.main) {
   // Submodule paths, not the bare package index — see the header note on
   // --allow-env.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

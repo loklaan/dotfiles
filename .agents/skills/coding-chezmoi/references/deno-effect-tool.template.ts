@@ -2,22 +2,16 @@
 
 // <One-line description of the tool — replace.> A single-file Deno + Effect v4
 // tool. Derive new tools by copying this file and editing the marked sections.
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
-import {
-  Config,
-  Context,
-  Effect,
-  Layer,
-  Schema,
-} from "npm:effect@4.0.0-rc.117";
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.117/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Config, Context, Effect, Layer, Schema } from "npm:effect@4.0.0";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import { Path } from "npm:effect@4.0.0/Path";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 // @effect/platform-node is imported dynamically in import.meta.main only, and
 // via SUBMODULE paths. Dynamic keeps `deno test` permission-free; submodules
 // keep --allow-env scopeable, because the bare package index re-exports
-// unstable/cluster/ShardingConfig, which enumerates process.env at load.
+// cluster/ShardingConfig, which enumerates process.env at load.
 
 // --- Domain types --------------------------------------------------------
 class MyServiceError
@@ -77,10 +71,10 @@ if (import.meta.main) {
   // NodeServices.layer already merges FileSystem, Path, Stdio, Terminal,
   // Crypto and ChildProcessSpawner, so it is the only layer to provide.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
 
   Command.run(myCommand, {

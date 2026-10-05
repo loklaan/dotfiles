@@ -36,7 +36,7 @@
 // IMPORTANT: @effect/platform-node is imported DYNAMICALLY inside the
 // `import.meta.main` block, never at module top level, and as the NodeRuntime and
 // NodeServices SUBMODULE paths rather than the bare package. The package index
-// re-exports unstable/cluster/ShardingConfig, whose
+// re-exports cluster/ShardingConfig, whose
 // `ConfigProvider.fromEnv` call ENUMERATES `process.env` — an enumeration Deno
 // cannot scope, so loading it demands a blanket `--allow-env`. Deferring the
 // import keeps `deno test` runnable with ZERO permission flags: the tests only
@@ -58,12 +58,9 @@ import {
   Layer,
   Option,
   Schema,
-} from "npm:effect@4.0.0-rc.117";
-import { Argument, Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { Argument, Command } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 // --------------------------------------------------------------------------
 // Constants & contracts
@@ -540,10 +537,10 @@ if (import.meta.main) {
   // live Node runtime. Submodule paths, not the
   // bare package index — see the IMPORTANT note in the header.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(profileCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

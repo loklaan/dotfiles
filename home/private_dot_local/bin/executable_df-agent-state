@@ -22,7 +22,7 @@
 // state that changed since. The checksum deliberately excludes mtime/timestamps
 // so it is stable across time and sensitive only to what a reviewer judged.
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
 import {
   ByteSize,
@@ -33,16 +33,16 @@ import {
   Option,
   PlatformError,
   Schema,
-} from "npm:effect@4.0.0-rc.117";
-import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import * as Path from "npm:effect@4.0.0-rc.117/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+} from "npm:effect@4.0.0";
+import * as FileSystem from "npm:effect@4.0.0/FileSystem";
+import * as Path from "npm:effect@4.0.0/Path";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 // NOTE: @effect/platform-node is imported DYNAMICALLY in import.meta.main only
 // so zero-flag tests do not initialize the live Node runtime.
 import { fileExists, hasCommand, parseJson, run } from "../lib/df-cache.ts";
-import type * as Process from "npm:effect@4.0.0-rc.117/unstable/process";
+import type * as Process from "npm:effect@4.0.0/process";
 
 type ToolEnv =
   | FileSystem.FileSystem
@@ -817,10 +817,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(agentStateCommand, { version: "0.0.0" }).pipe(
     Effect.provide(PhysicalFileSystem.layer),

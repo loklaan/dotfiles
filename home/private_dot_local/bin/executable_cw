@@ -16,22 +16,14 @@ import {
   Stdio,
   Stream,
   Terminal,
-} from "npm:effect@4.0.0-rc.117";
+} from "npm:effect@4.0.0";
 import {
   FileSystem,
   layerNoop as fileSystemLayerNoop,
-} from "npm:effect@4.0.0-rc.117/FileSystem";
-import { layer as pathLayer, Path } from "npm:effect@4.0.0-rc.117/Path";
-import {
-  Argument,
-  CliConfig,
-  Command,
-  Flag,
-} from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0/Path";
+import { Argument, CliConfig, Command, Flag } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -1977,10 +1969,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(cwCli, { version: "0.0.0" }).pipe(
     Effect.catchTags({

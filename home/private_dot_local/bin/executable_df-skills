@@ -16,19 +16,11 @@ import {
   Schema,
   type Scope,
   Stream,
-} from "npm:effect@4.0.0-rc.117";
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Path as PathService } from "npm:effect@4.0.0-rc.117/Path";
-import {
-  CliConfig,
-  Command,
-  Flag,
-  GlobalFlag,
-} from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import { Path as PathService } from "npm:effect@4.0.0/Path";
+import { CliConfig, Command, Flag, GlobalFlag } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 import { parse as parseYaml } from "jsr:@std/yaml@1";
 
 const { Array: List, optionalKey: Optional, Literal: Tag, makeFilter: rule } =
@@ -3745,10 +3737,10 @@ if (import.meta.main) {
   });
   try {
     const NodeRuntime = await import(
-      "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+      "npm:@effect/platform-node@4.0.0/NodeRuntime"
     );
     const NodeServices = await import(
-      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+      "npm:@effect/platform-node@4.0.0/NodeServices"
     );
     const output: string[] = [];
     const config = ConfigProvider.fromEnvRecord(
@@ -3802,11 +3794,11 @@ if (import.meta.main) {
 // deno test --config deno.json --allow-read=. --allow-run=chezmoi home/private_dot_local/bin/executable_df-skills
 
 import { strict as assert } from "node:assert";
-import { Fiber, Option, Sink } from "npm:effect@4.0.0-rc.117";
-import * as TestFileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import * as TestPath from "npm:effect@4.0.0-rc.117/Path";
-import * as TestPlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
-import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
+import { Fiber, Option, Sink } from "npm:effect@4.0.0";
+import * as TestFileSystem from "npm:effect@4.0.0/FileSystem";
+import * as TestPath from "npm:effect@4.0.0/Path";
+import * as TestPlatformError from "npm:effect@4.0.0/PlatformError";
+import { TestClock } from "npm:effect@4.0.0/testing";
 
 const hash = "a".repeat(64);
 const limits = { timeoutSeconds: 30, maxOutputBytes: 4096 };
@@ -4653,7 +4645,7 @@ const withRegistryFixture = async (
       package: false,
     }]);
     const NodeServices = await import(
-      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+      "npm:@effect/platform-node@4.0.0/NodeServices"
     );
     const run = <Value, Error>(
       effect: Effect.Effect<Value, Error, RuntimeDependencies>,

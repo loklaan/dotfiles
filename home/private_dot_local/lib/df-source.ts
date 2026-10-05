@@ -21,14 +21,11 @@
 // Nothing runs at import, so importing this module under `deno test` stays
 // permission-free. Callers need unscoped --allow-run (it spawns chezmoi and git).
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
-import { Config, Effect, Schema } from "npm:effect@4.0.0-rc.117";
-import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+import { Config, Effect, Schema } from "npm:effect@4.0.0";
+import * as FileSystem from "npm:effect@4.0.0/FileSystem";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 export class SourceRootError
   extends Schema.TaggedError<SourceRootError>()("SourceRootError", {

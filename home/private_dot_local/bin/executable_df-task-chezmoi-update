@@ -52,21 +52,18 @@
 // @effect/platform-node is imported DYNAMICALLY inside import.meta.main, and as
 // the NodeRuntime and NodeServices SUBMODULE paths rather than the bare package.
 // The package index re-exports
-// unstable/cluster/ShardingConfig, whose ConfigProvider.fromEnv call ENUMERATES
+// cluster/ShardingConfig, whose ConfigProvider.fromEnv call ENUMERATES
 // process.env — an enumeration Deno cannot scope, so loading it would demand a
 // blanket --allow-env. Deferring the import keeps the in-file tests runnable
 // with ZERO permission flags — they
 // only exercise the pure resolvers.
 //
 // Logging: `fatal` is a tiny inline helper (prints "fatal <msg>" to stderr then
-// exits 1). Effect v4 import paths verified against effect@4.0.0-rc.117.
+// exits 1). Effect v4 import paths verified against effect@4.0.0.
 
-import { Config, Effect } from "npm:effect@4.0.0-rc.117";
-import { Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+import { Config, Effect } from "npm:effect@4.0.0";
+import { Command } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 import { detail, setTopic, step } from "../lib/df-log.ts";
 
 setTopic("dotfiles");
@@ -356,10 +353,10 @@ if (import.meta.main) {
   // Submodule paths, not the bare package index — see the header note on
   // --allow-env.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

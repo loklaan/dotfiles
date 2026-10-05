@@ -14,13 +14,13 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.117";
-import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+} from "npm:effect@4.0.0";
+import * as FileSystem from "npm:effect@4.0.0/FileSystem";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0/process";
 
 const DESCRIPTION = `Checks dotfiles configuration status and prints instructions for
   completing setup. Run it after an initial dotfiles installation.`;
@@ -898,10 +898,10 @@ if (import.meta.main) {
 
   // Keep the live Node runtime out of permission-free unit tests.
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
 
   Command.run(setupCommand, { version: "0.0.0" }).pipe(

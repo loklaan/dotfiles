@@ -2,10 +2,10 @@
 
 Single-file Deno + Effect v4 tools for this dotfiles repo. Every tool follows
 the pattern established in `executable_notify` — the canonical reference. It is
-the one tool that exercises the whole stack in one file: an
-`effect/unstable/cli` command with a subcommand, a `Context.Service`, `Config`
-with `Redacted`, a `Schema.TaggedError`, an MCP stdio server, subprocess
-dispatch, and the in-file test suite.
+the one tool that exercises the whole stack in one file: an `effect/cli` command
+with a subcommand, a `Context.Service`, `Config` with `Redacted`, a
+`Schema.TaggedError`, an MCP stdio server, subprocess dispatch, and the in-file
+test suite.
 
 (`executable_pushbullet-mcp` is NOT the reference — it is a 14-line bash stub
 that `exec notify mcp "$@"` so mcpproxy can inject the token via its own env
@@ -83,44 +83,49 @@ import {
   Redacted,
   Schedule,
   Schema,
-} from "npm:effect@4.0.0-rc.117";
+} from "npm:effect@4.0.0";
 
 // Filesystem + path (top-level-safe):
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.117/Path";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import { Path } from "npm:effect@4.0.0/Path";
 
 // CLI (top-level-safe):
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 
-// Unstable sub-paths (MCP, HTTP):
-import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0-rc.117/unstable/ai";
+// Area sub-paths (MCP, HTTP); their APIs are tagged @stability unstable:
+import { McpServer, Tool, Toolkit } from "npm:effect@4.0.0/ai";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.117/unstable/http";
+} from "npm:effect@4.0.0/http";
 
-// Node runtime — DYNAMIC IMPORT ONLY (see below):
-// import { NodeRuntime, NodeFileSystem, NodePath, NodeServices } from "npm:@effect/platform-node@4.0.0-rc.117";
+// Node runtime — DYNAMIC SUBMODULE IMPORTS ONLY (see below):
+// const NodeRuntime = await import("npm:@effect/platform-node@4.0.0/NodeRuntime");
+// const NodeServices = await import("npm:@effect/platform-node@4.0.0/NodeServices");
 ```
 
-**Pin**: `npm:effect@4.0.0-rc.117` + `npm:@effect/platform-node@4.0.0-rc.117` —
-every tool in this repo pins the **same** prerelease. The Effect packages
-publish in lock-step, so a mixed tree (some `-beta.107`, some `-rc.112`) is
-unsupported and produces an inconsistent lock.
+**Pin**: `npm:effect@4.0.0` + `npm:@effect/platform-node@4.0.0` — every tool in
+this repo pins the **same** exact version. The Effect packages share one version
+number, so a mixed tree (one tool on `4.0.0`, another on `4.0.1`) is unsupported
+and produces an inconsistent lock.
 
-v4 is currently on **release candidates** (`4.0.0-rc.N`). Bump to the newest
-`rc` — `npm view effect dist-tags` reports it under the `rc` tag; `latest` still
-points at v3 and must NOT be used here.
+v4 is **stable** from `4.0.0`. Bump to the newest stable release, which
+`npm view effect dist-tags` reports under `latest`. The `rc` and `beta` tags
+still name superseded `4.0.0` prereleases and must NOT be used. Confirm that the
+target exists for **both** pinned packages before you bump, because a release
+can land unevenly: `@effect/platform-node-shared@4.0.1` shipped first,
+`effect@4.0.1` followed three hours later, and `@effect/platform-node@4.0.1` was
+still unpublished after that.
 
-**Why the same prerelease matters (the peer-dependency warning).**
+**Why the same version matters (the peer-dependency warning).**
 `@effect/platform-node@X` declares `@effect/platform-node-shared: "^X"` — a
-_caret_. Left unpinned that caret floats to the newest published prerelease,
-which then demands `effect@^<newer>` as a peer; the floated peer no longer
-matches the `effect@X` you pinned, so Deno prints a peer-dependency warning.
-(When `X` already _is_ the newest prerelease the caret has nowhere to float, so
-the warning hides — until the next one ships and it silently returns.)
+_caret_. Left unpinned that caret can float to a newer published release, which
+then demands `effect@^<newer>` as a peer; the floated peer no longer matches the
+`effect@X` you pinned, so Deno prints a peer-dependency warning. (When `X`
+already _is_ the newest release the caret has nowhere to float, so the warning
+hides — until the next one ships and it silently returns.)
 
 **The fix — one canonical config at the repo root, projected to runtime, with a
 frozen lockfile.** The repo root holds the canonical `deno.json` (flat
@@ -151,7 +156,7 @@ place: the root `deno.json` carries
 projects that whole `lock` object into `~/.local/bin/deno.json` (the
 `"./deno.lock"` path is relative to the config file, so at runtime it resolves
 to `~/.local/bin/deno.lock`). Tools pin **exact** specifiers
-(`npm:effect@4.0.0-rc.117`, never a range), so the lock is small and stable.
+(`npm:effect@4.0.0`, never a range), so the lock is small and stable.
 
 Why frozen and not "no lock": an _unfrozen_ `deno.lock` is auto-rewritten on
 every run (a union of every version Deno has ever resolved in that cwd, pulled
@@ -179,41 +184,103 @@ the tool _rewrite_ the lock, reintroducing the exact `MM` race.) `transcribe` is
 macbook-only and carries a heavy ML tree; keeping it out of the shared lock
 avoids bloating the lock every lightweight `df-*` tool reads.
 
+The cost of `--no-lock`: nothing holds `transcribe`'s transitive tree, so a new
+upstream release reaches it first. When `4.0.0` shipped, the `4.0.0-rc.117`
+build resolved `@effect/platform-node-shared@4.0.0` against
+`effect@4.0.0-rc.117` and died at startup with `ERR_MODULE_NOT_FOUND`. Bump it
+with the other tools, and smoke-test it with an empty cache:
+`DENO_DIR=$(mktemp -d) transcribe --help`.
+
 **Ritual when bumping Effect (or any pinned dep).** The freeze is intentional
 friction: a normal run will NOT update the lock, so bumping is a deliberate,
-two-part act.
+three-part act.
 
-1. Bump _every_ occurrence to the same new prerelease in lock-step — miss one
-   and you get a mixed tree. Search `.agents/` too, not just the tools: this
+1. Confirm the target and read what moved. `npm view effect@<new> version` and
+   `npm view @effect/platform-node@<new> version` must both print `<new>`, and
+   both releases must be over 24 hours old (`npm view effect time --json`). Deno
+   2.9.5 ignores npm releases younger than that by default, so an exact pin on a
+   newer one fails with "newer than the specified minimum dependency date". Then
+   read the `effect` changelog between the two versions for moved or removed
+   entry points: `4.0.0` removed every `effect/unstable/*` path, and those
+   modules now import from `effect/<area>` (`effect/cli`, `effect/process`,
+   `effect/http`, `effect/ai`).
+
+   > **`deno check` does not catch a removed npm subpath.** `effect` exports a
+   > `./*` pattern, so `npm:effect@4.0.0/unstable/cli` still resolves — to a
+   > file that does not exist — and type-checks as `any`. Only running the code
+   > fails. Run every tool's tests and `--help` after a bump.
+
+2. Rewrite the import specifiers to the new version in lock-step — miss one and
+   you get a mixed tree. Search `.agents/` too, not just the tools: this
    reference file and `deno-effect-tool.template.ts` carry pins as well, and a
-   stale pin in the docs seeds the next tool with the wrong version.
+   stale pin in the docs seeds the next tool with the wrong version. Rewrite
+   **only** `npm:` specifiers (`perl -pi` works on macOS and Linux alike):
    ```bash
-   grep -rl 4.0.0-<old> home/ .agents/                   # find stragglers
    # in zsh, unquoted $(...) does NOT word-split — pipe into a read loop:
-   grep -rl 4.0.0-<old> home/ .agents/ | while IFS= read -r f; do
-     sed -i '' 's/4\.0\.0-<old>/4.0.0-<new>/g' "$f"
-   done
+   grep -rlE 'npm:(effect|@effect/platform-node)@<old>' home/ .agents/ |
+     while IFS= read -r f; do
+       perl -pi -e 's#(npm:(?:effect|\@effect/platform-node))\@\Q<old>\E(?=[/"`])#$1\@<new>#g' "$f"
+     done
+   grep -rnF '<old>' home/ .agents/   # every remaining hit is a claim or a record
    ```
-2. Regenerate the lock with the freeze lifted for that one command, then
-   re-freeze happens automatically (the config stays frozen; you only override
-   per-invocation):
+   Review each remaining hit by hand. A `verified against effect@<old>` comment
+   or a "verified for Effect `<old>`" claim moves only after the checks below
+   pass at `<new>`, and an incident note keeps its version. The rewrite skips
+   the Effect v4 reference on purpose: its `EFFECT_VERSION` is not an import and
+   moves only with the rest of that pin (see "Moving the Effect v4 reference").
+3. Regenerate the lock **from scratch**, with the freeze lifted for that one
+   command (the config stays frozen; you only override per-invocation). An
+   incremental `deno cache` keeps the old version's entries and re-resolves them
+   against the new peers, so drop the lock first:
    ```bash
-   deno cache --frozen=false --config deno.json home/private_dot_local/bin/executable_cw
-   # repeat for any tool that introduces a NEW specifier; exact-pin bumps to an
-   # existing dep are covered by caching any one tool. Then commit deno.lock.
+   rm deno.lock
+   deno cache --frozen=false --config deno.json <every tool with a unique specifier>
+   # then confirm every @effect/* key carries <new>, and commit deno.lock
+   jq -r '.npm | keys[]' deno.lock | grep effect
    ```
-   To regenerate from scratch (purge lingering removed-dep entries):
-   `rm deno.lock && deno cache --frozen=false --config deno.json <tool>`.
+   A from-scratch regen also re-resolves every ranged dependency to the newest
+   version it allows (`jsr:@std/yaml@^1`, and `undici`, `ws` and `redis` under
+   `@effect/platform-node`), so read the lock diff before you commit. The same
+   24-hour minimum dependency age applies to those ranges: a fresh regen can
+   lock an older patch than `npm view` shows, and a later regen can float to one
+   that was too new before. The `jq` check catches both.
 
    **A from-scratch regen must cache every tool holding a unique specifier**,
    not just one. The lock is a union: drop it and cache only `executable_cw` and
-   you silently lose `jsr:@std/yaml@1` (only `df-lint-runtimes` imports it), and
-   that tool then dies at startup with `The lockfile is out of date`. Enumerate
-   the distinct specifiers first, and exclude `transcribe` (it runs `--no-lock`
-   by design — see the exemption above):
+   you silently lose `jsr:@std/yaml@1` (only `df-lint-runtimes` and `df-skills`
+   import it), and those tools then die at startup with
+   `The lockfile is out of date`. Enumerate the distinct specifiers first, and
+   exclude `transcribe` (it runs `--no-lock` by design — see the exemption
+   above):
    ```bash
    grep -rhoE '(npm:|jsr:)[^"]+' home/private_dot_local/bin/ home/private_dot_local/lib/ | sort -u
    ```
+
+**Moving the Effect v4 reference.** `executable_df-effect-v4-reference` pins the
+upstream source archive by commit, so its four constants move together:
+
+1. `EFFECT_VERSION` is `<new>`, and `EFFECT_COMMIT` is the commit that
+   `gh api repos/Effect-TS/effect/git/ref/tags/effect@<new>` reports (its `type`
+   must be `commit`).
+2. `ARCHIVE_SHA256` is the SHA-256 of that commit's archive:
+   `curl -fsSL https://codeload.github.com/Effect-TS/effect/tar.gz/<commit> | shasum -a 256`.
+3. `EXPECTED_INVENTORY_DIGEST` is the `contentDigest` a fresh install records. A
+   fresh install does not check this constant, so install the new pin into a
+   disposable root and read the value back. The root's parent must be a physical
+   path, so resolve `/var` to `/private/var` on macOS:
+   ```bash
+   root=$(cd "$(mktemp -d)" && pwd -P)/reference
+   EFFECT_V4_REFERENCE_ROOT=$root deno run --no-prompt \
+     --allow-env=HOME,MISE_DATA_DIR,EFFECT_V4_REFERENCE_ROOT,DF_EFFECT_V4_OPERATION \
+     --allow-run=deno home/private_dot_local/bin/executable_df-effect-v4-reference install
+   jq -r .contentDigest "$root/current/.effect-v4-reference.json"
+   ```
+   Run the same command with `remove` to clean up.
+4. Copy the version, commit and archive SHA-256 into the check-refs
+   `effect-v4-docs.md` (its contract and the `gh api` tag command), and the
+   version and commit into `lochy:coding:effect-ts/SKILL.md` and its
+   `references/v4-patterns.md`. Then run the helper's integration tests (the
+   command is in its test header).
 
 Verify the bump landed before trusting it — typecheck every tool, then run the
 in-file tests, both of which must be clean with the frozen lock in place:
@@ -277,10 +344,10 @@ module cannot enumerate `process.env` at module load:
 ```typescript
 if (import.meta.main) {
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
@@ -294,9 +361,8 @@ not provide separate Node filesystem or path layers. **Do NOT** statically
 import `NodeRuntime` or `NodeServices` at file top level: this breaks the
 zero-permission test rule.
 
-**Do NOT** use `npm:@effect/platform@4.0.0-rc.117` — that package is
-unresolvable at this pin. Use `npm:effect@4.0.0-rc.117/FileSystem` and
-`.../Path` instead.
+**Do NOT** use `npm:@effect/platform@4.0.0` — that package is unresolvable at
+this pin. Use `npm:effect@4.0.0/FileSystem` and `.../Path` instead.
 
 ---
 
@@ -356,8 +422,8 @@ distinguish "set but empty" from unset.
 
 ## 4. CLI Structure
 
-Use `effect/unstable/cli` (`Command` / `Flag` / `Argument`) for ALL tools —
-complex and simple alike. Import path: `npm:effect@4.0.0-rc.117/unstable/cli`.
+Use `effect/cli` (`Command` / `Flag` / `Argument`) for ALL tools — complex and
+simple alike. Import path: `npm:effect@4.0.0/cli`.
 
 Static import is top-level-safe: defining commands and flags does not pull
 `@effect/platform-node` at load time, so `deno test` stays zero-flag. Command
@@ -365,7 +431,7 @@ execution requires `NodeServices.layer` — keep the `Command.run(...)` tail
 behind the dynamic `import.meta.main` import.
 
 ```typescript
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 
 // --- Command definition (top-level safe) ------------------------------------
 const verbose = Flag.Boolean("verbose").pipe(Flag.withAlias("v"));
@@ -382,12 +448,13 @@ const myCommand = Command.make(
 
 // --- Entry point (dynamic import, runtime only) -----------------------------
 if (import.meta.main) {
-  const { NodeRuntime, NodeFileSystem, NodePath, NodeServices } = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117"
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(myCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.provide(NodePath.layer),
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
@@ -422,20 +489,20 @@ CLI with no arguments after an Effect bump.
 `--allow-env` scopeable:
 
 ```typescript
-// WRONG — loads the package index, which re-exports unstable/cluster/ShardingConfig.
+// WRONG — loads the package index, which re-exports cluster/ShardingConfig.
 // That calls ConfigProvider.fromEnv at module load, which ENUMERATES process.env
 // (Object.ownKeys -> Deno.env.toObject). Deno cannot scope an enumeration, so the
 // tool is forced onto a blanket --allow-env.
 const { NodeRuntime, NodeServices } = await import(
-  "npm:@effect/platform-node@4.0.0-rc.117"
+  "npm:@effect/platform-node@4.0.0"
 );
 
 // RIGHT — the cluster module is never loaded.
 const NodeRuntime = await import(
-  "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+  "npm:@effect/platform-node@4.0.0/NodeRuntime"
 );
 const NodeServices = await import(
-  "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+  "npm:@effect/platform-node@4.0.0/NodeServices"
 );
 ```
 
@@ -457,10 +524,10 @@ The submodule rule above only removes the first:
    `--allow-env=PUSHBULLET_ACCESS_TOKEN` still dies on
    `Config.Redacted("PUSHBULLET_ACCESS_TOKEN")`.
 3. **A `ChildProcessSpawner` spawn with its default `extendEnv: true`.** In
-   Effect `4.0.0-rc.117`, the Node spawn shim inherits the environment and
-   enumerates `process.env`, so Deno requires blanket `--allow-env`.
+   Effect `4.0.0`, the Node spawn shim inherits the environment and enumerates
+   `process.env`, so Deno requires blanket `--allow-env`.
 
-**Named-environment exception, verified for Effect `4.0.0-rc.117`:** a canonical
+**Named-environment exception, verified for Effect `4.0.0`:** a canonical
 `ChildProcessSpawner` can use named grants when every spawned command sets
 `extendEnv: false` and passes an explicit `env` record. Read only the named
 variables needed to build that record. `df-opencode-cost` is the verified
@@ -520,15 +587,15 @@ to evolve independently. No tool is exempt from declaring its own surface.
 
 ## 4a. FileSystem + Path
 
-Use `npm:effect@4.0.0-rc.117/FileSystem` and `npm:effect@4.0.0-rc.117/Path` for
-all filesystem and path operations. Both are top-level-safe for static imports.
+Use `npm:effect@4.0.0/FileSystem` and `npm:effect@4.0.0/Path` for all filesystem
+and path operations. Both are top-level-safe for static imports.
 
-Runtime: provided by `NodeFileSystem.layer` + `NodePath.layer` from the dynamic
-`@effect/platform-node` import in `import.meta.main`.
+Runtime: provided by `NodeServices.layer`, from the dynamic
+`@effect/platform-node/NodeServices` import in `import.meta.main`.
 
 ```typescript
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.117/Path";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import { Path } from "npm:effect@4.0.0/Path";
 
 const readConfig = (
   dir: string,
@@ -550,9 +617,8 @@ Permission notes:
 - `fs.exists(path)`: `--allow-read --allow-sys=uid` — avoid if possible; use
   `fs.stat` instead
 
-**Do NOT** use `npm:@effect/platform@4.0.0-rc.117` — that package is
-unresolvable at this pin. The `effect` package itself exports `FileSystem` and
-`Path` directly.
+**Do NOT** use `npm:@effect/platform@4.0.0` — that package is unresolvable at
+this pin. The `effect` package itself exports `FileSystem` and `Path` directly.
 
 ---
 
@@ -614,7 +680,7 @@ Use `Config` for all environment variable reads. Config reads are deferred to
 Effect execution time (not module load), so `deno test` stays permission-free.
 
 ```typescript
-import { Config, Redacted } from "npm:effect@4.0.0-rc.117";
+import { Config, Redacted } from "npm:effect@4.0.0";
 
 // Optional env var with a default:
 const prefix = yield* Config.String("MY_PREFIX").pipe(Config.withDefault(""));
@@ -636,7 +702,7 @@ Use `Duration` for all time values. Use `Effect.timeout` and `Effect.retry` with
 `Schedule` for bounded retries — never raw `setTimeout` or `AbortController`.
 
 ```typescript
-import { Duration, Effect, Schedule } from "npm:effect@4.0.0-rc.117";
+import { Duration, Effect, Schedule } from "npm:effect@4.0.0";
 
 // Timeout:
 const result = yield* myEffect.pipe(Effect.timeout(Duration.seconds(30)));
@@ -682,8 +748,8 @@ const program = Effect.scoped(
 ## 4e. --allow-ffi — do NOT grant it
 
 No Effect tool here needs `--allow-ffi`, and none carries it except
-`transcribe`. `effect@4.0.0-rc.117` and `@effect/platform-node@4.0.0-rc.117`
-have no native dependency.
+`transcribe`. `effect@4.0.0` and `@effect/platform-node@4.0.0` have no native
+dependency.
 
 `transcribe` is the one exception: `@huggingface/transformers` pulls
 `onnxruntime-node`, which is genuinely native.
@@ -703,26 +769,14 @@ native code is the most dangerous grant Deno has.
 For tools that expose an MCP server over stdio:
 
 ```typescript
-import {
-  McpProtocol,
-  McpServer,
-  Tool,
-  Toolkit,
-} from "npm:effect@4.0.0-rc.117/unstable/ai";
-import { NodeStdio } from "npm:@effect/platform-node@4.0.0-rc.117";
+import { McpProtocol, McpServer, Tool, Toolkit } from "npm:effect@4.0.0/ai";
 
-// Define a tool
+// Define a tool: the schema only. Its handler is bound in the toolkit layer.
 const MyTool = Tool.make("my_tool", {
   description: "Does a thing",
   parameters: Schema.Struct({ input: Schema.String }),
   success: Schema.Struct({ result: Schema.String }),
-  failure: Schema.Struct({ message: Schema.String }),
-  execute: ({ input }) =>
-    Effect.gen(function* () {
-      const svc = yield* MyService;
-      const result = yield* svc.doThing(input);
-      return { result };
-    }),
+  failure: Schema.String,
 })
   .annotate(Tool.Readonly, false) // mutates state
   .annotate(Tool.Destructive, false) // not destructive
@@ -730,14 +784,45 @@ const MyTool = Tool.make("my_tool", {
   .annotate(Tool.OpenWorld, true); // may access external resources
 
 // Bundle tools into a toolkit
-const MyToolkit = Toolkit.make({ tools: [MyTool] });
+const MyToolkit = Toolkit.make(MyTool);
 
-// Wire the MCP server layer
+// Wire the MCP server layer: handlers keyed by tool name, served over stdio.
+// It stays free of platform-node, so `deno test` can build it; `protocols` is
+// the list shown below.
 const ServerLayer = McpServer.toolkit(MyToolkit).pipe(
+  Layer.provideMerge(
+    MyToolkit.toLayer(
+      Effect.gen(function* () {
+        const svc = yield* MyService;
+        return {
+          my_tool: ({ input }) =>
+            svc.doThing(input).pipe(
+              Effect.map((result) => ({ result })),
+              Effect.catchTag("MyError", (e) => Effect.fail(e.message)),
+            ),
+        };
+      }),
+    ),
+  ),
   Layer.provide(MyService.layer),
-  Layer.provide(NodeStdio.layer), // stdio transport
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    McpServer.layerStdio({ name: "My MCP", version: "1.0.0", protocols }),
+  ),
 );
+
+// Entry point: the stdio transport is a platform-node SUBMODULE, imported
+// dynamically like the runtime (see §2).
+if (import.meta.main) {
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
+  );
+  const NodeStdio = await import(
+    "npm:@effect/platform-node@4.0.0/NodeStdio"
+  );
+  Layer.launch(ServerLayer.pipe(Layer.provide(NodeStdio.layer))).pipe(
+    NodeRuntime.runMain,
+  );
+}
 ```
 
 Annotations:
@@ -756,20 +841,21 @@ is not a valid MCP `inputSchema` and kills the server at startup with
 **`protocols` is required.** When the server is started with
 `McpServer.layerStdio` (as `notify mcp` does), you must declare which dated MCP
 protocols it implements. Register newest first; that is the negotiation
-preference order. `McpProtocol` comes from the same `unstable/ai` import:
+preference order. `McpProtocol` comes from the same `effect/ai` import:
 
 ```typescript
-McpServer.layerStdio({
-  name: "My MCP",
-  version: "1.0.0",
-  protocols: [
-    McpProtocol.v2025_11_25,
-    McpProtocol.v2025_06_18,
-    McpProtocol.v2025_03_26,
-    McpProtocol.v2024_11_05,
-  ],
-});
+const protocols = [
+  McpProtocol.v2026_07_28,
+  McpProtocol.v2025_11_25,
+  McpProtocol.v2025_06_18,
+  McpProtocol.v2025_03_26,
+  McpProtocol.v2024_11_05,
+] as const;
 ```
+
+`v2026_07_28` is stateless: its clients skip `initialize` and send the protocol
+version in each request's `_meta`, while `initialize` still negotiates among the
+stateful adapters after it.
 
 Register every adapter `McpProtocol` exports unless a client must deliberately
 be held to an older protocol — dropping a version a client offers makes its
@@ -900,9 +986,18 @@ for f in "$tmp"/bin/*; do
 done
 """
 
+[tasks."lint:template"]
+description = "Type-check, test, format-check and lint the new-tool template"
+run = [
+  "deno check --config deno.json .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno test --config deno.json .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno lint --rules-exclude=no-import-prefix .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+]
+
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
-depends = ["lint:runtimes", "lint:tmpl"]
+depends = ["lint:runtimes", "lint:tmpl", "lint:template"]
 run = [
   "deno fmt --ext=ts --check $(mise run lint:list-deno)",
   "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",
@@ -923,10 +1018,13 @@ run = [
   separate. It deliberately does not format-check rendered templates: rendering
   depends on machine data, while type-checking and linting are
   width-independent.
-- **`lint`** runs the runtime and template checks, format-checks the
-  manifest-derived Deno list and this guide, then lints that list. It excludes
-  `no-import-prefix` because the repository uses inline `npm:` specifiers rather
-  than a `deno.json` import map. Run `mise run lint`.
+- **`lint:template`** gates `deno-effect-tool.template.ts`, which seeds every
+  new tool but is not a manifest runnable: it type-checks the template, runs its
+  zero-permission tests, and format-checks and lints it.
+- **`lint`** runs `lint:runtimes`, `lint:tmpl` and `lint:template`,
+  format-checks the manifest-derived Deno list and this guide, then lints that
+  list. It excludes `no-import-prefix` because the repository uses inline `npm:`
+  specifiers rather than a `deno.json` import map. Run `mise run lint`.
 
 ---
 
@@ -980,21 +1078,18 @@ the runtime clean so it rarely fires:
 
 ## 9. Subprocess: supervise / fan-out / hand-over
 
-Shell out via `effect/unstable/process` — never raw `Deno.Command`. Three modes,
-chosen by one question: **does the parent do anything after the child exits?**
+Shell out via `effect/process` — never raw `Deno.Command`. Three modes, chosen
+by one question: **does the parent do anything after the child exits?**
 
 ```typescript
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 // executor: NodeServices.layer (dynamic-import @effect/platform-node, like NodeRuntime)
 ```
 
 **Permissions**: a command using the default `extendEnv: true` needs blanket
 `--allow-env` alongside the unscoped `--allow-run` that §1 requires. For Effect
-`4.0.0-rc.117`, a command with `extendEnv: false` and an explicit `env` record
-can use named grants when the tool has no other environment enumeration, as
+`4.0.0`, a command with `extendEnv: false` and an explicit `env` record can use
+named grants when the tool has no other environment enumeration, as
 `df-opencode-cost` proves. They do NOT need `--allow-ffi` (§4e).
 
 `ChildProcess.make` takes a template (`` `git status` ``), `({opts})`-tag, or

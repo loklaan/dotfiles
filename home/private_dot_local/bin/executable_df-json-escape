@@ -21,11 +21,11 @@
 // goes through Deno.stdout.writeSync rather than Console.log, so the value is
 // emitted byte for byte with nothing appended.
 //
-// Argument parsing uses the effect/unstable/cli Command/Argument surface, whose
+// Argument parsing uses the effect/cli Command/Argument surface, whose
 // runtime needs @effect/platform-node's NodeServices. NodeRuntime and
 // NodeServices are imported
 // as SUBMODULE paths, never as the bare package: the package index re-exports
-// unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
+// cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
 // module-evaluation time and so ENUMERATES process.env. Deno cannot scope an
 // enumeration, so any code path that loads it demands a blanket --allow-env. The
 // submodules never reach that module, so this tool needs no env grant.
@@ -33,7 +33,7 @@
 // stdin/stdout go through Deno's own primitives wrapped in Effect, so the in-file
 // tests remain hermetic and run with zero permission flags.
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
 import {
   Cause,
@@ -45,9 +45,9 @@ import {
   Path,
   Stdio,
   Terminal,
-} from "npm:effect@4.0.0-rc.117";
-import { Argument, Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
-import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { Argument, Command } from "npm:effect@4.0.0/cli";
+import { ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 const DESCRIPTION =
   `Escapes a JSON value for embedding in a quoted key=value field string.
@@ -242,10 +242,10 @@ if (import.meta.main) {
 
   // Submodule paths avoid the package index's environment enumeration.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

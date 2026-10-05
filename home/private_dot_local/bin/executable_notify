@@ -20,7 +20,7 @@
 // held as Redacted and never logged.
 //
 // @effect/platform-node (NodeRuntime/NodeStdio) is imported on live paths only.
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
 import {
   Config,
@@ -31,16 +31,16 @@ import {
   Redacted,
   Runtime,
   Schema,
-} from "npm:effect@4.0.0-rc.117";
-// NOTE: `unstable/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
+} from "npm:effect@4.0.0";
+// NOTE: `effect/ai` (McpServer/Tool/Toolkit) is imported lazily inside the
 // `mcp` branch and its annotation test.
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.117/unstable/http";
-import { Argument, Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+} from "npm:effect@4.0.0/http";
+import { Argument, Command, Flag } from "npm:effect@4.0.0/cli";
 
 // ===========================================================================
 // Desktop notification (default CLI surface — the bash `notify` front)
@@ -474,7 +474,7 @@ class Pushbullet extends Context.Service<Pushbullet, {
 // MCP tools/toolkit/server layer are built lazily on the MCP path.
 const buildMcp = async () => {
   const { McpProtocol, McpServer, Tool, Toolkit } = await import(
-    "npm:effect@4.0.0-rc.117/unstable/ai"
+    "npm:effect@4.0.0/ai"
   );
 
   const SendNotification = Tool.make("send_notification", {
@@ -604,7 +604,12 @@ const buildMcp = async () => {
         // Revisit when McpProtocol exports a newer adapter — this list is
         // hand-maintained, so a new dated protocol is NOT picked up by bumping
         // effect alone. Check `McpProtocol` for `v*` exports missing here.
+        //
+        // v2026_07_28 is stateless: its clients skip `initialize` and send the
+        // protocol version in each request's `_meta`, while `initialize` still
+        // negotiates among the stateful adapters after it.
         protocols: [
+          McpProtocol.v2026_07_28,
           McpProtocol.v2025_11_25,
           McpProtocol.v2025_06_18,
           McpProtocol.v2025_03_26,
@@ -631,7 +636,7 @@ const buildMcp = async () => {
 // commands so the CLI owns dispatch. Both keep their platform-node import lazy.
 const runMcpServer = Effect.gen(function* () {
   const NodeStdio = yield* Effect.promise(() =>
-    import("npm:@effect/platform-node@4.0.0-rc.117/NodeStdio")
+    import("npm:@effect/platform-node@4.0.0/NodeStdio")
   );
   const { ServerLayer } = yield* Effect.promise(() => buildMcp());
 
@@ -711,10 +716,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
 
   // The stdio RPC protocol interrupts the main fiber when the client closes

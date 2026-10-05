@@ -2,10 +2,10 @@
 
 ## Contract
 
-- Version: `effect@4.0.0-rc.117`
-- Commit: `14a3f140095fdebbff9162944fe7d4ea83e054e6`
+- Version: `effect@4.0.0`
+- Commit: `67ba4e46a11ccda0b6761578bfd22c04ae00167d`
 - Archive SHA-256:
-  `588b72aaf1ec8f7d9958017460faffa1aec467ccb00fd998baadb4a165eb9363`
+  `0f31d194310b1f2211f475ed1e5de56df37322f4b21ec245d9e4f9026c6dbe3d`
 - Stable path: `~/.local/share/mise/effect-v4-reference/current`
 - OpenCode alias: `@effect-v4`
 
@@ -18,7 +18,7 @@ not a selective copy in the Effect skill tree and not an OpenCode Git cache.
 1. Read `home/private_dot_local/bin/executable_df-effect-v4-reference` and
    extract the version, commit, URL, and checksum constants.
 2. Confirm the Effect tag resolves to the same commit:
-   `gh api repos/Effect-TS/effect/git/ref/tags/effect@4.0.0-rc.117`.
+   `gh api repos/Effect-TS/effect/git/ref/tags/effect@4.0.0`.
 3. Download the immutable commit archive to a temporary file and compare its
    SHA-256 with the helper constant.
 4. Run `df-effect-v4-reference status`. Require `state=current`, the exact

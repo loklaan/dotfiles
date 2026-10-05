@@ -17,9 +17,9 @@
 //   -l/--language      source language code, or "auto" (default en)
 //   --no-timestamps    print plain text only
 //
-// Effect v4 import paths verified against effect@4.0.0-rc.117. The CLI,
-// process, and platform-node submodules live under the `unstable/` path prefix
-// (location is unstable; the API is @since 1.0.0). Logs go to stderr so the
+// Effect v4 import paths verified against effect@4.0.0. The CLI and process
+// modules are imported from their `effect/cli` and `effect/process` subpaths
+// (their APIs are tagged `@stability unstable`). Logs go to stderr so the
 // transcript on stdout stays clean and copy-pasteable.
 
 import {
@@ -34,23 +34,20 @@ import {
   Layer,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.117";
-import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { TestClock } from "npm:effect@4.0.0/testing";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 type NodePlatform = {
   readonly NodeRuntime:
-    typeof import("npm:@effect/platform-node@4.0.0-rc.117").NodeRuntime;
+    typeof import("npm:@effect/platform-node@4.0.0").NodeRuntime;
   readonly NodeServices:
-    typeof import("npm:@effect/platform-node@4.0.0-rc.117").NodeServices;
+    typeof import("npm:@effect/platform-node@4.0.0").NodeServices;
 };
 
 const loadNodePlatform = (): Promise<NodePlatform> =>
-  import("npm:@effect/platform-node@4.0.0-rc.117") as Promise<NodePlatform>;
+  import("npm:@effect/platform-node@4.0.0") as Promise<NodePlatform>;
 
 // `@huggingface/transformers` is imported LAZILY (dynamic import inside the
 // Transcriber) rather than at the top level. Its dependency chain

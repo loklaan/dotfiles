@@ -46,9 +46,21 @@ for f in "$tmp"/bin/*; do
 done
 """
 
+# The new-tool template seeds every new tool but is not a manifest runnable, so
+# no other task reads it. Gate it like a tool: type-check, run its
+# zero-permission tests, format-check and lint.
+[tasks."lint:template"]
+description = "Type-check, test, format-check and lint the new-tool template"
+run = [
+  "deno check --config deno.json .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno test --config deno.json .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+  "deno lint --rules-exclude=no-import-prefix .agents/skills/coding-chezmoi/references/deno-effect-tool.template.ts",
+]
+
 [tasks.lint]
 description = "Format-check, lint, and tier-check all Deno+Effect tools"
-depends = ["lint:runtimes", "lint:tmpl"]
+depends = ["lint:runtimes", "lint:tmpl", "lint:template"]
 run = [
   "deno fmt --ext=ts --check $(mise run lint:list-deno)",
   "deno fmt --check .agents/skills/coding-chezmoi/references/deno-effect-tools.md",

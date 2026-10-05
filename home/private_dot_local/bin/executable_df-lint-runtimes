@@ -5,18 +5,12 @@
 // Reads home/.chezmoidata/runtime-tiers.yaml from the chezmoi source repo and
 // compares it with runnable source files on disk. The manifest is the source of
 // truth for bootstrap/runtime tiering and shebang-derived language labels.
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
-import {
-  Array as Arr,
-  Console,
-  Data,
-  Effect,
-  Schema,
-} from "npm:effect@4.0.0-rc.117";
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import { Path } from "npm:effect@4.0.0-rc.117/Path";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Array as Arr, Console, Data, Effect, Schema } from "npm:effect@4.0.0";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import { Path } from "npm:effect@4.0.0/Path";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import { parse as parseYaml } from "jsr:@std/yaml@^1";
 import { resolveRepoRoot } from "../lib/df-source.ts";
 
@@ -171,33 +165,34 @@ const readFirstLine = (
     ),
   );
 
-// List files matching a predicate in a directory.
-// Decision: FileSystem at beta.80 does not expose readDirectory/readDir.
-// Keeping Deno.readDir wrapped in Effect.tryPromise for directory listing.
-// Revisit when effect/FileSystem gains readDirectory in a stable release.
+// List the regular files directly inside a directory whose names match a
+// predicate, as sorted repo-relative paths. FileSystem.stat follows symlinks,
+// so a symlink to a file counts as a file, which Deno.readDir's isFile did not.
+// chezmoi encodes source symlinks as `symlink_` files, so the scanned source
+// dirs should hold no real symlinks; one that appears is now reported.
 const listMatchingFiles = (
   repoRoot: string,
   dir: string,
   predicate: (name: string) => boolean,
-): Effect.Effect<ReadonlyArray<string>, Error, Path> =>
-  Path.pipe(
-    Effect.flatMap((path) =>
-      Effect.tryPromise({
-        try: async () => {
-          const entries: string[] = [];
-          for await (
-            const entry of Deno.readDir(path.join(repoRoot, dir))
-          ) {
-            if (entry.isFile && predicate(entry.name)) {
-              entries.push(`${dir}/${entry.name}`);
-            }
-          }
-          return entries.sort();
-        },
-        catch: (cause) => new Error(`failed to list ${dir}: ${String(cause)}`),
-      })
-    ),
-  );
+): Effect.Effect<ReadonlyArray<string>, Error, FileSystem | Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem;
+    const path = yield* Path;
+    const listFailed = (cause: unknown) =>
+      new Error(`failed to list ${dir}: ${String(cause)}`);
+    const absolute = path.join(repoRoot, dir);
+    const names = yield* fs.readDirectory(absolute).pipe(
+      Effect.mapError(listFailed),
+    );
+    const entries: string[] = [];
+    for (const name of names.filter(predicate)) {
+      const info = yield* fs.stat(path.join(absolute, name)).pipe(
+        Effect.mapError(listFailed),
+      );
+      if (info.type === "File") entries.push(`${dir}/${name}`);
+    }
+    return entries.sort();
+  });
 
 const readManifest = (
   repoRoot: string,
@@ -220,7 +215,7 @@ const readManifest = (
 
 const actualRunnables = (
   repoRoot: string,
-): Effect.Effect<ReadonlyArray<string>, Error, Path> =>
+): Effect.Effect<ReadonlyArray<string>, Error, FileSystem | Path> =>
   Effect.gen(function* () {
     const bin = yield* listMatchingFiles(
       repoRoot,
@@ -362,15 +357,15 @@ if (import.meta.main) {
   // @effect/platform-node is imported dynamically so `deno test` does not
   // initialize the live runtime. The imports are SUBMODULE paths, never the
   // bare package: the package index re-exports
-  // unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
+  // cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
   // module-evaluation time and so ENUMERATES process.env — an enumeration Deno
   // cannot scope, forcing a blanket --allow-env. The submodules never reach that
   // module.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
 
   // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,

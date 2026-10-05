@@ -26,10 +26,10 @@
 // home/private_dot_config/pitchfork/config.toml.tmpl — do not "simplify" it.
 //
 // WHY THE NARROW --allow-env: argument parsing is the
-// effect/unstable/cli Command/Argument surface, whose runtime needs
+// effect/cli Command/Argument surface, whose runtime needs
 // @effect/platform-node's NodeServices. NodeRuntime and NodeServices are imported
 // as SUBMODULE paths, never as the bare package: the package index re-exports
-// unstable/cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
+// cluster/ShardingConfig, which calls ConfigProvider.fromEnv at
 // module-evaluation time and so ENUMERATES process.env. Deno cannot scope an
 // enumeration, so any code path that loads it demands a blanket --allow-env. The
 // submodules never reach that module, so the named workspace grant is enough.
@@ -37,8 +37,8 @@
 // injected as parameters, so the in-file tests remain hermetic and run with zero
 // permission flags.
 
-import { Console, Effect, Option } from "npm:effect@4.0.0-rc.117";
-import { Argument, Command } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Console, Effect, Option } from "npm:effect@4.0.0";
+import { Argument, Command } from "npm:effect@4.0.0/cli";
 
 const DESCRIPTION =
   `Rewrites loopback URLs so they are reachable from a macbook over Coder
@@ -234,10 +234,10 @@ if (import.meta.main) {
 
   // Submodule paths, not the bare package index, preserve the named env grant.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(command, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

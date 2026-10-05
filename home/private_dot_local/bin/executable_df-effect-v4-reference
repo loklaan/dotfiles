@@ -8,26 +8,23 @@ import {
   Layer,
   Schema,
   Stream,
-} from "npm:effect@4.0.0-rc.117";
-import { FileSystem } from "npm:effect@4.0.0-rc.117/FileSystem";
-import * as PlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
-import { Path } from "npm:effect@4.0.0-rc.117/Path";
-import {
-  ChildProcess,
-  ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
+} from "npm:effect@4.0.0";
+import { FileSystem } from "npm:effect@4.0.0/FileSystem";
+import * as PlatformError from "npm:effect@4.0.0/PlatformError";
+import { Path } from "npm:effect@4.0.0/Path";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.117/unstable/http";
+} from "npm:effect@4.0.0/http";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, normalize, parse as parsePath } from "node:path";
 
-export const EFFECT_VERSION = "4.0.0-rc.117";
-export const EFFECT_COMMIT = "14a3f140095fdebbff9162944fe7d4ea83e054e6";
+export const EFFECT_VERSION = "4.0.0";
+export const EFFECT_COMMIT = "67ba4e46a11ccda0b6761578bfd22c04ae00167d";
 export const ARCHIVE_SHA256 =
-  "588b72aaf1ec8f7d9958017460faffa1aec467ccb00fd998baadb4a165eb9363";
+  "0f31d194310b1f2211f475ed1e5de56df37322f4b21ec245d9e4f9026c6dbe3d";
 export const ARCHIVE_URL =
   `https://codeload.github.com/Effect-TS/effect/tar.gz/${EFFECT_COMMIT}`;
 
@@ -42,7 +39,7 @@ const NODE_COVERAGE_ENV = "NODE_V8_COVERAGE";
 const PROCESS_ENVIRONMENT = { PATH: "/usr/bin:/bin" } as const;
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const EXPECTED_INVENTORY_DIGEST =
-  "63eec0bf1d6c44f84ed6a5361d67193c11a4af6313ae2982d0ba6673a3416b9c";
+  "25651b40341a65aa7a29fe915e55cf4b85ad5fc6c9a082a2d602625678909833";
 const encoder = new TextEncoder();
 
 const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
@@ -1711,10 +1708,10 @@ if (import.meta.main) {
     Deno.exit(1);
   });
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   commandProgram(operation).pipe(
     Effect.catch((error) =>
@@ -1988,7 +1985,7 @@ Deno.test({
   sanitizeResources: false,
   fn: async () => {
     const NodeServices = await import(
-      "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+      "npm:@effect/platform-node@4.0.0/NodeServices"
     );
     const program = Effect.scoped(Effect.gen(function* () {
       const fs = yield* FileSystem;

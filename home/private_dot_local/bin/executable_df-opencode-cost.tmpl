@@ -1,7 +1,7 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-env=HOME,PATH,SSH_AUTH_SOCK,NODE_V8_COVERAGE --allow-read
 
 // df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
-// Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0-rc.117
+// Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0
 // (repo-wide canonical version; the frozen deno.lock projected into ~/.local/bin
 // resolves it — no --minimum-dependency-age needed, unlike a standalone script).
 //
@@ -22,13 +22,13 @@ import {
   Schema,
   Sink,
   Stream,
-} from "npm:effect@4.0.0-rc.117";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+} from "npm:effect@4.0.0";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
-import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
+} from "npm:effect@4.0.0/process";
+import { TestClock } from "npm:effect@4.0.0/testing";
 // @effect/platform-node is imported in import.meta.main only.
 
 // Hosts baked in from chezmoi data at apply time. Empty on machines that did not
@@ -599,10 +599,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   Command.run(costCommand, { version: "1.0.0" }).pipe(
     Effect.provide(NodeServices.layer),

@@ -7,15 +7,15 @@
 //   chezmoi execute-template < home/private_dot_local/bin/executable_install-my-completions.tmpl > /tmp/imc.ts
 //   deno check /tmp/imc.ts && deno fmt --check /tmp/imc.ts && deno lint /tmp/imc.ts && deno test /tmp/imc.ts
 //
-// Effect v4 design (modules verified against effect@4.0.0-rc.117):
-//   - effect/unstable/cli      Command + a custom Flag.Boolean("help"); the flag
+// Effect v4 design (modules verified against effect@4.0.0):
+//   - effect/cli               Command + a custom Flag.Boolean("help"); the flag
 //                              shadows the built-in so `--help` prints the exact
 //                              usage below rather than the auto-generated help.
 //   - effect/FileSystem        directory creation, command-exists probing, and
 //                              the temp-file/rename/cleanup completion writes.
 //   - effect/Path              joins HOME with the completion dir + PATH-augment
 //                              dirs.
-//   - effect/unstable/process  ChildProcessSpawner.string captures stdout+stderr.
+//   - effect/process           ChildProcessSpawner.string captures stdout+stderr.
 //   - Duration                 Effect.timeout(Duration.seconds(15)) replaces the
 //                              old AbortController/setTimeout per-job deadline.
 //   - Config                   reads HOME / PATH from the environment.
@@ -35,14 +35,14 @@ import {
   Data,
   Duration,
   Effect,
-} from "npm:effect@4.0.0-rc.117";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+} from "npm:effect@4.0.0";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import {
   ChildProcess,
   ChildProcessSpawner,
-} from "npm:effect@4.0.0-rc.117/unstable/process";
-import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import * as Path from "npm:effect@4.0.0-rc.117/Path";
+} from "npm:effect@4.0.0/process";
+import * as FileSystem from "npm:effect@4.0.0/FileSystem";
+import * as Path from "npm:effect@4.0.0/Path";
 
 // Shared dotfiles log renderer. At runtime this resolves from ~/.local/bin to
 // ~/.local/lib (chezmoi: home/private_dot_local/lib/df-log.ts).
@@ -554,10 +554,10 @@ if (import.meta.main) {
   // NodeRuntime.runMain installs the signal handlers the parallel child-process
   // fan-out relies on for graceful teardown.
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   const loggerLayer = await makeLoggerLayer();
   command.pipe(

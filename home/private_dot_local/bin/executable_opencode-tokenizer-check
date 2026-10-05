@@ -4,24 +4,18 @@
 // context-usage tokenizer resolver. This intentionally does NOT couple to the
 // live upstream plugin at test time: offline checks lock the local source files;
 // `drift-json --refresh-upstream` is the only network path.
-// Effect v4 import paths verified against effect@4.0.0-rc.117.
+// Effect v4 import paths verified against effect@4.0.0.
 
-import {
-  Console,
-  Effect,
-  Fiber,
-  Schedule,
-  Schema,
-} from "npm:effect@4.0.0-rc.117";
-import * as FileSystem from "npm:effect@4.0.0-rc.117/FileSystem";
-import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.117/unstable/process";
-import { Command, Flag } from "npm:effect@4.0.0-rc.117/unstable/cli";
+import { Console, Effect, Fiber, Schedule, Schema } from "npm:effect@4.0.0";
+import * as FileSystem from "npm:effect@4.0.0/FileSystem";
+import { ChildProcessSpawner } from "npm:effect@4.0.0/process";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientResponse,
-} from "npm:effect@4.0.0-rc.117/unstable/http";
-import { TestClock } from "npm:effect@4.0.0-rc.117/testing";
+} from "npm:effect@4.0.0/http";
+import { TestClock } from "npm:effect@4.0.0/testing";
 import { resolveRepoRoot } from "../lib/df-source.ts";
 
 type Deps =
@@ -34,7 +28,7 @@ const exitWith = (code: number): Effect.Effect<never> =>
   Effect.sync(() => Deno.exit(code)) as Effect.Effect<never>;
 // @effect/platform-node is imported dynamically in import.meta.main only, as
 // SUBMODULE paths rather than the bare package. The package index re-exports
-// unstable/cluster/ShardingConfig, whose
+// cluster/ShardingConfig, whose
 // ConfigProvider.fromEnv call ENUMERATES process.env — an enumeration Deno cannot
 // scope, forcing a blanket --allow-env. Submodules avoid that module, and the
 // dynamic import keeps deno test zero-flag offline.
@@ -730,10 +724,10 @@ if (import.meta.main) {
   });
 
   const NodeRuntime = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeRuntime"
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
   );
   const NodeServices = await import(
-    "npm:@effect/platform-node@4.0.0-rc.117/NodeServices"
+    "npm:@effect/platform-node@4.0.0/NodeServices"
   );
   // NodeServices.layer already merges NodeChildProcessSpawner, NodeFileSystem,
   // NodeCrypto, NodePath, NodeStdio and NodeTerminal.

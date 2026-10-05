@@ -1,13 +1,7 @@
-import {
-  Deferred,
-  Effect,
-  Fiber,
-  Layer,
-  Stream,
-} from "npm:effect@4.0.0-rc.117";
-import * as PlatformError from "npm:effect@4.0.0-rc.117/PlatformError";
-import * as Sink from "npm:effect@4.0.0-rc.117/Sink";
-import { ChildProcessSpawner } from "npm:effect@4.0.0-rc.117/unstable/process";
+import { Deferred, Effect, Fiber, Layer, Stream } from "npm:effect@4.0.0";
+import * as PlatformError from "npm:effect@4.0.0/PlatformError";
+import * as Sink from "npm:effect@4.0.0/Sink";
+import { ChildProcessSpawner } from "npm:effect@4.0.0/process";
 
 import { run } from "./df-cache.ts";
 
