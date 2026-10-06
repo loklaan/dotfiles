@@ -130,8 +130,8 @@ routes through `@canva/opencode-plugin-llmproxy`, with two modes:
    - Use a **whitelisted** model ID in full form — the bedrock whitelist is the
      work profile's `provider_block["amazon-bedrock"].whitelist` in
      `home/.chezmoidata/profiles.json` (e.g.
-     `amazon-bedrock/global.anthropic.claude-sonnet-5` is a cheap option). A
-     short/unlisted ID like `…/anthropic.claude-sonnet-5` returns an
+     `amazon-bedrock/global.anthropic.claude-sonnet-5-5` is a cheap option). A
+     short/unlisted ID like `…/anthropic.claude-sonnet-5-5` returns an
      `UnknownError` server-side error followed by `Model not found … Did you
      mean …?` — that is NOT an auth failure, don't misread it as one.
    - PASS: a coherent response (e.g. `pong`). A `401`/`403`/SigV4/`otter` token

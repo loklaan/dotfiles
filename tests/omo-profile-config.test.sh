@@ -94,14 +94,17 @@ jq -e --argjson expected "$CLAUDEISH_AGENTS" \
 jq -e '
   .profiles.work.model == "amazon-bedrock/global.anthropic.claude-opus-5-5" and
   (.profiles.work.provider_block["amazon-bedrock"].whitelist | index("global.anthropic.claude-opus-5-5")) != null and
-  .profiles.work.provider_block["amazon-bedrock"].models["global.anthropic.claude-opus-5-5"] == {
-    "reasoning": true,
-    "limit": {"context": 1000000, "output": 128000}
-  } and
-  .profiles.work.provider_block["amazon-bedrock"].models["global.anthropic.claude-opus-5"] == {
-    "limit": {"context": 1000000, "output": 128000}
+  .profiles.work.provider_block["amazon-bedrock"].models == {
+    "global.anthropic.claude-opus-5-5": {
+      "reasoning": true,
+      "limit": {"context": 1000000, "output": 128000}
+    }
   }
 ' "$PROFILES" >/dev/null || fail "Bedrock Opus model registration is incomplete"
+jq -e '
+  .profiles.work.provider_block["amazon-bedrock"] as $bedrock |
+  $bedrock.models | keys | all(. as $id | $bedrock.whitelist | index($id) != null)
+' "$PROFILES" >/dev/null || fail "a Bedrock model override targets a model that is not whitelisted"
 jq -e '[.profiles[] | .. | strings | select(test("gpt-[^/]*-(fast|flex|ultrafast)$"))] == []' \
   "$PROFILES" >/dev/null ||
   fail "a pin uses an OpenCode service-tier alias (-fast/-flex/-ultrafast), which Coder boxes do not list"

@@ -21,7 +21,8 @@ tier names, exact agent/category routing, Bedrock model registration, legacy
 tier migration, and invalid-value fallback without running `chezmoi apply` or
 writing managed targets under `$HOME`. It also rejects any pin on an OpenCode
 service-tier alias (`-fast`, `-flex`, `-ultrafast`), which Coder boxes do not
-list, and any pinned `amazon-bedrock` model missing from the work whitelist.
+list, any pinned `amazon-bedrock` model missing from the work whitelist, and
+any Bedrock model override for a model that is not whitelisted.
 
 ## Skill reconcile
 
