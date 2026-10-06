@@ -104,7 +104,7 @@ Description:
 
 Arguments:
   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
-  mode         ssh (default), tmux, vscode, claude, ccyolo, or any app slug
+  mode         ssh (default), tmux, vscode, claude, or any app slug
                available on the coder box (cursor, intellij, code-server)
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
@@ -122,7 +122,6 @@ Examples:
   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
   cw connect for-tasks code-server    # Open code-server in browser
   cw connect for-tasks claude         # SSH + Claude Code
-  cw connect for-prs ccyolo           # YOLO mode
   cw connect --local-forward 3000:127.0.0.1:3000 for-tasks   # Mac:3000 → workspace:3000
   cw connect --remote-forward 3845:127.0.0.1:3845 for-tasks  # workspace:3845 → Mac:3845
 `;
@@ -256,7 +255,6 @@ _cw() {
       'tmux:Attach or create a persistent tmux session'
       'vscode:Open in VS Code'
       'claude:SSH + Claude Code'
-      'ccyolo:SSH + Claude Code YOLO mode'
     )
     if command -v coder >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
       local -a apps
@@ -698,7 +696,7 @@ const tmuxRemoteCommand = (directory: string): string => {
 // These are the modes that need the GPG/terminfo/pubkey preflight, and the
 // ones whose non-zero exit is worth running the dead-datapath diagnostic over.
 const usesSshTerminal = (mode: string): boolean =>
-  ["ssh", "claude", "ccyolo", "tmux"].includes(mode);
+  ["ssh", "claude", "tmux"].includes(mode);
 
 const remoteForwardMessage = (forward: string): string => {
   const match = /^([^:]+):(.+):([^:]+)$/.exec(forward);
@@ -993,14 +991,10 @@ const connectCommand = (
         });
         return res.code;
       }
-      case "claude":
-      case "ccyolo": {
-        const base = mode === "claude"
-          ? "claude"
-          : "claude --dangerously-skip-permissions --permission-mode bypassPermissions --model global.anthropic.claude-opus-4-7";
+      case "claude": {
         const cmd = directory === ""
-          ? base
-          : `cd ${shellQuote(directory)} && ${base}`;
+          ? "claude"
+          : `cd ${shellQuote(directory)} && claude`;
         const res = yield* runChild("ssh", [
           "-tt",
           ...forwardFailureOpts,

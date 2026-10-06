@@ -105,7 +105,7 @@ _term_restore_cw_attaches() {
     *) mode="${pos[2]:-ssh}" ;;
   esac
   case "$mode" in
-    ssh|tmux|claude|ccyolo) return 0 ;;
+    ssh|tmux|claude) return 0 ;;
   esac
   return 1
 }

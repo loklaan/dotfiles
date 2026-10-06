@@ -29,7 +29,6 @@ restores=(
   'cw for-tasks tmux'
   'cw for-tasks claude /home/coder/dev/me/dotfiles'
   'cw connect for-tasks'
-  'cw connect for-tasks-2 ccyolo'
   'cw tmux for-tasks'
   'cw -L 3000:127.0.0.1:3000 for-tasks'
   'cw --remote-forward 3845:127.0.0.1:3845 for-tasks'
