@@ -129,8 +129,10 @@ This is a `git-repo` external with `refreshPeriod = "168h"`.
 
 ### 7. opencode model pins
 
-**Files:** `home/private_dot_config/opencode/*.json` (chezmoi modify-templates
-that pin model IDs)
+**File:** `home/.chezmoidata/profiles.json`. Each profile pins its default
+`model` (and `small_model`), its `provider_block`, and the agent/category
+models of each OMO tier. The opencode and OMO modify-templates only project
+these values.
 
 Model IDs are provider-prefixed strings (e.g. `{provider}/{model}`) that
 opencode resolves against the [models.dev](https://models.dev) token database.
@@ -138,8 +140,8 @@ Pinned IDs drift as providers ship new versions.
 
 **Procedure:**
 
-1. Grep the opencode config templates for pinned model IDs. Record each
-   pin's location (file + path/key) and the current ID.
+1. Read the profile data for pinned model IDs. Record each pin's location
+   (profile + tier + key) and the current ID.
 2. Fetch the models.dev catalogue as the source of truth:
    ```
    curl -fsSL https://models.dev/api.json
@@ -155,11 +157,18 @@ renamed (e.g. the catalogue repo moved from `sst/models.dev` to
 `anomalyco/models.dev`). Always verify against models.dev — never guess from
 memory.
 
-**Cross-file integrity:** when changing a Bedrock model ID, also check
-`home/private_dot_config/opencode/modify_opencode.json` — it whitelists which
-`amazon-bedrock` IDs appear in the model picker. A pin in
-`dot_omo/modify_omo.jsonc` (or any other opencode config) that isn't in
-that whitelist will silently fail to surface. The two files must agree.
+**Whitelist integrity:** a pinned `amazon-bedrock` ID must also appear in the
+work profile's `provider_block["amazon-bedrock"].whitelist`, which decides
+which Bedrock IDs opencode lists. An unlisted pin silently fails to surface.
+`tests/omo-profile-config.test.sh` checks this and the tier routing, so update
+its expected maps with the pins.
+
+**Never pin a mode alias.** opencode can add an `<id>-<mode>` model for each
+key of a models.dev entry's `experimental.modes`: `-fast`, `-flex`, `-pro`, and
+Astra's `-ultrafast`. They are not catalogue models. A Mac lists them, but Coder
+boxes on the same opencode version do not, so such a pin breaks there. Pin the
+base ID. Some `-pro` IDs, such as `gpt-5.5-pro`, are real catalogue models;
+check models.dev.
 
 **Judging a swap — not just freshness.** A newer model ID can still be the wrong
 slot. Before bumping, check:

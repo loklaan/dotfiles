@@ -15,12 +15,12 @@ fail() {
 
 GPTISH_CATEGORIES=$(cat <<'JSON'
 {
-  "unspecified-high": {"model": "openai/gpt-6-sol", "reasoning": "high"},
+  "unspecified-high": {"model": "openai/gpt-6.1-sol", "reasoning": "high"},
   "unspecified-low": {"model": "openai/gpt-6-luna", "reasoning": "medium"},
   "ultrabrain": {"model": "openai/gpt-6-astra", "reasoning": "high"},
-  "deep": {"model": "openai/gpt-6-sol", "reasoning": "high"},
+  "deep": {"model": "openai/gpt-6.1-sol", "reasoning": "high"},
   "quick": {"model": "openai/gpt-6-luna", "reasoning": "low"},
-  "visual-engineering": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "visual-engineering": {"model": "openai/gpt-6.1-sol", "reasoning": "medium"},
   "artistry": {"model": "openai/gpt-5.6-terra", "reasoning": "medium"},
   "writing": {"model": "openai/gpt-5.6-terra", "reasoning": "medium"}
 }
@@ -29,17 +29,17 @@ JSON
 
 GPTISH_AGENTS=$(cat <<'JSON'
 {
-  "sisyphus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
-  "hephaestus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
-  "oracle": {"model": "openai/gpt-6-sol", "reasoning": "xhigh"},
+  "sisyphus": {"model": "openai/gpt-6.1-sol", "reasoning": "medium"},
+  "hephaestus": {"model": "openai/gpt-6.1-sol", "reasoning": "medium"},
+  "oracle": {"model": "openai/gpt-6.1-sol", "reasoning": "xhigh"},
   "prometheus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
   "metis": {"model": "openai/gpt-6-astra", "reasoning": "max"},
   "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
   "atlas": {"model": "openai/gpt-6-luna", "reasoning": "low"},
-  "sisyphus-junior": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "sisyphus-junior": {"model": "openai/gpt-6.1-sol", "reasoning": "medium"},
   "librarian": {"model": "openai/gpt-6-luna", "reasoning": "low"},
   "explore": {"model": "openai/gpt-6-luna", "reasoning": "low"},
-  "multimodal-looker": {"model": "openai/gpt-6-sol", "reasoning": "low"}
+  "multimodal-looker": {"model": "openai/gpt-6.1-sol", "reasoning": "low"}
 }
 JSON
 )
@@ -61,16 +61,16 @@ JSON
 CLAUDEISH_AGENTS=$(cat <<'JSON'
 {
   "sisyphus": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
-  "hephaestus": {"model": "openai/gpt-6-sol", "reasoning": "medium"},
+  "hephaestus": {"model": "openai/gpt-6.1-sol", "reasoning": "medium"},
   "oracle": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "prometheus": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "metis": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
-  "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
-  "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5"},
-  "librarian": {"model": "openai/gpt-6-luna-fast", "reasoning": "max"},
-  "explore": {"model": "openai/gpt-6-luna-fast", "reasoning": "high"},
-  "multimodal-looker": {"model": "openai/gpt-6-sol", "reasoning": "low"}
+  "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"},
+  "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"},
+  "librarian": {"model": "openai/gpt-6-luna", "reasoning": "max"},
+  "explore": {"model": "openai/gpt-6-luna", "reasoning": "high"},
+  "multimodal-looker": {"model": "openai/gpt-6.1-sol", "reasoning": "low"}
 }
 JSON
 )
@@ -92,7 +92,7 @@ jq -e --argjson expected "$CLAUDEISH_AGENTS" \
   '.profiles.work.claudeish.agents == $expected' "$PROFILES" >/dev/null ||
   fail "claudeish agents do not match the role-fitting mapping"
 jq -e '
-  .profiles.work.model == "amazon-bedrock/global.anthropic.claude-opus-5" and
+  .profiles.work.model == "amazon-bedrock/global.anthropic.claude-opus-5-5" and
   (.profiles.work.provider_block["amazon-bedrock"].whitelist | index("global.anthropic.claude-opus-5-5")) != null and
   .profiles.work.provider_block["amazon-bedrock"].models["global.anthropic.claude-opus-5-5"] == {
     "reasoning": true,
@@ -102,6 +102,16 @@ jq -e '
     "limit": {"context": 1000000, "output": 128000}
   }
 ' "$PROFILES" >/dev/null || fail "Bedrock Opus model registration is incomplete"
+jq -e '[.profiles[] | .. | strings | select(test("gpt-[^/]*-(fast|flex|ultrafast)$"))] == []' \
+  "$PROFILES" >/dev/null ||
+  fail "a pin uses an OpenCode service-tier alias (-fast/-flex/-ultrafast), which Coder boxes do not list"
+jq -e '
+  .profiles.work as $work |
+  $work.provider_block["amazon-bedrock"].whitelist as $whitelist |
+  [$work.model, ($work.agent_tiers[] as $tier | $work[$tier] | (.agents, .categories) | .[] | .model // empty)] |
+  map(select(startswith("amazon-bedrock/")) | ltrimstr("amazon-bedrock/")) |
+  all(. as $id | $whitelist | index($id) != null)
+' "$PROFILES" >/dev/null || fail "a pinned amazon-bedrock model is missing from the work whitelist"
 
 TEST_ROOT=$(mktemp -d)
 DESTINATION="${TEST_ROOT}/destination"

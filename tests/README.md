@@ -19,7 +19,9 @@ zsh tests/terminal-restore.test.zsh
 modify templates with temporary data, sidecar, and destination paths. It covers
 tier names, exact agent/category routing, Bedrock model registration, legacy
 tier migration, and invalid-value fallback without running `chezmoi apply` or
-writing managed targets under `$HOME`.
+writing managed targets under `$HOME`. It also rejects any pin on an OpenCode
+service-tier alias (`-fast`, `-flex`, `-ultrafast`), which Coder boxes do not
+list, and any pinned `amazon-bedrock` model missing from the work whitelist.
 
 ## Skill reconcile
 

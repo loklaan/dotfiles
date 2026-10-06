@@ -10,7 +10,7 @@
                 "google",
                 "openai"
             ],
-            "model": "amazon-bedrock/global.anthropic.claude-opus-5",
+            "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
             "provider_block": {
                 "amazon-bedrock": {
                     "models": {
@@ -34,6 +34,7 @@
                         "global.anthropic.claude-fable-5",
                         "global.anthropic.claude-fable-5-1",
                         "global.anthropic.claude-sonnet-5",
+                        "global.anthropic.claude-sonnet-5-5",
                         "global.anthropic.claude-haiku-4-5-20251001-v1:0",
                         "global.amazon.nova-2-lite-v1:0",
                         "moonshotai.kimi-k2.5",
@@ -58,7 +59,7 @@
             "gptish": {
                 "categories": {
                     "unspecified-high": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "high"
                     },
                     "unspecified-low": {
@@ -70,7 +71,7 @@
                         "reasoning": "high"
                     },
                     "deep": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "high"
                     },
                     "quick": {
@@ -78,7 +79,7 @@
                         "reasoning": "low"
                     },
                     "visual-engineering": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "medium"
                     },
                     "artistry": {
@@ -92,15 +93,15 @@
                 },
                 "agents": {
                     "sisyphus": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "medium"
                     },
                     "hephaestus": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "medium"
                     },
                     "oracle": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "xhigh"
                     },
                     "prometheus": {
@@ -120,7 +121,7 @@
                         "reasoning": "low"
                     },
                     "sisyphus-junior": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "medium"
                     },
                     "librarian": {
@@ -132,7 +133,7 @@
                         "reasoning": "low"
                     },
                     "multimodal-looker": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "low"
                     }
                 }
@@ -178,7 +179,7 @@
                         "reasoning": "max"
                     },
                     "hephaestus": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "medium"
                     },
                     "oracle": {
@@ -198,21 +199,21 @@
                         "reasoning": "xhigh"
                     },
                     "atlas": {
-                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"
                     },
                     "sisyphus-junior": {
-                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5"
+                        "model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"
                     },
                     "librarian": {
-                        "model": "openai/gpt-6-luna-fast",
+                        "model": "openai/gpt-6-luna",
                         "reasoning": "max"
                     },
                     "explore": {
-                        "model": "openai/gpt-6-luna-fast",
+                        "model": "openai/gpt-6-luna",
                         "reasoning": "high"
                     },
                     "multimodal-looker": {
-                        "model": "openai/gpt-6-sol",
+                        "model": "openai/gpt-6.1-sol",
                         "reasoning": "low"
                     }
                 }
@@ -225,7 +226,7 @@
             "enabled_providers": [
                 "opencode-go"
             ],
-            "model": "opencode-go/gpt-5.6-luna",
+            "model": "opencode-go/gpt-6-luna",
             "small_model": "opencode-go/glm-5.3-flash",
             "provider_block": {
                 "opencode-go": {
@@ -240,7 +241,7 @@
                     "model": "opencode-go/glm-5.3"
                 },
                 "hephaestus": {
-                    "model": "opencode-go/gpt-5.6-luna",
+                    "model": "opencode-go/gpt-6-luna",
                     "reasoning": "medium"
                 },
                 "oracle": {
@@ -285,20 +286,20 @@
                     "reasoning": "max"
                 },
                 "artistry": {
-                    "model": "opencode-go/gpt-5.6-luna"
+                    "model": "opencode-go/gpt-6-luna"
                 },
                 "quick": {
                     "model": "opencode-go/glm-5.3-flash"
                 },
                 "unspecified-low": {
-                    "model": "opencode-go/gpt-5.6-luna"
+                    "model": "opencode-go/gpt-6-luna"
                 },
                 "unspecified-high": {
                     "model": "opencode-go/deepseek-v4.1-flash",
                     "reasoning": "max"
                 },
                 "writing": {
-                    "model": "opencode-go/gpt-5.6-luna"
+                    "model": "opencode-go/gpt-6-luna"
                 }
             }
         }
