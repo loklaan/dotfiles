@@ -7,6 +7,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROFILES="${ROOT}/home/.chezmoidata/profiles.json"
 SIDECAR_TEMPLATE="${ROOT}/home/private_dot_config/opencode/modify_private_dot_omo-profile.json"
 OMO_TEMPLATE="${ROOT}/home/dot_omo/modify_omo.jsonc"
+OPENCODE2_TEMPLATE="${ROOT}/home/private_dot_config/opencode2/modify_opencode.json"
+WORK_PLUGIN_V2="example-work-plugin"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -47,10 +49,10 @@ JSON
 CLAUDEISH_CATEGORIES=$(cat <<'JSON'
 {
   "unspecified-high": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
-  "unspecified-low": {"model": "openai/gpt-6-luna", "reasoning": "medium"},
+  "unspecified-low": {"model": "amazon-bedrock/global.anthropic.claude-haiku-5-5", "reasoning": "max"},
   "ultrabrain": {"model": "openai/gpt-6-astra", "reasoning": "max"},
   "deep": {"model": "openai/gpt-6-astra", "reasoning": "high"},
-  "quick": {"model": "openai/gpt-6-luna", "reasoning": "low"},
+  "quick": {"model": "amazon-bedrock/global.anthropic.claude-haiku-5-5", "reasoning": "max"},
   "visual-engineering": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "artistry": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "max"},
   "writing": {"model": "amazon-bedrock/global.anthropic.claude-opus-5-5", "reasoning": "high"}
@@ -68,8 +70,8 @@ CLAUDEISH_AGENTS=$(cat <<'JSON'
   "momus": {"model": "openai/gpt-6-astra", "reasoning": "xhigh"},
   "atlas": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"},
   "sisyphus-junior": {"model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"},
-  "librarian": {"model": "openai/gpt-6-luna", "reasoning": "max"},
-  "explore": {"model": "openai/gpt-6-luna", "reasoning": "high"},
+  "librarian": {"model": "amazon-bedrock/global.anthropic.claude-haiku-5-5", "reasoning": "max"},
+  "explore": {"model": "amazon-bedrock/global.anthropic.claude-haiku-5-5", "reasoning": "max"},
   "multimodal-looker": {"model": "openai/gpt-6.1-sol", "reasoning": "low"}
 }
 JSON
@@ -98,9 +100,13 @@ jq -e '
     "global.anthropic.claude-opus-5-5": {
       "reasoning": true,
       "limit": {"context": 1000000, "output": 128000}
+    },
+    "global.anthropic.claude-haiku-5-5": {
+      "reasoning": true,
+      "limit": {"context": 100000, "output": 32000}
     }
   }
-' "$PROFILES" >/dev/null || fail "Bedrock Opus model registration is incomplete"
+' "$PROFILES" >/dev/null || fail "Bedrock Opus and Haiku model registration is incomplete"
 jq -e '
   .profiles.work.provider_block["amazon-bedrock"] as $bedrock |
   $bedrock.models | keys | all(. as $id | $bedrock.whitelist | index($id) != null)
@@ -144,6 +150,18 @@ render_omo() {
   printf '%s\n' "$existing" |
     chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
       --override-data-file "$DATA" --with-stdin -f "$OMO_TEMPLATE"
+}
+
+render_opencode2() {
+  local plugin=$1
+  local existing=${2:-'{}'}
+  local data="${TEST_ROOT}/data-opencode2.json"
+  jq -n --arg home "$TEST_HOME" --arg plugin "$plugin" \
+    '{machineProfile: "work", openCodeWorkPluginV2: $plugin, chezmoi: {homeDir: $home}}' \
+    > "$data"
+  printf '%s\n' "$existing" |
+    chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
+      --override-data-file "$data" --with-stdin -f "$OPENCODE2_TEMPLATE"
 }
 
 assert_sidecar_profile() {
@@ -211,4 +229,35 @@ second=$(render_omo gptish "$migrated")
 jq -e --argjson first "$migrated" '. == $first and (has("codegraph") | not)' <<< "$second" >/dev/null ||
   fail "OMO render reintroduced codegraph or changed on second render"
 
-printf 'PASS: OMO profile source and migration contract\n'
+BEDROCK_LIMITS=$(jq -c '
+  .profiles.work.provider_block["amazon-bedrock"].models |
+  with_entries(select(.value | has("limit")) | .value = {limit: .value.limit})
+' "$PROFILES")
+
+with_plugin=$(render_opencode2 "$WORK_PLUGIN_V2")
+jq -e --argjson limits "$BEDROCK_LIMITS" '
+  .providers["amazon-bedrock"] == {models: $limits} and
+  .providers["amazon-bedrock"].models["global.anthropic.claude-haiku-5-5"].limit.context == 100000 and
+  (.enabled_providers | index("amazon-bedrock")) != null
+' <<< "$with_plugin" >/dev/null ||
+  fail "OpenCode 2 does not carry the Bedrock model limits when the work plugin admits Bedrock"
+
+without_plugin=$(render_opencode2 "")
+jq -e '
+  (.providers // {} | has("amazon-bedrock") | not) and
+  .enabled_providers == [] and
+  (has("plugins") | not)
+' <<< "$without_plugin" >/dev/null ||
+  fail "OpenCode 2 emits Bedrock config while the work plugin lever is empty"
+
+cleared=$(render_opencode2 "" "$with_plugin")
+jq -e --argjson expected "$without_plugin" '. == $expected' <<< "$cleared" >/dev/null ||
+  fail "OpenCode 2 kept Bedrock config after the work plugin lever was cleared"
+
+stale=$(jq '.providers["amazon-bedrock"].models["global.anthropic.claude-retired"] = {limit: {context: 1, output: 1}}' \
+  <<< "$with_plugin")
+reapplied=$(render_opencode2 "$WORK_PLUGIN_V2" "$stale")
+jq -e --argjson first "$with_plugin" '. == $first' <<< "$reapplied" >/dev/null ||
+  fail "OpenCode 2 kept a model limit the profile no longer declares, or changed on second render"
+
+printf 'PASS: OMO profile source, migration, and OpenCode 2 model limit contract\n'

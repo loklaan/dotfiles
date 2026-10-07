@@ -255,7 +255,7 @@ The work profile in `home/.chezmoidata/profiles.json` sets a `whitelist` on the 
 - **Anthropic models:** use `global.` prefixed inference profile IDs only. The `global.` prefix routes to all regions. Bare IDs (no prefix) are invalid on Bedrock and will error.
 - **Third-party models:** use bare IDs (e.g. `moonshotai.kimi-k2.5`). These don't have inference profile prefixes.
 - **One per family:** only whitelist the latest generation of each model family. Don't include older versions alongside newer ones.
-- **Context limit overrides:** only needed when models.dev reports incorrect limits (e.g. 1M instead of Bedrock's 200K for Opus). Add entries to the `models` dict to override.
+- **Context limit overrides:** only needed when models.dev reports incorrect limits (e.g. 1M instead of Bedrock's 200K for Opus), or to cap a model below a pricing tier (Haiku 5.5 is capped at 100K, above which it costs 5x). Add entries to the `models` dict to override.
 
 ### Evaluating new models
 

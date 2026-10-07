@@ -162,7 +162,8 @@
      lever. Widening the allowlist without the plugin resurrects the HTTP 403
      (inherited placeholder credentials, nothing to swap them); loading the
      plugin without widening leaves its injected models denied and invisible.
-     Coupling them makes both failure modes unreachable.
+     Coupling them makes both failure modes unreachable. Their per-model limits
+     follow the same lever; see below.
 
      Empty by default, so this is inert until the plugin ships a V2 entry
      point. */ -}}
@@ -179,6 +180,30 @@
 {{- end -}}
 {{- $enabled = $enabled | sortAlpha -}}
 {{- $config = $config | setValueAtPath "enabled_providers" $enabled -}}
+
+{{- /* Per-model limits, translated from the same profile provider_block that
+     V1 copies verbatim, so a cap stays single-sourced in profiles.json. The
+     load-bearing case is a cost cap: Haiku 5.5's context limit makes sessions
+     compact before they cross the context size above which its price rises
+     5x. V2 takes the same {context, input, output} shape at
+     providers.<id>.models.<model>.limit and merges it over the catalogue
+     entry. Only `limit` translates: V2's model schema has no `reasoning` flag
+     and its providers have no `whitelist`.
+
+     Emitted only for providers V2 admits. For the proxied providers that is
+     the work plugin lever above, so with the lever empty nothing is written
+     for Bedrock and its inherited credentials stay inert; a limit for a
+     provider V2 denies would be dead config. Model IDs contain dots, so the
+     path is a list rather than a dotted string. */ -}}
+{{- range $id, $entry := $v1Providers -}}
+{{-   if has $id $enabled -}}
+{{-     range $modelId, $model := (dig "models" (dict) $entry) -}}
+{{-       if hasKey $model "limit" -}}
+{{-         $config = $config | setValueAtPath (list "providers" $id "models" $modelId "limit") (get $model "limit") -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
 
 {{- /* Only carry the profile's default model when its provider is enabled here;
      otherwise leave it unset so V2 picks a default from an enabled provider

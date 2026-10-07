@@ -15,14 +15,17 @@ zsh tests/terminal-restore.test.zsh
 
 ## OMO profile config
 
-`omo-profile-config.test.sh` validates the source profile table and renders both
+`omo-profile-config.test.sh` validates the source profile table and renders three
 modify templates with temporary data, sidecar, and destination paths. It covers
 tier names, exact agent/category routing, Bedrock model registration, legacy
 tier migration, and invalid-value fallback without running `chezmoi apply` or
 writing managed targets under `$HOME`. It also rejects any pin on an OpenCode
 service-tier alias (`-fast`, `-flex`, `-ultrafast`), which Coder boxes do not
 list, any pinned `amazon-bedrock` model missing from the work whitelist, and
-any Bedrock model override for a model that is not whitelisted.
+any Bedrock model override for a model that is not whitelisted. The override
+map pins Haiku 5.5's 100K context cap, above which it costs 5x. The OpenCode 2
+template must carry each Bedrock model limit when the work plugin lever is set,
+and must write or admit no Bedrock provider when the lever is empty or cleared.
 
 ## Skill reconcile
 

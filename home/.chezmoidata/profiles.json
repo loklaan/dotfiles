@@ -20,13 +20,20 @@
                                 "context": 1000000,
                                 "output": 128000
                             }
+                        },
+                        "global.anthropic.claude-haiku-5-5": {
+                            "reasoning": true,
+                            "limit": {
+                                "context": 100000,
+                                "output": 32000
+                            }
                         }
                     },
                     "whitelist": [
                         "global.anthropic.claude-opus-5-5",
                         "global.anthropic.claude-fable-5-1",
                         "global.anthropic.claude-sonnet-5-5",
-                        "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                        "global.anthropic.claude-haiku-5-5",
                         "global.amazon.nova-2-lite-v1:0",
                         "moonshotai.kimi-k2.5",
                         "deepseek.v3.2",
@@ -134,8 +141,8 @@
                         "reasoning": "max"
                     },
                     "unspecified-low": {
-                        "model": "openai/gpt-6-luna",
-                        "reasoning": "medium"
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                        "reasoning": "max"
                     },
                     "ultrabrain": {
                         "model": "openai/gpt-6-astra",
@@ -146,8 +153,8 @@
                         "reasoning": "high"
                     },
                     "quick": {
-                        "model": "openai/gpt-6-luna",
-                        "reasoning": "low"
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                        "reasoning": "max"
                     },
                     "visual-engineering": {
                         "model": "amazon-bedrock/global.anthropic.claude-opus-5-5",
@@ -194,12 +201,12 @@
                         "model": "amazon-bedrock/global.anthropic.claude-sonnet-5-5"
                     },
                     "librarian": {
-                        "model": "openai/gpt-6-luna",
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
                         "reasoning": "max"
                     },
                     "explore": {
-                        "model": "openai/gpt-6-luna",
-                        "reasoning": "high"
+                        "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                        "reasoning": "max"
                     },
                     "multimodal-looker": {
                         "model": "openai/gpt-6.1-sol",
