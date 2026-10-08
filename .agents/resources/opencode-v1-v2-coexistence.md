@@ -127,9 +127,10 @@ Only the alias, resolved path, and concise description enter agent context.
 
 Two deliberate omissions:
 
-- **No plugins.** V2 uses a new plugin API and does not load V1 plugins. Both
-  V1 plugins are V1-only, so there is nothing to port. `opencode2` therefore has
-  no Sisyphus/omo agents.
+- **No V1 plugins.** V2 uses a new plugin API and does not load V1 plugins, so
+  `opencode2` has no Sisyphus/omo agents. The `/changes` TUI plugin is written
+  twice, once per API. V2 discovers its copy in `plugins/changed-files/` with no
+  config entry; V1 lists its copy in `tui.json`.
 - **No `instructions`.** V2 accepts the field but does not load it. It natively
   discovers `~/.agents` and `~/.claude`, both global and per-project, which
   `opencode2 debug config` reports as config sources — so the shared
@@ -191,3 +192,4 @@ above which it costs 5x. With the lever empty, none of this is rendered.
 | `home/.chezmoiscripts/run_after_install-071-opencode2.sh` | Installs/refreshes the `opencode2` beta into `~/.local/share/opencode2` on every apply |
 | `home/private_dot_local/bin/executable_opencode2` | Wrapper supplying `OPENCODE_CONFIG_DIR` + `OPENCODE_DB` so V2 never touches V1 state |
 | `home/private_dot_config/opencode2/modify_opencode.json` | V2's global config in native V2 shape, separate from V1's |
+| `home/private_dot_config/opencode2/plugins/changed-files/tui.ts` | V2 `/changes` TUI plugin; port of `home/private_dot_config/opencode/tui-plugins/changed-files.tsx` |
