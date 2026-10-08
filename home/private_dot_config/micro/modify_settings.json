@@ -1,0 +1,31 @@
+{{- /* chezmoi:modify-template */ -}}
+
+{{- /* micro rewrites this file on every `set`, so chezmoi overlays only the
+       keys below and leaves every other key to micro. Keep each value
+       different from micro's default: micro deletes default-valued keys when
+       it next writes the file, and every apply would put them back. */ -}}
+{{- $managed := dict
+      "colorscheme" "catppuccin-mocha"
+      "diffgutter" true
+      "hlsearch" true
+      "mkparents" true
+      "parsecursor" true
+      "softwrap" true
+      "tabstospaces" true
+      "wordwrap" true -}}
+
+{{- /* Headless Linux boxes have no clipboard tool, so copy over OSC 52
+       through the terminal and tmux's set-clipboard. */ -}}
+{{- if eq .chezmoi.os "linux" -}}
+{{-   $managed = set $managed "clipboard" "terminal" -}}
+{{- end -}}
+
+{{- /* micro reads settings.json as JSON5, so tolerate hand-added comments. */ -}}
+{{- $settings := fromJsonc (default "{}" .chezmoi.stdin) -}}
+{{- range $key, $value := $managed -}}
+{{-   $settings = set $settings $key $value -}}
+{{- end -}}
+
+{{- /* Four-space indent and sorted keys match micro's own writer, so a
+       micro rewrite leaves no diff for chezmoi to report. */ -}}
+{{- $settings | toPrettyJson "    " -}}

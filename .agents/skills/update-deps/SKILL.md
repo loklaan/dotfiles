@@ -23,7 +23,7 @@ present a summary, and apply chosen bumps.
 
 ### 1. Chezmoi externals — commit-pinned archives
 
-**Files:** `home/.chezmoiexternals/zsh.toml.tmpl`, `home/.chezmoiexternals/tmux.toml.tmpl`
+**Files:** `home/.chezmoiexternals/zsh.toml.tmpl`, `home/.chezmoiexternals/tmux.toml.tmpl`, `home/.chezmoiexternals/micro.toml.tmpl`
 
 These pin GitHub repos to a short commit hash in the archive URL:
 
