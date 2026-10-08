@@ -23,16 +23,23 @@
        the same spec as modify_opencode.json and strip any other OMO entry
        (legacy bare subpaths, or a previous dist-tag such as @beta). */ -}}
 {{- $omoTuiPlugin := "oh-my-openagent@latest" -}}
+
+{{- /* /changes lists the session's changed files and opens them in micro.
+       A relative spec resolves against this file's directory. It is stripped
+       and re-appended like the OMO entry, so the order never changes between
+       applies. */ -}}
+{{- $changedFilesTuiPlugin := "./tui-plugins/changed-files.tsx" -}}
 {{- $plugins := default (list) (get $config "plugin") -}}
 {{- $cleaned := list -}}
 {{- range $p := $plugins -}}
-{{-   if not (or (hasPrefix "oh-my-openagent" $p) (hasPrefix "oh-my-opencode" $p)) -}}
+{{-   if not (or (hasPrefix "oh-my-openagent" $p) (hasPrefix "oh-my-opencode" $p) (eq $p $changedFilesTuiPlugin)) -}}
 {{-     $cleaned = append $cleaned $p -}}
 {{-   end -}}
 {{- end -}}
 {{- if not (has $omoTuiPlugin $cleaned) -}}
 {{-   $cleaned = append $cleaned $omoTuiPlugin -}}
 {{- end -}}
+{{- $cleaned = append $cleaned $changedFilesTuiPlugin -}}
 {{- $config = $config | setValueAtPath "plugin" $cleaned -}}
 
 {{ $config | toPrettyJson }}
