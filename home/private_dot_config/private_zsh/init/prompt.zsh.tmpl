@@ -3,34 +3,24 @@
 #|-----------------------------------------------------------------------------|
 #|                                                                             |
 #| Purpose:                                                                    |
-#|   Configures the interactive shell's visual appearance and user experience. |
-#|   Handles terminal initialization, clearing, cursor control, and displays   |
-#|   welcome messages for a pleasant shell startup experience.                 |
+#|   Prints a welcome message and tip above the first prompt.                  |
+#|   Handles startup profiling output and the tmux attach prompt.              |
 #|                                                                             |
 #| Responsibilities:                                                           |
-#|   - Initialize terminal display and cursor control                          |
-#|   - Display welcome messages and decorations                                |
+#|   - Print a welcome message and tip above the first prompt                  |
 #|   - Handle startup profiling output                                         |
-#|   - Configure tmux session attachment prompts                               |
+#|   - Handle the tmux attach prompt                                           |
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
 
 source "${HOME}/.local/lib/term.zsh"
 
 #|------------------------------------------------------------|#
-#| Reset terminal text
+#| Greeting
 #|
-{{/*clear && reset_cursor && cursor_disable*/}}
-
-#|------------------------------------------------------------|#
-#| Cute lochlanness
+#| Print a welcome message and tip for interactive shells.
 #|
-{{/*cursor_disable && loading_message*/}}
-
-#|------------------------------------------------------------|#
-#| Final cute lochlanness
-#|
-{{/*welcome_message && cursor_enable*/}}
+is_interactive_shell && greeting
 
 #|------------------------------------------------------------|#
 #| Terminal Profile
