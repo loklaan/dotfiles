@@ -37,3 +37,8 @@
 .config/opencode/plugin/tokenizer-registry.mjs
 .config/opencode/plugin/vendor
 .config/opencode/tokenizer-resolution.test.mjs
+{{- /* The /changes TUI plugin moved into the shared package at
+       ~/.local/share/dotfiles/opencode-tui-plugins/. OpenCode 2's old copy
+       needs no entry: its directory target is now a symlink, and chezmoi
+       replaces the directory when it writes the symlink. */}}
+.config/opencode/tui-plugins/changed-files.tsx

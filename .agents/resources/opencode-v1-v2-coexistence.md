@@ -128,9 +128,9 @@ Only the alias, resolved path, and concise description enter agent context.
 Two deliberate omissions:
 
 - **No V1 plugins.** V2 uses a new plugin API and does not load V1 plugins, so
-  `opencode2` has no Sisyphus/omo agents. The `/changes` TUI plugin is written
-  twice, once per API. V2 discovers its copy in `plugins/changed-files/` with no
-  config entry; V1 lists its copy in `tui.json`.
+  `opencode2` has no Sisyphus/omo agents. The `/changes` TUI plugin is the
+  exception: both versions load one package, described in
+  [Shared TUI plugin package](#shared-tui-plugin-package).
 - **No `instructions`.** V2 accepts the field but does not load it. It natively
   discovers `~/.agents` and `~/.claude`, both global and per-project, which
   `opencode2 debug config` reports as config sources — so the shared
@@ -185,6 +185,40 @@ carries the profile's per-model limits into
 `providers.<id>.models.<model>.limit`, notably Haiku 5.5's 100K context cap,
 above which it costs 5x. With the lever empty, none of this is rendered.
 
+## Shared TUI plugin package
+
+`/changes` lists the files the current session changed and opens them in
+micro. Its code lives once, in `~/.local/share/dotfiles/opencode-tui-plugins/`,
+and each version reaches it differently:
+
+| | V1 (`opencode`) | V2 (`opencode2`) |
+|---|---|---|
+| Entry point | `changed-files/opencode.tsx` | `changed-files/tui.ts` |
+| How it is found | Absolute path in `tui.json`, written by `modify_tui.json` | Auto-discovered: `plugins/changed-files` is a symlink to the package's `changed-files/` |
+| Where `effect` comes from | The package's `node_modules`, pinned to `4.0.0` | The host's own copy (`4.0.0-rc.112` in 2.0.26) |
+
+Both entry points are thin adapters over `changed-files/changes.ts`, which holds
+the behaviour.
+
+**V2 refuses a plugin's own `effect`.** Since 2.0.26, its plugin runtime
+resolves `effect` and `@opencode/plugin` to the host's copies, and fails any
+module under a plugin's `node_modules/effect`. V1 provides no `effect` to TUI
+plugins. So the shared core imports only from the root `effect` barrel, which
+both versions export: subpaths such as the process modules sit at different
+paths in `4.0.0` and in the prerelease V2 ships. For the same reason the core
+cannot use Effect's platform layers, which must match one Effect build, so it
+spawns processes through a narrow `node:child_process` adapter.
+
+**Dependencies install only when they change.**
+`run_after_install-072-opencode-tui-plugins.sh.tmpl` renders empty, and chezmoi
+runs nothing, unless V1 is installed and `node_modules` was not installed from
+the current `package.json` and `bun.lock`. After a frozen-lockfile install it
+writes their hash into `node_modules/.dotfiles-install.sha256`, so deleting
+`node_modules` triggers a reinstall too. It uses a standalone `bun` when one
+runs, and otherwise the Bun that `opencode` is compiled with (`BUN_BE_BUN=1`), so
+it needs no separate Bun install. A failed install warns and leaves the stamp
+unwritten, so the next apply retries.
+
 ## Files
 
 | Path | Purpose |
@@ -192,4 +226,6 @@ above which it costs 5x. With the lever empty, none of this is rendered.
 | `home/.chezmoiscripts/run_after_install-071-opencode2.sh` | Installs/refreshes the `opencode2` beta into `~/.local/share/opencode2` on every apply |
 | `home/private_dot_local/bin/executable_opencode2` | Wrapper supplying `OPENCODE_CONFIG_DIR` + `OPENCODE_DB` so V2 never touches V1 state |
 | `home/private_dot_config/opencode2/modify_opencode.json` | V2's global config in native V2 shape, separate from V1's |
-| `home/private_dot_config/opencode2/plugins/changed-files/tui.ts` | V2 `/changes` TUI plugin; port of `home/private_dot_config/opencode/tui-plugins/changed-files.tsx` |
+| `home/private_dot_local/share/dotfiles/opencode-tui-plugins/` | The `/changes` TUI plugin package both versions load, with its `package.json` and `bun.lock` |
+| `home/private_dot_config/opencode2/plugins/symlink_changed-files.tmpl` | Links V2's plugin discovery directory to the package |
+| `home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl` | Installs the package's dependencies for V1 when its lockfile changes |

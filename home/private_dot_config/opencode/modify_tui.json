@@ -25,14 +25,16 @@
 {{- $omoTuiPlugin := "oh-my-openagent@latest" -}}
 
 {{- /* /changes lists the session's changed files and opens them in micro.
-       A relative spec resolves against this file's directory. It is stripped
-       and re-appended like the OMO entry, so the order never changes between
-       applies. */ -}}
-{{- $changedFilesTuiPlugin := "./tui-plugins/changed-files.tsx" -}}
+       Its package is shared with OpenCode 2, so the spec is an absolute path
+       into it. It is stripped and re-appended like the OMO entry, so the
+       order never changes between applies; the strip also drops the spec of
+       the copy that used to live in tui-plugins/. */ -}}
+{{- $changedFilesTuiPlugin := joinPath .chezmoi.homeDir ".local/share/dotfiles/opencode-tui-plugins/changed-files/opencode.tsx" -}}
+{{- $legacyChangedFilesTuiPlugin := "./tui-plugins/changed-files.tsx" -}}
 {{- $plugins := default (list) (get $config "plugin") -}}
 {{- $cleaned := list -}}
 {{- range $p := $plugins -}}
-{{-   if not (or (hasPrefix "oh-my-openagent" $p) (hasPrefix "oh-my-opencode" $p) (eq $p $changedFilesTuiPlugin)) -}}
+{{-   if not (or (hasPrefix "oh-my-openagent" $p) (hasPrefix "oh-my-opencode" $p) (eq $p $changedFilesTuiPlugin) (eq $p $legacyChangedFilesTuiPlugin)) -}}
 {{-     $cleaned = append $cleaned $p -}}
 {{-   end -}}
 {{- end -}}

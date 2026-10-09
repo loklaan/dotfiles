@@ -127,7 +127,34 @@ This is a `git-repo` external with `refreshPeriod = "168h"`.
    ```
 4. Record: whether a refresh is pending or the clone is up-to-date.
 
-### 7. opencode model pins
+### 7. OpenCode TUI plugin package
+
+**Files:** `home/private_dot_local/share/dotfiles/opencode-tui-plugins/package.json`
+and its `bun.lock`
+
+The package pins `effect` for OpenCode 1 only; OpenCode 2 uses its own copy.
+Keep the pin on the same Effect version as the Deno tools and the `@effect-v4`
+reference, and move it with them (see the bump ritual in
+`.agents/skills/coding-chezmoi/references/deno-effect-tools.md`).
+
+**Procedure:**
+
+1. Compare the pinned `effect` version with `npm view effect dist-tags --json`
+   (`latest`) and with the Deno tools' `npm:effect@<version>` pin.
+2. Record: pinned version, latest version, Deno pin, behind (yes/no).
+
+To bump, edit `package.json`, regenerate `bun.lock` in a scratch copy so no
+`node_modules` lands in the source tree, copy the lock back, then run
+`bash tests/opencode-tui-plugins/install.test.sh`:
+
+```
+tmp=$(mktemp -d)
+cp home/private_dot_local/share/dotfiles/opencode-tui-plugins/package.json "$tmp/"
+(cd "$tmp" && bun install --ignore-scripts)
+cp "$tmp/bun.lock" home/private_dot_local/share/dotfiles/opencode-tui-plugins/
+```
+
+### 8. opencode model pins
 
 **File:** `home/.chezmoidata/profiles.json`. Each profile pins its default
 `model` (and `small_model`), its `provider_block`, and the agent/category

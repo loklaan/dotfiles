@@ -125,6 +125,7 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | `home/.chezmoiscripts/run_after_install-056-mcpproxy-daemon.sh.tmpl` | Lifecycle for the MCP proxy daemon |
 | `home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl` | Lifecycle for `opencode serve` |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
+| `home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl` | Installs the shared TUI plugin package's dependencies for OpenCode 1, only when its lockfile changes |
 | `home/private_dot_local/lib/pitchfork-lifecycle.sh` | Shared Pitchfork lifecycle helpers |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Plugin cache helpers |
 | `home/private_dot_local/bin/executable_cw` | Coder workspace CLI: `cw connect`, `cw fleet`, and `cw migrate` |

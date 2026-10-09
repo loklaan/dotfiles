@@ -11,6 +11,7 @@ deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
 bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
+bash tests/opencode-tui-plugins/install.test.sh
 ```
 
 ## OMO profile config
@@ -38,6 +39,22 @@ builds no packs. A missing boundary or a non-boolean value is malformed. The
 script runs under a temporary `HOME` with the real `jq` binary linked ahead of
 any mise shim. `SKILL_RECONCILE_SCRIPT=<file>` runs it against another
 revision.
+
+## OpenCode TUI plugins
+
+`opencode-tui-plugins/install.test.sh` renders
+`run_after_install-072-opencode-tui-plugins.sh.tmpl` with a temporary
+`homeDir` and runs it against a copy of the plugin package. The template must
+render to whitespace once `node_modules` matches the source `package.json` and
+`bun.lock`, so chezmoi skips it. It must render again when the install stamp is
+stale or `node_modules` is gone. Shims that fail like an uninstalled mise tool
+check the fallback to the Bun built into `opencode`, and the warning when
+neither runs. With the package installed, it also runs
+`opencode-tui-plugins/changes.test.ts` next to the shared `/changes` core, so
+`effect` resolves from the installed package as it does under OpenCode 1. Those
+tests cover the picker, the tmux popup, handing the terminal to micro and
+taking it back, and error reporting. It skips without `opencode` on `PATH`, and
+needs network on a cold Bun cache.
 
 ## Terminal restore
 

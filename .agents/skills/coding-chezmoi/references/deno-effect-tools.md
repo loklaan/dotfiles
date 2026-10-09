@@ -228,6 +228,9 @@ three-part act.
    pass at `<new>`, and an incident note keeps its version. The rewrite skips
    the Effect v4 reference on purpose: its `EFFECT_VERSION` is not an import and
    moves only with the rest of that pin (see "Moving the Effect v4 reference").
+   It also skips the OpenCode TUI plugin package, which pins `effect` in a
+   `package.json` and `bun.lock`; bump those with the update-deps skill's
+   "OpenCode TUI plugin package" procedure.
 3. Regenerate the lock **from scratch**, with the freeze lifted for that one
    command (the config stays frozen; you only override per-invocation). An
    incremental `deno cache` keeps the old version's entries and re-resolves them

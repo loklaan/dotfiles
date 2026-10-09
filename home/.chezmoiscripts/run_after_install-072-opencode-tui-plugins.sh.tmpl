@@ -1,0 +1,94 @@
+{{- /* Installs the OpenCode TUI plugin package's npm dependencies with bun's
+       frozen lockfile. OpenCode 2 provides effect to its plugins itself, so
+       only OpenCode 1 needs them.
+
+       The template renders empty, and chezmoi runs nothing, unless OpenCode 1
+       is installed and node_modules was not installed from the current
+       package.json and bun.lock. After a successful install the script writes
+       their hash into node_modules, so deleting node_modules also triggers a
+       reinstall. */ -}}
+{{- $root := joinPath .chezmoi.homeDir ".local/share/dotfiles/opencode-tui-plugins" -}}
+{{- $source := "private_dot_local/share/dotfiles/opencode-tui-plugins" -}}
+{{- $want := printf "%s%s" (include (joinPath $source "package.json")) (include (joinPath $source "bun.lock")) | sha256sum -}}
+{{- $stamp := joinPath $root "node_modules/.dotfiles-install.sha256" -}}
+{{- $have := "" -}}
+{{- if stat $stamp -}}
+{{-   $have = include $stamp | trim -}}
+{{- end -}}
+{{- if and (lookPath "opencode") (ne $have $want) -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")" "plugins"
+
+#/ Usage:
+#/   run_after_install-072-opencode-tui-plugins.sh
+#/
+#/ Description:
+#/   Installs the npm dependencies of the OpenCode TUI plugin package in
+#/   ~/.local/share/dotfiles/opencode-tui-plugins with
+#/   `bun install --frozen-lockfile`, then writes the hash of the package.json
+#/   and bun.lock it installed into node_modules/.dotfiles-install.sha256.
+#/   chezmoi renders this script only while that hash is stale or missing.
+#/
+#/   Uses a standalone bun when one runs, and otherwise the Bun runtime that
+#/   OpenCode is compiled with (BUN_BE_BUN=1). A failed install warns and
+#/   exits 0 without writing the hash, so the next apply retries.
+#/
+#/ Options:
+#/   --help:      Display this help message
+
+readonly PACKAGE_DIR={{ $root | quote }}
+readonly STAMP={{ $stamp | quote }}
+readonly WANT={{ $want | quote }}
+
+BUN_COMMAND=()
+BUN_LABEL=""
+
+# Sets BUN_COMMAND to a command that runs Bun, or fails when none does.
+find_bun() {
+  local version
+  if version=$(bun --version 2>/dev/null) && [ -n "$version" ]; then
+    BUN_COMMAND=(bun)
+    BUN_LABEL="bun ${version}"
+    return 0
+  fi
+
+  local opencode own_version
+  opencode=$(command -v opencode) || return 1
+  # Only `--version` is safe to probe: if this build ignored BUN_BE_BUN, any
+  # other argument could start the TUI. Acting as Bun, it reports Bun's
+  # version rather than its own.
+  version=$(BUN_BE_BUN=1 "$opencode" --version 2>/dev/null) || return 1
+  own_version=$("$opencode" --version 2>/dev/null) || return 1
+  [ -n "$version" ] && [ "$version" != "$own_version" ] || return 1
+  BUN_COMMAND=(env BUN_BE_BUN=1 "$opencode")
+  BUN_LABEL="the Bun ${version} built into opencode"
+}
+
+main() {
+  bl_parse_help "$@"
+
+  if ! find_bun; then
+    log_warn "Skipped OpenCode TUI plugin dependencies: neither bun nor opencode can run Bun"
+    return 0
+  fi
+
+  log_step "Installing OpenCode TUI plugin dependencies with ${BUN_LABEL}"
+  if ! run_quiet "${BUN_COMMAND[@]}" install --cwd "$PACKAGE_DIR" \
+    --frozen-lockfile --ignore-scripts; then
+    log_warn "Could not install OpenCode TUI plugin dependencies; the next apply retries"
+    return 0
+  fi
+  printf '%s\n' "$WANT" > "$STAMP"
+  log_detail "Installed ${PACKAGE_DIR}/node_modules from bun.lock"
+}
+
+main "$@"
+{{- end }}

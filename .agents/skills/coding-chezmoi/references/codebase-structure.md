@@ -139,7 +139,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
 | `opencode` | opencode-serve (063) |
 | `auth` | opencode-auth (065) |
-| `plugins` | sync-opencode-plugins (067) |
+| `plugins` | sync-opencode-plugins + opencode-tui-plugins (067/072) |
 | `nginx` | nginx-sites (066) |
 | `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
@@ -247,7 +247,7 @@ When adding commands, check if they can prompt and add the appropriate flag.
 
 The work profile in `home/.chezmoidata/profiles.json` sets a `whitelist` on the `amazon-bedrock` provider, which `modify_opencode.json` projects, to control which models appear in the model picker. Without it, every model variant from models.dev is shown (bare, `us.`, `eu.`, `global.`, `au.` — often 4+ entries per model).
 
-> For routine model ID bumps (all in `home/.chezmoidata/profiles.json`), see `update-deps` § 7.
+> For routine model ID bumps (all in `home/.chezmoidata/profiles.json`), see `update-deps` § 8.
 
 ### Principles
 
