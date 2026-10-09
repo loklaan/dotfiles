@@ -50,7 +50,7 @@
 {{-   $config = $config | setValueAtPath "snapshots" false -}}
 {{- end -}}
 
-{{- /* Base `mp-all` entry, plus one `mp-<slug>` per profile read from
+{{- /* Base `mp-codemode` entry, plus one `mp-<slug>` per profile read from
      mcpproxy's own config so the list cannot drift. `/mcp/p/<slug>` scopes
      that lane; V1 keeps its original `mcpproxy` name. */ -}}
 {{- $v1Mcp := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
@@ -66,7 +66,7 @@
 {{-     $server = set $server "command" (get $entry "command") -}}
 {{-   end -}}
 {{-   $server = set $server "disabled" (not (dig "enabled" true $entry)) -}}
-{{-   $servers = set $servers "mp-all" $server -}}
+{{-   $servers = set $servers "mp-codemode" $server -}}
 {{- end -}}
 {{- $mcpproxyConfig := joinPath .chezmoi.homeDir ".mcpproxy/mcp_config.json" -}}
 {{- if and (ne "" $origin) (stat $mcpproxyConfig) -}}

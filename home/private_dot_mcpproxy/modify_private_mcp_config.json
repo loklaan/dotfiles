@@ -267,7 +267,7 @@
 {{- $config = $config | setValueAtPath "routing_mode" "code_execution" -}}
 {{- $config = $config | setValueAtPath "enable_code_execution" true -}}
 {{- /* mcpproxy's built-in prompts surface as MCP prompts, which OpenCode turns
-       into slash commands prefixed per server (mp-all:setup-new-mcp-server, ...).
+       into slash commands prefixed per server (mp-codemode:setup-new-mcp-server, ...).
        Nine entries would yield 18 junk commands. No upstream prompts are used. */ -}}
 {{- $config = $config | setValueAtPath "enable_prompts" false -}}
 {{- $config = $config | setValueAtPath "profiles" (list

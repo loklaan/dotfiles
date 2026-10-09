@@ -7,7 +7,7 @@ description: "Reach external services through mcpproxy's MCP tools, preferring c
 
 External services (GitHub, Jira, Slack, databases, cloud APIs, …) are reachable
 as MCP tools through the proxy. Their tools are **not** listed individually:
-`mp-all` and the `mp-<profile>` lanes expose only the proxy's own built-ins.
+`mp-codemode` and the `mp-<profile>` lanes expose only the proxy's own built-ins.
 
 - Before using a shell CLI (`gh`, `aws`, `kubectl`, `curl`, …) or a raw HTTP API
   for an external service, call `retrieve_tools` with the task and the service
