@@ -21,23 +21,6 @@ boot_start = true
 ready_delay = 2
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) -}}
-{{- $csBind := "0.0.0.0" -}}
-{{- $csPort := .ports.code_server.external -}}
-{{- if dig "nginxProxy" false . -}}
-{{-   $csBind = "127.0.0.1" -}}
-{{-   $csPort = .ports.code_server.internal -}}
-{{- end }}
-[daemons.df-code-server]
-run = "code-server --bind-addr {{ $csBind }}:{{ $csPort }} --auth none"
-watch = ["{{ .chezmoi.homeDir }}/.config/code-server/config.yaml"]
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
-retry = true
-boot_start = true
-ready_delay = 2
-{{- end }}
-
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
 [daemons.df-mcpproxy]
 run = "mcpproxy serve --log-level error"

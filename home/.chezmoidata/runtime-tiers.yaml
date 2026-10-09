@@ -165,9 +165,6 @@ runtimeTiers:
     - path: home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl
       tier: runtime
       lang: bash
-    - path: home/.chezmoiscripts/run_after_install-064-code-server.sh.tmpl
-      tier: runtime
-      lang: bash
     - path: home/.chezmoiscripts/run_after_install-065-opencode-auth.sh.tmpl
       tier: runtime
       lang: bash

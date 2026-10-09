@@ -138,7 +138,6 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `mcpproxy` | mcpproxy-daemon (056) |
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
 | `opencode` | opencode-serve (063) |
-| `code-server` | code-server (064) |
 | `auth` | opencode-auth (065) |
 | `plugins` | setup-opencode-plugin + sync-opencode-plugins (065/067) |
 | `nginx` | nginx-sites (066) |

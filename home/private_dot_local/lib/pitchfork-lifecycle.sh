@@ -5,7 +5,7 @@
 #|                                                                            |
 #| One implementation of "resolve pitchfork, restart a daemon, confirm it took, |
 #| probe its port" for the chezmoi scripts that manage Pitchfork daemons:      |
-#| df-opencode-serve, df-code-server, df-mcpproxy.                             |
+#| df-opencode-serve, df-mcpproxy.                                             |
 #|                                                                            |
 #| Usage:                                                                     |
 #|   source "${HOME}/.local/lib/bash-logging.sh"                             |

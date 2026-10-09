@@ -2,7 +2,6 @@
 {{- /* Build a content-hash from all rendered nginx site configs so this
        script re-runs only when one of them actually changes. */ -}}
 {{- $oc := include "private_dot_config/nginx/opencode.conf.tmpl" -}}
-{{- $cs := include "private_dot_config/nginx/code-server.conf.tmpl" -}}
 {{- $mp := include "private_dot_config/nginx/mcpproxy.conf.tmpl" -}}
 {{- $ei := include "private_dot_config/nginx/exe-index.conf.tmpl" -}}
 #!/usr/bin/env bash
@@ -13,7 +12,7 @@ IFS=$'\n\t'
 source "${HOME}/.local/lib/bash-logging.sh"
 setup_session_logging "$(basename "$0")" "nginx"
 
-# content-hash: {{ printf "%s|%s|%s|%s" ($oc | sha256sum) ($cs | sha256sum) ($mp | sha256sum) ($ei | sha256sum) | sha256sum }}
+# content-hash: {{ printf "%s|%s|%s" ($oc | sha256sum) ($mp | sha256sum) ($ei | sha256sum) | sha256sum }}
 
 #/ Usage:
 #/   run_onchange_after_install-066-nginx-sites.sh
@@ -28,8 +27,8 @@ setup_session_logging "$(basename "$0")" "nginx"
 #/   definitions in .chezmoidata/ports.toml. nginx owns the external (nice)
 #/   ports; pitchfork daemons bind to the internal ports.
 #/
-#/   This script OWNS /etc/nginx/sites-available/{opencode,code-server,
-#/   mcpproxy,exe-index}.conf and their sites-enabled symlinks. Hand-edits
+#/   This script OWNS /etc/nginx/sites-available/{opencode,mcpproxy,
+#/   exe-index}.conf and their sites-enabled symlinks. Hand-edits
 #/   to those files will be overwritten on the next chezmoi apply.
 #/
 #/   Requires passwordless sudo (already available on Coder/exe.dev boxes).
@@ -44,7 +43,7 @@ SITES_ENABLED="/etc/nginx/sites-enabled"
 
 # The set of site configs we manage. Files that rendered empty (gated off by
 # a profile flag) are skipped — their symlinks are removed if present.
-MANAGED_SITES="opencode code-server mcpproxy exe-index"
+MANAGED_SITES="opencode mcpproxy exe-index"
 
 main() {
   if [ ! -d "$SRC_DIR" ]; then

@@ -4,7 +4,6 @@
 # nginx serves a static, mobile-friendly directory of links to the
 # other services on this VM (reached via transparent port forwarding):
 #   https://lochlanio.exe.xyz:{{ .ports.opencode.external }}/  -> opencode web   (nginx -> pitchfork df-opencode-serve)
-#   https://lochlanio.exe.xyz:{{ .ports.code_server.external }}/  -> code-server    (nginx -> pitchfork df-code-server)
 #   https://lochlanio.exe.xyz:{{ .ports.mcpproxy.external }}/  -> mcpproxy web UI (nginx -> pitchfork df-mcpproxy)
 #
 # Ports are defined in .chezmoidata/ports.yaml — nginx owns the external

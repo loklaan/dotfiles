@@ -100,7 +100,7 @@ Description:
 Arguments:
   workspace    Workspace name (e.g. for-tasks, for-tasks-2)
   mode         ssh (default), tmux, vscode, claude, or any app slug
-               available on the coder box (cursor, intellij, code-server)
+               available on the coder box (cursor, intellij)
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
 Options:
@@ -112,7 +112,6 @@ Examples:
   cw connect for-tasks-2 vscode       # Open in VS Code
   cw connect for-tasks-2 cursor       # Open Cursor via coder
   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
-  cw connect for-tasks code-server    # Open code-server in browser
   cw connect for-tasks claude         # SSH + Claude Code
   cw connect -L 3000 for-tasks        # Mac:3000 → workspace:3000
   cw connect -R 3845 for-tasks        # workspace:3845 → Mac:3845

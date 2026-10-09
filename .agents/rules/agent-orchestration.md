@@ -25,7 +25,7 @@ Coder workspaces are reached through their standard `coder.<workspace>` SSH host
 
 ## Bootstrap
 
-`chezmoi apply` renders the enabled Pitchfork daemon configuration. On Linux, `df-code-server` and `df-mcpproxy` are also available behind their configuration gates.
+`chezmoi apply` renders the enabled Pitchfork daemon configuration. On Linux, `df-mcpproxy` is also available behind its configuration gate.
 
 ## Discovery
 
@@ -121,10 +121,9 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | Path | Purpose |
 |---|---|
 | `home/private_dot_config/mise/config.toml.tmpl` | Installs Pitchfork, OpenCode, and Linux-gated services |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-opencode-serve`, `df-code-server`, and `df-mcpproxy` when their gates are enabled |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-opencode-serve` and `df-mcpproxy` when their gates are enabled |
 | `home/.chezmoiscripts/run_after_install-056-mcpproxy-daemon.sh.tmpl` | Lifecycle for the MCP proxy daemon |
 | `home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl` | Lifecycle for `opencode serve` |
-| `home/.chezmoiscripts/run_after_install-064-code-server.sh.tmpl` | Lifecycle for code-server |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
 | `home/private_dot_local/lib/pitchfork-lifecycle.sh` | Shared Pitchfork lifecycle helpers |
 | `home/private_dot_local/lib/tool-cache-sync.sh` | Plugin cache helpers |
@@ -174,7 +173,7 @@ Running boxes converge immediately through the manual fleet update. Stopped boxe
 1. `chezmoi init` must NOT pass `--data=false`, which hides cached `[data]` and forces every `promptStringOnce` or `promptBoolOnce` to fall through to an interactive prompt. It MUST pass `--no-tty`, so a genuinely missing prompt fails fast in the boot log instead of hanging on `/dev/tty`. Every prompt declared in `home/.chezmoi.toml.tmpl` MUST have an exact-text-matching `--promptString` or `--promptBool` seed in `install.sh`.
 2. The source sync uses `git fetch origin main` plus `git reset --hard origin/main`, not a plain pull. A fast-forward-only pull aborts on a diverged clone, leaving the box pinned to a stale source. The hard reset self-heals on every boot.
 
-Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, plus the Linux-gated `mcpproxy` and code-server daemons.
+Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, plus the Linux-gated `mcpproxy` daemon.
 
 > **Boot-enabling is an invariant of starting a daemon, not a caller's chore.** `pf_start` in `pitchfork-lifecycle.sh` calls `pf_ensure_supervisor` before every start. It starts the supervisor and enables its boot integration, probing the existing state first so steady state stays quiet. Linux boxes previously did not become boot-enabled, so daemon liveness depended on a successful `chezmoi apply` at boot. `pitchfork start` can auto-start a supervisor, which made the failure look healthy until reboot. Do not move this work back to individual callers. `boot_start = true` in `pitchfork/config.toml` is per-daemon and does nothing until Pitchfork itself is boot-enabled.
 

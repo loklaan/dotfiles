@@ -459,18 +459,6 @@ const checkOpencodeServe: Effect.Effect<boolean, never, DoctorServices> = Effect
 });
 {{- end }}
 
-{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
-
-const checkCodeServer: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
-  const pitchfork = (yield* hasCommand("pitchfork"))
-    ? "pitchfork"
-    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
-  if (pitchfork === "") return false;
-  const result = yield* run(pitchfork, ["status", "df-code-server"]);
-  return result.ok && /Status:\s*running/.test(result.stdout);
-});
-{{- end }}
-
 {{- if eq .chezmoi.os "linux" }}
 
 const checkMcpproxy: Effect.Effect<
@@ -591,28 +579,6 @@ const printStatus = (
     } else {
       print("yellow", [], "  ✗ opencode serve");
       print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode-serve");
-    }
-{{- end }}
-{{- if and (eq .chezmoi.os "linux") (dig "codeServer" false .) }}
-
-    printPlain();
-
-    const codeServerActive = yield* checkCodeServer;
-    const codeServerReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "localhost:{{ .ports.code_server.external }}"]).pipe(
-      Effect.map((result) => result.ok),
-    );
-
-    if (codeServerActive) {
-      print("green", [], "  ✓ code-server");
-      print("white", ["dim"], "    pitchfork daemon running");
-      if (codeServerReachable) {
-        print("green", ["dim"], "    localhost:{{ .ports.code_server.external }} reachable");
-      } else {
-        print("yellow", ["dim"], "    localhost:{{ .ports.code_server.external }} not reachable");
-      }
-    } else {
-      print("yellow", [], "  ✗ code-server");
-      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-code-server");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}

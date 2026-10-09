@@ -12,9 +12,6 @@ ports:
   opencode:
     external: 4096
     internal: 4097
-  code_server:
-    external: 4444
-    internal: 4445
   mcpproxy:
     external: 9183
     internal: 18321

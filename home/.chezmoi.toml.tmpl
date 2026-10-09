@@ -10,7 +10,6 @@
 {{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
 {{- $machineProfile := promptStringOnce . "machineProfile" "Machine profile (work|personal)" "personal" -}}
 {{- $openCodeServer := promptBoolOnce . "openCodeServer" "Run opencode serve as a pitchfork daemon?" false -}}
-{{- $codeServer := promptBoolOnce . "codeServer" "Run code-server on this machine?" false -}}
 {{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
 {{- $nginxProxy := promptBoolOnce . "nginxProxy" "Put nginx reverse proxy in front of services (gzip, loopback daemons)?" false -}}
 {{- $ephemeralCache := promptBoolOnce . "ephemeralCache" "Use ephemeral storage for ~/.cache on this machine?" false -}}
@@ -36,7 +35,6 @@
   openCodeCostHosts = {{ $openCodeCostHosts | quote }}
   machineProfile = {{ $machineProfile | quote }}
   openCodeServer = {{ $openCodeServer }}
-  codeServer = {{ $codeServer }}
   mcpproxyGate = {{ $mcpproxyGate }}
   nginxProxy = {{ $nginxProxy }}
   ephemeralCache = {{ $ephemeralCache }}
