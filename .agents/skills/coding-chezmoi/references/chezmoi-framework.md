@@ -143,8 +143,6 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 ├── mcp-servers-claude-json-tmpl
 ├── mcp-servers-codex-toml-tmpl
 ├── mcp-servers-opencode-mcpproxy-json-tmpl
-├── opencode-tokenizer-aliases-json
-├── opencode-tokenizer-registry-mjs
 ├── zprofile-body
 └── zshrc-body
 ```
@@ -157,8 +155,6 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 | `mcp-servers-claude-json-tmpl` | Claude-format definition of the local MCP proxy server. | `home/modify_dot_claude.json`, `home/Library/Application Support/Claude/modify_claude_desktop_config.json` |
 | `mcp-servers-codex-toml-tmpl` | Codex TOML definition of the local MCP proxy server. | None currently. |
 | `mcp-servers-opencode-mcpproxy-json-tmpl` | OpenCode-format definition of the local MCP proxy server. | `home/private_dot_config/opencode/modify_opencode.json`, `home/private_dot_config/opencode2/modify_opencode.json` |
-| `opencode-tokenizer-aliases-json` | Tokenizer aliases, provider defaults, and ordered model-family mappings for the OpenCode plugin patch. | `home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl` |
-| `opencode-tokenizer-registry-mjs` | Patched tokenizer registry module that resolves model tokenizers for the OpenCode plugin. | `home/.chezmoiscripts/run_onchange_after_install-065-setup-opencode-plugin.sh.tmpl` |
 | `zprofile-body` | Managed `~/.zprofile` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zprofile` |
 | `zshrc-body` | Managed `~/.zshrc` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zshrc` |
 

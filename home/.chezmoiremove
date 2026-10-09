@@ -24,3 +24,16 @@
 .codex/hooks.json
 {{-   end }}
 {{- end }}
+{{- /* opencode-tokenizer-check only checked the context-usage plugin's
+       tokenizer pins. */}}
+.local/bin/opencode-tokenizer-check
+{{- /* The context-usage plugin (/context and its tokenizers) was removed: the
+       files its external unpacked, and the files and ~400 MB npm tree its
+       setup script generated. chezmoi removes a listed directory with
+       everything in it. */}}
+.config/opencode/command/context.md
+.config/opencode/plugin/context-usage.ts
+.config/opencode/plugin/tokenizer-aliases.json
+.config/opencode/plugin/tokenizer-registry.mjs
+.config/opencode/plugin/vendor
+.config/opencode/tokenizer-resolution.test.mjs

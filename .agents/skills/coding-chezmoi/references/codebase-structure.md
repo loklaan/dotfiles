@@ -139,7 +139,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
 | `opencode` | opencode-serve (063) |
 | `auth` | opencode-auth (065) |
-| `plugins` | setup-opencode-plugin + sync-opencode-plugins (065/067) |
+| `plugins` | sync-opencode-plugins (067) |
 | `nginx` | nginx-sites (066) |
 | `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
