@@ -11,6 +11,7 @@ import {
   Effect,
   Layer,
   Option,
+  Result,
   Schema,
   Sink,
   Stdio,
@@ -46,21 +47,20 @@ const TMUX_DEFAULT_SESSION = "main-session";
 const helpColour = (colour: string, value: string): string =>
   Deno.stdout.isTerminal() ? `${colour}${value}\x1b[0m` : value;
 const localPortHelp = helpColour("\x1b[36m", "LOCAL PORT");
-const localDestinationHelp = helpColour(
-  "\x1b[36m",
-  "LOCAL HOST:PORT",
-);
 const remotePortHelp = helpColour("\x1b[35m", "REMOTE PORT");
-const remoteDestinationHelp = helpColour(
-  "\x1b[35m",
-  "REMOTE HOST:PORT",
-);
+
+// Shared by every usage that connects. PORTS is cw's own shorthand (see
+// expandForwards); SPEC is ssh's -L/-R syntax, passed through verbatim.
+const FORWARD_OPTIONS_USAGE =
+  `  -L, --local-forward PORTS|SPEC   Listen: ${localPortHelp} → ${remotePortHelp} (repeatable)
+  -R, --remote-forward PORTS|SPEC  Listen: ${remotePortHelp} → ${localPortHelp} (repeatable)
+      PORTS  LISTEN[:TARGET][,…], each a port or A-B range on localhost:
+             3000,8080:80,9090-9092 (TARGET defaults to LISTEN)
+      SPEC   anything else, verbatim to ssh: 3000:127.0.0.1:3000 or 5432:db:5432`;
 
 const TOP_USAGE = `Usage:
   cw <subcommand> [args...]
-  cw [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
-     [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
-     <workspace> [mode] [directory]
+  cw [-L PORTS|SPEC] [-R PORTS|SPEC] <workspace> [mode] [directory]
                                          (shorthand for \`cw connect ...\`)
 
 Description:
@@ -84,17 +84,12 @@ Examples:
   cw migrate
 
 Options:
-  -L, --local-forward PORT:HOST:PORT
-      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
-  -R, --remote-forward PORT:HOST:PORT
-      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+${FORWARD_OPTIONS_USAGE}
   --help                           Display this message
 `;
 
 const CONNECT_USAGE = `Usage:
-  cw connect [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
-             [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
-             <workspace> [mode] [directory]
+  cw connect [-L PORTS|SPEC] [-R PORTS|SPEC] <workspace> [mode] [directory]
 
 Description:
   Connect to a Coder workspace in various modes. Built-in modes handle
@@ -109,10 +104,7 @@ Arguments:
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
 Options:
-  -L, --local-forward PORT:HOST:PORT
-      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
-  -R, --remote-forward PORT:HOST:PORT
-      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+${FORWARD_OPTIONS_USAGE}
 
 Examples:
   cw connect for-tasks                # SSH into for-tasks
@@ -122,14 +114,12 @@ Examples:
   cw connect for-tasks-2 intellij     # Open IntelliJ via coder
   cw connect for-tasks code-server    # Open code-server in browser
   cw connect for-tasks claude         # SSH + Claude Code
-  cw connect --local-forward 3000:127.0.0.1:3000 for-tasks   # Mac:3000 → workspace:3000
-  cw connect --remote-forward 3845:127.0.0.1:3845 for-tasks  # workspace:3845 → Mac:3845
+  cw connect -L 3000 for-tasks        # Mac:3000 → workspace:3000
+  cw connect -R 3845 for-tasks        # workspace:3845 → Mac:3845
 `;
 
 const TMUX_USAGE = `Usage:
-  cw tmux [-L PORT:HOST:PORT] [--local-forward PORT:HOST:PORT]
-          [-R PORT:HOST:PORT] [--remote-forward PORT:HOST:PORT]
-          <workspace> [directory]
+  cw tmux [-L PORTS|SPEC] [-R PORTS|SPEC] <workspace> [directory]
 
 Description:
   Attach to the persistent \`${TMUX_DEFAULT_SESSION}\` tmux session on a Coder
@@ -146,10 +136,7 @@ Arguments:
   directory    Absolute project path on the remote (/home/coder/dev/<project>)
 
 Options:
-  -L, --local-forward PORT:HOST:PORT
-      Listen: ${localPortHelp} → ${remoteDestinationHelp} (repeatable)
-  -R, --remote-forward PORT:HOST:PORT
-      Listen: ${remotePortHelp} → ${localDestinationHelp} (repeatable)
+${FORWARD_OPTIONS_USAGE}
   --help                           Display this message
 
 Examples:
@@ -282,10 +269,10 @@ _cw() {
     connect)
       if [[ "$words[CURRENT]" == -* ]]; then
         _describe 'option' '(
-           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
-           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
-           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
-           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+           -L:Listen: LOCAL PORT → REMOTE PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE PORT
+           -R:Listen: REMOTE PORT → LOCAL PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL PORT
         )'
         return
       fi
@@ -298,10 +285,10 @@ _cw() {
     tmux)
       if [[ "$words[CURRENT]" == -* ]]; then
         _describe 'option' '(
-           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
-           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
-           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
-           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+           -L:Listen: LOCAL PORT → REMOTE PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE PORT
+           -R:Listen: REMOTE PORT → LOCAL PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL PORT
         )'
         return
       fi
@@ -333,10 +320,10 @@ _cw() {
     *)
       if [[ "$words[CURRENT]" == -* ]]; then
         _describe 'option' '(
-           -L:Listen: LOCAL PORT → REMOTE HOST:PORT
-           --local-forward:Listen: LOCAL PORT → REMOTE HOST:PORT
-           -R:Listen: REMOTE PORT → LOCAL HOST:PORT
-           --remote-forward:Listen: REMOTE PORT → LOCAL HOST:PORT
+           -L:Listen: LOCAL PORT → REMOTE PORT
+           --local-forward:Listen: LOCAL PORT → REMOTE PORT
+           -R:Listen: REMOTE PORT → LOCAL PORT
+           --remote-forward:Listen: REMOTE PORT → LOCAL PORT
         )'
       elif [[ $CURRENT -eq 2 ]]; then
         _describe 'subcommand' subcommands
@@ -721,6 +708,158 @@ interface ConnectForwards {
 
 const noConnectForwards: ConnectForwards = { local: [], remote: [] };
 
+// A -L/-R value made only of digits, `,`, `:` and `-` is PORTS:
+// LISTEN[:TARGET][,…], each side a port or an inclusive A-B range, expanded to
+// ssh's LISTEN:localhost:TARGET. Anything else is SPEC, ssh's own forwarding
+// syntax, and reaches ssh verbatim. The only ssh spelling PORTS claims is
+// `-R PORT`, ssh's SOCKS proxy, which stays reachable as `-R localhost:PORT`.
+//
+// The target is `localhost`, not 127.0.0.1: the far end tries every address
+// the name resolves to (::1 first on the workspaces), so a server listening on
+// only one loopback address is still reached.
+type ForwardFlag = "-L" | "-R";
+
+const PORTS_CHARACTERS = /^[0-9,:-]*$/;
+const FORWARD_TARGET_HOST = "localhost";
+// A wider range is far more likely a typo, such as 3000-30000 for 3000-3010,
+// than intent, and ssh would try to bind every port in it.
+const MAX_FORWARD_RANGE_PORTS = 100;
+
+class ForwardSyntaxError extends Data.TaggedError("ForwardSyntaxError")<{
+  readonly flag: ForwardFlag;
+  readonly value: string;
+  readonly reason: string;
+  readonly message: string;
+}> {}
+
+const forwardSyntaxError = (
+  flag: ForwardFlag,
+  value: string,
+  reason: string,
+): ForwardSyntaxError =>
+  new ForwardSyntaxError({
+    flag,
+    value,
+    reason,
+    message: `${flag} "${value}": ${reason}`,
+  });
+
+const countOf = (count: number, noun: string): string =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+// One side of an entry: a port or an inclusive A-B range.
+const parseForwardPorts = (
+  side: string,
+): Result.Result<ReadonlyArray<number>, string> => {
+  const bounds = side.split("-");
+  if (bounds.length > 2 || bounds.includes("")) {
+    return Result.fail(`"${side}" is not a port or A-B range`);
+  }
+  for (const bound of bounds) {
+    const port = Number(bound);
+    if (port < 1 || port > 65535) {
+      return Result.fail(`port ${bound} is outside 1-65535`);
+    }
+  }
+  const first = Number(bounds[0]);
+  const last = Number(bounds[bounds.length - 1]);
+  if (first > last) return Result.fail(`range ${side} runs backwards`);
+  const size = last - first + 1;
+  if (size > MAX_FORWARD_RANGE_PORTS) {
+    return Result.fail(
+      `range ${side} covers ${size} ports; the limit is ${MAX_FORWARD_RANGE_PORTS}`,
+    );
+  }
+  return Result.succeed(Array.from({ length: size }, (_, i) => first + i));
+};
+
+interface PortPair {
+  readonly listen: number;
+  readonly target: number;
+}
+
+// One comma-separated entry: LISTEN[:TARGET], with ranges paired by position.
+const parseForwardEntry = (
+  entry: string,
+): Result.Result<ReadonlyArray<PortPair>, string> => {
+  if (entry === "") return Result.fail("the list has an empty entry");
+  const sides = entry.split(":");
+  if (sides.length > 2) {
+    return Result.fail(
+      `entry "${entry}" has more than one ":"; expected LISTEN[:TARGET]`,
+    );
+  }
+  if (sides.includes("")) {
+    return Result.fail(`entry "${entry}" is missing a port`);
+  }
+  const listen = parseForwardPorts(sides[0]);
+  if (Result.isFailure(listen)) return Result.fail(listen.failure);
+  const target = sides.length === 2 ? parseForwardPorts(sides[1]) : listen;
+  if (Result.isFailure(target)) return Result.fail(target.failure);
+  const listenPorts = listen.success;
+  const targetPorts = target.success;
+  if (listenPorts.length !== targetPorts.length) {
+    return Result.fail(
+      `entry "${entry}" pairs ${
+        countOf(listenPorts.length, "listening port")
+      } with ${countOf(targetPorts.length, "target port")}`,
+    );
+  }
+  return Result.succeed(
+    listenPorts.map((port, i) => ({ listen: port, target: targetPorts[i] })),
+  );
+};
+
+// Expands one flag's values in the order given. An exact repeat collapses into
+// one forward. A listening port given a second, different target is rejected
+// here rather than left for ssh to fail on the second bind.
+const expandForwards = (
+  flag: ForwardFlag,
+  values: ReadonlyArray<string>,
+): Result.Result<ReadonlyArray<string>, ForwardSyntaxError> => {
+  const specs: string[] = [];
+  const targets = new Map<number, number>();
+  for (const value of values) {
+    if (!PORTS_CHARACTERS.test(value)) {
+      specs.push(value);
+      continue;
+    }
+    for (const entry of value.split(",")) {
+      const pairs = parseForwardEntry(entry);
+      if (Result.isFailure(pairs)) {
+        return Result.fail(forwardSyntaxError(flag, value, pairs.failure));
+      }
+      for (const { listen, target } of pairs.success) {
+        const existing = targets.get(listen);
+        if (existing === target) continue;
+        if (existing !== undefined) {
+          return Result.fail(
+            forwardSyntaxError(
+              flag,
+              value,
+              `listening port ${listen} already forwards to ${existing}`,
+            ),
+          );
+        }
+        targets.set(listen, target);
+        specs.push(`${listen}:${FORWARD_TARGET_HOST}:${target}`);
+      }
+    }
+  }
+  return Result.succeed(specs);
+};
+
+// -L and -R listen on different machines, so each flag is checked on its own.
+const expandConnectForwards = (
+  forwards: ConnectForwards,
+): Result.Result<ConnectForwards, ForwardSyntaxError> => {
+  const local = expandForwards("-L", forwards.local);
+  if (Result.isFailure(local)) return Result.fail(local.failure);
+  const remote = expandForwards("-R", forwards.remote);
+  if (Result.isFailure(remote)) return Result.fail(remote.failure);
+  return Result.succeed({ local: local.success, remote: remote.success });
+};
+
 interface ConnectEnv {
   readonly log: boolean;
   readonly preflight: boolean;
@@ -888,6 +1027,12 @@ const connectCommand = (
       yield* writeStderr(CONNECT_USAGE);
       fatal("connect requires a workspace name");
     }
+    const expanded = expandConnectForwards(forwards);
+    if (Result.isFailure(expanded)) {
+      yield* logError(expanded.failure.message);
+      return 2;
+    }
+    const sshForwards = expanded.success;
     if (env.checkCommands) {
       yield* requireCommand("coder", "coder CLI not found");
     }
@@ -910,25 +1055,25 @@ const connectCommand = (
     const sshOpts = usesSshTerminal(mode)
       ? yield* coderPreflight(env, host)
       : [];
-    const localForwardOpts = forwards.local.flatMap((forward) => [
+    const localForwardOpts = sshForwards.local.flatMap((forward) => [
       "-L",
       forward,
     ]);
-    const remoteForwardOpts = forwards.remote.flatMap((forward) => [
+    const remoteForwardOpts = sshForwards.remote.flatMap((forward) => [
       "-R",
       forward,
     ]);
-    const hasRequestedForwards = forwards.local.length > 0 ||
-      forwards.remote.length > 0;
+    const hasRequestedForwards = sshForwards.local.length > 0 ||
+      sshForwards.remote.length > 0;
     const forwardFailureOpts = hasRequestedForwards
       ? ["-o", "ExitOnForwardFailure=yes"]
       : [];
     const diagnoseSshFailure = env.diagnostics && !hasRequestedForwards;
     if (env.log) {
-      for (const forward of forwards.local) {
+      for (const forward of sshForwards.local) {
         yield* logInfo(localForwardMessage(forward));
       }
-      for (const forward of forwards.remote) {
+      for (const forward of sshForwards.remote) {
         yield* logInfo(remoteForwardMessage(forward));
       }
     }
@@ -1720,17 +1865,17 @@ const migrateCommand = (
 const connectHelpFlag = Flag.Boolean("help").pipe(Flag.withDefault(false));
 const localForwardFlag = Flag.String("local-forward").pipe(
   Flag.withAlias("L"),
-  Flag.withMetavar("PORT:HOST:PORT"),
+  Flag.withMetavar("PORTS|SPEC"),
   Flag.withDescription(
-    `Listen: ${localPortHelp} → ${remoteDestinationHelp}`,
+    `Listen: ${localPortHelp} → ${remotePortHelp}`,
   ),
   Flag.atMost(Number.MAX_SAFE_INTEGER),
 );
 const remoteForwardFlag = Flag.String("remote-forward").pipe(
   Flag.withAlias("R"),
-  Flag.withMetavar("PORT:HOST:PORT"),
+  Flag.withMetavar("PORTS|SPEC"),
   Flag.withDescription(
-    `Listen: ${remotePortHelp} → ${localDestinationHelp}`,
+    `Listen: ${remotePortHelp} → ${localPortHelp}`,
   ),
   Flag.atMost(Number.MAX_SAFE_INTEGER),
 );
@@ -2045,6 +2190,18 @@ const parseConnectCli = async (
       ),
   );
   return exit._tag === "Success" ? parsed : null;
+};
+
+// expandForwards' outcome as one comparable string: the ssh specs joined by
+// spaces, or "error: <message>".
+const expandedForwards = (
+  flag: ForwardFlag,
+  values: ReadonlyArray<string>,
+): string => {
+  const result = expandForwards(flag, values);
+  return Result.isFailure(result)
+    ? `error: ${result.failure.message}`
+    : result.success.join(" ");
 };
 
 class MockChildProcessSpawner {
@@ -2494,6 +2651,170 @@ if (!import.meta.main) {
       remoteForwardMessage("3845:127.0.0.1:3845"),
       "🔌  Forwarding remote port 3845 → 127.0.0.1:3845",
     );
+  });
+
+  Deno.test("forward PORTS expand to LISTEN:localhost:TARGET in order", () => {
+    assertEq(
+      expandedForwards("-L", [
+        "4174,8080:80",
+        "9090-9092",
+        "3000-3001:4000-4001",
+      ]),
+      [
+        "4174:localhost:4174",
+        "8080:localhost:80",
+        "9090:localhost:9090",
+        "9091:localhost:9091",
+        "9092:localhost:9092",
+        "3000:localhost:4000",
+        "3001:localhost:4001",
+      ].join(" "),
+    );
+  });
+
+  Deno.test("forward SPEC values reach ssh verbatim, in place among PORTS", () => {
+    assertEq(
+      expandedForwards("-L", [
+        "3000",
+        "5432:db:5432",
+        "0.0.0.0:4000:localhost:4000",
+        "8080:/run/app.sock",
+        "9000:90",
+      ]),
+      [
+        "3000:localhost:3000",
+        "5432:db:5432",
+        "0.0.0.0:4000:localhost:4000",
+        "8080:/run/app.sock",
+        "9000:localhost:90",
+      ].join(" "),
+    );
+  });
+
+  Deno.test("forward -R PORT is a forward; ssh's SOCKS proxy needs a SPEC", () => {
+    assertEq(
+      expandedForwards("-R", ["1080", "localhost:1081"]),
+      "1080:localhost:1080 localhost:1081",
+    );
+  });
+
+  Deno.test("forward PORTS reject each malformed shape with its own cause", () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["3000,,8080", `-L "3000,,8080": the list has an empty entry`],
+      ["3000,", `-L "3000,": the list has an empty entry`],
+      [
+        "3000::80",
+        `-L "3000::80": entry "3000::80" has more than one ":"; expected LISTEN[:TARGET]`,
+      ],
+      ["4174,3118:", `-L "4174,3118:": entry "3118:" is missing a port`],
+      [":80", `-L ":80": entry ":80" is missing a port`],
+      ["3000-", `-L "3000-": "3000-" is not a port or A-B range`],
+      [
+        "3000-3001-3002",
+        `-L "3000-3001-3002": "3000-3001-3002" is not a port or A-B range`,
+      ],
+      ["0", `-L "0": port 0 is outside 1-65535`],
+      ["65536", `-L "65536": port 65536 is outside 1-65535`],
+      ["3005-3000", `-L "3005-3000": range 3005-3000 runs backwards`],
+      [
+        "3000-30000",
+        `-L "3000-30000": range 3000-30000 covers 27001 ports; the limit is 100`,
+      ],
+      [
+        "3000-3002:4000",
+        `-L "3000-3002:4000": entry "3000-3002:4000" pairs 3 listening ports with 1 target port`,
+      ],
+    ];
+    for (const [value, message] of cases) {
+      assertEq(expandedForwards("-L", [value]), `error: ${message}`);
+    }
+  });
+
+  Deno.test("forward ranges stop at 100 ports", () => {
+    assertEq(expandedForwards("-L", ["3000-3099"]).split(" ").length, 100);
+    assertEq(
+      expandedForwards("-L", ["3000-3100"]),
+      `error: -L "3000-3100": range 3000-3100 covers 101 ports; the limit is 100`,
+    );
+  });
+
+  Deno.test("forward PORTS collapse exact repeats and reject a second target", () => {
+    assertEq(
+      expandedForwards("-L", ["3000-3002", "3001"]),
+      "3000:localhost:3000 3001:localhost:3001 3002:localhost:3002",
+    );
+    assertEq(
+      expandedForwards("-R", ["3000", "3000:4000"]),
+      `error: -R "3000:4000": listening port 3000 already forwards to 3000`,
+    );
+  });
+
+  Deno.test("forward conflicts are checked per flag, not across -L and -R", () => {
+    const result = expandConnectForwards({ local: ["3000"], remote: ["3000"] });
+    assertEq(Result.isSuccess(result), true);
+  });
+
+  Deno.test("connect sends expanded PORTS to ssh", async () => {
+    const spawner = new MockChildProcessSpawner([
+      {
+        code: 0,
+        stdout: JSON.stringify([{
+          name: "box",
+          latest_build: { status: "running" },
+        }]),
+        stderr: "",
+      },
+      { code: 0, stdout: "", stderr: "" },
+    ]);
+    await Effect.runPromise(
+      connectCommand(
+        ["box"],
+        offlineConnectEnv,
+        { local: ["4174,8080:80"], remote: ["3845"] },
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    assertEq(
+      spawner.calls[1].args.join("\u0000"),
+      [
+        "-tt",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-L",
+        "4174:localhost:4174",
+        "-L",
+        "8080:localhost:80",
+        "-R",
+        "3845:localhost:3845",
+        "coder.box",
+        "/usr/bin/zsh -l",
+      ].join("\u0000"),
+    );
+  });
+
+  Deno.test("connect rejects malformed PORTS before calling coder", async () => {
+    const spawner = new MockChildProcessSpawner([]);
+    const code = await Effect.runPromise(
+      connectCommand(
+        ["box"],
+        offlineConnectEnv,
+        { local: ["3005-3000"], remote: [] },
+      ).pipe(Effect.provide(spawner.layer)) as Effect.Effect<number>,
+    );
+    assertEq(code, 2);
+    assertEq(spawner.calls.length, 0);
+  });
+
+  Deno.test("connect CLI keeps a PORTS list as one value", async () => {
+    const forwards = await parseConnectCli(["-L", "4174,8080:80", "box"]);
+    assertEq(forwards?.local.join("\u0000"), "4174,8080:80");
+  });
+
+  Deno.test("help and completion lead with PORTS, not ssh's PORT:HOST:PORT", () => {
+    for (const usage of [TOP_USAGE, CONNECT_USAGE, TMUX_USAGE]) {
+      assertEq(usage.includes(FORWARD_OPTIONS_USAGE), true);
+      assertEq(usage.includes("PORT:HOST:PORT"), false);
+    }
+    assertEq(ZSH_COMPLETION.includes("HOST:PORT"), false);
   });
 
   Deno.test("connect tmux mode attaches through a remote login zsh", async () => {
