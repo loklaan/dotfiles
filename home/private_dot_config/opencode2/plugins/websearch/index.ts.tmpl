@@ -1,0 +1,99 @@
+{{- $bwsToken := "" -}}
+{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-   $bwsToken = include .bwsTokenPath | trim -}}
+{{- end -}}
+{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{- $exaKey := "" -}}
+{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
+{{-   $exaKey = output $bwsGet .bwsIdExaApiKey .bwsTokenPath | trim -}}
+{{- end -}}
+import { Plugin } from "@opencode/plugin";
+
+const EXA_KEY = "{{ $exaKey }}";
+
+const DESCRIPTION =
+  "Search the web for current information, news, facts, docs, people, or companies. " +
+  "Returns clean text content from the top results. " +
+  "Best for: finding current info beyond training data, researching topics, looking up docs. " +
+  "If the highlights are insufficient, follow up with the webfetch tool on the best URLs.";
+
+const QUERY_DESCRIPTION =
+  "Natural language search query. Describe the ideal page, not just keywords. " +
+  'e.g. "blog post comparing React and Vue performance" not "React vs Vue". ' +
+  "Use category:people / category:company to search through LinkedIn profiles / companies.";
+
+type ExaResult = { title?: string; url?: string; text?: string };
+
+async function search(
+  query: string,
+  numResults: number | undefined,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  const res = await fetch("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { "x-api-key": EXA_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      numResults: numResults ?? 10,
+      contents: { text: { maxCharacters: 3000 } },
+    }),
+    signal,
+  });
+
+  if (!res.ok) return `EXA search failed: ${res.status} ${res.statusText}`;
+
+  const data = (await res.json()) as { results?: ExaResult[] };
+  const results = data.results ?? [];
+  if (results.length === 0) return "No results found.";
+
+  return results
+    .map((r) => `## ${r.title ?? "(untitled)"}\n${r.url ?? ""}\n\n${r.text ?? ""}`)
+    .join("\n\n---\n\n");
+}
+
+export default Plugin.define({
+  id: "dotfiles:websearch",
+  async setup(ctx) {
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "websearch",
+        description: DESCRIPTION,
+        input: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: QUERY_DESCRIPTION },
+            numResults: {
+              type: "number",
+              description: "Number of results to return (default: 10).",
+            },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+        execute: async (input, context) => {
+          if (!EXA_KEY) {
+            return {
+              content:
+                "EXA API key not configured — web search unavailable. Run `df-setup` for guidance.",
+            };
+          }
+          const { query, numResults } = input as {
+            query: string;
+            numResults?: number;
+          };
+          try {
+            return {
+              content: await search(query, numResults, context.signal),
+            };
+          } catch (error) {
+            return {
+              content: `EXA search error: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            };
+          }
+        },
+      });
+    });
+  },
+});
