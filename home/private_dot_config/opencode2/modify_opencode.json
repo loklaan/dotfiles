@@ -50,6 +50,8 @@
 {{-   $config = $config | setValueAtPath "snapshots" false -}}
 {{- end -}}
 
+{{- $config = $config | setValueAtPath "websearch" false -}}
+
 {{- /* Base `mp-codemode` entry, plus one `mp-<slug>` per profile read from
      mcpproxy's own config so the list cannot drift. `/mcp/p/<slug>` scopes
      that lane; V1 keeps its original `mcpproxy` name. */ -}}
