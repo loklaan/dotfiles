@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (24) ---
+    # --- home/private_dot_local/bin (25) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -40,6 +40,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-coder-url
+      tier: runtime
+      lang: deno
+    - path: home/private_dot_local/bin/executable_df-dictation-archive
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-effect-v4-reference
@@ -60,10 +63,10 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_df-opencode-cost.tmpl
       tier: runtime
       lang: deno
-    - path: home/private_dot_local/bin/executable_df-skills
+    - path: home/private_dot_local/bin/executable_df-setup.tmpl
       tier: runtime
       lang: deno
-    - path: home/private_dot_local/bin/executable_df-setup.tmpl
+    - path: home/private_dot_local/bin/executable_df-skills
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-task-chezmoi-apply
@@ -72,12 +75,12 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_df-task-chezmoi-update
       tier: runtime
       lang: deno
-    - path: home/private_dot_local/bin/executable_df-task-update
-      tier: runtime
-      lang: bash
     - path: home/private_dot_local/bin/executable_df-task-mise-upgrade
       tier: runtime
       lang: deno
+    - path: home/private_dot_local/bin/executable_df-task-update
+      tier: runtime
+      lang: bash
     - path: home/private_dot_local/bin/executable_github-token.tmpl
       tier: na
       lang: bash

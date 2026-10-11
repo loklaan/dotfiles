@@ -1,0 +1,27 @@
+# Dictation archive defaults, projected to ~/.config/dotfiles/dictation-archive.json on macOS.
+# Destination and recipients are deliberately EMPTY here: set them in the
+# machine-local chezmoi config (`chezmoi edit-config`) under
+# [data.dictationArchive.destination] and [data.dictationArchive.encryption],
+# which override matching keys here. CLI flags override both at runtime.
+#
+# destination.host: SSH host; empty means a LOCAL rsync destination.
+# destination.path: absolute destination directory (required to run).
+# encryption.recipients: PUBLIC age recipients; empty refuses writes unless
+#   --allow-plaintext. Never put an identity here.
+# recipe.bitrate: integer Opus kbps, 6k..512k.
+# sources: directories in the Hex layout (the only source adapter today).
+dictationArchive:
+  destination:
+    host: ""
+    user: ""
+    port: 22
+    path: ""
+    identityFile: ""
+    connectTimeoutSeconds: 15
+  encryption:
+    recipients: []
+  recipe:
+    bitrate: 24k
+  sources:
+    - ~/Library/Containers/com.kitlangton.Hex/Data/Library/Application Support/com.kitlangton.Hex
+    - ~/Library/Application Support/com.kitlangton.Hex

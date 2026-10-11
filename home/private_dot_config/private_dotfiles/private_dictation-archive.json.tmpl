@@ -1,0 +1,34 @@
+{{- $config := dig "dictationArchive" (dict) . -}}
+{{- if not (kindIs "map" $config) -}}
+{{-   fail "dictationArchive must be an object" -}}
+{{- end -}}
+{{- range $key := list "destination" "encryption" "recipe" -}}
+{{-   if not (kindIs "map" (dig $key (dict) $config)) -}}
+{{-     fail (printf "dictationArchive.%s must be an object" $key) -}}
+{{-   end -}}
+{{- end -}}
+{{- $destination := dig "destination" (dict) $config -}}
+{{- range $key := list "host" "user" "path" "identityFile" -}}
+{{-   if not (kindIs "string" (dig $key "" $destination)) -}}
+{{-     fail (printf "dictationArchive.destination.%s must be a string" $key) -}}
+{{-   end -}}
+{{- end -}}
+{{- $recipients := dig "encryption" "recipients" (list) $config -}}
+{{- if not (kindIs "slice" $recipients) -}}
+{{-   fail "dictationArchive.encryption.recipients must be an array" -}}
+{{- end -}}
+{{- range $recipient := $recipients -}}
+{{-   if not (kindIs "string" $recipient) -}}
+{{-     fail "dictationArchive.encryption.recipients must contain public recipient strings" -}}
+{{-   end -}}
+{{- end -}}
+{{- $sources := dig "sources" (list) $config -}}
+{{- if not (kindIs "slice" $sources) -}}
+{{-   fail "dictationArchive.sources must be an array" -}}
+{{- end -}}
+{{- range $source := $sources -}}
+{{-   if not (kindIs "string" $source) -}}
+{{-     fail "dictationArchive.sources must contain directory strings" -}}
+{{-   end -}}
+{{- end -}}
+{{ $config | toPrettyJson }}

@@ -30,6 +30,45 @@ Chezmoi maps source paths in this repo to target paths under `~/` using [source 
 
 To find the source path for any target: `chezmoi source-path <target-path>`
 
+## Dotfiles-owned config, state and data
+
+Use one shared directory per XDG root, with one config file per tool:
+
+| Purpose | Target convention | Ownership |
+|---|---|---|
+| Config | `~/.config/dotfiles/<tool>.json` | Render from committed `home/.chezmoidata/<tool>.yaml` through `home/private_dot_config/private_dotfiles/private_<tool>.json.tmpl`, so shared defaults stay visible in git history; private values go in machine-local chezmoi config |
+| State | `~/.local/state/dotfiles/<tool>/` | Tool-owned receipts, locks and staging; honour `XDG_STATE_HOME` when set |
+| Durable data | `~/.local/share/dotfiles/<tool>/` | Repository-owned data, separate from operational state |
+
+Existing instances are `~/.config/dotfiles/skill-lifecycle.json` and
+`~/.local/share/dotfiles/skills`. This convention does not migrate their current
+schemas or owners. `~/.config/chezmoi/secrets` remains chezmoi-owned.
+
+An isolated `chezmoi data` probe confirms that machine-local `chezmoi.toml
+[data]` overrides matching committed data keys while preserving committed
+sibling keys. Keep shared intent in the committed file; use local overrides
+deliberately. Runtime CLI overrides take precedence over the rendered file.
+
+### Dictation archive (macOS)
+
+`df-dictation-archive` stages, transcodes (Opus), age-encrypts and rsyncs
+dictations to an append-only archive. Hex is the only source adapter today.
+Run `df-dictation-archive --help` for commands and flags.
+
+- **Config:** `home/.chezmoidata/dictation-archive.yaml` holds defaults only.
+  The real destination and age recipients live in the machine-local chezmoi
+  config (`chezmoi edit-config`, `[data.dictationArchive.*]`), never in git.
+- **State:** `${XDG_STATE_HOME:-~/.local/state}/dotfiles/dictation-archive/`
+  (ledger, staging, locks). Keep one state directory per destination.
+- **Frozen archive format:** stored identifiers say `hex` (`projections/hex-capture.json`,
+  `HEX_ID` tag, `hexId` key) because they name the source app. Changing them
+  needs a schema bump and a new recipe id. A new app adds its own adapter and
+  `<app>-capture.json`.
+- **Safety:** output is counts only, never capture text or filenames. Writes
+  need age recipients (or explicit `--allow-plaintext`). Objects are write-once;
+  rsync never deletes or overwrites. After a lost ledger, `run` adopts encrypted
+  objects already at the destination instead of re-sending them.
+
 ## Custom Data Variables
 
 Defined in `.chezmoi.toml.tmpl` under `[data]`:

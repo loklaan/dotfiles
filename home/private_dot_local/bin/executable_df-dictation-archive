@@ -1,0 +1,3898 @@
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-read --allow-write --allow-env=HOME,PATH,SSH_AUTH_SOCK,XDG_STATE_HOME,NODE_V8_COVERAGE,LANG,LC_ALL,LC_CTYPE,NO_COLOR,TERM
+
+// df-dictation-archive — immutable, optionally age-encrypted dictation archive.
+// Usage: df-dictation-archive [run|status|verify] [--help]
+// Configure home/.chezmoidata/dictation-archive.yaml, projected on macOS to
+// ~/.config/dotfiles/dictation-archive.json. Flags > config file > built-in defaults.
+// run is the default. --dry-run is read-only; --limit selects oldest-first.
+// Plain-text count summaries by default; --json selects whitelisted JSON.
+// status exits 0 = converged, 2 = work pending.
+// verify checks only currently staged objects, NOT pruned ledger-only objects.
+// Lost ledger: run adopts differing .age objects at existing write-once paths,
+// fsyncs receipts before pruning duplicates; verify only reports wouldAdopt.
+// Plaintext differences, missing destination files and unknown rsync output block
+// ALL receipts/pruning. Adoption trusts destination ciphertext, not its integrity.
+// Empty recipients require --allow-plaintext for writes (never for observation).
+// --no-ship stages only; --keep-staged retains verified copies. Changed recipes
+// add recording + sidecar objects; source and Hex projection remain write-once.
+// Recipients apply to NEW objects only: existing ciphertext is never rekeyed.
+// State: ${XDG_STATE_HOME:-~/.local/state}/dotfiles/dictation-archive/{staging,ledger.jsonl,lock}.
+// Use one state/staging pair per destination; a binding prevents accidental reuse.
+// Sources are read-only; Hex's tmp directory is never visited. No content logging.
+// Read/write grants are unscoped because CLI paths may be outside HOME; spawning
+// requires unscoped allow-run for supervised process-group teardown. Named env
+// reads and extendEnv:false prevent environment enumeration. No age identity read.
+// allow: SIZE_OK — explicitly requested single-file CLI, services and in-file tests.
+
+import {
+  ByteSize,
+  Clock,
+  Console,
+  Context,
+  Crypto,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  PlatformError,
+  Schedule,
+  Schema,
+  SchemaIssue,
+  Stream,
+} from "npm:effect@4.0.0";
+import { FileSystem, layerNoop } from "npm:effect@4.0.0/FileSystem";
+import { layer as pathLayer, Path } from "npm:effect@4.0.0/Path";
+import { Command, Flag } from "npm:effect@4.0.0/cli";
+import { ChildProcess, ChildProcessSpawner } from "npm:effect@4.0.0/process";
+
+// --- Contracts / pure transformations -------------------------------------
+class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", {
+  key: Schema.String,
+  message: Schema.String,
+}) {}
+class SourceError extends Schema.TaggedError<SourceError>()("SourceError", {
+  operation: Schema.String,
+  hexId: Schema.String,
+  message: Schema.String,
+}) {}
+class StateError extends Schema.TaggedError<StateError>()("StateError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
+class ProcessError extends Schema.TaggedError<ProcessError>()("ProcessError", {
+  program: Schema.String,
+  exitCode: Schema.Number,
+  stderr: Schema.String,
+}) {
+  override get message() {
+    return `${this.program} exited ${this.exitCode}${
+      this.stderr ? `: ${this.stderr}` : ""
+    }`;
+  }
+}
+class ShipVerifyError
+  extends Schema.TaggedError<ShipVerifyError>()("ShipVerifyError", {
+    differences: Schema.Number,
+    adoptable: Schema.Number,
+    blocking: Schema.Number,
+    conflicts: Schema.Number,
+    newAtDestination: Schema.Number,
+    unknown: Schema.Number,
+  }) {
+  override get message() {
+    const classes = [
+      this.conflicts ? `non-adoptable file differences=${this.conflicts}` : "",
+      this.newAtDestination ? `newAtDestination=${this.newAtDestination}` : "",
+      this.unknown ? `unknown=${this.unknown}` : "",
+    ].filter(Boolean).join(", ");
+    return `verification blocked by ${classes}; differences=${this.differences}, adoptable=${this.adoptable}, blocking=${this.blocking}; staging preserved and ledger unchanged; resolve blocking records before retrying`;
+  }
+}
+class WavError extends Schema.TaggedError<WavError>()("WavError", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return `WAV ${this.reason}`;
+  }
+}
+const safeString = Schema.String.check(Schema.isPattern(/^[^\p{Cc}\p{Cf}]*$/u));
+const positiveInt = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: 65535 }),
+);
+const Uuid = Schema.String.check(
+  Schema.isPattern(/^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/),
+);
+const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+const Bitrate = Schema.String.check(
+  Schema.isPattern(/^(?:[6-9]|[1-9][0-9]|[1-4][0-9]{2}|50[0-9]|51[0-2])k$/),
+);
+const Destination = Schema.Struct({
+  host: Schema.String.check(
+    Schema.isPattern(/^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$/),
+  ),
+  user: Schema.String.check(
+    Schema.isPattern(/^(?:[A-Za-z0-9_][A-Za-z0-9._-]*)?$/),
+  ),
+  port: positiveInt,
+  path: safeString,
+  identityFile: safeString,
+  connectTimeoutSeconds: positiveInt,
+});
+const Configuration = Schema.Struct({
+  destination: Destination,
+  encryption: Schema.Struct({
+    recipients: Schema.Array(
+      Schema.String.check(Schema.isPattern(/^age1\S+$/)),
+    ),
+  }),
+  recipe: Schema.Struct({ bitrate: Bitrate }),
+  sources: Schema.Array(safeString),
+  stagingDir: safeString,
+  stateDir: safeString,
+});
+type Configuration = typeof Configuration.Type;
+const ConfigInput = Schema.Struct({
+  destination: Schema.optional(Schema.Struct({
+    host: Schema.optional(Destination.fields.host),
+    user: Schema.optional(Destination.fields.user),
+    port: Schema.optional(positiveInt),
+    path: Schema.optional(safeString),
+    identityFile: Schema.optional(safeString),
+    connectTimeoutSeconds: Schema.optional(positiveInt),
+  })),
+  encryption: Schema.optional(
+    Schema.Struct({
+      recipients: Schema.optional(
+        Configuration.fields.encryption.fields.recipients,
+      ),
+    }),
+  ),
+  recipe: Schema.optional(Schema.Struct({ bitrate: Schema.optional(Bitrate) })),
+  sources: Schema.optional(Schema.Array(safeString)),
+  stagingDir: Schema.optional(safeString),
+  stateDir: Schema.optional(safeString),
+});
+type ConfigInput = typeof ConfigInput.Type;
+const Transcript = Schema.Struct({
+  id: Uuid,
+  timestamp: Schema.Number,
+  text: Schema.String,
+  audioPath: Schema.String,
+  duration: Schema.Number,
+  sourceAppBundleID: Schema.optional(Schema.String),
+  sourceAppName: Schema.optional(Schema.String),
+});
+type Transcript = typeof Transcript.Type;
+type Entry = {
+  readonly transcript: Transcript;
+  readonly wav: string;
+  readonly model: string;
+};
+const History = Schema.Struct({ history: Schema.Array(Transcript) });
+// FROZEN ARCHIVE FORMAT
+// Delivered objects and the ledger persist entries/<uuid>/source.json,
+// projections/hex-capture.json and recordings/opus-<N>k-voip-v1.{opus,json},
+// with .age for encrypted objects. Keep objectPattern and these paths unchanged.
+// HEX_ID, SOURCE_SHA256, CAPTURED_END and CODING_HISTORY Opus tags, hexId/hex
+// JSON keys, producer.name = "hex", postProcessing text and all source,
+// projection and recording-sidecar fields are frozen deterministic bytes.
+// These identifiers name the source app, not this tool. Hex is the only adapter
+// today; its schemas, store layout and app lookup remain Hex-specific.
+// Renaming the format requires a schema bump and a new recipe id; changing it
+// in place breaks ledger/object-path planning and forces a full re-encode.
+const objectPattern =
+  /^entries\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/(?:source\.json|projections\/hex-capture\.json|recordings\/opus-[0-9]+k-voip-v1\.(?:opus|json))(?:\.age)?$/;
+const ObjectPath = Schema.String.check(Schema.isPattern(objectPattern));
+const Stored = Schema.Struct({ path: ObjectPath, sha256: Digest });
+type Stored = typeof Stored.Type;
+const HashedReceipt = Schema.Struct({
+  ...Stored.fields,
+  adopted: Schema.optionalKey(Schema.Never),
+});
+const AdoptedReceipt = Schema.Struct({
+  path: ObjectPath.check(Schema.isPattern(/\.age$/)),
+  adopted: Schema.Literal(true),
+  sha256: Schema.optionalKey(Schema.Never),
+});
+type Receipt = typeof HashedReceipt.Type | typeof AdoptedReceipt.Type;
+const receiptMetadata = {
+  shippedAt: Schema.String,
+  destination: Schema.String,
+};
+const LedgerRow = Schema.Union([
+  Schema.Struct({ ...HashedReceipt.fields, ...receiptMetadata }),
+  Schema.Struct({ ...AdoptedReceipt.fields, ...receiptMetadata }),
+]);
+const Manifest = Schema.Array(Stored);
+const canonical = (value: Schema.Json): string => {
+  const keys = new Set<string>();
+  JSON.stringify(value, (key, entry: Schema.Json) => {
+    keys.add(key);
+    return entry;
+  });
+  return JSON.stringify(value, [...keys].sort()) + "\n";
+};
+const capturedEnd = (timestamp: number): string =>
+  new Date(Math.round((timestamp + 978307200) * 1000)).toISOString();
+const audioBasename = (value: string): string => {
+  try {
+    const pathname = value.startsWith("file:")
+      ? new URL(value).pathname
+      : value;
+    const basename = decodeURIComponent(
+      pathname.slice(pathname.lastIndexOf("/") + 1),
+    );
+    if (
+      !basename || basename === "." || basename === ".." ||
+      /[/\\\p{Cc}\p{Cf}]/u.test(basename)
+    ) {
+      throw new WavError({ reason: "audioPath basename is unsafe" });
+    }
+    return basename;
+  } catch (cause) {
+    if (cause instanceof WavError) throw cause;
+    throw new WavError({ reason: "audioPath cannot be decoded" });
+  }
+};
+type Wav = {
+  readonly sampleRate: number;
+  readonly channels: number;
+  readonly samples: number;
+  readonly format: "f32le";
+};
+const parseWav = (bytes: Uint8Array): Wav => {
+  const fail = (reason: string): never => {
+    throw new WavError({ reason });
+  };
+  if (bytes.length < 12) return fail("header is truncated");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (offset: number) =>
+    String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return fail("requires RIFF/WAVE");
+  const end = view.getUint32(4, true) + 8;
+  if (end > bytes.length || end < 12) return fail("RIFF length is truncated");
+  let format: Omit<Wav, "samples"> | undefined;
+  let samples: number | undefined;
+  for (let offset = 12; offset < end;) {
+    if (offset + 8 > end) return fail("chunk header is truncated");
+    const length = view.getUint32(offset + 4, true), start = offset + 8;
+    if (start + length > end) return fail("chunk payload is truncated");
+    switch (tag(offset)) {
+      case "fmt ": {
+        if (length < 16 || format) {
+          return fail("format chunk is missing fields or duplicated");
+        }
+        const code = view.getUint16(start, true),
+          channels = view.getUint16(start + 2, true);
+        const sampleRate = view.getUint32(start + 4, true),
+          bits = view.getUint16(start + 14, true);
+        const float = code === 3 || (code === 65534 && length >= 40 &&
+          view.getUint16(start + 16, true) >= 22 &&
+          view.getUint16(start + 18, true) === 32 &&
+          [...bytes.subarray(start + 24, start + 40)].join(",") ===
+            "3,0,0,0,0,0,16,0,128,0,0,170,0,56,155,113");
+        if (!float || bits !== 32) {
+          return fail("requires 32-bit IEEE float samples");
+        }
+        if (
+          channels !== 1 || sampleRate !== 16000 ||
+          view.getUint16(start + 12, true) !== 4 ||
+          view.getUint32(start + 8, true) !== 64000
+        ) return fail("requires 16 kHz mono with four-byte frames");
+        format = { channels, sampleRate, format: "f32le" };
+        break;
+      }
+      case "data":
+        if (samples !== undefined || length % 4 !== 0) {
+          return fail("data chunk has inconsistent frames");
+        }
+        samples = length / 4;
+        break;
+    }
+    offset = start + length + length % 2;
+    if (offset > end) return fail("chunk padding is truncated");
+  }
+  if (!format || samples === undefined) {
+    return fail("requires format and data chunks");
+  }
+  return { ...format, samples };
+};
+const recipeId = (bitrate: string) => `opus-${bitrate}-voip-v1`;
+const defaults = (home: string, stateHome: string): Configuration => ({
+  destination: {
+    host: "",
+    user: "",
+    port: 22,
+    path: "",
+    identityFile: "",
+    connectTimeoutSeconds: 15,
+  },
+  encryption: { recipients: [] },
+  recipe: { bitrate: "24k" },
+  sources: [
+    `${home}/Library/Containers/com.kitlangton.Hex/Data/Library/Application Support/com.kitlangton.Hex`,
+    `${home}/Library/Application Support/com.kitlangton.Hex`,
+  ],
+  stateDir: `${stateHome}/dotfiles/dictation-archive`,
+  stagingDir: `${stateHome}/dotfiles/dictation-archive/staging`,
+});
+const mergeConfig = (
+  base: Configuration,
+  file: ConfigInput,
+  flags: ConfigInput,
+): Configuration => {
+  const stateDir = flags.stateDir ?? file.stateDir ?? base.stateDir;
+  return {
+    ...base,
+    ...file,
+    ...flags,
+    stateDir,
+    stagingDir: flags.stagingDir ?? file.stagingDir ?? `${stateDir}/staging`,
+    destination: {
+      ...base.destination,
+      ...file.destination,
+      ...flags.destination,
+    },
+    encryption: { ...base.encryption, ...file.encryption, ...flags.encryption },
+    recipe: { ...base.recipe, ...file.recipe, ...flags.recipe },
+  };
+};
+const requireEncryption = (config: Configuration, allowed: boolean) =>
+  config.encryption.recipients.length || allowed ? Effect.void : Effect.fail(
+    new ConfigError({
+      key: "encryption.recipients",
+      message:
+        "no age recipients configured; set home/.chezmoidata/dictation-archive.yaml or --recipient, or explicitly accept unencrypted objects with --allow-plaintext",
+    }),
+  );
+const desiredObjects = (
+  id: string,
+  config: Configuration,
+): readonly string[] => {
+  const prefix = `entries/${id.toLowerCase()}`,
+    recipe = recipeId(config.recipe.bitrate);
+  const suffix = config.encryption.recipients.length ? ".age" : "";
+  return [
+    `${prefix}/source.json`,
+    `${prefix}/projections/hex-capture.json`,
+    `${prefix}/recordings/${recipe}.opus`,
+    `${prefix}/recordings/${recipe}.json`,
+  ].map((p) => p + suffix);
+};
+const newObjects = (
+  desired: readonly string[],
+  ledger: ReadonlySet<string>,
+  staged: ReadonlySet<string>,
+) => desired.filter((p) => !ledger.has(p) && !staged.has(p));
+const destinationLabel = (config: Configuration) =>
+  canonical({
+    host: config.destination.host,
+    user: config.destination.user,
+    port: config.destination.port,
+    path: config.destination.path,
+  }).trim();
+const quoteShell = (value: string): string =>
+  `'${value.replaceAll("'", "'\\''")}'`;
+const sshArgs = (d: Configuration["destination"]): readonly string[] => [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  `ConnectTimeout=${d.connectTimeoutSeconds}`,
+  "-p",
+  String(d.port),
+  ...(d.identityFile ? ["-i", d.identityFile] : []),
+];
+const sshTarget = (d: Configuration["destination"]) =>
+  `${d.user ? `${d.user}@` : ""}${d.host}`;
+const rsyncArgs = (
+  config: Configuration,
+  verify: boolean,
+): readonly string[] => {
+  const d = config.destination;
+  return [
+    ...(verify ? ["-rnc"] : ["-a", "--ignore-existing", "--partial"]),
+    "--itemize-changes",
+    "--exclude=/.pending/",
+    "--exclude=/.lock/",
+    ...(d.host ? ["-e", ["ssh", ...sshArgs(d)].map(quoteShell).join(" ")] : []),
+    "--",
+    `${config.stagingDir}/`,
+    d.host ? `${sshTarget(d)}:${quoteShell(`${d.path}/`)}` : `${d.path}/`,
+  ];
+};
+type VerifyRecord =
+  | { readonly _tag: "differs"; readonly path: string }
+  | { readonly _tag: "newAtDestination"; readonly path: string }
+  | { readonly _tag: "ignorable" }
+  | { readonly _tag: "unknown" };
+const parseVerifyLine = (line: string): VerifyRecord => {
+  // -rnc emits 7 attribute columns in macOS openrsync (protocol 29),
+  // 10 in Homebrew rsync 3.4.1 (9 in earlier rsync 3.x). Never trim paths.
+  const fields =
+    /^([<>.c])([fd])(\+{7}|\+{9}|\+{10}|[.c][.s][.tT](?:\.{4}|\.{6}|\.{7})) (.+)$/
+      .exec(line);
+  if (!fields) return { _tag: "unknown" };
+  const [, update, kind, attributes, path] = fields;
+  if (/[\p{Cc}\p{Cf}]/u.test(path)) return { _tag: "unknown" };
+  if (kind === "d" && (update === "c" || update === ".")) {
+    return { _tag: "ignorable" };
+  }
+  if (kind !== "f" || update === "c") return { _tag: "unknown" };
+  if (attributes.startsWith("+")) {
+    return update === "."
+      ? { _tag: "unknown" }
+      : { _tag: "newAtDestination", path };
+  }
+  if (attributes[0] === "c" || attributes[1] === "s") {
+    return { _tag: "differs", path };
+  }
+  return { _tag: "ignorable" };
+};
+const classifyVerification = (
+  output: string,
+  staged: ReadonlySet<string>,
+) => {
+  const adoptable = new Set<string>();
+  let conflicts = 0, newAtDestination = 0, unknown = 0;
+  // Only the record terminator is discarded; blank/malformed records fail closed.
+  const lines = output === "" ? [] : output.replace(/\n$/, "").split("\n");
+  for (const line of lines) {
+    Match.value(parseVerifyLine(line)).pipe(
+      Match.tag("differs", ({ path }) => {
+        if (
+          objectPattern.test(path) && path.endsWith(".age") && staged.has(path)
+        ) {
+          adoptable.add(path);
+        } else conflicts++;
+      }),
+      Match.tag("newAtDestination", () => {
+        newAtDestination++;
+      }),
+      Match.tag("unknown", () => {
+        unknown++;
+      }),
+      Match.tag("ignorable", () => undefined),
+      Match.exhaustive,
+    );
+  }
+  const blocking = conflicts + newAtDestination + unknown;
+  return {
+    differences: adoptable.size + blocking,
+    adoptable,
+    blocking,
+    conflicts,
+    newAtDestination,
+    unknown,
+  };
+};
+const requireVerified = (
+  result: ReturnType<typeof classifyVerification>,
+): Effect.Effect<ReturnType<typeof classifyVerification>, ShipVerifyError> =>
+  result.blocking
+    ? Effect.fail(
+      new ShipVerifyError({ ...result, adoptable: result.adoptable.size }),
+    )
+    : Effect.succeed(result);
+const pendingReceipts = (
+  objects: readonly Stored[],
+  shipped: ReadonlySet<string>,
+  adoptable: ReadonlySet<string>,
+): readonly Receipt[] =>
+  objects.filter((object) => !shipped.has(object.path)).map((object) =>
+    adoptable.has(object.path) ? { path: object.path, adopted: true } : object
+  );
+type Encoder = {
+  readonly ffmpeg: string;
+  readonly libavcodec: string;
+  readonly libopus: string;
+};
+type EncodeFacts = {
+  readonly hexId: string;
+  readonly sourceSha256: string;
+  readonly capturedEnd: string;
+  readonly bitrate: string;
+  readonly encoder: Encoder;
+};
+const ffmpegArgs = (wav: string, facts: EncodeFacts): readonly string[] => [
+  "-nostdin",
+  "-hide_banner",
+  "-loglevel",
+  "error",
+  "-i",
+  wav,
+  "-map",
+  "0:a:0",
+  "-map_metadata",
+  "-1",
+  "-ac",
+  "1",
+  "-ar",
+  "16000",
+  "-c:a",
+  "libopus",
+  "-application",
+  "voip",
+  "-b:a",
+  facts.bitrate,
+  "-vbr",
+  "on",
+  "-compression_level",
+  "10",
+  "-fflags",
+  "+bitexact",
+  "-flags:a",
+  "+bitexact",
+  "-metadata:s:a:0",
+  `HEX_ID=${facts.hexId}`,
+  "-metadata:s:a:0",
+  `SOURCE_SHA256=${facts.sourceSha256}`,
+  "-metadata:s:a:0",
+  `CAPTURED_END=${facts.capturedEnd}`,
+  "-metadata:s:a:0",
+  `CODING_HISTORY=A=PCM,F=16000,W=32,M=mono,T=hex-capture(float)\nA=OPUS,F=16000,B=${
+    parseInt(facts.bitrate)
+  },M=mono,T=ffmpeg ${facts.encoder.ffmpeg}+libopus ${facts.encoder.libopus};voip;vbr;cl10`,
+  "-f",
+  "ogg",
+  "pipe:1",
+];
+
+// --- File boundaries / source and ledger services -------------------------
+const missing = Effect.catch((cause: PlatformError.PlatformError) =>
+  cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause)
+);
+const ioError = (operation: string) =>
+  Effect.mapError((cause: PlatformError.PlatformError) =>
+    new StateError({
+      operation,
+      message:
+        `${operation}: ${cause.reason._tag}; inspect filesystem permissions and available space`,
+    })
+  );
+const concatenate = (chunks: readonly Uint8Array[]): Uint8Array => {
+  const bytes = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+const readBounded = Effect.fn("Files.readBounded")(
+  function* (file: string, limit: number) {
+    const fs = yield* FileSystem;
+    const info = yield* fs.stat(file).pipe(ioError("read metadata"));
+    if (info.type !== "File") {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "read",
+          message: "expected a regular file",
+        }),
+      );
+    }
+    if (info.size > BigInt(limit)) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "read",
+          message: `input exceeds ${limit}-byte safety bound`,
+        }),
+      );
+    }
+    const bytes = concatenate(
+      yield* fs.stream(file, { bytesToRead: limit + 1 }).pipe(
+        Stream.runCollect,
+        ioError("read bytes"),
+      ),
+    );
+    if (bytes.length > limit) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "read",
+          message: `input grew beyond ${limit}-byte safety bound`,
+        }),
+      );
+    }
+    return bytes;
+  },
+);
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  bytes: Uint8Array,
+) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+    new TextDecoder().decode(bytes),
+  );
+const scanHexSource = Effect.fn("DictationSource.scanHexSource")(
+  function* (config: Configuration) {
+    const fs = yield* FileSystem, path = yield* Path;
+    let model = "unknown";
+    for (const directory of config.sources) {
+      const settingsFile = path.join(directory, "hex_settings.json");
+      const selectedModel = yield* readBounded(settingsFile, 4 * 1024 * 1024)
+        .pipe(
+          Effect.flatMap((bytes) =>
+            decodeJson(
+              Schema.Struct({ selectedModel: Schema.optional(Schema.String) }),
+              bytes,
+            )
+          ),
+          Effect.map((settings) => settings.selectedModel),
+          Effect.orElseSucceed(() => undefined),
+        );
+      if (selectedModel !== undefined) {
+        model = selectedModel;
+        break;
+      }
+    }
+    const seen = new Map<string, Entry | null>();
+    let sourcesScanned = 0;
+    for (const directory of config.sources) {
+      const history = path.join(directory, "transcription_history.json");
+      if (
+        (yield* fs.stat(history).pipe(missing, ioError("inspect history"))) ===
+          null
+      ) continue;
+      const entries = yield* readBounded(history, 128 * 1024 * 1024).pipe(
+        Effect.flatMap((bytes) => decodeJson(History, bytes)),
+        Effect.mapError(() =>
+          new SourceError({
+            operation: "history",
+            hexId: "",
+            message:
+              "history could not be read as a complete Hex document; retry after Hex finishes writing",
+          })
+        ),
+        Effect.retry(
+          Schedule.max([Schedule.spaced("100 millis"), Schedule.recurs(3)]),
+        ),
+      );
+      sourcesScanned++;
+      if (entries.history.length > 500000) {
+        return yield* Effect.fail(
+          new SourceError({
+            operation: "history",
+            hexId: "",
+            message: "history exceeds 500000-entry safety bound",
+          }),
+        );
+      }
+      for (const raw of entries.history) {
+        const id = raw.id.toLowerCase();
+        if (seen.get(id)) continue;
+        const basename = yield* Effect.try({
+          try: () => audioBasename(raw.audioPath),
+          catch: () =>
+            new SourceError({
+              operation: "audioPath",
+              hexId: id,
+              message: `cannot decode audioPath for ${id}`,
+            }),
+        });
+        const wav = path.join(directory, "Recordings", basename);
+        const info = yield* fs.stat(wav).pipe(
+          missing,
+          ioError("inspect recording"),
+        );
+        if (info === null) {
+          seen.set(id, null);
+          continue;
+        }
+        if (info.type !== "File") {
+          return yield* Effect.fail(
+            new SourceError({
+              operation: "recording",
+              hexId: id,
+              message: `recording is not a regular file for ${id}`,
+            }),
+          );
+        }
+        yield* Effect.try({
+          try: () => capturedEnd(raw.timestamp),
+          catch: () =>
+            new SourceError({
+              operation: "timestamp",
+              hexId: id,
+              message:
+                `timestamp is outside the supported date range for ${id}`,
+            }),
+        });
+        seen.set(id, { transcript: { ...raw, id }, wav, model });
+      }
+    }
+    return {
+      sourcesScanned,
+      entriesTotal: seen.size,
+      missingSource: [...seen.values()].filter((e) => e === null).length,
+      entries: [...seen.values()].filter((e): e is Entry => e !== null).sort((
+        a,
+        b,
+      ) =>
+        a.transcript.timestamp - b.transcript.timestamp ||
+        a.transcript.id.localeCompare(b.transcript.id)
+      ),
+    };
+  },
+);
+class DictationSource extends Context.Service<
+  DictationSource,
+  { readonly scan: typeof scanHexSource }
+>()("df-dictation-archive/DictationSource") {
+  static readonly layer = Layer.succeed(DictationSource, {
+    scan: scanHexSource,
+  });
+}
+const readLedger = Effect.fn("Ledger.read")(function* (config: Configuration) {
+  const fs = yield* FileSystem, target = `${config.stateDir}/ledger.jsonl`;
+  if (
+    (yield* fs.stat(target).pipe(missing, ioError("inspect ledger"))) === null
+  ) return [];
+  const bytes = yield* readBounded(target, 256 * 1024 * 1024);
+  const text = new TextDecoder().decode(bytes);
+  if (text && !text.endsWith("\n")) {
+    return yield* Effect.fail(
+      new StateError({
+        operation: "ledger",
+        message:
+          "ledger has a torn final line; preserve it and repair before retrying",
+      }),
+    );
+  }
+  return yield* Effect.forEach(
+    text.split("\n").filter(Boolean),
+    (line) =>
+      Schema.decodeUnknownEffect(Schema.fromJsonString(LedgerRow))(line).pipe(
+        Effect.mapError(() =>
+          new StateError({
+            operation: "ledger",
+            message:
+              "ledger row does not match the object receipt schema; preserve it and repair before retrying",
+          })
+        ),
+      ),
+    { concurrency: 1 },
+  );
+});
+const appendLedger = Effect.fn("Ledger.append")(
+  function* (config: Configuration, objects: readonly Receipt[]) {
+    const fs = yield* FileSystem, now = yield* Clock.currentTimeMillis;
+    if (
+      (yield* physicalPath(`${config.stateDir}/ledger.jsonl`)) !==
+        `${config.stateDir}/ledger.jsonl`
+    ) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "ledger",
+          message: "ledger is a symlink; no receipt appended",
+        }),
+      );
+    }
+    const text = objects.map((object) => {
+      const metadata = {
+        destination: destinationLabel(config),
+        shippedAt: new Date(now).toISOString(),
+      };
+      return Match.value(object).pipe(
+        Match.when(
+          { adopted: true },
+          ({ path }) => canonical({ path, adopted: true, ...metadata }),
+        ),
+        Match.orElse(({ path, sha256 }) =>
+          canonical({ path, sha256, ...metadata })
+        ),
+      );
+    }).join("");
+    if (!text) return;
+    yield* fs.writeFileString(`${config.stateDir}/ledger.jsonl`, text, {
+      flag: "a",
+      mode: 0o600,
+    }).pipe(ioError("append ledger"));
+    yield* syncFile(`${config.stateDir}/ledger.jsonl`);
+  },
+);
+class Ledger extends Context.Service<
+  Ledger,
+  { readonly read: typeof readLedger; readonly append: typeof appendLedger }
+>()("df-dictation-archive/Ledger") {
+  static readonly layer = Layer.succeed(Ledger, {
+    read: readLedger,
+    append: appendLedger,
+  });
+}
+
+// --- Supervised processes / streaming encryption --------------------------
+const environment = Effect.sync(() => {
+  const env: Record<string, string> = {};
+  for (const name of ["HOME", "PATH", "SSH_AUTH_SOCK"] as const) {
+    const value = Deno.env.get(name);
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+});
+const child = (
+  program: string,
+  args: readonly string[],
+  env: Record<string, string>,
+) =>
+  ChildProcess.make(program, args, {
+    env,
+    extendEnv: false,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    forceKillAfter: "5 seconds",
+  });
+const boundedOutput = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  limit: number,
+) =>
+  stream.pipe(
+    Stream.runFoldEffect(
+      (): { chunks: Uint8Array[]; size: number } => ({ chunks: [], size: 0 }),
+      (buffer, bytes) => {
+        if (buffer.size + bytes.length > limit) {
+          return Effect.fail(
+            new StateError({
+              operation: "process output",
+              message:
+                `process exceeded ${limit}-byte output bound; output withheld`,
+            }),
+          );
+        }
+        buffer.chunks.push(bytes);
+        buffer.size += bytes.length;
+        return Effect.succeed(buffer);
+      },
+    ),
+    Effect.map((buffer) => concatenate(buffer.chunks)),
+  );
+const checkedExit = (program: string, code: number, stderr: Uint8Array) =>
+  code === 0 ? Effect.void : Effect.fail(
+    new ProcessError({
+      program,
+      exitCode: code,
+      // Encoder diagnostics can contain timestamp-bearing WAV names. Only transfer
+      // diagnostics are safe to render; neither argv nor raw defects are logged.
+      stderr: ["rsync", "ssh"].includes(program)
+        ? new TextDecoder().decode(stderr).split("\n").slice(-12).join("\n")
+          .trim()
+        : "diagnostics withheld to protect capture paths",
+    }),
+  );
+const runProcess = Effect.fn("Processes.run")(
+  function* (program: string, args: readonly string[], input?: Uint8Array) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const env = yield* environment;
+    // rsync 3.2.4+ otherwise quotes an already POSIX-quoted remote path again.
+    // Older/openrsync ignores this compatibility env variable; no 3.x flags used.
+    const handle = yield* spawner.spawn(
+      child(
+        program,
+        args,
+        program === "rsync" ? { ...env, RSYNC_OLD_ARGS: "1" } : env,
+      ),
+    ).pipe(ioError(`spawn ${program}`));
+    const result = yield* Effect.all({
+      input: Stream.make(input ?? new Uint8Array()).pipe(
+        Stream.run(handle.stdin),
+        ioError(`feed ${program}`),
+      ),
+      stdout: boundedOutput(handle.stdout, 64 * 1024 * 1024).pipe(
+        Effect.mapError((e) =>
+          e instanceof StateError ? e : new StateError({
+            operation: program,
+            message: `${program} stdout: ${e.reason._tag}`,
+          })
+        ),
+      ),
+      stderr: boundedOutput(handle.stderr, 65536).pipe(
+        Effect.mapError((e) =>
+          e instanceof StateError ? e : new StateError({
+            operation: program,
+            message: `${program} stderr: ${e.reason._tag}`,
+          })
+        ),
+      ),
+      code: handle.exitCode.pipe(ioError(`wait ${program}`)),
+    }, { concurrency: "unbounded" });
+    yield* checkedExit(program, Number(result.code), result.stderr);
+    return result.stdout;
+  },
+  Effect.scoped,
+);
+const digest = Effect.fn("Crypto.sha256")(function* (bytes: Uint8Array) {
+  return (yield* (yield* Crypto.Crypto).digest("SHA-256", bytes).pipe(
+    ioError("SHA-256"),
+  )).toHex();
+});
+const syncFile = Effect.fn("Files.sync")(function* (file: string) {
+  const fs = yield* FileSystem;
+  const handle = yield* fs.open(file, { flag: "r" }).pipe(
+    ioError("open for sync"),
+  );
+  yield* handle.sync.pipe(ioError("sync file"));
+}, Effect.scoped);
+const makePrivateDirectory = Effect.fn("Files.privateDirectory")(
+  function* (directory: string) {
+    const fs = yield* FileSystem;
+    if ((yield* physicalPath(directory)) !== directory) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "directory",
+          message:
+            "managed directory contains a symlink; no permissions or contents changed",
+        }),
+      );
+    }
+    yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(
+      ioError("create private directory"),
+    );
+    yield* fs.chmod(directory, 0o700).pipe(ioError("secure directory"));
+  },
+);
+const atomicBytes = Effect.fn("Files.atomicBytes")(
+  function* (file: string, bytes: Uint8Array) {
+    const fs = yield* FileSystem;
+    if (
+      (yield* physicalPath(file)) !== file ||
+      (yield* physicalPath(file + ".partial")) !== file + ".partial"
+    ) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "write",
+          message: "publication path is a symlink; no bytes written",
+        }),
+      );
+    }
+    yield* fs.writeFile(file + ".partial", bytes, { flag: "wx", mode: 0o600 })
+      .pipe(ioError("write partial"));
+    yield* syncFile(file + ".partial");
+    yield* fs.rename(file + ".partial", file).pipe(ioError("publish file"));
+  },
+);
+const encryptBytes = Effect.fn("Staging.encryptBytes")(
+  function* (file: string, bytes: Uint8Array, recipients: readonly string[]) {
+    const fs = yield* FileSystem;
+    if (recipients.length === 0) {
+      yield* atomicBytes(file, bytes);
+      return;
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      child("age", recipients.flatMap((r) => ["-r", r]), yield* environment),
+    ).pipe(ioError("spawn age"));
+    const result = yield* Effect.all({
+      input: Stream.make(bytes).pipe(
+        Stream.run(handle.stdin),
+        ioError("age input"),
+      ),
+      output: handle.stdout.pipe(
+        Stream.run(fs.sink(file + ".partial", { flag: "wx", mode: 0o600 })),
+        ioError("age output"),
+      ),
+      stderr: boundedOutput(handle.stderr, 65536),
+      code: handle.exitCode,
+    }, { concurrency: "unbounded" }).pipe(
+      Effect.mapError((e) =>
+        e instanceof StateError ? e : new StateError({
+          operation: "encrypt",
+          message: `age stream: ${e.reason._tag}`,
+        })
+      ),
+    );
+    yield* checkedExit("age", Number(result.code), result.stderr);
+    yield* syncFile(file + ".partial");
+    yield* fs.rename(file + ".partial", file).pipe(
+      ioError("publish encrypted file"),
+    );
+  },
+  Effect.scoped,
+);
+const encoderIdentity = Effect.fn("Transcoder.identity")(function* () {
+  const text = new TextDecoder().decode(
+    yield* runProcess("ffmpeg", ["-version"]),
+  );
+  return {
+    ffmpeg: text.match(/^ffmpeg version (\S+)/)?.[1] ?? "unknown",
+    libavcodec:
+      text.match(/libavcodec\s+(\d+)\.\s*(\d+)\.\s*(\d+)/)?.slice(1).join(
+        ".",
+      ) ?? "unknown",
+    libopus: text.match(/libopus\s+(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? "unknown",
+  };
+});
+const encodeRecording = Effect.fn("Transcoder.encode")(
+  function* (
+    file: string,
+    entry: Entry,
+    request: { readonly config: Configuration; readonly facts: EncodeFacts },
+  ) {
+    const fs = yield* FileSystem,
+      spawner = yield* ChildProcessSpawner.ChildProcessSpawner,
+      env = yield* environment;
+    const encoder = yield* spawner.spawn(
+      child("ffmpeg", ffmpegArgs(entry.wav, request.facts), env),
+    ).pipe(ioError("spawn ffmpeg"));
+    const recipients = request.config.encryption.recipients;
+    const age = recipients.length
+      ? yield* spawner.spawn(
+        child("age", recipients.flatMap((r) => ["-r", r]), env),
+      ).pipe(ioError("spawn age"))
+      : null;
+    // Effect 4.0.0 pipeTo exposes only the LAST exit status (NodeChildProcessSpawner
+    // lines 667-685). Explicit stream wiring preserves both statuses and feed errors.
+    // Crypto.digest is one-shot: retain bounded Opus chunks in memory while piping
+    // them to age. No plaintext file is created, even during interruption.
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    const audio = encoder.stdout.pipe(
+      Stream.tap((bytes) =>
+        Effect.gen(function* () {
+          size += bytes.length;
+          if (size > 64 * 1024 * 1024) {
+            return yield* Effect.fail(
+              new StateError({
+                operation: "encode",
+                message:
+                  "Opus output exceeds 64 MiB per-recording safety bound",
+              }),
+            );
+          }
+          chunks.push(bytes);
+        })
+      ),
+    );
+    const output = fs.sink(file + ".partial", { flag: "wx", mode: 0o600 });
+    const result = yield* Effect.all({
+      closeInput: Stream.empty.pipe(Stream.run(encoder.stdin)),
+      feed: age
+        ? audio.pipe(Stream.run(age.stdin))
+        : audio.pipe(Stream.run(output)),
+      stored: age ? age.stdout.pipe(Stream.run(output)) : Effect.void,
+      ffmpegError: boundedOutput(encoder.stderr, 65536),
+      ffmpegCode: encoder.exitCode,
+      ageError: age
+        ? boundedOutput(age.stderr, 65536)
+        : Effect.succeed(new Uint8Array()),
+      ageCode: age ? age.exitCode : Effect.succeed(0),
+    }, { concurrency: "unbounded" }).pipe(
+      Effect.mapError((e) =>
+        e instanceof StateError ? e : new StateError({
+          operation: "encode",
+          message: `encoding stream: ${e.reason._tag}`,
+        })
+      ),
+    );
+    yield* checkedExit("ffmpeg", Number(result.ffmpegCode), result.ffmpegError);
+    yield* checkedExit("age", Number(result.ageCode), result.ageError);
+    yield* syncFile(file + ".partial");
+    yield* fs.rename(file + ".partial", file).pipe(
+      ioError("publish recording"),
+    );
+    return { sha256: yield* digest(concatenate(chunks)), bytes: size };
+  },
+  Effect.scoped,
+);
+class Transcoder extends Context.Service<
+  Transcoder,
+  {
+    readonly identity: typeof encoderIdentity;
+    readonly encode: typeof encodeRecording;
+  }
+>()("df-dictation-archive/Transcoder") {
+  static readonly layer = Layer.succeed(Transcoder, {
+    identity: encoderIdentity,
+    encode: encodeRecording,
+  });
+}
+
+// --- Staging transactions -------------------------------------------------
+// Each transaction becomes recoverable BEFORE any final object is published.
+// Its manifest contains only export paths and ciphertext hashes. Recovery moves
+// the original bytes; it never re-encrypts an already-published object.
+const hashFile = Effect.fn("Staging.hashFile")(function* (file: string) {
+  return yield* digest(yield* readBounded(file, 128 * 1024 * 1024));
+});
+const listStaged = Effect.fn("Staging.list")(function* (config: Configuration) {
+  const fs = yield* FileSystem;
+  const names = yield* fs.readDirectory(config.stagingDir).pipe(
+    missing,
+    ioError("inspect staging root"),
+  );
+  if (names === null) return [];
+  if (names.some((name) => !["entries", ".pending", ".lock"].includes(name))) {
+    return yield* Effect.fail(
+      new StateError({
+        operation: "staging",
+        message:
+          "staging root contains an unrecognized item; move unrelated files out before transfer",
+      }),
+    );
+  }
+  const root = `${config.stagingDir}/entries`;
+  if (
+    (yield* fs.stat(root).pipe(missing, ioError("inspect staging"))) === null
+  ) return [];
+  const found: string[] = [];
+  const walk = Effect.fn("Staging.walk")(
+    function* (
+      relative: string,
+      depth: number,
+    ): Effect.fn.Return<void, StateError> {
+      const dir = `${config.stagingDir}/${relative}`;
+      if ((yield* fs.realPath(dir).pipe(ioError("resolve staging"))) !== dir) {
+        return yield* Effect.fail(
+          new StateError({
+            operation: "staging",
+            message:
+              "staging contains a symlink; remove the link before retrying",
+          }),
+        );
+      }
+      for (
+        const name of yield* fs.readDirectory(dir).pipe(ioError("list staging"))
+      ) {
+        const next = `${relative}/${name}`,
+          full = `${config.stagingDir}/${next}`;
+        if (
+          (yield* fs.realPath(full).pipe(ioError("resolve object"))) !== full
+        ) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "staging",
+              message:
+                "staging contains a symlink; remove the link before retrying",
+            }),
+          );
+        }
+        const info = yield* fs.stat(full).pipe(ioError("inspect object"));
+        if (
+          info.type === "Directory" && depth < 3 &&
+          (depth === 1
+            ? Schema.is(Uuid)(name) && name === name.toLowerCase()
+            : ["recordings", "projections"].includes(name))
+        ) {
+          yield* walk(next, depth + 1);
+          continue;
+        }
+        if (info.type !== "File" || !objectPattern.test(next)) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "staging",
+              message:
+                "staging contains an unrecognized object; move unrelated files out before retrying",
+            }),
+          );
+        }
+        if ((info.mode & 0o777) !== 0o600) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "staging",
+              message: "staged object permissions must be 0600",
+            }),
+          );
+        }
+        found.push(next);
+        if (found.length > 2000000) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "staging",
+              message: "staging exceeds two million objects",
+            }),
+          );
+        }
+      }
+    },
+  );
+  yield* walk("entries", 1);
+  return found;
+});
+const objectDirectories = Effect.fn("Staging.objectDirectories")(
+  function* (root: string, relative: string) {
+    const path = yield* Path;
+    let current = root;
+    for (const part of path.dirname(relative).split("/")) {
+      current += `/${part}`;
+      yield* makePrivateDirectory(current);
+    }
+  },
+);
+const publishTransaction = Effect.fn("Staging.publish")(
+  function* (config: Configuration, transaction: string) {
+    const fs = yield* FileSystem;
+    const manifest = yield* readBounded(`${transaction}/manifest.json`, 1048576)
+      .pipe(
+        Effect.flatMap((bytes) => decodeJson(Manifest, bytes)),
+        Effect.mapError(() =>
+          new StateError({
+            operation: "transaction",
+            message:
+              "staging transaction manifest is unreadable; preserve it for recovery",
+          })
+        ),
+      );
+    for (const object of manifest) {
+      const target = `${config.stagingDir}/${object.path}`,
+        original = `${transaction}/${object.path}`;
+      if (
+        (yield* physicalPath(target)) !== target ||
+        (yield* physicalPath(original)) !== original
+      ) {
+        return yield* Effect.fail(
+          new StateError({
+            operation: "transaction",
+            message: "transaction object path contains a symlink",
+          }),
+        );
+      }
+      const present = yield* fs.stat(target).pipe(
+        missing,
+        ioError("inspect publication"),
+      );
+      if (present !== null) {
+        if ((yield* hashFile(target)) !== object.sha256) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "transaction",
+              message:
+                "published object conflicts with its transaction hash; no bytes overwritten",
+            }),
+          );
+        }
+      } else {
+        if ((yield* hashFile(original)) !== object.sha256) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "transaction",
+              message: "transaction object differs from its recorded hash",
+            }),
+          );
+        }
+        yield* objectDirectories(config.stagingDir, object.path);
+        yield* fs.rename(original, target).pipe(
+          ioError("publish staged object"),
+        );
+      }
+    }
+    yield* fs.remove(transaction, { recursive: true }).pipe(
+      ioError("finish transaction"),
+    );
+  },
+);
+const recoverStaging = Effect.fn("Staging.recover")(
+  function* (config: Configuration) {
+    const fs = yield* FileSystem, root = `${config.stagingDir}/.pending`;
+    if (
+      (yield* fs.stat(root).pipe(missing, ioError("inspect pending"))) === null
+    ) return;
+    for (
+      const name of yield* fs.readDirectory(root).pipe(ioError("list pending"))
+    ) {
+      if (!Schema.is(Uuid)(name)) {
+        return yield* Effect.fail(
+          new StateError({
+            operation: "recovery",
+            message: "pending directory contains an unrecognized transaction",
+          }),
+        );
+      }
+      const transaction = `${root}/${name}`;
+      if (
+        (yield* fs.realPath(transaction).pipe(
+          ioError("resolve transaction"),
+        )) !== transaction
+      ) {
+        return yield* Effect.fail(
+          new StateError({
+            operation: "recovery",
+            message: "transaction is a symlink",
+          }),
+        );
+      }
+      if (
+        (yield* fs.stat(`${transaction}/manifest.json`).pipe(
+          missing,
+          ioError("inspect transaction"),
+        )) === null
+      ) {
+        // Without a manifest nothing was published. Discard only our unfinished build.
+        yield* fs.remove(transaction, { recursive: true }).pipe(
+          ioError("discard unfinished transaction"),
+        );
+      } else yield* publishTransaction(config, transaction);
+    }
+  },
+);
+const stageEntry = Effect.fn("Staging.entry")(
+  function* (
+    entry: Entry,
+    needed: readonly string[],
+    request: {
+      readonly config: Configuration;
+      readonly encoder: Encoder;
+      readonly appVersion: string;
+    },
+  ) {
+    const { config, encoder, appVersion } = request;
+    const fs = yield* FileSystem,
+      path = yield* Path,
+      transcoder = yield* Transcoder;
+    const id = entry.transcript.id,
+      transaction = `${config.stagingDir}/.pending/${id}`;
+    yield* makePrivateDirectory(`${config.stagingDir}/.pending`);
+    yield* fs.makeDirectory(transaction, { mode: 0o700 }).pipe(
+      ioError("start transaction"),
+    );
+    let recoverable = false;
+    yield* Effect.acquireRelease(
+      Effect.succeed(transaction),
+      (directory) =>
+        recoverable
+          ? Effect.void
+          : fs.remove(directory, { recursive: true, force: true }).pipe(
+            Effect.orDie,
+          ),
+    );
+    const bytes = yield* readBounded(entry.wav, 512 * 1024 * 1024);
+    const wav = yield* Effect.try({
+      try: () => parseWav(bytes),
+      catch: (cause) =>
+        cause instanceof WavError
+          ? cause
+          : new WavError({ reason: "parser failed" }),
+    });
+    const sourceSha256 = yield* digest(bytes),
+      end = capturedEnd(entry.transcript.timestamp),
+      recipe = recipeId(config.recipe.bitrate);
+    const suffix = config.encryption.recipients.length ? ".age" : "";
+    const recordingPath = `entries/${id}/recordings/${recipe}.opus${suffix}`;
+    let recording:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
+    if (needed.includes(recordingPath)) {
+      yield* objectDirectories(transaction, recordingPath);
+      recording = yield* transcoder.encode(
+        `${transaction}/${recordingPath}`,
+        entry,
+        {
+          config,
+          facts: {
+            hexId: id,
+            sourceSha256,
+            capturedEnd: end,
+            bitrate: config.recipe.bitrate,
+            encoder,
+          },
+        },
+      );
+      if (
+        (yield* digest(yield* readBounded(entry.wav, 512 * 1024 * 1024))) !==
+          sourceSha256
+      ) {
+        return yield* Effect.fail(
+          new SourceError({
+            operation: "snapshot",
+            hexId: id,
+            message:
+              `recording changed while encoding ${id}; retry after capture completes`,
+          }),
+        );
+      }
+    }
+    for (
+      const relative of needed.filter((p) => p !== recordingPath)
+    ) {
+      yield* objectDirectories(transaction, relative);
+      let document: Schema.Json;
+      if (relative.endsWith(`/source.json${suffix}`)) {
+        const hex = entry.transcript;
+        // durationReported is hotkey-hold time, NOT audio length. Real duration is
+        // integer samples / sampleRate. Raw Hex seconds are preserved, not invented.
+        document = {
+          schema: 1,
+          hexId: id,
+          source: { sha256: sourceSha256, bytes: bytes.length, ...wav },
+          hex: {
+            timestampRaw: hex.timestamp,
+            durationReported: hex.duration,
+            ...(hex.sourceAppBundleID === undefined
+              ? {}
+              : { sourceAppBundleID: hex.sourceAppBundleID }),
+            ...(hex.sourceAppName === undefined
+              ? {}
+              : { sourceAppName: hex.sourceAppName }),
+          },
+          capturedEnd: end,
+        };
+      } else if (relative.endsWith(`/hex-capture.json${suffix}`)) {
+        document = {
+          schema: 1,
+          hexId: id,
+          producer: {
+            name: "hex",
+            appVersion,
+            selectedModelAtExport: entry.model,
+          },
+          sourceSha256,
+          text: entry.transcript.text,
+          postProcessing:
+            "hex-applied (word removals, remappings, formatting) — per-entry settings at capture time are unknown",
+        };
+      } else {
+        if (!recording) {
+          return yield* Effect.fail(
+            new StateError({
+              operation: "recording sidecar",
+              message:
+                `recording pair is incomplete for ${id}; restore its staging transaction instead of regenerating metadata`,
+            }),
+          );
+        }
+        document = {
+          schema: 1,
+          hexId: id,
+          recipe,
+          file: path.basename(recordingPath),
+          ...recording,
+          sourceSha256,
+          encoder,
+        };
+      }
+      yield* encryptBytes(
+        `${transaction}/${relative}`,
+        new TextEncoder().encode(canonical(document)),
+        config.encryption.recipients,
+      );
+    }
+    const manifest = yield* Effect.forEach(
+      needed,
+      (relative) =>
+        hashFile(`${transaction}/${relative}`).pipe(
+          Effect.map((sha256) => ({ path: relative, sha256 })),
+        ),
+      { concurrency: 1 },
+    );
+    yield* atomicBytes(
+      `${transaction}/manifest.json`,
+      new TextEncoder().encode(canonical(manifest)),
+    );
+    recoverable = true;
+    yield* publishTransaction(config, transaction);
+  },
+  Effect.scoped,
+);
+class Staging extends Context.Service<
+  Staging,
+  {
+    readonly list: typeof listStaged;
+    readonly recover: typeof recoverStaging;
+    readonly stage: typeof stageEntry;
+  }
+>()("df-dictation-archive/Staging") {
+  static readonly layer = Layer.succeed(Staging, {
+    list: listStaged,
+    recover: recoverStaging,
+    stage: stageEntry,
+  });
+}
+
+// --- Append-only shipper --------------------------------------------------
+const verifyStaged = Effect.fn("Shipper.verify")(
+  function* (config: Configuration, staged: ReadonlySet<string>) {
+    const output = new TextDecoder().decode(
+      yield* runProcess("rsync", rsyncArgs(config, true)),
+    );
+    // Never --ignore-existing here: classification needs existing-file conflicts.
+    return yield* requireVerified(classifyVerification(output, staged));
+  },
+);
+const shipStaged = Effect.fn("Shipper.ship")(function* (
+  config: Configuration,
+  staged: ReadonlySet<string>,
+) {
+  const d = config.destination;
+  if (d.host) {
+    // ssh executes its remote command through a shell even with an argv API.
+    // Send ONE command argument, with the path POSIX-quoted, never raw interpolation.
+    yield* runProcess("ssh", [
+      ...sshArgs(d),
+      "--",
+      sshTarget(d),
+      `mkdir -p -- ${quoteShell(d.path)}`,
+    ]);
+  } else yield* makePrivateDirectory(d.path);
+  yield* runProcess("rsync", rsyncArgs(config, false));
+  return yield* verifyStaged(config, staged);
+});
+class Shipper extends Context.Service<
+  Shipper,
+  { readonly ship: typeof shipStaged; readonly verify: typeof verifyStaged }
+>()("df-dictation-archive/Shipper") {
+  static readonly layer = Layer.succeed(Shipper, {
+    ship: shipStaged,
+    verify: verifyStaged,
+  });
+}
+
+// --- Configuration / path ownership --------------------------------------
+const configFailure = (cause: Schema.SchemaError) => {
+  const issue =
+    SchemaIssue.makeFormatterStandardSchemaV1()(cause.issue).issues[0];
+  const known = new Set([
+    "destination",
+    "host",
+    "user",
+    "port",
+    "path",
+    "identityFile",
+    "connectTimeoutSeconds",
+    "encryption",
+    "recipients",
+    "recipe",
+    "bitrate",
+    "sources",
+    "stagingDir",
+    "stateDir",
+  ]);
+  const key =
+    (issue?.path ?? []).map((part) =>
+      typeof part === "number"
+        ? String(part)
+        : typeof part === "string" && known.has(part)
+        ? part
+        : "<unknown-key>"
+    ).join(".") || "config";
+  return new ConfigError({
+    key,
+    message:
+      `${key} does not match the configuration schema; check its type and allowed range`,
+  });
+};
+const parseConfig = (value: unknown) =>
+  Schema.decodeUnknownEffect(ConfigInput)(value, { onExcessProperty: "error" })
+    .pipe(Effect.mapError(configFailure));
+const expandHome = (value: string, home: string) =>
+  value === "~" ? home : value.startsWith("~/") ? home + value.slice(1) : value;
+const physicalPath = Effect.fn("Files.physicalPath")(function* (value: string) {
+  const fs = yield* FileSystem, path = yield* Path;
+  let current = path.resolve(value);
+  const names: string[] = [];
+  for (;;) {
+    const info = yield* fs.stat(current).pipe(missing, ioError("resolve path"));
+    if (info !== null) {
+      return path.join(
+        yield* fs.realPath(current).pipe(ioError("resolve physical path")),
+        ...names.reverse(),
+      );
+    }
+    const parent = path.dirname(current);
+    // stat follows symlinks, so detect a dangling link rather than creating through it.
+    const siblings = yield* fs.readDirectory(parent).pipe(
+      missing,
+      ioError("inspect path parent"),
+    );
+    if (siblings?.includes(path.basename(current))) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "path",
+          message: "configured path contains a dangling symlink",
+        }),
+      );
+    }
+    if (parent === current) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "path",
+          message: "cannot resolve path root",
+        }),
+      );
+    }
+    names.push(path.basename(current));
+    current = parent;
+  }
+});
+const overlaps = (a: string, b: string): boolean =>
+  a === b || a.startsWith(b + "/") || b.startsWith(a + "/");
+const validateLocations = Effect.fn("Config.locations")(
+  function* (config: Configuration, home: string) {
+    if (
+      config.sources.some((p) =>
+        overlaps(p, `${home}/Library/Containers/com.kitlangton.Hex/Data/tmp`)
+      )
+    ) {
+      return yield* Effect.fail(
+        new ConfigError({
+          key: "sources",
+          message: "sources must not include the Hex temporary-data tree",
+        }),
+      );
+    }
+    const protectedPaths = [
+      ...config.sources,
+      `${home}/Library/Containers/com.kitlangton.Hex`,
+      `${home}/Library/Application Support/com.kitlangton.Hex`,
+    ];
+    const sources = yield* Effect.forEach(config.sources, physicalPath, {
+      concurrency: 4,
+    });
+    const protectedRoots = yield* Effect.forEach(protectedPaths, physicalPath, {
+      concurrency: 4,
+    });
+    const stateDir = yield* physicalPath(config.stateDir),
+      stagingDir = yield* physicalPath(config.stagingDir);
+    const destinationPath = config.destination.host || !config.destination.path
+      ? config.destination.path
+      : yield* physicalPath(config.destination.path);
+    for (
+      const [key, output] of [
+        ["stateDir", stateDir],
+        ["stagingDir", stagingDir],
+        ...(!config.destination.host && destinationPath
+          ? [["destination.path", destinationPath]]
+          : []),
+      ]
+    ) {
+      if (
+        output === "/" ||
+        protectedRoots.some((source) => overlaps(output, source))
+      ) {
+        return yield* Effect.fail(
+          new ConfigError({
+            key,
+            message:
+              `${key} overlaps read-only source storage; select an independent export location`,
+          }),
+        );
+      }
+    }
+    if (stateDir === stagingDir || stateDir.startsWith(stagingDir + "/")) {
+      return yield* Effect.fail(
+        new ConfigError({
+          key: "stagingDir",
+          message: "stagingDir must not contain stateDir",
+        }),
+      );
+    }
+    if (
+      !config.destination.host && destinationPath &&
+      [stateDir, stagingDir].some((p) => overlaps(p, destinationPath))
+    ) {
+      return yield* Effect.fail(
+        new ConfigError({
+          key: "destination.path",
+          message: "destination.path must not overlap state or staging",
+        }),
+      );
+    }
+    return {
+      ...config,
+      sources,
+      stateDir,
+      stagingDir,
+      destination: { ...config.destination, path: destinationPath },
+    };
+  },
+);
+const optionalString = (name: string) => Flag.String(name).pipe(Flag.optional);
+const boolean = (name: string, description: string) =>
+  Flag.Boolean(name).pipe(
+    Flag.withDefault(false),
+    Flag.withDescription(description),
+  );
+const commonFlags = {
+  json: boolean("json", "Print machine-readable counts instead of plain text"),
+  config: optionalString("config"),
+  host: optionalString("host"),
+  user: optionalString("user"),
+  port: Flag.Int("port").pipe(Flag.optional),
+  path: optionalString("path"),
+  identityFile: optionalString("identity-file"),
+  bitrate: optionalString("bitrate"),
+  source: Flag.String("source").pipe(Flag.between(0, 32)),
+  recipient: Flag.String("recipient").pipe(Flag.between(0, 128)),
+  stateDir: optionalString("state-dir"),
+  stagingDir: optionalString("staging-dir"),
+};
+type FlagValue<F> = F extends Flag.Flag<infer A> ? A : never;
+type CommonFlags = {
+  readonly [K in keyof typeof commonFlags]: FlagValue<typeof commonFlags[K]>;
+};
+const loadConfig = Effect.fn("Config.load")(function* (flags: CommonFlags) {
+  const fs = yield* FileSystem;
+  const home = yield* Effect.sync(() => Deno.env.get("HOME") ?? "");
+  if (!home) {
+    return yield* Effect.fail(
+      new ConfigError({
+        key: "HOME",
+        message:
+          "HOME is required to resolve configuration and default sources",
+      }),
+    );
+  }
+  const stateHome = yield* Effect.sync(() =>
+    Deno.env.get("XDG_STATE_HOME") || `${home}/.local/state`
+  );
+  const filePath = expandHome(
+    Option.getOrElse(
+      flags.config,
+      () => `${home}/.config/dotfiles/dictation-archive.json`,
+    ),
+    home,
+  );
+  const present = yield* fs.stat(filePath).pipe(
+    missing,
+    ioError("inspect config"),
+  );
+  if (present === null && Option.isSome(flags.config)) {
+    return yield* Effect.fail(
+      new ConfigError({
+        key: "config",
+        message: "explicit --config file does not exist",
+      }),
+    );
+  }
+  const file = present === null
+    ? {}
+    : yield* readBounded(filePath, 1048576).pipe(
+      Effect.flatMap((bytes) =>
+        Schema.decodeUnknownEffect(Schema.fromJsonString(ConfigInput))(
+          new TextDecoder().decode(bytes),
+          { onExcessProperty: "error" },
+        )
+      ),
+      Effect.mapError((e) => e instanceof StateError ? e : configFailure(e)),
+    );
+  const override: ConfigInput = {
+    destination: {
+      host: Option.getOrUndefined(flags.host),
+      user: Option.getOrUndefined(flags.user),
+      port: Option.getOrUndefined(flags.port),
+      path: Option.getOrUndefined(flags.path),
+      identityFile: Option.getOrUndefined(flags.identityFile),
+    },
+    ...(Option.isSome(flags.bitrate)
+      ? { recipe: { bitrate: flags.bitrate.value } }
+      : {}),
+    ...(flags.source.length ? { sources: flags.source } : {}),
+    ...(flags.recipient.length
+      ? { encryption: { recipients: flags.recipient } }
+      : {}),
+    ...(Option.isSome(flags.stateDir)
+      ? { stateDir: flags.stateDir.value }
+      : {}),
+    ...(Option.isSome(flags.stagingDir)
+      ? { stagingDir: flags.stagingDir.value }
+      : {}),
+  };
+  // Absent flag keys must not overwrite file values with undefined.
+  const cleaned = {
+    ...override,
+    destination: Object.fromEntries(
+      Object.entries(override.destination ?? {}).filter(([, v]) =>
+        v !== undefined
+      ),
+    ),
+  };
+  const config = mergeConfig(
+    defaults(home, stateHome),
+    file,
+    yield* parseConfig(cleaned),
+  );
+  const expanded = {
+    ...config,
+    sources: config.sources.map((p) => expandHome(p, home)),
+    stateDir: expandHome(config.stateDir, home),
+    stagingDir: expandHome(config.stagingDir, home),
+    destination: {
+      ...config.destination,
+      path: config.destination.host
+        ? config.destination.path
+        : expandHome(config.destination.path, home),
+      identityFile: expandHome(config.destination.identityFile, home),
+    },
+  };
+  const validated = yield* Schema.decodeUnknownEffect(Configuration)(expanded)
+    .pipe(Effect.mapError(configFailure));
+  for (
+    const [key, values] of [
+      ["sources", validated.sources],
+      ["stateDir", [validated.stateDir]],
+      ["stagingDir", [validated.stagingDir]],
+      [
+        "destination.path",
+        validated.destination.path ? [validated.destination.path] : [],
+      ],
+      [
+        "destination.identityFile",
+        validated.destination.identityFile
+          ? [validated.destination.identityFile]
+          : [],
+      ],
+    ] as const
+  ) {
+    if (values.some((v) => !v.startsWith("/"))) {
+      return yield* Effect.fail(
+        new ConfigError({
+          key,
+          message:
+            `${key} must use absolute paths (local paths may start with ~/)`,
+        }),
+      );
+    }
+  }
+  return yield* validateLocations(validated, home);
+});
+const requireDestination = (config: Configuration) =>
+  config.destination.path ? Effect.void : Effect.fail(
+    new ConfigError({
+      key: "destination.path",
+      message:
+        "destination is not configured; edit home/.chezmoidata/dictation-archive.yaml or pass --path and optionally --host/--user/--port/--identity-file",
+    }),
+  );
+const lockDirectory = Effect.fn("State.lock")(function* (directory: string) {
+  const fs = yield* FileSystem;
+  yield* Effect.acquireRelease(
+    fs.makeDirectory(directory, { mode: 0o700 }).pipe(
+      Effect.mapError((cause) =>
+        new StateError({
+          operation: "lock",
+          message: cause.reason._tag === "AlreadyExists"
+            ? `lock exists at ${directory}; another run may be active; remove only after confirming it is stale`
+            : `lock creation: ${cause.reason._tag}`,
+        })
+      ),
+    ),
+    () => fs.remove(directory, { recursive: true }).pipe(Effect.orDie),
+  );
+});
+const bindDestination = Effect.fn("State.bindDestination")(
+  function* (config: Configuration) {
+    const fs = yield* FileSystem, file = `${config.stateDir}/destination.json`;
+    const wanted = destinationLabel(config);
+    if (
+      (yield* fs.stat(file).pipe(
+        missing,
+        ioError("inspect destination binding"),
+      )) === null
+    ) {
+      yield* atomicBytes(
+        file,
+        new TextEncoder().encode(
+          canonical({ destination: wanted, stagingDir: config.stagingDir }),
+        ),
+      );
+    } else {
+      const binding = yield* readBounded(file, 1048576).pipe(
+        Effect.flatMap((bytes) =>
+          decodeJson(
+            Schema.Struct({
+              destination: Schema.String,
+              stagingDir: Schema.String,
+            }),
+            bytes,
+          )
+        ),
+        Effect.mapError(() =>
+          new StateError({
+            operation: "binding",
+            message: "state destination binding is unreadable",
+          })
+        ),
+      );
+      if (
+        binding.destination !== wanted ||
+        binding.stagingDir !== config.stagingDir
+      ) {
+        return yield* Effect.fail(
+          new ConfigError({
+            key: "stateDir",
+            message:
+              "stateDir belongs to a different destination or staging directory; use a separate state/staging pair",
+          }),
+        );
+      }
+    }
+  },
+);
+
+// --- Observation / reconciliation ----------------------------------------
+const probe = (program: string) =>
+  runProcess(program, ["--version"]).pipe(
+    Effect.map(() => true),
+    Effect.orElseSucceed(() => false),
+  );
+const planWork = Effect.fn("Export.plan")(function* (config: Configuration) {
+  const source = yield* DictationSource,
+    ledger = yield* Ledger,
+    staging = yield* Staging;
+  const scan = yield* source.scan(config),
+    rows = yield* ledger.read(config),
+    staged = yield* staging.list(config);
+  const shipped = new Set(
+    rows.filter((r) => r.destination === destinationLabel(config)).map((r) =>
+      r.path
+    ),
+  );
+  const stagedSet = new Set(staged);
+  const plans = scan.entries.map((entry) => ({
+    entry,
+    needed: newObjects(
+      desiredObjects(entry.transcript.id, config),
+      shipped,
+      stagedSet,
+    ),
+  })).filter((p) => p.needed.length);
+  const counts = {
+    sourcesScanned: scan.sourcesScanned,
+    entriesTotal: scan.entriesTotal,
+    missingSource: scan.missingSource,
+    shipped: scan.entries.filter((entry) =>
+      desiredObjects(entry.transcript.id, config).every((p) =>
+        shipped.has(p)
+      )
+    ).length,
+    stagedNotShipped:
+      new Set(staged.filter((p) => !shipped.has(p)).map((p) => p.split("/")[1]))
+        .size,
+    new: plans.length,
+    destinationConfigured: Boolean(config.destination.path),
+    encryptionConfigured: config.encryption.recipients.length > 0,
+  };
+  return { counts, plans, staged, shipped };
+});
+const observe = Effect.fn("Export.observe")(function* (config: Configuration) {
+  const plan = yield* planWork(config);
+  const fs = yield* FileSystem;
+  const pending = yield* fs.readDirectory(`${config.stagingDir}/.pending`).pipe(
+    missing,
+    ioError("observe pending transactions"),
+  );
+  const pendingIds = new Set(
+    plan.staged.filter((p) => !plan.shipped.has(p)).map((p) => p.split("/")[1]),
+  );
+  for (const id of pending ?? []) {
+    if (!Schema.is(Uuid)(id)) {
+      return yield* Effect.fail(
+        new StateError({
+          operation: "observation",
+          message: "pending staging contains an unrecognized transaction",
+        }),
+      );
+    }
+    pendingIds.add(id);
+  }
+  const tools = yield* Effect.all({
+    ffmpegFound: runProcess("ffmpeg", ["-version"]).pipe(
+      Effect.map(() => true),
+      Effect.orElseSucceed(() => false),
+    ),
+    ageFound: probe("age"),
+    rsyncFound: probe("rsync"),
+  }, { concurrency: "unbounded" });
+  return {
+    ...plan,
+    counts: { ...plan.counts, stagedNotShipped: pendingIds.size, ...tools },
+  };
+});
+type StatusCounts = {
+  readonly sourcesScanned: number;
+  readonly entriesTotal: number;
+  readonly missingSource: number;
+  readonly shipped: number;
+  readonly stagedNotShipped: number;
+  readonly new: number;
+  readonly destinationConfigured: boolean;
+  readonly encryptionConfigured: boolean;
+  readonly ffmpegFound: boolean;
+  readonly ageFound: boolean;
+  readonly rsyncFound: boolean;
+};
+const statusJson = (counts: StatusCounts, newObjects?: number) =>
+  JSON.stringify({
+    sourcesScanned: counts.sourcesScanned,
+    entriesTotal: counts.entriesTotal,
+    missingSource: counts.missingSource,
+    shipped: counts.shipped,
+    stagedNotShipped: counts.stagedNotShipped,
+    new: counts.new,
+    destinationConfigured: counts.destinationConfigured,
+    encryptionConfigured: counts.encryptionConfigured,
+    ffmpegFound: counts.ffmpegFound,
+    ageFound: counts.ageFound,
+    rsyncFound: counts.rsyncFound,
+    ...(newObjects === undefined ? {} : { newObjects }),
+  });
+const statusExitCode = (counts: StatusCounts): 0 | 2 =>
+  counts.new || counts.stagedNotShipped || counts.missingSource ? 2 : 0;
+const plural = (n: number, noun: string): string =>
+  `${n} ${noun}${n === 1 ? "" : "s"}`;
+const renderStatus = (counts: StatusCounts): string =>
+  [
+    `Dictation recordings found: ${counts.entriesTotal} (${
+      plural(counts.sourcesScanned, "source")
+    })`,
+    `Exported: ${counts.shipped}`,
+    `Waiting to export: ${counts.new}`,
+    `Staged but not sent: ${counts.stagedNotShipped}`,
+    `Recordings with missing audio: ${counts.missingSource}`,
+    "Setup:",
+    `  destination: ${counts.destinationConfigured ? "set" : "not set"}`,
+    `  encryption: ${
+      counts.encryptionConfigured ? "on" : "off (--allow-plaintext needed)"
+    }`,
+    `  ffmpeg: ${counts.ffmpegFound ? "found" : "missing"}`,
+    `  age: ${counts.ageFound ? "found" : "missing"}`,
+    `  rsync: ${counts.rsyncFound ? "found" : "missing"}`,
+    statusExitCode(counts) === 0 ? "Up to date." : "Work remaining (exit 2).",
+  ].join("\n");
+const renderDryRun = (
+  counts: StatusCounts & {
+    readonly newObjects: number;
+    readonly limit: number;
+  },
+): string =>
+  [
+    "Dry run, nothing written:",
+    renderStatus(counts),
+    `Would create ${plural(counts.newObjects, "file")} for ${
+      plural(Math.min(counts.limit, counts.new), "recording")
+    }.`,
+  ].join("\n");
+// Receipt paths already satisfy ObjectPath; every object belongs to one entry.
+const recordingIds = (receipts: readonly Receipt[]): ReadonlySet<string> =>
+  new Set(receipts.map((receipt) => receipt.path.split("/")[1]));
+const runSummary = (
+  receipts: readonly Receipt[],
+  encodedThisRun: number,
+  filesStagedOnly: number,
+) => ({
+  recordings: recordingIds(receipts).size,
+  filesDelivered: receipts.filter((r) => r.adopted !== true).length,
+  filesAdopted: receipts.filter((r) => r.adopted === true).length,
+  filesStagedOnly,
+  recordingsEncodedThisRun: encodedThisRun,
+});
+const renderRunSummary = (
+  receipts: readonly Receipt[],
+  encodedThisRun: number,
+  outcome: {
+    readonly filesStagedOnly: number;
+    readonly remaining: number;
+    readonly noShip: boolean;
+  },
+): string => {
+  const counts = runSummary(receipts, encodedThisRun, outcome.filesStagedOnly);
+  // Keep grouping local to run: status, dry-run and verify retain their layout.
+  const count = (n: number, noun: string): string =>
+    `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`;
+  if (
+    counts.recordingsEncodedThisRun === 0 && counts.recordings === 0 &&
+    counts.filesStagedOnly === 0 && outcome.remaining === 0
+  ) return "Up to date: 0 new recordings.";
+  // No file total: delivered, adopted and staged-only are disjoint outcomes.
+  const lines = outcome.noShip
+    ? [
+      `Processed ${count(counts.recordingsEncodedThisRun, "recording")}.`,
+      `  staged ${count(counts.filesStagedOnly, "file")}, not sent (--no-ship)`,
+    ]
+    : [
+      `Exported ${
+        count(counts.recordings, "recording")
+      } (delivered and verified at destination).`,
+      `  delivered and verified: ${count(counts.filesDelivered, "file")}`,
+      `  already at destination (adopted): ${
+        count(counts.filesAdopted, "file")
+      }`,
+      ...(counts.recordingsEncodedThisRun === counts.recordings ? [] : [
+        `  encoded in this run: ${
+          count(counts.recordingsEncodedThisRun, "recording")
+        } (the rest were staged by an earlier run)`,
+      ]),
+    ];
+  lines.push(
+    outcome.remaining === 0
+      ? "Up to date: nothing left to export."
+      : `Remaining: ${count(outcome.remaining, "recording")} still to export`,
+  );
+  return lines.join("\n");
+};
+const verifySummary = (
+  stagedObjects: number,
+  verification: ReturnType<typeof classifyVerification>,
+) => ({
+  stagedObjects,
+  differences: verification.differences,
+  wouldAdopt: verification.adoptable.size,
+  blocking: verification.blocking,
+});
+const renderVerify = (counts: ReturnType<typeof verifySummary>): string =>
+  `Checked ${
+    plural(counts.stagedObjects, "staged file")
+  } against destination: ${
+    counts.wouldAdopt === 0
+      ? "all match."
+      : `${counts.wouldAdopt} of ${counts.stagedObjects} already at destination (would be adopted by run).`
+  }`;
+// --- Count-only terminal progress -----------------------------------------
+// Renderers accept no source data. All glyphs occupy one terminal cell.
+const fitToWidth = (line: string, width: number): string =>
+  line.slice(0, Math.max(0, Math.floor(width)));
+const formatDuration = (seconds: number): string => {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m ${s % 60}s`;
+};
+const formatEta = (seconds: number): string => {
+  const s = Math.max(0, Math.ceil(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h${
+    String(Math.floor(s / 60) % 60).padStart(2, "0")
+  }m`;
+};
+type ProgressCounts = {
+  readonly completed: number;
+  readonly total: number;
+  readonly elapsedSeconds: number;
+};
+const renderProgressBar = (counts: ProgressCounts, width: number): string => {
+  const { completed, total, elapsedSeconds } = counts;
+  const fraction = total === 0 ? 1 : Math.min(1, completed / total);
+  const warmed = (completed >= 3 || elapsedSeconds >= 2) &&
+    completed > 0 && elapsedSeconds > 0;
+  const rate = completed / elapsedSeconds;
+  const details = `  ${completed.toLocaleString("en-US")} / ${
+    total.toLocaleString("en-US")
+  } recordings  ${Math.floor(fraction * 100)}%  ${
+    warmed ? rate.toFixed(1) : "--"
+  }/s  ETA ${warmed ? formatEta((total - completed) / rate) : "--"}`;
+  // Keep at least one bar cell; truncation handles very narrow terminals.
+  const cells = Math.max(
+    1,
+    Math.min(40, width - "Exporting  []".length - details.length),
+  );
+  const filled = Math.floor(fraction * cells);
+  return fitToWidth(
+    `Exporting  [${"█".repeat(filled)}${"░".repeat(cells - filled)}]${details}`,
+    width,
+  );
+};
+const renderShippingProgress = (
+  counts: { readonly total: number; readonly elapsedSeconds: number },
+  frame: string,
+  width: number,
+): string =>
+  fitToWidth(
+    `Sending to destination  ${frame}  ${
+      formatDuration(counts.elapsedSeconds)
+    }  [${counts.total.toLocaleString("en-US")} files staged]`,
+    width,
+  );
+type ProgressLabel = "Exporting" | "Sending to destination";
+class Progress extends Context.Service<Progress, {
+  readonly start: (label: ProgressLabel, total: number) => Effect.Effect<void>;
+  readonly advance: () => Effect.Effect<void>;
+  readonly phase: (label: "Sending to destination") => Effect.Effect<void>;
+  readonly finish: () => Effect.Effect<void>;
+}>()("df-dictation-archive/Progress") {
+  static readonly noop = Layer.succeed(Progress, {
+    start: () => Effect.void,
+    advance: () => Effect.void,
+    phase: () => Effect.void,
+    finish: () => Effect.void,
+  });
+
+  static readonly live = Layer.effect(
+    Progress,
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const now = () => Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000;
+      const locale = Deno.env.get("LC_ALL") || Deno.env.get("LC_CTYPE") ||
+        Deno.env.get("LANG") || "";
+      const frames = /utf-?8/i.test(locale) &&
+          Deno.env.get("NO_COLOR") === undefined &&
+          Deno.env.get("TERM") !== "dumb"
+        ? "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        : "|/-\\";
+      // Layer-local state; each update + synchronous write is one atomic turn,
+      // including concurrent staging completions. No queue grows with input.
+      let label: ProgressLabel = "Exporting", total = 0, completed = 0;
+      let started = 0, lastDraw = -Infinity, frame = 0;
+      let visible = false, shipping = false, finished = false, writable = true;
+      const write = (text: string) => {
+        if (!writable) return;
+        try {
+          const bytes = new TextEncoder().encode(text);
+          let offset = 0;
+          while (offset < bytes.length) {
+            offset += Deno.stderr.writeSync(bytes.subarray(offset));
+          }
+        } catch {
+          // Cosmetic output must not abort a transaction if the terminal closes.
+          // Disable further writes rather than retrying a broken sink forever.
+          writable = false;
+        }
+      };
+      const draw = (force = false) => {
+        if (finished || !writable) return;
+        const time = now();
+        if (!force && time - lastDraw < 100) return;
+        let columns = 80;
+        try {
+          columns = Deno.consoleSize().columns || 80;
+        } catch {
+          // A detached or unsupported terminal has no queryable dimensions.
+        }
+        // Leave the final column unused to avoid terminal autowrap pending state.
+        const width = Math.max(0, columns - 1);
+        const elapsedSeconds = Math.max(0, (time - started) / 1000);
+        const line = label === "Exporting"
+          ? renderProgressBar({ completed, total, elapsedSeconds }, width)
+          : renderShippingProgress(
+            { total, elapsedSeconds },
+            frames[frame++ % frames.length],
+            width,
+          );
+        visible = true;
+        lastDraw = time;
+        write(`\r\x1b[2K${line}`);
+      };
+      const finish = () =>
+        Effect.sync(() => {
+          finished = true;
+          shipping = false;
+          if (visible) write("\r\x1b[2K");
+          visible = false;
+        });
+      // One scoped ticker, asleep during staging; at most eight ship frames/s.
+      yield* Effect.gen(function* () {
+        while (!finished && writable) {
+          yield* Effect.sleep("125 millis");
+          if (shipping) draw();
+        }
+      }).pipe(Effect.catchCause(() => finish()), Effect.forkScoped);
+      yield* Effect.addFinalizer(finish);
+      return Progress.of({
+        start: (nextLabel, nextTotal) =>
+          Effect.sync(() => {
+            label = nextLabel;
+            total = nextTotal;
+            completed = 0;
+            started = now();
+            shipping = false;
+            if (label === "Exporting") draw(true);
+          }),
+        advance: () =>
+          Effect.sync(() => {
+            completed++;
+            // The final 100% frame bypasses throttling, even for very small runs.
+            draw(completed === total);
+          }),
+        phase: (nextLabel) =>
+          Effect.sync(() => {
+            label = nextLabel;
+            shipping = true;
+            draw(true);
+          }),
+        finish,
+      });
+    }),
+  );
+}
+
+const runFlags = {
+  ...commonFlags,
+  dryRun: boolean("dry-run", "Plan only; no writes"),
+  noProgress: boolean(
+    "no-progress",
+    "Disable stderr TTY progress (also off for --json and --dry-run)",
+  ),
+  noShip: boolean("no-ship", "Stage only; do not contact destination"),
+  keepStaged: boolean("keep-staged", "Keep checksum-verified staged objects"),
+  allowPlaintext: boolean(
+    "allow-plaintext",
+    "Explicitly allow unencrypted export objects",
+  ),
+  limit: Flag.Int("limit").pipe(
+    Flag.optional,
+    Flag.withDescription("Process at most N new entries, oldest first"),
+  ),
+  concurrency: Flag.Int("concurrency").pipe(
+    Flag.optional,
+    Flag.withDescription("Parallel encoders, default min(CPUs,4); maximum 16"),
+  ),
+};
+type RunFlags = {
+  readonly [K in keyof typeof runFlags]: FlagValue<typeof runFlags[K]>;
+};
+const runExport = Effect.fn("Export.run")(function* (flags: RunFlags) {
+  const config = yield* loadConfig(flags);
+  const limit = Option.getOrElse(flags.limit, () => Number.MAX_SAFE_INTEGER),
+    concurrency = Option.getOrElse(
+      flags.concurrency,
+      () => Math.min(navigator.hardwareConcurrency || 1, 4),
+    );
+  if (limit < 1) {
+    return yield* Effect.fail(
+      new ConfigError({
+        key: "limit",
+        message: "limit must be a positive integer",
+      }),
+    );
+  }
+  if (concurrency < 1 || concurrency > 16) {
+    return yield* Effect.fail(
+      new ConfigError({
+        key: "concurrency",
+        message: "concurrency must be between 1 and 16",
+      }),
+    );
+  }
+  if (flags.dryRun) {
+    const observation = yield* observe(config);
+    const newObjects = observation.plans.slice(0, limit).reduce(
+      (n, p) => n + p.needed.length,
+      0,
+    );
+    yield* Console.log(
+      flags.json
+        ? statusJson(observation.counts, newObjects)
+        : renderDryRun({ ...observation.counts, newObjects, limit }),
+    );
+    return;
+  }
+  yield* requireDestination(config);
+  yield* requireEncryption(config, flags.allowPlaintext);
+  const progress = Context.get(
+    yield* Layer.build(
+      !flags.json && !flags.noProgress && Deno.stderr.isTerminal()
+        ? Progress.live
+        : Progress.noop,
+    ),
+    Progress,
+  );
+  const fs = yield* FileSystem,
+    ledger = yield* Ledger,
+    staging = yield* Staging,
+    shipper = yield* Shipper,
+    transcoder = yield* Transcoder;
+  yield* makePrivateDirectory(config.stateDir);
+  yield* lockDirectory(`${config.stateDir}/lock`);
+  yield* makePrivateDirectory(config.stagingDir);
+  yield* lockDirectory(`${config.stagingDir}/.lock`);
+  yield* bindDestination(config);
+  yield* staging.recover(config);
+  const observation = yield* observe(config),
+    plans = observation.plans.slice(0, limit);
+  if (plans.length) {
+    const encoder = yield* transcoder.identity();
+    const appVersion = yield* runProcess("/usr/bin/defaults", [
+      "read",
+      "/Applications/Hex.app/Contents/Info",
+      "CFBundleShortVersionString",
+    ]).pipe(
+      Effect.map((bytes) =>
+        new TextDecoder().decode(bytes).trim() || "unknown"
+      ),
+      Effect.orElseSucceed(() => "unknown"),
+    );
+    yield* progress.start("Exporting", plans.length);
+    yield* Effect.forEach(
+      plans,
+      (plan) =>
+        staging.stage(plan.entry, plan.needed, { config, encoder, appVersion })
+          .pipe(
+            Effect.tap(() => progress.advance()),
+          ),
+      { concurrency },
+    );
+  }
+  const staged = yield* staging.list(config);
+  if (
+    config.encryption.recipients.length && staged.some((p) =>
+      !p.endsWith(".age")
+    ) && !flags.allowPlaintext
+  ) {
+    return yield* Effect.fail(
+      new ConfigError({
+        key: "stagingDir",
+        message:
+          "staging contains plaintext objects; isolate them or explicitly pass --allow-plaintext",
+      }),
+    );
+  }
+  let receipts: readonly Receipt[] = [];
+  if (!flags.noShip && staged.length) {
+    // Rebase the count from recordings to the actual objects, including backlog.
+    yield* progress.start("Sending to destination", staged.length);
+    yield* progress.phase("Sending to destination");
+    const hashes = yield* Effect.forEach(
+      staged,
+      (relative) =>
+        hashFile(`${config.stagingDir}/${relative}`).pipe(
+          Effect.map((sha256) => ({ path: relative, sha256 })),
+        ),
+      { concurrency: 1 },
+    );
+    const verification = yield* shipper.ship(config, new Set(staged));
+    // age output is random: after ledger loss, different bytes at the same
+    // write-once path are expected. We never have an age identity, so cannot
+    // decrypt-and-compare. Trust the destination copy as canonical. This cannot
+    // detect destination encrypted-object corruption (accepted limitation).
+    const unshipped = pendingReceipts(
+      hashes,
+      observation.shipped,
+      verification.adoptable,
+    );
+    // Append + fsync ALL receipts before removing anything. A crash after sync
+    // leaves shipped paths staged: planning skips them, verification reclassifies
+    // them, and this filter avoids duplicate receipts before pruning the leftovers.
+    yield* ledger.append(config, unshipped);
+    receipts = unshipped;
+    for (const object of hashes) {
+      // --keep-staged applies only to matching copies, never adopted duplicates.
+      if (!flags.keepStaged || verification.adoptable.has(object.path)) {
+        yield* fs.remove(`${config.stagingDir}/${object.path}`).pipe(
+          ioError("prune verified object"),
+        );
+      }
+    }
+  }
+  const stagedOnly = flags.noShip
+    ? staged.filter((p) => !observation.shipped.has(p))
+    : [];
+  const encodedThisRun = new Set(plans.map((p) => p.entry.transcript.id)).size;
+  const remaining = observation.counts.missingSource + (flags.noShip
+    ? new Set([
+      ...observation.plans.map((p) => p.entry.transcript.id),
+      ...stagedOnly.map((p) => p.split("/")[1]),
+    ]).size
+    : observation.plans.length - plans.length);
+  yield* progress.finish();
+  yield* Console.log(
+    flags.json
+      ? JSON.stringify(runSummary(receipts, encodedThisRun, stagedOnly.length))
+      : renderRunSummary(receipts, encodedThisRun, {
+        filesStagedOnly: stagedOnly.length,
+        remaining,
+        noShip: flags.noShip,
+      }),
+  );
+}, Effect.scoped);
+const statusCommand = Command.make(
+  "status",
+  commonFlags,
+  (flags) =>
+    Effect.gen(function* () {
+      const observation = yield* observe(yield* loadConfig(flags));
+      yield* Console.log(
+        flags.json
+          ? statusJson(observation.counts)
+          : renderStatus(observation.counts),
+      );
+      Deno.exitCode = statusExitCode(observation.counts);
+    }),
+).pipe(
+  Command.withDescription(
+    "Read-only counts; exits 2 while export work remains",
+  ),
+);
+const verifyCommand = Command.make(
+  "verify",
+  commonFlags,
+  (flags) =>
+    Effect.gen(function* () {
+      const config = yield* loadConfig(flags);
+      yield* requireDestination(config);
+      const staged = yield* (yield* Staging).list(config);
+      const verification = staged.length
+        ? yield* (yield* Shipper).verify(config, new Set(staged))
+        : classifyVerification("", new Set());
+      const summary = verifySummary(staged.length, verification);
+      yield* Console.log(
+        flags.json ? JSON.stringify(summary) : renderVerify(summary),
+      );
+    }),
+).pipe(
+  Command.withDescription(
+    "Checksum-verify currently staged objects only, never pruned objects",
+  ),
+);
+const command = Command.make("df-dictation-archive", runFlags, runExport).pipe(
+  Command.withDescription(
+    "Export dictations without changing their source stores",
+  ),
+  Command.withSubcommands([
+    Command.make("run", runFlags, runExport),
+    statusCommand,
+    verifyCommand,
+  ]),
+);
+const services = Layer.mergeAll(
+  DictationSource.layer,
+  Ledger.layer,
+  Staging.layer,
+  Transcoder.layer,
+  Shipper.layer,
+);
+if (import.meta.main) {
+  // Privacy overrides the generic backstop: raw defects may contain capture data.
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    console.error(
+      "error uncaught rejection; details withheld to protect capture data",
+    );
+    Deno.exit(1);
+  });
+  globalThis.addEventListener("error", (event) => {
+    event.preventDefault();
+    console.error(
+      "error uncaught exception; details withheld to protect capture data",
+    );
+    Deno.exit(1);
+  });
+  const NodeRuntime = await import(
+    "npm:@effect/platform-node@4.0.0/NodeRuntime"
+  );
+  const NodeServices = await import(
+    "npm:@effect/platform-node@4.0.0/NodeServices"
+  );
+  Command.run(command, { version: "1.0.0", renderErrors: false }).pipe(
+    Effect.provide(services),
+    Effect.provide(NodeServices.layer),
+    Effect.catch((error) =>
+      Console.error(
+        `error ${
+          error instanceof ConfigError || error instanceof StateError ||
+            error instanceof SourceError || error instanceof WavError ||
+            error instanceof ShipVerifyError || error instanceof ProcessError
+            ? error.message
+            : "arguments rejected; run df-dictation-archive --help"
+        }`,
+      ).pipe(Effect.andThen(Effect.sync(() => {
+        Deno.exitCode = 1;
+      })))
+    ),
+    Effect.catchCause(() =>
+      Console.error(
+        "error unexpected runtime failure; details withheld to protect capture data",
+      ).pipe(Effect.andThen(Effect.sync(() => {
+        Deno.exitCode = 1;
+      })))
+    ),
+    NodeRuntime.runMain({ disableErrorReporting: true }),
+  );
+}
+
+// === Tests ===============================================================
+// deno test --config deno.json home/private_dot_local/bin/executable_df-dictation-archive
+// No permission flags; real-process integration is explicitly env-gated below.
+const fixtureId = "00000000-0000-4000-8000-000000000001";
+const floatWav = (extraChunk: boolean): Uint8Array => {
+  const bytes = new Uint8Array(44 + (extraChunk ? 12 : 0) + 160 * 4);
+  const view = new DataView(bytes.buffer), text = new TextEncoder();
+  bytes.set(text.encode("RIFF"));
+  view.setUint32(4, bytes.length - 8, true);
+  bytes.set(text.encode("WAVEfmt "), 8);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 3, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 64000, true);
+  view.setUint16(32, 4, true);
+  view.setUint16(34, 32, true);
+  if (extraChunk) {
+    bytes.set(text.encode("FLLR"), 36);
+    view.setUint32(40, 4, true);
+  }
+  const data = extraChunk ? 48 : 36;
+  bytes.set(text.encode("data"), data);
+  view.setUint32(data + 4, 640, true);
+  for (let i = 0; i < 160; i++) {
+    view.setFloat32(data + 8 + i * 4, Math.sin(i / 5) * 0.1, true);
+  }
+  return bytes;
+};
+const assert = (condition: boolean, message = "assertion failed"): void => {
+  if (!condition) throw new Error(message);
+};
+if (!import.meta.main) {
+  for (const completed of [0, 5000, 10000]) {
+    Deno.test(`progress bar renders ${completed / 100}%`, () => {
+      // Given
+      const counts = { completed, total: 10000, elapsedSeconds: 10 };
+      // When
+      const output = renderProgressBar(counts, 140);
+      // Then
+      const filled = completed / 250;
+      assert(
+        output.includes(`[${"█".repeat(filled)}${"░".repeat(40 - filled)}]`),
+      );
+      assert(
+        output.includes(
+          `${completed.toLocaleString("en-US")} / 10,000 recordings`,
+        ),
+      );
+      assert(output.includes(`  ${completed / 100}%  `));
+    });
+  }
+  for (const width of [0, 1, 8, 12, 20, 40, 80, 120, 240]) {
+    Deno.test(`progress fits ${width} terminal columns`, () => {
+      // Given
+      const counts = { completed: 3042, total: 15215, elapsedSeconds: 742 };
+      // When
+      const output = renderProgressBar(counts, width);
+      // Then
+      assert(output.length <= width);
+      if (width >= 80) assert(output.includes("3,042 / 15,215 recordings"));
+      if (width >= 120) {
+        assert(output.includes(`[${"█".repeat(7)}${"░".repeat(33)}]`));
+      }
+    });
+  }
+  Deno.test("progress bar adapts its cells to available width", () => {
+    // Given
+    const counts = { completed: 10, total: 20, elapsedSeconds: 10 };
+    // When
+    const outputs = [80, 120].map((width) => renderProgressBar(counts, width));
+    // Then
+    const cells = outputs.map((line) => (line.match(/[█░]/g) ?? []).length);
+    assert(cells[0] > 0 && cells[0] < cells[1]);
+  });
+  Deno.test("empty progress has a complete bar without division by zero", () => {
+    // Given / When
+    const output = renderProgressBar({
+      completed: 0,
+      total: 0,
+      elapsedSeconds: 0,
+    }, 120);
+    // Then
+    assert(output.includes("100%  --/s  ETA --") && !output.includes("░"));
+  });
+  for (
+    const [seconds, duration, eta] of [
+      [0, "0s", "0s"],
+      [45, "45s", "45s"],
+      [59, "59s", "59s"],
+      [60, "1m 0s", "1m"],
+      [72, "1m 12s", "1m"],
+      [3599, "59m 59s", "59m"],
+      [3600, "1h 0m 0s", "1h00m"],
+      [3901, "1h 5m 1s", "1h05m"],
+    ] as const
+  ) {
+    Deno.test(`progress duration formats ${seconds}s`, () => {
+      // Given / When
+      const output = formatDuration(seconds);
+      // Then
+      assert(output === duration);
+    });
+    Deno.test(`progress ETA formats ${seconds}s`, () => {
+      // Given / When
+      const output = formatEta(seconds);
+      // Then
+      assert(output === eta);
+    });
+  }
+  for (
+    const [completed, elapsedSeconds, warmed] of [
+      [0, 0, false],
+      [0, 2, false],
+      [1, 1, false],
+      [2, 1.999, false],
+      [3, 1, true],
+      [1, 2, true],
+      [3, 0, false],
+    ] as const
+  ) {
+    Deno.test(`progress warmup at ${completed} completions and ${elapsedSeconds}s`, () => {
+      // Given / When
+      const output = renderProgressBar(
+        { completed, total: 10, elapsedSeconds },
+        120,
+      );
+      // Then
+      assert(output.includes("--/s  ETA --") === !warmed);
+      if (warmed) assert(!output.includes("--"));
+    });
+  }
+  Deno.test("progress rate and ETA use completions per elapsed second", () => {
+    // Given / When
+    const output = renderProgressBar({
+      completed: 5,
+      total: 20,
+      elapsedSeconds: 2,
+    }, 120);
+    // Then
+    assert(output.endsWith("2.5/s  ETA 6s"));
+  });
+  for (const width of [0, 1, 5, 40, 80, 240]) {
+    Deno.test(`fitToWidth never exceeds ${width} cells`, () => {
+      // Given
+      const line = "Exporting  [██░░]  50%  ⠋  |/-\\";
+      // When
+      const output = fitToWidth(line, width);
+      // Then
+      assert(output.length <= width && line.startsWith(output));
+      if (width >= line.length) assert(output === line);
+    });
+  }
+  Deno.test("progress renderers admit only fixed words and count glyphs", () => {
+    // Given: hostile extra fields cannot enter either renderer's count contract.
+    const privateFields = {
+      text: "secret transcript",
+      path: "/private/capture.wav",
+      id: fixtureId,
+    };
+    const words = new Set(
+      "Exporting recordings ETA s m h Sending to destination files staged"
+        .split(" "),
+    );
+    const counts = {
+      completed: 3042,
+      total: 15215,
+      elapsedSeconds: 742,
+      ...privateFields,
+    };
+    // When
+    const outputs = [
+      renderProgressBar(counts, 160),
+      renderProgressBar({ ...counts, completed: 0, elapsedSeconds: 0 }, 160),
+      ...[..."⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/-\\"].map((frame) =>
+        renderShippingProgress(counts, frame, 160)
+      ),
+    ];
+    // Then
+    for (const output of outputs) {
+      assert(/^[ A-Za-z0-9,.%/\[\]█░⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|\\-]*$/.test(output));
+      assert(
+        (output.match(/[A-Za-z]+/g) ?? []).every((word) => words.has(word)),
+      );
+    }
+  });
+  Deno.test("progress no-op layer writes no stderr bytes", async () => {
+    // Given: intercept only the output boundary, with no platform permissions.
+    const write = Deno.stderr.write, writeSync = Deno.stderr.writeSync;
+    let bytes = 0;
+    Deno.stderr.write = (buffer) => {
+      bytes += buffer.length;
+      return Promise.resolve(buffer.length);
+    };
+    Deno.stderr.writeSync = (buffer) => {
+      bytes += buffer.length;
+      return buffer.length;
+    };
+    try {
+      // When
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const progress = yield* Progress;
+          yield* progress.start("Exporting", 20);
+          yield* Effect.forEach(
+            Array.from({ length: 20 }),
+            () => progress.advance(),
+            { concurrency: 4 },
+          );
+          yield* progress.start("Sending to destination", 80);
+          yield* progress.phase("Sending to destination");
+          yield* progress.finish();
+        }).pipe(Effect.provide(Progress.noop)),
+      );
+      // Then
+      assert(bytes === 0);
+    } finally {
+      Deno.stderr.write = write;
+      Deno.stderr.writeSync = writeSync;
+    }
+  });
+  // Real -rnc --itemize-changes captures, using synthetic paths only.
+  const rsyncFixtures = [
+    {
+      flavor: "Homebrew 3.4.1",
+      lines: [
+        ">fc.T....... equal",
+        ">f++++++++++ new",
+        ">fcsT....... size",
+        "cd++++++++++ directory/",
+      ],
+    },
+    {
+      flavor: "macOS openrsync protocol 29",
+      lines: [
+        ">fc.T.... equal",
+        ">f+++++++ new",
+        ">fcsT.... size",
+        "cd+++++++ directory/",
+      ],
+    },
+  ] as const;
+  for (const fixture of rsyncFixtures) {
+    Deno.test(`verify parser classifies captured ${fixture.flavor} records`, () => {
+      // Given
+      const expected = [
+        { _tag: "differs", path: "equal" },
+        { _tag: "newAtDestination", path: "new" },
+        { _tag: "differs", path: "size" },
+        { _tag: "ignorable" },
+      ];
+      // When
+      const records = fixture.lines.map(parseVerifyLine);
+      // Then
+      assert(JSON.stringify(records) === JSON.stringify(expected));
+    });
+  }
+  for (
+    const line of [
+      "unexpected diagnostic",
+      ">fc.T..... equal",
+      ">f?cT....... equal",
+      ">f++++++++++",
+      "*deleting   equal",
+      "cL++++++++++ link -> target",
+      "",
+      " ",
+    ]
+  ) {
+    Deno.test("verify parser fails closed when a record is unrecognized", () => {
+      // Given / When
+      const record = parseVerifyLine(line);
+      // Then
+      assert(record._tag === "unknown");
+    });
+  }
+  const adoptedPath = `entries/${fixtureId}/source.json.age`;
+  for (
+    const fixture of [
+      {
+        output: `>fc.T....... ${adoptedPath}\n`,
+        present: true,
+        adoptable: 1,
+        conflicts: 0,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: `>fcsT.... ${adoptedPath}\n`,
+        present: true,
+        adoptable: 1,
+        conflicts: 0,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: `>fc.T....... ${adoptedPath.slice(0, -4)}\n`,
+        present: true,
+        adoptable: 0,
+        conflicts: 1,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: `>fc.T....... ${adoptedPath}\n>fc.T.... ${
+          adoptedPath.slice(0, -4)
+        }\n`,
+        present: true,
+        adoptable: 1,
+        conflicts: 1,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: `>f++++++++++ ${adoptedPath}\n`,
+        present: true,
+        adoptable: 0,
+        conflicts: 0,
+        created: 1,
+        unknown: 0,
+      },
+      {
+        output: `>fc.T....... ${adoptedPath}\nunknown\n`,
+        present: true,
+        adoptable: 1,
+        conflicts: 0,
+        created: 0,
+        unknown: 1,
+      },
+      {
+        output: `>fc.T....... ${adoptedPath}\n`,
+        present: false,
+        adoptable: 0,
+        conflicts: 1,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: ">fc.T....... ../unowned.age\n",
+        present: true,
+        adoptable: 0,
+        conflicts: 1,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: "cd+++++++ directory/\n.f..T....... equal\n",
+        present: true,
+        adoptable: 0,
+        conflicts: 0,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: "",
+        present: false,
+        adoptable: 0,
+        conflicts: 0,
+        created: 0,
+        unknown: 0,
+      },
+      {
+        output: "\n",
+        present: false,
+        adoptable: 0,
+        conflicts: 0,
+        created: 0,
+        unknown: 1,
+      },
+    ]
+  ) {
+    Deno.test("verification permits adoption only when every difference is adoptable", async () => {
+      // Given
+      const staged = new Set(
+        fixture.present ? [adoptedPath, "../unowned.age"] : [],
+      );
+      const blocking = fixture.conflicts + fixture.created + fixture.unknown;
+      // When
+      const verification = classifyVerification(fixture.output, staged);
+      const outcome = await Effect.runPromise(
+        requireVerified(verification).pipe(
+          Effect.match({ onSuccess: () => null, onFailure: (error) => error }),
+        ),
+      );
+      // Then: the gate never returns adoptable paths for a mixed/blocking batch.
+      assert(
+        verification.adoptable.size === fixture.adoptable &&
+          verification.differences === fixture.adoptable + blocking &&
+          verification.blocking === blocking,
+      );
+      assert(
+        blocking === 0
+          ? outcome === null
+          : outcome instanceof ShipVerifyError &&
+            outcome.adoptable === fixture.adoptable &&
+            outcome.blocking === blocking &&
+            outcome.conflicts === fixture.conflicts &&
+            outcome.newAtDestination === fixture.created &&
+            outcome.unknown === fixture.unknown,
+      );
+    });
+  }
+  for (
+    const fixture of [
+      { receipt: { sha256: "a".repeat(64) }, accepted: true },
+      { receipt: { adopted: true }, accepted: true },
+      { receipt: { adopted: true, sha256: "a".repeat(64) }, accepted: false },
+      { receipt: {}, accepted: false },
+      { receipt: { adopted: false }, accepted: false },
+      { receipt: { adopted: true, sha256: undefined }, accepted: false },
+    ]
+  ) {
+    Deno.test("ledger schema accepts exactly one receipt kind", () => {
+      // Given
+      const row = {
+        path: adoptedPath,
+        destination: "synthetic",
+        shippedAt: capturedEnd(0),
+        ...fixture.receipt,
+      };
+      // When
+      const accepted = Option.isSome(
+        Schema.decodeUnknownOption(LedgerRow)(row),
+      );
+      // Then
+      assert(accepted === fixture.accepted);
+    });
+  }
+  for (const leftover of [false, true]) {
+    Deno.test(`adopted receipts prevent re-encoding when staged leftover=${leftover}`, async () => {
+      // Given
+      const config = mergeConfig(defaults("/home/test", "/state"), {}, {
+        encryption: { recipients: ["age1synthetic"] },
+      });
+      const desired = desiredObjects(fixtureId, config);
+      const rows = desired.map((path) =>
+        Schema.decodeUnknownSync(LedgerRow)({
+          path,
+          adopted: true,
+          destination: destinationLabel(config),
+          shippedAt: capturedEnd(0),
+        })
+      );
+      const fake = Layer.mergeAll(
+        Layer.succeed(DictationSource, {
+          scan: () =>
+            Effect.succeed({
+              sourcesScanned: 1,
+              entriesTotal: 1,
+              missingSource: 0,
+              entries: [{
+                transcript: {
+                  id: fixtureId,
+                  timestamp: 0,
+                  duration: 1,
+                  text: "",
+                  audioPath: "unused",
+                },
+                wav: "unused",
+                model: "unknown",
+              }],
+            }),
+        }),
+        Layer.succeed(Ledger, {
+          read: () => Effect.succeed(rows),
+          append: () => Effect.die("observer must not append"),
+        }),
+        Layer.succeed(Staging, {
+          list: () => Effect.succeed(leftover ? [...desired] : []),
+          recover: () => Effect.die("observer must not recover"),
+          stage: () => Effect.die("observer must not stage"),
+        }),
+        layerNoop({}),
+        pathLayer,
+      );
+      // When
+      const plan = await Effect.runPromise(
+        planWork(config).pipe(Effect.provide(fake)),
+      );
+      // Then
+      assert(
+        plan.plans.length === 0 && plan.counts.shipped === 1 &&
+          plan.counts.stagedNotShipped === 0,
+      );
+      assert(desired.every((path) => plan.shipped.has(path)));
+    });
+  }
+  Deno.test("verification reclassifies a staged adoption leftover without another receipt", async () => {
+    // Given: a crash after ledger fsync but before staged duplicate removal.
+    const shipped = new Set([adoptedPath]);
+    const staged = new Set([adoptedPath]);
+    const objects = [{ path: adoptedPath, sha256: "a".repeat(64) }];
+    // When
+    const verification = await Effect.runPromise(requireVerified(
+      classifyVerification(`>fc.T....... ${adoptedPath}\n`, staged),
+    ));
+    // Then: still eligible for pruning, but excluded from new ledger receipts.
+    assert(
+      verification.adoptable.has(adoptedPath) && verification.blocking === 0,
+    );
+    assert(
+      pendingReceipts(objects, shipped, verification.adoptable).length === 0,
+    );
+  });
+  Deno.test("pending receipts omit the staged hash only when adopting", () => {
+    // Given
+    const matchedPath = `entries/${fixtureId}/projections/hex-capture.json.age`;
+    const objects = [adoptedPath, matchedPath].map((path) => ({
+      path,
+      sha256: "a".repeat(64),
+    }));
+    // When
+    const receipts = pendingReceipts(
+      objects,
+      new Set(),
+      new Set([adoptedPath]),
+    );
+    // Then
+    assert(
+      JSON.stringify(receipts) === JSON.stringify([
+        { path: adoptedPath, adopted: true },
+        { path: matchedPath, sha256: "a".repeat(64) },
+      ]),
+    );
+  });
+  Deno.test("later-source entries use the first source's model at export", async () => {
+    // Given
+    const config = {
+      ...defaults("/home/test", "/state"),
+      sources: ["/first", "/later"],
+    };
+    const documents = new Map<string, Uint8Array>([
+      [
+        "/first/hex_settings.json",
+        new TextEncoder().encode(canonical({ selectedModel: "current-model" })),
+      ],
+      [
+        "/first/transcription_history.json",
+        new TextEncoder().encode(canonical({ history: [] })),
+      ],
+      [
+        "/later/hex_settings.json",
+        new TextEncoder().encode(canonical({ selectedModel: "stale-model" })),
+      ],
+      [
+        "/later/transcription_history.json",
+        new TextEncoder().encode(
+          canonical({
+            history: [{
+              id: fixtureId,
+              timestamp: 0,
+              duration: 1,
+              text: "",
+              audioPath: "fixture",
+            }],
+          }),
+        ),
+      ],
+      ["/later/Recordings/fixture", new Uint8Array()],
+    ]);
+    const filesystem = layerNoop({
+      stat: (file) => {
+        const bytes = documents.get(file);
+        if (bytes === undefined) return Effect.die("unexpected fixture access");
+        return Effect.succeed({
+          type: "File",
+          size: ByteSize.bytes(bytes.length),
+          mode: 0o600,
+          dev: 1,
+          mtime: Option.none(),
+          atime: Option.none(),
+          birthtime: Option.none(),
+          ino: Option.none(),
+          nlink: Option.none(),
+          uid: Option.none(),
+          gid: Option.none(),
+          rdev: Option.none(),
+          blksize: Option.none(),
+          blocks: Option.none(),
+        });
+      },
+      stream: (file) => {
+        const bytes = documents.get(file);
+        return bytes === undefined
+          ? Stream.die("unexpected fixture access")
+          : Stream.make(bytes);
+      },
+    });
+    // When
+    const scan = await Effect.runPromise(
+      scanHexSource(config).pipe(
+        Effect.provide(Layer.mergeAll(filesystem, pathLayer)),
+      ),
+    );
+    // Then
+    assert(
+      scan.entries.length === 1 && scan.entries[0].model === "current-model",
+    );
+  });
+  Deno.test("staging refuses unrelated root files before rsync can include them", async () => {
+    // Given
+    const filesystem = layerNoop({
+      readDirectory: () => Effect.succeed(["unrelated"]),
+    });
+    // When
+    const failure = await Effect.runPromise(
+      listStaged(defaults("/home/test", "/state")).pipe(
+        Effect.flip,
+        Effect.provide(filesystem),
+      ),
+    );
+    // Then
+    assert(failure instanceof StateError && failure.operation === "staging");
+  });
+  Deno.test("configuration validation names the offending key without its value", async () => {
+    // Given / When
+    const result = await Effect.runPromise(
+      parseConfig({ destination: { port: 0 } }).pipe(Effect.flip),
+    );
+    // Then
+    assert(result instanceof ConfigError && result.key === "destination.port");
+  });
+  Deno.test("fake source and ledger services preserve planning idempotence", async () => {
+    // Given
+    const config = defaults("/home/test", "/state"),
+      desired = desiredObjects(fixtureId, config);
+    const fake = Layer.mergeAll(
+      Layer.succeed(DictationSource, {
+        scan: () =>
+          Effect.succeed({
+            sourcesScanned: 1,
+            entriesTotal: 1,
+            missingSource: 0,
+            entries: [{
+              transcript: {
+                id: fixtureId,
+                timestamp: 0,
+                duration: 1,
+                text: "synthetic",
+                audioPath: "unused",
+              },
+              wav: "unused",
+              model: "unknown",
+            }],
+          }),
+      }),
+      Layer.succeed(Ledger, {
+        read: () =>
+          Effect.succeed(
+            desired.map((path) => ({
+              path,
+              sha256: "a".repeat(64),
+              destination: destinationLabel(config),
+              shippedAt: capturedEnd(0),
+            })),
+          ),
+        append: () => Effect.die("observer must not append"),
+      }),
+      Layer.succeed(Staging, {
+        list: () => Effect.succeed([]),
+        recover: () => Effect.die("observer must not recover"),
+        stage: () => Effect.die("observer must not stage"),
+      }),
+      layerNoop({}),
+      pathLayer,
+    );
+    // When
+    const plan = await Effect.runPromise(
+      planWork(config).pipe(Effect.provide(fake)),
+    );
+    // Then
+    assert(plan.plans.length === 0 && plan.counts.shipped === 1);
+  });
+  Deno.test("status output is restricted to the count and boolean whitelist", () => {
+    // Given
+    const counts = {
+      sourcesScanned: 2,
+      entriesTotal: 5,
+      missingSource: 1,
+      shipped: 2,
+      stagedNotShipped: 1,
+      new: 1,
+      destinationConfigured: true,
+      encryptionConfigured: true,
+      ffmpegFound: true,
+      ageFound: true,
+      rsyncFound: true,
+      text: "synthetic do not display",
+    };
+    // When
+    const output = statusJson(counts);
+    // Then
+    const parsed = Schema.decodeUnknownSync(
+      Schema.Record(
+        Schema.String,
+        Schema.Union([Schema.Number, Schema.Boolean]),
+      ),
+    )(JSON.parse(output));
+    assert(
+      Object.keys(parsed).sort().join(",") ===
+        "ageFound,destinationConfigured,encryptionConfigured,entriesTotal,ffmpegFound,missingSource,new,rsyncFound,shipped,sourcesScanned,stagedNotShipped",
+    );
+  });
+  const readyCounts: StatusCounts = {
+    sourcesScanned: 0,
+    entriesTotal: 0,
+    missingSource: 0,
+    shipped: 0,
+    stagedNotShipped: 0,
+    new: 0,
+    destinationConfigured: true,
+    encryptionConfigured: true,
+    ffmpegFound: true,
+    ageFound: true,
+    rsyncFound: true,
+  };
+  const runReceipts = (
+    recordings: number,
+    filesPerRecording = 4,
+  ): readonly Receipt[] =>
+    Array.from({ length: recordings }, (_, i) =>
+      desiredObjects(
+        `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+        mergeConfig(defaults("/home/test", "/state"), {}, {
+          encryption: { recipients: ["age1synthetic"] },
+        }),
+      ).slice(0, filesPerRecording).map((path) => ({
+        path,
+        sha256: "a".repeat(64),
+      }))).flat();
+  const runFixtures = [
+    {
+      name: "zero",
+      receipts: [],
+      encodedThisRun: 0,
+      outcome: {
+        filesStagedOnly: 0,
+        remaining: 0,
+        noShip: false,
+      },
+      expected: "Up to date: 0 new recordings.",
+    },
+    {
+      name: "one",
+      receipts: runReceipts(1, 1),
+      encodedThisRun: 1,
+      outcome: {
+        filesStagedOnly: 0,
+        remaining: 1,
+        noShip: false,
+      },
+      expected:
+        "Exported 1 recording (delivered and verified at destination).\n" +
+        "  delivered and verified: 1 file\n" +
+        "  already at destination (adopted): 0 files\n" +
+        "Remaining: 1 recording still to export",
+    },
+    {
+      name: "mixed outcomes without a duplicate total",
+      receipts: runReceipts(2).map((r, i) =>
+        i < 3 ? { path: r.path, adopted: true as const } : r
+      ),
+      encodedThisRun: 2,
+      outcome: {
+        filesStagedOnly: 0,
+        remaining: 0,
+        noShip: false,
+      },
+      expected:
+        "Exported 2 recordings (delivered and verified at destination).\n" +
+        "  delivered and verified: 5 files\n" +
+        "  already at destination (adopted): 3 files\n" +
+        "Up to date: nothing left to export.",
+    },
+    {
+      name: "adoption only",
+      receipts: runReceipts(1, 1).map((r) => ({
+        path: r.path,
+        adopted: true as const,
+      })),
+      encodedThisRun: 1,
+      outcome: {
+        filesStagedOnly: 0,
+        remaining: 3,
+        noShip: false,
+      },
+      expected:
+        "Exported 1 recording (delivered and verified at destination).\n" +
+        "  delivered and verified: 0 files\n" +
+        "  already at destination (adopted): 1 file\n" +
+        "Remaining: 3 recordings still to export",
+    },
+    {
+      name: "staged backlog without new recordings",
+      receipts: runReceipts(1),
+      encodedThisRun: 0,
+      outcome: {
+        filesStagedOnly: 0,
+        remaining: 0,
+        noShip: false,
+      },
+      expected:
+        "Exported 1 recording (delivered and verified at destination).\n" +
+        "  delivered and verified: 4 files\n" +
+        "  already at destination (adopted): 0 files\n" +
+        "  encoded in this run: 0 recordings (the rest were staged by an earlier run)\n" +
+        "Up to date: nothing left to export.",
+    },
+    {
+      name: "large backlog with new recordings",
+      receipts: runReceipts(15215),
+      encodedThisRun: 3,
+      outcome: { filesStagedOnly: 0, remaining: 0, noShip: false },
+      expected:
+        "Exported 15,215 recordings (delivered and verified at destination).\n" +
+        "  delivered and verified: 60,860 files\n" +
+        "  already at destination (adopted): 0 files\n" +
+        "  encoded in this run: 3 recordings (the rest were staged by an earlier run)\n" +
+        "Up to date: nothing left to export.",
+    },
+    {
+      name: "one newly encoded recording alongside backlog",
+      receipts: runReceipts(2),
+      encodedThisRun: 1,
+      outcome: { filesStagedOnly: 0, remaining: 0, noShip: false },
+      expected:
+        "Exported 2 recordings (delivered and verified at destination).\n" +
+        "  delivered and verified: 8 files\n" +
+        "  already at destination (adopted): 0 files\n" +
+        "  encoded in this run: 1 recording (the rest were staged by an earlier run)\n" +
+        "Up to date: nothing left to export.",
+    },
+    {
+      name: "thousands of adopted, encoded and remaining recordings",
+      receipts: runReceipts(1235, 1).map((r) => ({
+        path: r.path,
+        adopted: true as const,
+      })),
+      encodedThisRun: 1234,
+      outcome: { filesStagedOnly: 0, remaining: 2345, noShip: false },
+      expected:
+        "Exported 1,235 recordings (delivered and verified at destination).\n" +
+        "  delivered and verified: 0 files\n" +
+        "  already at destination (adopted): 1,235 files\n" +
+        "  encoded in this run: 1,234 recordings (the rest were staged by an earlier run)\n" +
+        "Remaining: 2,345 recordings still to export",
+    },
+    {
+      name: "thousands staged only",
+      receipts: [],
+      encodedThisRun: 1234,
+      outcome: { filesStagedOnly: 4936, remaining: 1234, noShip: true },
+      expected: "Processed 1,234 recordings.\n" +
+        "  staged 4,936 files, not sent (--no-ship)\n" +
+        "Remaining: 1,234 recordings still to export",
+    },
+    {
+      name: "staged-only backlog without new encodes",
+      receipts: [],
+      encodedThisRun: 0,
+      outcome: { filesStagedOnly: 8, remaining: 2, noShip: true },
+      expected: "Processed 0 recordings.\n" +
+        "  staged 8 files, not sent (--no-ship)\n" +
+        "Remaining: 2 recordings still to export",
+    },
+    {
+      name: "no-ship up to date",
+      receipts: [],
+      encodedThisRun: 0,
+      outcome: { filesStagedOnly: 0, remaining: 0, noShip: true },
+      expected: "Up to date: 0 new recordings.",
+    },
+    ...[0, 1, 8].map((n) => ({
+      name: `no-ship ${n}`,
+      receipts: [],
+      encodedThisRun: n === 8 ? 2 : n,
+      outcome: {
+        filesStagedOnly: n,
+        remaining: 3,
+        noShip: true,
+      },
+      expected:
+        `Processed ${n === 8 ? 2 : n} recording${n === 1 ? "" : "s"}.\n` +
+        `  staged ${n} file${n === 1 ? "" : "s"}, not sent (--no-ship)\n` +
+        "Remaining: 3 recordings still to export",
+    })),
+  ];
+  const statusFixtures = [
+    {
+      name: "zero",
+      counts: readyCounts,
+      expected: "Dictation recordings found: 0 (0 sources)\n" +
+        "Exported: 0\nWaiting to export: 0\nStaged but not sent: 0\n" +
+        "Recordings with missing audio: 0\nSetup:\n" +
+        "  destination: set\n  encryption: on\n" +
+        "  ffmpeg: found\n  age: found\n  rsync: found\nUp to date.",
+    },
+    {
+      name: "one with incomplete setup",
+      counts: {
+        ...readyCounts,
+        sourcesScanned: 1,
+        entriesTotal: 1,
+        new: 1,
+        destinationConfigured: false,
+        encryptionConfigured: false,
+        ffmpegFound: false,
+        ageFound: false,
+        rsyncFound: false,
+      },
+      expected: "Dictation recordings found: 1 (1 source)\n" +
+        "Exported: 0\nWaiting to export: 1\nStaged but not sent: 0\n" +
+        "Recordings with missing audio: 0\nSetup:\n" +
+        "  destination: not set\n  encryption: off (--allow-plaintext needed)\n" +
+        "  ffmpeg: missing\n  age: missing\n  rsync: missing\n" +
+        "Work remaining (exit 2).",
+    },
+    {
+      name: "many",
+      counts: {
+        ...readyCounts,
+        sourcesScanned: 2,
+        entriesTotal: 11,
+        shipped: 3,
+        new: 5,
+        stagedNotShipped: 2,
+        missingSource: 1,
+      },
+      expected: "Dictation recordings found: 11 (2 sources)\n" +
+        "Exported: 3\nWaiting to export: 5\nStaged but not sent: 2\n" +
+        "Recordings with missing audio: 1\nSetup:\n" +
+        "  destination: set\n  encryption: on\n" +
+        "  ffmpeg: found\n  age: found\n  rsync: found\n" +
+        "Work remaining (exit 2).",
+    },
+  ];
+  const dryRunFixtures = statusFixtures.map((fixture, index) => ({
+    name: fixture.name,
+    counts: {
+      ...fixture.counts,
+      // Include a partially exported recipe: do not assume four files per entry.
+      newObjects: [0, 1, 6][index],
+      limit: [10, 10, 2][index],
+    },
+    expected: `Dry run, nothing written:\n${fixture.expected}\n` + [
+      "Would create 0 files for 0 recordings.",
+      "Would create 1 file for 1 recording.",
+      "Would create 6 files for 2 recordings.",
+    ][index],
+  }));
+  const verifyFixtures = [
+    { stagedObjects: 0, wouldAdopt: 0, expected: "all match." },
+    { stagedObjects: 1, wouldAdopt: 0, expected: "all match." },
+    { stagedObjects: 8, wouldAdopt: 0, expected: "all match." },
+    {
+      stagedObjects: 1,
+      wouldAdopt: 1,
+      expected: "1 of 1 already at destination (would be adopted by run).",
+    },
+    {
+      stagedObjects: 8,
+      wouldAdopt: 3,
+      expected: "3 of 8 already at destination (would be adopted by run).",
+    },
+  ].map((fixture) => ({
+    name: `${fixture.stagedObjects} staged, ${fixture.wouldAdopt} adoptable`,
+    counts: {
+      stagedObjects: fixture.stagedObjects,
+      differences: fixture.wouldAdopt,
+      wouldAdopt: fixture.wouldAdopt,
+      blocking: 0,
+    },
+    expected: `Checked ${fixture.stagedObjects} staged file${
+      fixture.stagedObjects === 1 ? "" : "s"
+    } against destination: ${fixture.expected}`,
+  }));
+  const privateFields = {
+    text: "synthetic content must stay private",
+    audioPath: "/fixture/capture-2001-01-01.wav",
+    path: adoptedPath,
+  };
+  const rendererFixtures = [
+    ...runFixtures.map((f) => ({
+      ...f,
+      name: `run ${f.name}`,
+      render: () =>
+        renderRunSummary(f.receipts, f.encodedThisRun, {
+          ...f.outcome,
+          ...privateFields,
+        }),
+    })),
+    ...statusFixtures.map((f) => ({
+      ...f,
+      name: `status ${f.name}`,
+      render: () => renderStatus({ ...f.counts, ...privateFields }),
+    })),
+    ...dryRunFixtures.map((f) => ({
+      ...f,
+      name: `dry-run ${f.name}`,
+      render: () => renderDryRun({ ...f.counts, ...privateFields }),
+    })),
+    ...verifyFixtures.map((f) => ({
+      ...f,
+      name: `verify ${f.name}`,
+      render: () => renderVerify({ ...f.counts, ...privateFields }),
+    })),
+  ];
+  for (const fixture of rendererFixtures) {
+    Deno.test(`text renderer handles ${fixture.name}`, () => {
+      // Given: count-only inputs plus fields that must never reach stdout.
+      // When
+      const output = fixture.render();
+      // Then: layout, pluralisation and mutually exclusive counts are the API.
+      assert(output === fixture.expected);
+    });
+    Deno.test(`text renderer keeps count-only hygiene for ${fixture.name}`, () => {
+      // Given: fixed label vocabulary, never derived from renderer output.
+      const labels = new Set(
+        ("Up to date new recordings Exported recording sent destination file files " +
+          "already at adopted Remaining still export nothing left Processed staged " +
+          "not no-ship for previously Dictation found source sources Waiting Staged but " +
+          "Recordings with missing audio Setup encryption set on off " +
+          "allow-plaintext needed ffmpeg age rsync Work remaining exit " +
+          "Dry run written Would create Checked against all match of would be by " +
+          "delivered and verified encoded in this the rest were an earlier")
+          .split(" "),
+      );
+      // When
+      const output = fixture.render();
+      // Then: reject path separators, filename-like tokens and unknown words.
+      assert(!/[/\\]|\b[\w-]+\.[\w-]+/.test(output));
+      assert(/^[A-Za-z0-9\s:().,\-]+$/.test(output));
+      assert(
+        (output.match(/[A-Za-z]+(?:-[A-Za-z]+)*/g) ?? []).every((word) =>
+          labels.has(word)
+        ),
+      );
+    });
+  }
+  for (
+    const pending of [
+      { new: 1 },
+      { stagedNotShipped: 1 },
+      { missingSource: 1 },
+    ]
+  ) {
+    Deno.test("status verdict remains pending for each independent backlog", () => {
+      // Given
+      const counts = { ...readyCounts, ...pending };
+      // When
+      const code = statusExitCode(counts), text = renderStatus(counts);
+      // Then
+      assert(code === 2 && text.endsWith("Work remaining (exit 2)."));
+    });
+  }
+  Deno.test("status setup warnings do not change the existing convergence exit code", () => {
+    // Given
+    const counts = {
+      ...readyCounts,
+      destinationConfigured: false,
+      encryptionConfigured: false,
+      ffmpegFound: false,
+      ageFound: false,
+      rsyncFound: false,
+    };
+    // When / Then
+    assert(statusExitCode(counts) === 0);
+  });
+  Deno.test("run summary counts disjoint receipts and whitelists JSON keys", () => {
+    // Given: an already-receipted adoption leftover is not handled again.
+    const objects = desiredObjects(
+      fixtureId,
+      mergeConfig(defaults("/home/test", "/state"), {}, {
+        encryption: { recipients: ["age1synthetic"] },
+      }),
+    ).map((path) => ({ ...privateFields, path, sha256: "a".repeat(64) }));
+    const receipts = pendingReceipts(
+      objects,
+      new Set([objects[0].path]),
+      new Set(objects.slice(0, 3).map((o) => o.path)),
+    );
+    // When
+    const output = JSON.stringify(runSummary(receipts, 1, 0));
+    // Then: one delivered + two adopted, not three delivered + three adopted.
+    assert(
+      output ===
+        '{"recordings":1,"filesDelivered":1,"filesAdopted":2,"filesStagedOnly":0,"recordingsEncodedThisRun":1}',
+    );
+  });
+  Deno.test("run summary reports staged-only files without delivery counts", () => {
+    // Given / When
+    const output = JSON.stringify(runSummary([], 2, 8));
+    // Then
+    assert(
+      output ===
+        '{"recordings":0,"filesDelivered":0,"filesAdopted":0,"filesStagedOnly":8,"recordingsEncodedThisRun":2}',
+    );
+  });
+  Deno.test("recording ids collapse four receipt paths into one entry", () => {
+    // Given
+    const receipts = runReceipts(1);
+    // When
+    const ids = recordingIds(receipts);
+    // Then
+    assert(
+      ids.size === 1 && ids.has("00000000-0000-0000-0000-000000000000"),
+    );
+  });
+  Deno.test("recording ids include adopted entries and collapse duplicate receipts", () => {
+    // Given: one delivered entry, a distinct adopted entry, duplicate paths.
+    const receipts = runReceipts(2, 1).map((r, i) =>
+      i === 1 ? { path: r.path, adopted: true as const } : r
+    );
+    // When
+    const ids = recordingIds([...receipts, ...receipts]);
+    // Then
+    assert(
+      ids.size === 2 && ids.has("00000000-0000-0000-0000-000000000000") &&
+        ids.has("00000000-0000-0000-0000-000000000001"),
+    );
+  });
+  Deno.test("run summary counts entries touched by a two-object recipe change", () => {
+    // Given: only recording objects, with no source or projection receipt.
+    const receipts = runReceipts(3).filter((r) =>
+      r.path.includes("/recordings/")
+    );
+    // When
+    const summary = runSummary(receipts, 1, 0);
+    // Then
+    assert(
+      summary.recordings === 3 && summary.filesDelivered === 6 &&
+        summary.recordingsEncodedThisRun === 1,
+    );
+  });
+  Deno.test("dry-run JSON adds only the planned-file count to the status whitelist", () => {
+    // Given
+    const counts = { ...readyCounts, new: 2, ...privateFields };
+    // When
+    const output = statusJson(counts, 6);
+    // Then
+    const parsed = Schema.decodeUnknownSync(
+      Schema.Record(
+        Schema.String,
+        Schema.Union([Schema.Number, Schema.Boolean]),
+      ),
+    )(JSON.parse(output));
+    assert(
+      Object.keys(parsed).sort().join(",") ===
+        "ageFound,destinationConfigured,encryptionConfigured,entriesTotal,ffmpegFound,missingSource,new,newObjects,rsyncFound,shipped,sourcesScanned,stagedNotShipped",
+    );
+    assert(parsed.newObjects === 6);
+  });
+  Deno.test("verify JSON reports counts without leaking adoptable paths", () => {
+    // Given
+    const verification = classifyVerification(
+      `>fc.T....... ${adoptedPath}\n`,
+      new Set([adoptedPath]),
+    );
+    // When
+    const output = JSON.stringify(verifySummary(4, verification));
+    // Then
+    assert(
+      output ===
+        '{"stagedObjects":4,"differences":1,"wouldAdopt":1,"blocking":0}',
+    );
+  });
+  Deno.test("canonical JSON is byte-stable when keys arrive in different orders", () => {
+    // Given / When / Then: equivalent nested inputs serialize identically.
+    const a = { z: [{ b: 2, a: 1 }], a: true },
+      b = { a: true, z: [{ a: 1, b: 2 }] };
+    assert(canonical(a) === canonical(b));
+  });
+  Deno.test("capture timestamp converts the Hex epoch to UTC milliseconds", () => {
+    // Given / When / Then
+    assert(capturedEnd(0) === "2001-01-01T00:00:00.000Z");
+  });
+  for (const filler of [false, true]) {
+    Deno.test(`float WAV parses sample frames when filler=${filler}`, () => {
+      // Given
+      const bytes = floatWav(filler);
+      // When
+      const wav = parseWav(bytes);
+      // Then
+      assert(
+        wav.samples === 160 && wav.sampleRate === 16000 && wav.channels === 1 &&
+          wav.format === "f32le",
+      );
+    });
+  }
+  for (const kind of ["garbage", "truncated", "format"] as const) {
+    Deno.test(`WAV rejects ${kind} through a typed error`, () => {
+      // Given
+      const bytes = kind === "garbage" ? new Uint8Array(20) : floatWav(true);
+      if (kind === "format") bytes[20] = 1;
+      // When / Then
+      try {
+        parseWav(
+          kind === "truncated" ? bytes.subarray(0, bytes.length - 1) : bytes,
+        );
+      } catch (cause) {
+        assert(cause instanceof WavError);
+        return;
+      }
+      throw new Error("expected typed WAV failure");
+    });
+  }
+  for (
+    const input of [
+      "file:///fixture/Recordings/audio%20one.wav",
+      "/fixture/audio%20one.wav",
+      "audio%20one.wav",
+    ]
+  ) {
+    Deno.test(`audio basename decodes input form ${input.indexOf(":") >= 0 ? "URL" : input.startsWith("/") ? "absolute" : "relative"}`, () => {
+      // Given / When / Then
+      assert(audioBasename(input) === "audio one.wav");
+    });
+  }
+  Deno.test("configuration uses flags before file before defaults", () => {
+    // Given
+    const base = defaults("/home/test", "/state");
+    // When
+    const merged = mergeConfig(base, {
+      destination: { host: "example.invalid", path: "/file", port: 2222 },
+      recipe: { bitrate: "32k" },
+    }, { destination: { host: "", path: "/flag" } });
+    // Then
+    assert(
+      merged.destination.host === "" && merged.destination.path === "/flag" &&
+        merged.destination.port === 2222 && merged.recipe.bitrate === "32k" &&
+        merged.destination.connectTimeoutSeconds === 15,
+    );
+  });
+  Deno.test("encryption refuses writes when no recipient or explicit consent exists", async () => {
+    // Given / When
+    const result = await Effect.runPromiseExit(
+      requireEncryption(defaults("/home/test", "/state"), false),
+    );
+    // Then
+    assert(result._tag === "Failure");
+  });
+  Deno.test("ffmpeg argv keeps deterministic metadata and both bitexact flags", () => {
+    // Given
+    const facts = {
+      hexId: fixtureId,
+      sourceSha256: "a".repeat(64),
+      capturedEnd: capturedEnd(0),
+      bitrate: "24k",
+      encoder: { ffmpeg: "9.0.2", libavcodec: "63.1.102", libopus: "unknown" },
+    };
+    // When
+    const args = ffmpegArgs("/fixture/input.wav", facts);
+    // Then
+    assert(
+      args[args.indexOf("-fflags") + 1] === "+bitexact" &&
+        args[args.indexOf("-flags:a") + 1] === "+bitexact",
+    );
+    assert(
+      args.includes(`HEX_ID=${fixtureId}`) &&
+        args.includes(`SOURCE_SHA256=${facts.sourceSha256}`) &&
+        args.includes(`CAPTURED_END=${facts.capturedEnd}`),
+    );
+    assert(
+      !args.some((v) => v.includes("synthetic transcript") || v.includes("\r")),
+    );
+  });
+  for (const remote of [false, true]) {
+    Deno.test(`rsync preserves append-only transfer and checksum verification when remote=${remote}`, () => {
+      // Given
+      const base = defaults("/home/test", "/state");
+      const config = mergeConfig(base, {}, {
+        destination: {
+          host: remote ? "example.invalid" : "",
+          path: "/with space/a'b",
+          identityFile: "/identity with space",
+        },
+      });
+      // When
+      const transfer = rsyncArgs(config, false),
+        verify = rsyncArgs(config, true);
+      // Then
+      assert(
+        transfer.includes("--ignore-existing") &&
+          !verify.includes("--ignore-existing"),
+      );
+      assert(verify.includes("-rnc") && transfer.includes("-e") === remote);
+      assert(
+        ![...transfer, ...verify].some((v) =>
+          ["--delete", "--mkpath", "--protect-args", "--no-motd"].includes(v) ||
+          v.startsWith("--info=")
+        ),
+      );
+      assert(
+        transfer.at(-1) ===
+          (remote
+            ? "example.invalid:'/with space/a'\\''b/'"
+            : "/with space/a'b/"),
+      );
+    });
+  }
+  Deno.test("new-object planning is a no-op when the current recipe is shipped", () => {
+    // Given
+    const config = defaults("/home/test", "/state"),
+      desired = desiredObjects(fixtureId, config);
+    // When
+    const planned = newObjects(desired, new Set(desired), new Set());
+    // Then
+    assert(planned.length === 0);
+  });
+  Deno.test("recipe change adds exactly two objects and rewrites none", () => {
+    // Given
+    const config = defaults("/home/test", "/state"),
+      shipped = new Set(desiredObjects(fixtureId, config));
+    // When
+    const planned = newObjects(
+      desiredObjects(
+        fixtureId,
+        mergeConfig(config, {}, { recipe: { bitrate: "32k" } }),
+      ),
+      shipped,
+      new Set(),
+    );
+    // Then
+    assert(
+      planned.length === 2 &&
+        planned.every((p) =>
+          p.includes("/recordings/opus-32k-") && !shipped.has(p)
+        ),
+    );
+  });
+}
