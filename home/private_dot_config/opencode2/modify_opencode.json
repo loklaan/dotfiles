@@ -52,9 +52,9 @@
 
 {{- $config = $config | setValueAtPath "websearch" false -}}
 
-{{- /* Base `mp-codemode` entry, plus one `mp-<slug>` per profile read from
-     mcpproxy's own config so the list cannot drift. `/mcp/p/<slug>` scopes
-     that lane; V1 keeps its original `mcpproxy` name. */ -}}
+{{- /* Base `mp-codemode` entry, plus one `mp-<slug>` per profile in shared
+     .chezmoidata/mcpproxy.yaml, independent of deployed config and apply order.
+     `/mcp/p/<slug>` scopes that lane; V1 keeps its original `mcpproxy` name. */ -}}
 {{- $v1Mcp := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
 {{- $servers := dict -}}
 {{- $origin := "" -}}
@@ -70,10 +70,8 @@
 {{-   $server = set $server "disabled" (not (dig "enabled" true $entry)) -}}
 {{-   $servers = set $servers "mp-codemode" $server -}}
 {{- end -}}
-{{- $mcpproxyConfig := joinPath .chezmoi.homeDir ".mcpproxy/mcp_config.json" -}}
-{{- if and (ne "" $origin) (stat $mcpproxyConfig) -}}
-{{-   $mcpproxy := include $mcpproxyConfig | fromJson -}}
-{{-   range $profile := (dig "profiles" (list) $mcpproxy) -}}
+{{- if ne "" $origin -}}
+{{-   range $profile := (dig "mcpproxyProfiles" (list) .) -}}
 {{-     $slug := dig "name" "" $profile -}}
 {{-     if ne "" $slug -}}
 {{-       $servers = set $servers (printf "mp-%s" $slug) (dict "type" "remote" "url" (printf "%s/mcp/p/%s" $origin $slug) "disabled" false) -}}

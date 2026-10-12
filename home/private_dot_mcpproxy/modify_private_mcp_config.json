@@ -270,16 +270,7 @@
        into slash commands prefixed per server (mp-codemode:setup-new-mcp-server, ...).
        Nine entries would yield 18 junk commands. No upstream prompts are used. */ -}}
 {{- $config = $config | setValueAtPath "enable_prompts" false -}}
-{{- $config = $config | setValueAtPath "profiles" (list
-      (dict "name" "docs" "servers" (list "context7"))
-      (dict "name" "research" "servers" (list "websearch" "context7"))
-      (dict "name" "browser" "servers" (list "chrome-devtools"))
-      (dict "name" "design" "servers" (list "figma-desktop" "chrome-devtools"))
-      (dict "name" "pdf" "servers" (list "pdf-tools"))
-      (dict "name" "memory" "servers" (list "notion"))
-      (dict "name" "notify" "servers" (list "pushbullet"))
-      (dict "name" "flows" "servers" (list "smithers"))
-) -}}
+{{- $config = $config | setValueAtPath "profiles" (dig "mcpproxyProfiles" (list) .) -}}
 {{- $config = $config | setValueAtPath "trusted_hosts" $trustedHosts -}}
 {{- $config = $config | setValueAtPath "telemetry.enabled" false -}}
 

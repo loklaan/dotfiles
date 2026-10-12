@@ -1,0 +1,18 @@
+# Shared intent for MCPProxy profiles and OpenCode 2's mp-<name> lanes.
+mcpproxyProfiles:
+  - name: docs
+    servers: [context7]
+  - name: research
+    servers: [websearch, context7]
+  - name: browser
+    servers: [chrome-devtools]
+  - name: design
+    servers: [figma-desktop, chrome-devtools]
+  - name: pdf
+    servers: [pdf-tools]
+  - name: memory
+    servers: [notion]
+  - name: notify
+    servers: [pushbullet]
+  - name: flows
+    servers: [smithers]

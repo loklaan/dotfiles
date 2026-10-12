@@ -9,6 +9,7 @@ SIDECAR_TEMPLATE="${ROOT}/home/private_dot_config/opencode/modify_private_dot_om
 OMO_TEMPLATE="${ROOT}/home/dot_omo/modify_omo.jsonc"
 OPENCODE_TEMPLATE="${ROOT}/home/private_dot_config/opencode/modify_opencode.json"
 OPENCODE2_TEMPLATE="${ROOT}/home/private_dot_config/opencode2/modify_opencode.json"
+MCPPROXY_TEMPLATE="${ROOT}/home/private_dot_mcpproxy/modify_private_mcp_config.json"
 SYNC_TEMPLATE="${ROOT}/home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl"
 WORK_PLUGIN_V2="example-work-plugin"
 WORK_PLUGIN_REPO="/path/to/plugin-repo"
@@ -361,3 +362,53 @@ chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
   '{{ includeTemplate "opencode-work-plugin-tmpl" (dict) }}' |
   jq -e '. == {v1Local: "", v2: ""}' >/dev/null || fail "shared plugin template requires an optional key"
 printf 'PASS: config-template repo persistence and missing-key fleet safety\n'
+
+MCPPROXY_PROFILES=$(chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
+  --override-data-file "$DATA" '{{ .mcpproxyProfiles | toJson }}')
+jq -e 'length > 0' <<< "$MCPPROXY_PROFILES" >/dev/null || fail "shared MCPProxy profiles are empty"
+[ ! -e "$TEST_HOME/.mcpproxy/mcp_config.json" ] || fail "MCPProxy config exists before fresh render"
+
+assert_mcp_lanes() {
+  local rendered=$1
+  local profiles=$2
+  jq -e --argjson profiles "$profiles" '
+    .mcp.servers as $servers |
+    ($servers["mp-codemode"].url | sub("/mcp/?$"; "")) as $origin |
+    ($origin | length > 0) and
+    $servers["mp-codemode"].type == "remote" and
+    $servers["mp-codemode"].disabled == false and
+    ($servers | keys) == (["mp-codemode"] + [$profiles[].name | "mp-" + .] | sort) and
+    all($profiles[]; .name as $name |
+      $servers["mp-" + $name] == {
+        type: "remote", url: ($origin + "/mcp/p/" + $name), disabled: false
+      })
+  ' <<< "$rendered" >/dev/null || fail "OpenCode 2 lanes differ from shared MCPProxy profiles"
+}
+
+for machine_profile in work personal; do
+  overrides=$(jq -nc --arg profile "$machine_profile" '{machineProfile: $profile}')
+  lanes=$(render_work_plugin "$OPENCODE2_TEMPLATE" "$overrides")
+  assert_mcp_lanes "$lanes" "$MCPPROXY_PROFILES"
+  proxy=$(render_work_plugin "$MCPPROXY_TEMPLATE" "$overrides")
+  jq -e --argjson expected "$MCPPROXY_PROFILES" '.profiles == $expected' <<< "$proxy" >/dev/null ||
+    fail "MCPProxy profile values or order differ from shared data for ${machine_profile}"
+done
+printf 'PASS: shared MCPProxy profiles and OpenCode 2 lanes without deployed config (work/personal)\n'
+
+mkdir -p "$TEST_HOME/.mcpproxy"
+printf '{"profiles":[{"name":"stale","servers":[]}]}\n' > "$TEST_HOME/.mcpproxy/mcp_config.json"
+for profiles in "$MCPPROXY_PROFILES" '[{"name":"example","servers":["context7"]}]' '[]'; do
+  overrides=$(jq -nc --argjson profiles "$profiles" '{mcpproxyProfiles: $profiles}')
+  lanes=$(render_work_plugin "$OPENCODE2_TEMPLATE" "$overrides" "$lanes")
+  assert_mcp_lanes "$lanes" "$profiles"
+  proxy=$(render_work_plugin "$MCPPROXY_TEMPLATE" "$overrides" "$proxy")
+  jq -e --argjson expected "$profiles" '.profiles == $expected' <<< "$proxy" >/dev/null ||
+    fail "MCPProxy did not converge changed or removed profiles"
+  repeated=$(render_work_plugin "$OPENCODE2_TEMPLATE" "$overrides" "$lanes")
+  jq -e --argjson expected "$lanes" '. == $expected' <<< "$repeated" >/dev/null ||
+    fail "OpenCode 2 profile lanes changed on second render"
+  repeated=$(render_work_plugin "$MCPPROXY_TEMPLATE" "$overrides" "$proxy")
+  jq -e --argjson expected "$proxy" '. == $expected' <<< "$repeated" >/dev/null ||
+    fail "MCPProxy profiles changed on second render"
+done
+printf 'PASS: stale deployed profiles ignored; changed/removed profiles converge and re-render identically\n'
