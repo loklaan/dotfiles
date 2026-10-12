@@ -199,12 +199,13 @@
 {{- $config = $config | setValueAtPath "enabled_providers" $enabled -}}
 
 {{- /* Per-model limits, translated from the same profile provider_block that
-     V1 copies verbatim, so a cap stays single-sourced in profiles.json. The
-     load-bearing case is a cost cap: Haiku 5.5's context limit makes sessions
-     compact before they cross the context size above which its price rises
-     5x. V2 takes the same {context, input, output} shape at
+     V1 copies verbatim, so a limit stays single-sourced in profiles.json. The
+     load-bearing case is a catalogue entry whose limits are wrong for the
+     deployed model, such as Opus. V2
+     takes the same {context, input, output} shape at
      providers.<id>.models.<model>.limit and merges it over the catalogue
-     entry. Only `limit` translates: V2's model schema has no `reasoning` flag
+     entry. Models without a `limit` keep their catalogue values. Only `limit`
+     translates: V2's model schema has no `reasoning` flag
      and its providers have no `whitelist`.
 
      Emitted only for providers V2 admits. For the proxied providers that is

@@ -182,8 +182,9 @@ When it clears, the work is: add the plugin to V2's `plugins` array and widen
 `enabled_providers` to include the proxied providers. The
 `openCodeWorkPluginV2` lever in `chezmoi data` already does both. It also
 carries the profile's per-model limits into
-`providers.<id>.models.<model>.limit`, notably Haiku 5.5's 100K context cap,
-above which it costs 5x. With the lever empty, none of this is rendered.
+`providers.<id>.models.<model>.limit` for models that define one, such as
+Opus. Models without a limit, such as Haiku 5.5, keep their catalogue values.
+With the lever empty, none of this is rendered.
 Setting `openCodeWorkPluginRepo = "/path/to/plugin-repo"` overrides both
 `openCodeWorkPluginLocalPath` and `openCodeWorkPluginV2` with the monorepo's
 `packages/opencode-plugin/dist/index.js` and `packages/opencode2-plugin/dist`

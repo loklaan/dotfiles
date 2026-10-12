@@ -24,7 +24,8 @@ writing managed targets under `$HOME`. It also rejects any pin on an OpenCode
 service-tier alias (`-fast`, `-flex`, `-ultrafast`), which Coder boxes do not
 list, any pinned `amazon-bedrock` model missing from the work whitelist, and
 any Bedrock model override for a model that is not whitelisted. The override
-map pins Haiku 5.5's 100K context cap, above which it costs 5x. The OpenCode 2
+map carries limits only for models that define one (Opus), and Haiku 5.5 must
+carry none, so it uses its catalogue context window. The OpenCode 2
 template must carry each Bedrock model limit when the work plugin lever is set,
 and must write or admit no Bedrock provider when the lever is empty or cleared.
 

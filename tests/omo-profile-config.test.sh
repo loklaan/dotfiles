@@ -106,11 +106,10 @@ jq -e '
       "limit": {"context": 1000000, "output": 128000}
     },
     "global.anthropic.claude-haiku-5-5": {
-      "reasoning": true,
-      "limit": {"context": 100000, "output": 32000}
+      "reasoning": true
     }
   }
-' "$PROFILES" >/dev/null || fail "Bedrock Opus and Haiku model registration is incomplete"
+' "$PROFILES" >/dev/null || fail "Bedrock Opus and Haiku model registration is incomplete (Haiku must carry no limit)"
 jq -e '
   .profiles.work.provider_block["amazon-bedrock"] as $bedrock |
   $bedrock.models | keys | all(. as $id | $bedrock.whitelist | index($id) != null)
@@ -258,7 +257,8 @@ BEDROCK_LIMITS=$(jq -c '
 with_plugin=$(render_opencode2 "$WORK_PLUGIN_V2")
 jq -e --argjson limits "$BEDROCK_LIMITS" '
   .providers["amazon-bedrock"] == {models: $limits} and
-  .providers["amazon-bedrock"].models["global.anthropic.claude-haiku-5-5"].limit.context == 100000 and
+  .providers["amazon-bedrock"].models["global.anthropic.claude-opus-5-5"].limit.context == 1000000 and
+  (.providers["amazon-bedrock"].models | has("global.anthropic.claude-haiku-5-5") | not) and
   (.enabled_providers | index("amazon-bedrock")) != null
 ' <<< "$with_plugin" >/dev/null ||
   fail "OpenCode 2 does not carry the Bedrock model limits when the work plugin admits Bedrock"
