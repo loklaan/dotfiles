@@ -25,6 +25,17 @@ source "$HOOK"
 #| Which command lines count as a remote session
 #|
 restores=(
+  'ssh box'
+  'ssh user@box'
+  'ssh -p 2222 box'
+  'ssh -p2222 box'
+  'ssh -o BatchMode=yes box'
+  'ssh -i ~/.ssh/id_test -l me box'
+  'ssh -t box tmux attach'
+  'ssh -tt box htop'
+  'ssh -At box'
+  'ssh -- box'
+  'FOO=1 ssh box'
   'cw for-tasks'
   'cw for-tasks tmux'
   'cw for-tasks claude /home/coder/dev/me/dotfiles'
@@ -37,6 +48,18 @@ restores=(
   'ssh coder.for-tasks'
 )
 quiet=(
+  'ssh box true'
+  "ssh -o BatchMode=yes box 'id -un; echo \$HOME'"
+  'ssh -p 22 box ls -la'
+  'ssh -- box uptime'
+  'ssh -N -L 8080:localhost:80 box'
+  'ssh -fN box'
+  'ssh -O check box'
+  'ssh -W host:22 box'
+  'ssh -G box'
+  'ssh -V'
+  'ssh'
+  'ssh box uptime; ls'
   'cw'
   'cw --help'
   'cw --help | less'
@@ -104,6 +127,12 @@ else
     got=$(screen_lines clean)
     [[ $got == 'one|two|three||'*'remote session ended||END' ]] ||
       fail "clean logout: cursor moved or notice missing: $got"
+  fi
+
+  if run_pane oneshot "$stale; _term_restore_preexec 'ssh -o BatchMode=yes box true'; (exit 255); _term_restore_precmd"; then
+    got=$(screen_lines oneshot)
+    [[ $got != *'remote session ended'* ]] ||
+      fail "one-shot ssh: unexpected session notice: $got"
   fi
 
   # A dropped session leaves the remote's alternate screen and mouse on.

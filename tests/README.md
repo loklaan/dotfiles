@@ -67,6 +67,7 @@ saved cursor at the top. A restore after a dropped session must leave the
 alternate screen and turn mouse reporting off. `TERM_RESTORE_HOOK=<file>` runs
 it against another revision of the hook. The terminal checks are skipped when
 `tmux` is not on `PATH`.
+One-shot ssh commands (a remote command without `-t`) stay quiet.
 
 ## tmux-resurrect-code-agents
 

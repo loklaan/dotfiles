@@ -23,6 +23,7 @@
 #|   here means ONE implementation covers ssh, cw, mosh, et, or a crashed      |
 #|   local TUI, with zero per-tool wrappers to maintain. preexec records the   |
 #|   command; precmd cleans up only when that command was a remote launcher.   |
+#|   One-shot ssh commands stay quiet unless -t forces a terminal.             |
 #|                                                                             |
 #|-----------------------------------------------------------------------------|
 
@@ -60,17 +61,65 @@ _term_restore_emit() {
 #|
 #| True when the command line launched a remote/full-screen
 #| session whose abrupt exit can leave the terminal dirty. Matches
-#| the program word, tolerating leading env assignments. cw counts
-#| only when it attaches the terminal, so `cw --help` stays quiet.
+#| the program word, tolerating leading env assignments. cw and ssh
+#| count only when attaching, so help and one-shot ssh stay quiet.
 #|
 _term_restore_is_remote_launcher() {
   local -a words=("${(@Q)${(z)1}}")
   while [[ "${words[1]}" == *=* ]]; do shift words; done  # skip leading VAR=val assignments
   case "${words[1]:t}" in
     cw) _term_restore_cw_attaches "${(@)words[2,-1]}" ;;
-    ssh|mosh|et|sshrc|autossh) return 0 ;;
+    ssh) _term_restore_ssh_attaches "${(@)words[2,-1]}" ;;
+    mosh|et|sshrc|autossh) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+#|------------------------------------------------------------|#
+#| _term_restore_ssh_attaches
+#|
+#| True for a destination without a remote command, or with -t.
+#| Forward-only, control, query and background modes never attach.
+#| Stop at shell operator tokens, not operator characters inside
+#| a quoted remote command (which arrives as one unquoted word).
+#|
+_term_restore_ssh_attaches() {
+  local arg flags flag dest="" tty="" skip="" end_options=""
+  for arg in "$@"; do
+    case "$arg" in
+      ';'|'|'|'||'|'&&'|'&'|'|&') break ;;
+    esac
+    [[ "$arg" =~ '^[0-9]*[<>]' ]] && break
+    if [[ -n "$skip" ]]; then
+      skip=""
+      continue
+    fi
+    if [[ -z "$end_options" ]]; then
+      case "$arg" in
+        --) end_options=1; continue ;;
+        -?*)
+          flags="${arg[2,-1]}"
+          while [[ -n "$flags" ]]; do
+            flag="${flags[1]}"
+            flags="${flags[2,-1]}"
+            case "$flag" in
+              N|W|O|G|V|Q|f) return 1 ;;
+              t) tty=1 ;;
+              B|b|c|D|E|e|F|I|i|J|L|l|m|o|P|p|R|S|w)
+                [[ -n "$flags" ]] || skip=1  # attached value or next word
+                break ;;
+            esac
+          done
+          continue ;;
+      esac
+    fi
+    # After the destination, this word and the rest belong to the remote command.
+    if [[ -n "$dest" ]]; then
+      [[ -n "$tty" ]]; return
+    fi
+    dest=1
+  done
+  [[ -n "$dest" && -z "$skip" ]]
 }
 
 #|------------------------------------------------------------|#
