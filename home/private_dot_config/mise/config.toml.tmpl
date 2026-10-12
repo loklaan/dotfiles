@@ -7,6 +7,8 @@
 # Installed on every machine; the opencode plugin lives in
 # private_dot_config/opencode/plugins/rtk.ts (managed here, not via `rtk init`).
 "github:rtk-ai/rtk" = { version = "v0.50.0", exe = "rtk" }
+# tmux's official prebuilt binary: no source build; the asdf plugin cannot build 3.7 on macOS.
+"github:tmux/tmux-builds" = "3.7c"
 {{ if eq .chezmoi.os "linux" -}}
 "github:smart-mcp-proxy/mcpproxy-go" = { version = "0.70.0", exe = "mcpproxy" }
 {{ end -}}
@@ -37,7 +39,6 @@ ripgrep = "latest"
 rust = "1.98.1"
 shellcheck = "0.11.0"
 starship = "1.26.0"
-tmux = "3.7c"
 uv = "0.12.21"
 
 [env]
