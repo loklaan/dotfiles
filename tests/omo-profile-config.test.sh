@@ -7,8 +7,11 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROFILES="${ROOT}/home/.chezmoidata/profiles.json"
 SIDECAR_TEMPLATE="${ROOT}/home/private_dot_config/opencode/modify_private_dot_omo-profile.json"
 OMO_TEMPLATE="${ROOT}/home/dot_omo/modify_omo.jsonc"
+OPENCODE_TEMPLATE="${ROOT}/home/private_dot_config/opencode/modify_opencode.json"
 OPENCODE2_TEMPLATE="${ROOT}/home/private_dot_config/opencode2/modify_opencode.json"
+SYNC_TEMPLATE="${ROOT}/home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl"
 WORK_PLUGIN_V2="example-work-plugin"
+WORK_PLUGIN_REPO="/path/to/plugin-repo"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -126,19 +129,21 @@ TEST_ROOT=$(mktemp -d)
 DESTINATION="${TEST_ROOT}/destination"
 TEST_HOME="${TEST_ROOT}/home"
 DATA="${TEST_ROOT}/data.json"
+EMPTY_CONFIG="${TEST_ROOT}/chezmoi-empty.json"
 cleanup() {
   rm -rf "$TEST_ROOT"
 }
 trap cleanup EXIT
 
 mkdir -p "$DESTINATION" "$TEST_HOME/.config/opencode"
+printf '{}\n' > "$EMPTY_CONFIG"
 jq -n --arg home "$TEST_HOME" \
   '{machineProfile: "work", chezmoi: {homeDir: $home}}' > "$DATA"
 
 render_sidecar() {
   local requested=$1
   jq -nc --arg profile "$requested" '{profile: $profile}' |
-    chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
+    chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
       --override-data-file "$DATA" --with-stdin -f "$SIDECAR_TEMPLATE"
 }
 
@@ -148,7 +153,7 @@ render_omo() {
   jq -n --arg profile "$requested" '{profile: $profile}' \
     > "$TEST_HOME/.config/opencode/.omo-profile.json"
   printf '%s\n' "$existing" |
-    chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
+    chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
       --override-data-file "$DATA" --with-stdin -f "$OMO_TEMPLATE"
 }
 
@@ -160,8 +165,23 @@ render_opencode2() {
     '{machineProfile: "work", openCodeWorkPluginV2: $plugin, chezmoi: {homeDir: $home}}' \
     > "$data"
   printf '%s\n' "$existing" |
-    chezmoi execute-template -S "$ROOT" -D "$DESTINATION" \
+    chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
       --override-data-file "$data" --with-stdin -f "$OPENCODE2_TEMPLATE"
+}
+
+render_work_plugin() {
+  local template=$1
+  local overrides=$2
+  local existing=${3:-'{}'}
+  local data="${TEST_ROOT}/data-work-plugin.json"
+  jq -n --arg home "$TEST_HOME" --argjson overrides "$overrides" '
+    {machineProfile: "work", openCodeWorkPlugin: "example-work-plugin@latest",
+     npmWorkRegistry: "https://registry.example.invalid/",
+     bwsTokenPath: ($home + "/missing-token"), chezmoi: {homeDir: $home}} + $overrides
+  ' > "$data"
+  printf '%s\n' "$existing" |
+    chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
+      --override-data-file "$data" --with-stdin -f "$template"
 }
 
 assert_sidecar_profile() {
@@ -261,3 +281,83 @@ jq -e --argjson first "$with_plugin" '. == $first' <<< "$reapplied" >/dev/null |
   fail "OpenCode 2 kept a model limit the profile no longer declares, or changed on second render"
 
 printf 'PASS: OMO profile source, migration, and OpenCode 2 model limit contract\n'
+
+# Both entry points come from the repo, even when the legacy levers are set.
+EXPECTED_PROVIDERS=$(jq -c '.profiles.work.enabled_providers | sort' "$PROFILES")
+for explicit in '{}' \
+  '{"openCodeWorkPluginLocalPath":"/path/to/old-plugin/dist/index.js","openCodeWorkPluginV2":" example-work-plugin-v2@latest "}'; do
+  repo_set=$(jq -c --arg repo "$WORK_PLUGIN_REPO" '. + {openCodeWorkPluginRepo: $repo}' <<< "$explicit")
+  repo_empty=$(jq -c '. + {openCodeWorkPluginRepo: ""}' <<< "$explicit")
+  v1=$(render_work_plugin "$OPENCODE_TEMPLATE" "$repo_set")
+  v2=$(render_work_plugin "$OPENCODE2_TEMPLATE" "$repo_set")
+  jq -e --arg repo "$WORK_PLUGIN_REPO" '
+    .plugin == [($repo + "/packages/opencode-plugin/dist/index.js"), "oh-my-openagent@latest"]
+  ' <<< "$v1" >/dev/null || fail "repo override did not select the V1 monorepo entry"
+  jq -e --arg repo "$WORK_PLUGIN_REPO" --argjson providers "$EXPECTED_PROVIDERS" '
+    .plugins == [($repo + "/packages/opencode2-plugin/dist")] and
+    .enabled_providers == $providers
+  ' <<< "$v2" >/dev/null || fail "repo override did not select the V2 entry and admit proxied providers"
+
+  fallback_v1=$(render_work_plugin "$OPENCODE_TEMPLATE" "$repo_empty")
+  fallback_v2=$(render_work_plugin "$OPENCODE2_TEMPLATE" "$repo_empty")
+  jq -e --argjson explicit "$explicit" '
+    .plugin == [($explicit.openCodeWorkPluginLocalPath // "example-work-plugin@latest"), "oh-my-openagent@latest"]
+  ' <<< "$fallback_v1" >/dev/null || fail "empty repo changed the explicit V1 entry or published fallback"
+  jq -e --argjson explicit "$explicit" '
+    if $explicit | has("openCodeWorkPluginV2") then
+      .plugins == [($explicit.openCodeWorkPluginV2 | gsub("^\\s+|\\s+$"; ""))]
+    else has("plugins") | not end
+  ' <<< "$fallback_v2" >/dev/null || fail "empty repo changed the explicit V2 entry or its whitespace trimming"
+
+  for template in "$OPENCODE_TEMPLATE" "$OPENCODE2_TEMPLATE" "$SYNC_TEMPLATE"; do
+    render_work_plugin "$template" "$explicit" > "${TEST_ROOT}/absent"
+    render_work_plugin "$template" "$repo_empty" > "${TEST_ROOT}/empty"
+    cmp -s "${TEST_ROOT}/absent" "${TEST_ROOT}/empty" ||
+      fail "empty and absent repo render differently: ${template}"
+    if [ "$template" != "$SYNC_TEMPLATE" ]; then
+      selected=$(render_work_plugin "$template" "$repo_set")
+      render_work_plugin "$template" "$repo_set" "$selected" > "${TEST_ROOT}/reapplied"
+      render_work_plugin "$template" "$repo_set" > "${TEST_ROOT}/selected"
+      cmp -s "${TEST_ROOT}/selected" "${TEST_ROOT}/reapplied" ||
+        fail "repo override is not idempotent: ${template}"
+      render_work_plugin "$template" "$repo_empty" "$selected" > "${TEST_ROOT}/restored"
+      cmp -s "${TEST_ROOT}/empty" "${TEST_ROOT}/restored" ||
+        fail "clearing repo did not restore the explicit keys: ${template}"
+    fi
+  done
+done
+printf 'PASS: work plugin repo paths, precedence, empty/absent fallback, re-render, and rollback\n'
+
+# Positive control: published caches are still busted when neither local lever is set.
+render_work_plugin "$SYNC_TEMPLATE" '{}' > "${TEST_ROOT}/sync-published.sh"
+grep -Fx "tcs_bust_opencode_plugin \"\$packages_dir\" \"@canva/opencode-plugin-llmproxy@latest\"" \
+  "${TEST_ROOT}/sync-published.sh" >/dev/null || fail "published work plugin cache bust is missing"
+grep -Fx "tcs_bust_opencode_plugin \"\$packages_dir\" \"@canva/opencode-plugin-llmproxy\"" \
+  "${TEST_ROOT}/sync-published.sh" >/dev/null || fail "legacy work plugin cache bust is missing"
+render_work_plugin "$SYNC_TEMPLATE" "$(jq -nc --arg repo "$WORK_PLUGIN_REPO" '{openCodeWorkPluginRepo: $repo}')" \
+  > "${TEST_ROOT}/sync-repo.sh"
+if grep -F '@canva/opencode-plugin-llmproxy' "${TEST_ROOT}/sync-repo.sh" >/dev/null; then
+  fail "repo override still busts published work plugin caches"
+fi
+grep -Fx "tcs_bust_opencode_plugin \"\$packages_dir\" \"oh-my-openagent@latest\"" \
+  "${TEST_ROOT}/sync-repo.sh" >/dev/null || fail "repo override suppressed the unrelated OMO cache bust"
+for script in "${TEST_ROOT}/sync-published.sh" "${TEST_ROOT}/sync-repo.sh"; do
+  bash -n "$script"
+done
+printf 'PASS: work plugin repo skips published cache busting without suppressing OMO\n'
+
+# --init only simulates config-template rendering; never run chezmoi init/apply.
+# Load the value from an actual temporary config [data], not override-data.
+for data in '{}' '{"openCodeWorkPluginRepo":""}' \
+  '{"openCodeWorkPluginRepo":"/path/to/plugin-repo"}'; do
+  jq -n --argjson data "$data" '{data: $data}' > "${TEST_ROOT}/chezmoi-init.json"
+  chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/chezmoi-init.json" \
+    -S "$ROOT" -D "$DESTINATION" -f "${ROOT}/home/.chezmoi.toml.tmpl" > "${TEST_ROOT}/config.toml"
+  expected=$(jq -r '"  openCodeWorkPluginRepo = " + (.openCodeWorkPluginRepo // "" | tojson)' <<< "$data")
+  [ "$(grep -Fxc "$expected" "${TEST_ROOT}/config.toml")" = 1 ] ||
+    fail "config-template rendering did not preserve/default the repo key as one editable line"
+done
+chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
+  '{{ includeTemplate "opencode-work-plugin-tmpl" (dict) }}' |
+  jq -e '. == {v1Local: "", v2: ""}' >/dev/null || fail "shared plugin template requires an optional key"
+printf 'PASS: config-template repo persistence and missing-key fleet safety\n'

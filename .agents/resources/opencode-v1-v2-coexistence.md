@@ -184,6 +184,10 @@ When it clears, the work is: add the plugin to V2's `plugins` array and widen
 carries the profile's per-model limits into
 `providers.<id>.models.<model>.limit`, notably Haiku 5.5's 100K context cap,
 above which it costs 5x. With the lever empty, none of this is rendered.
+Setting `openCodeWorkPluginRepo = "/path/to/plugin-repo"` overrides both
+`openCodeWorkPluginLocalPath` and `openCodeWorkPluginV2` with the monorepo's
+`packages/opencode-plugin/dist/index.js` and `packages/opencode2-plugin/dist`
+entries respectively; emptying it restores the two explicit keys.
 
 ## Shared TUI plugin package
 

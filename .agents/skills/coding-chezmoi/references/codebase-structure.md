@@ -86,6 +86,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .skills                           // Desired provider-owned skill IDs
 .npmWorkRegistry                  // Scoped npm registry for work packages
 .openCodeWorkPlugin               // OpenCode plugin for work environments
+.openCodeWorkPluginRepo           // Local plugin monorepo; overrides openCodeWorkPluginLocalPath and openCodeWorkPluginV2; empty means off
 .jetbrainsLicenseServer           // JetBrains license server URL
 ```
 

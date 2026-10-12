@@ -1,0 +1,9 @@
+{{- /* A repo checkout overrides both explicit entries; empty keeps their defaults. */ -}}
+{{- $repo := dig "openCodeWorkPluginRepo" "" . -}}
+{{- $v1Local := dig "openCodeWorkPluginLocalPath" "" . -}}
+{{- $v2 := dig "openCodeWorkPluginV2" "" . | trim -}}
+{{- if ne "" $repo -}}
+{{-   $v1Local = joinPath $repo "packages/opencode-plugin/dist/index.js" -}}
+{{-   $v2 = joinPath $repo "packages/opencode2-plugin/dist" -}}
+{{- end -}}
+{{- dict "v1Local" $v1Local "v2" $v2 | toJson -}}

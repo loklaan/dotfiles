@@ -1,4 +1,6 @@
-{{- $llmproxyLocal := dig "openCodeWorkPluginLocalPath" "" . -}}
+{{- /* Share V1's resolved local entry so repo overrides also skip cache busting. */ -}}
+{{- $workPluginEntries := includeTemplate "opencode-work-plugin-tmpl" . | fromJson -}}
+{{- $llmproxyLocal := $workPluginEntries.v1Local -}}
 {{- $machineProfile := dig "machineProfile" "personal" . -}}
 {{- $workRegistry := dig "npmWorkRegistry" "" . -}}
 #!/usr/bin/env bash

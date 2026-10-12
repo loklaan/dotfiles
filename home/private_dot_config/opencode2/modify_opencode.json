@@ -15,8 +15,8 @@
      ordered `permissions` array instead of a per-tool `permission` map.
 
       Kept minimal on purpose. The compatible oh-my-opencode-slim plugin is
-      registered below; the work LLM-proxy plugin remains absent because it is
-      V1-only and has no V2 entry point.
+       registered below; the work LLM-proxy plugin is absent unless a V2 entry
+       is configured explicitly or via the shared repo override.
       - `.agents` content. V2 discovers `.agents/skills` natively; instructions
         come only from AGENTS.md, rendered alongside this file.
 */ -}}
@@ -92,10 +92,9 @@
      The work profile's proxied providers (amazon-bedrock and friends) are
      NOT portable. Their endpoint and credentials come entirely from the work
      LLM-proxy plugin — a rotating bearer token on VPN, SigV4 over IMDS on
-     Coder — and that plugin is V1-API-only. There is no config-only equivalent,
-     and a static apiKey would expire. So on a work-profile machine opencode2
-     starts with free-tier models until that plugin ships a V2 entry point;
-     `/connect` inside the TUI is the escape hatch.
+     Coder. There is no config-only equivalent, and a static apiKey would
+     expire. Without a configured V2 entry, a work-profile machine starts with
+     no admitted providers; `/connect` inside the TUI is the escape hatch.
 
      Key is embedded literally rather than via {env:OPENCODE_API_KEY} for the
      same reason as V1: that env var is only exported by zsh, so any
@@ -148,17 +147,18 @@
      inside the agent's own shell.
 
      So V2 starts life holding V1's provider credentials. For the proxied
-     providers those credentials are a placeholder key that only the V1 plugin
-     can swap for a real bearer token, so V2 presents e.g. a Bedrock model and
-     then fails every request with HTTP 403 — observed before this allowlist was
-     added. Restricting enabled_providers renders the inherited credentials
-     inert, which is what makes the separation real rather than nominal.
+     providers those credentials are a placeholder key that needs the work
+     plugin to swap in a real bearer token. Without its V2 entry, V2 presents
+     e.g. a Bedrock model and then fails every request with HTTP 403 — observed
+     before this allowlist was added. Restricting enabled_providers renders the
+     inherited credentials inert, which makes the separation real rather than
+     nominal.
 
      The allowlist is DERIVED from the profile and never invented. An empty list
      is deny-all (verified: `enabled_providers: []` yields zero models), which is
-     the correct state for a work machine before the plugin exists — V2 is
-     installed and isolated but has no model until the plugin lands or the user
-     runs `/connect` deliberately.
+     the correct state for a work machine without a configured V2 work plugin
+     — V2 is installed and isolated but has no model until that entry is set or
+     the user runs `/connect` deliberately.
 
      Do NOT reintroduce a fallback to the built-in `opencode` provider here. The
      work profile deliberately enables only the proxied providers, so defaulting
@@ -169,8 +169,9 @@
 {{-   $enabled = append $enabled $id -}}
 {{- end -}}
 
-{{- /* The V2 work plugin, when one exists. `openCodeWorkPluginV2` is passed
-     through verbatim so it accepts either form V2 can load: an ABSOLUTE bundle
+{{- /* The V2 work plugin, when configured. The shared template resolves a repo
+     override first, otherwise `openCodeWorkPluginV2` is passed through with
+     whitespace trimmed so it accepts either form V2 can load: an ABSOLUTE bundle
      path (which bypasses resolution entirely — `isAbsolute(target)` short
      circuits to a file URL, the local-dev case) or a package spec (resolved by
      probing `exports` subpaths `["server", ""]`, so a published package must
@@ -183,9 +184,9 @@
      Coupling them makes both failure modes unreachable. Their per-model limits
      follow the same lever; see below.
 
-     Empty by default, so this is inert until the plugin ships a V2 entry
-     point. */ -}}
-{{- $workPluginV2 := dig "openCodeWorkPluginV2" "" . | trim -}}
+     Empty by default, so this is inert until a V2 entry is configured. */ -}}
+{{- $workPluginEntries := includeTemplate "opencode-work-plugin-tmpl" . | fromJson -}}
+{{- $workPluginV2 := $workPluginEntries.v2 -}}
 {{- if ne "" $workPluginV2 -}}
 {{-   $config = $config | setValueAtPath "plugins" (list $workPluginV2) -}}
 {{-   range $id := (dig "enabled_providers" (list) $p) -}}
