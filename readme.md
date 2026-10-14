@@ -109,6 +109,30 @@ Validate installation in a clean environment:
 
 Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from `chezmoi.test.toml`.
 
+## Skulk
+
+Mise installs the pinned Skulk CLI and Bun runtime; Pitchfork owns `df-skulk`
+on macOS and Linux. The apply lifecycle restarts it after OpenCode 2 installation
+and probes `skulk status`. No separate launchd/systemd Skulk service is installed.
+The upstream agent skill is checksum-pinned in the shared `.agents/skills`
+registry through the existing skill lifecycle, not `npx skills`.
+
+Skulk delivers through the `opencode2` isolation wrapper: its `opencode api`
+integration targets OpenCode 2, not V1's `opencode serve`. No plugin is needed.
+Inside an OpenCode 2 session, `skulk in 10m --do "Report progress"` wakes that
+session; other agents can use foreground `--wait` without a delivery instruction.
+Inspect with `skulk status`, `skulk list`, or `pitchfork logs df-skulk`.
+
+Custom command watches are disabled in both the CLI and daemon by default;
+timers and built-in GitHub/npm/session triggers remain available. Never grant a
+blanket `skulk *` shell permission. GitHub triggers use the machine's existing
+`gh` login. Capacity triggers need a separately configured capacity probe.
+
+Machine-local chezmoi data can set `[data.skulk]` `enabled = false` to stop the
+daemon on the next apply (watches are retained). Setting `allowExec = true`
+enables deferred command execution; keep `poll`, `when exits`, and `run` subject
+to shell approval, and never embed secrets in stored commands.
+
 ## Secret Management
 
 Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates call the `bws-get-or-empty` wrapper with a secret ID and token-file path to resolve secret values during `chezmoi apply`.

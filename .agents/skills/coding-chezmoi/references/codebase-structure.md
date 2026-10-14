@@ -185,6 +185,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `hex` | reload-hex-settings (068) |
 | `omo` | cleanup-legacy-omo-config (069) |
 | `opencode2` | opencode2 (071) |
+| `skulk` | skulk-daemon (073) |
 | `fonts` | install-fonts (100) |
 | `completions` | install-zsh-completions (100) |
 | `shell` | change-term (100) |

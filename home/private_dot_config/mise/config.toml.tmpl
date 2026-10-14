@@ -45,6 +45,8 @@ uv = "0.12.21"
 [env]
 DISABLE_AUTOUPDATER = "1"
 DENO_NO_UPDATE_CHECK = "1"
+SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2"
+SKULK_ALLOW_EXEC = "{{ if dig "skulk" "allowExec" false . }}1{{ else }}0{{ end }}"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node"]

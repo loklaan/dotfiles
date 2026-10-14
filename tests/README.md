@@ -10,6 +10,7 @@ bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
 bash tests/skill-reconcile.test.sh
+bash tests/skulk.test.sh
 zsh tests/terminal-restore.test.zsh
 bash tests/opencode-tui-plugins/install.test.sh
 ```
@@ -40,6 +41,14 @@ builds no packs. A missing boundary or a non-boolean value is malformed. The
 script runs under a temporary `HOME` with the real `jq` binary linked ahead of
 any mise shim. `SKILL_RECONCILE_SCRIPT=<file>` runs it against another
 revision.
+
+## Skulk
+
+`skulk.test.sh` renders mise and Pitchfork configuration for macOS and Linux,
+checking the package pin, isolated OpenCode 2 wrapper, command-execution policy,
+and daemon opt-out. It exercises the lifecycle with shimmed tools: repeated
+start, stop, missing runtime/OpenCode 2, startup failure, and health-probe failure.
+It never applies chezmoi or starts a real service.
 
 ## OpenCode TUI plugins
 
