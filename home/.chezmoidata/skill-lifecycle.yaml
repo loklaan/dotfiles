@@ -55,23 +55,6 @@ skillLifecycleDefaults:
           package: true
         - id: lochy:writing
           package: true
-    skulk:
-      id: skulk
-      kind: archive
-      path: "{homeDir}/.local/share/dotfiles/skills/skulk"
-      url: https://github.com/kitlangton/skulk/archive/4074db6e1d8b6e471e1b8283f0127b3d1ff56269.tar.gz
-      stripComponents: 3
-      include:
-        - "*/skills/skulk/**"
-      lock:
-        algorithm: sha256
-        checksum: 2b61a222a6804202d01f1bb8001df39a53812f1c47eeebfc7b495f7ebf337e9b
-        contentDigest: fbe98362aabd488b579e87a1b72839b74c9f9a4dc6d01342a7014d188820a2e0
-        ref: 4074db6e1d8b6e471e1b8283f0127b3d1ff56269
-      items:
-        - id: skulk
-          directory: .
-          package: false
     public-architecture:
       id: public-architecture
       kind: archive

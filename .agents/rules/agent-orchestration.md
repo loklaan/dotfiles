@@ -18,7 +18,6 @@ Coder workspaces are reached through their standard `coder.<workspace>` SSH host
 | Process | Where | Manager | Lifecycle |
 |---|---|---|---|
 | `opencode serve` | Any machine | Pitchfork when `openCodeServer`; otherwise per-session or manual | Long-running opt-in or per-session |
-| `skulk daemon` | macOS and Linux | Pitchfork unless `skulk.enabled = false` | Durable OpenCode 2 wake-ups |
 
 ## Server Model
 
@@ -57,14 +56,6 @@ config locations by default, so its isolation is deliberate and easy to break:
   service inherits the env of whichever client started it and is then reused.
 
 See [OpenCode 1 / OpenCode 2 Coexistence](../resources/opencode-v1-v2-coexistence.md).
-
-Skulk uses V2's `api` CLI, not V1's `serve` API. Both its mise environment and
-Pitchfork daemon set `SKULK_OPENCODE` to the `~/.local/bin/opencode2` wrapper;
-never point it at the underlying binary. No plugin is needed. Its upstream
-skill is acquired through the checksum-locked shared skill lifecycle.
-`skulk.allowExec` defaults to false in committed chezmoi data, disabling
-deferred user-supplied commands. `skulk.enabled = false` stops `df-skulk` on
-apply without deleting watches.
 
 ## Plugin Versioning
 
@@ -133,7 +124,6 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-opencode-serve` and `df-mcpproxy` when their gates are enabled |
 | `home/.chezmoiscripts/run_after_install-056-mcpproxy-daemon.sh.tmpl` | Lifecycle for the MCP proxy daemon |
 | `home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl` | Lifecycle for `opencode serve` |
-| `home/.chezmoiscripts/run_after_install-073-skulk-daemon.sh.tmpl` | Lifecycle and health probe for Skulk |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
 | `home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl` | Installs the shared TUI plugin package's dependencies for OpenCode 1, only when its lockfile changes |
 | `home/private_dot_local/lib/pitchfork-lifecycle.sh` | Shared Pitchfork lifecycle helpers |

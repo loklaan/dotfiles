@@ -30,15 +30,6 @@ providers:
     notices:
       - LICENSE
 
-  skulk:
-    label: Kit Langton — Skulk
-    upstreamUrl: https://github.com/kitlangton/skulk
-    permission:
-      _tag: UpstreamLicense
-      license: MIT
-    notices:
-      - LICENSE
-
   omo-setup:
     label: OhMyOpenCode setup information
     upstreamUrl: https://www.npmjs.com/package/oh-my-openagent

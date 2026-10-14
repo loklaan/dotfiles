@@ -1,13 +1,11 @@
 #:schema https://pitchfork.jdx.dev/schema.json
-{{- if and (has .chezmoi.os (list "linux" "darwin")) (dig "skulk" "enabled" true .) }}
 [daemons.df-skulk]
 run = "skulk daemon"
 dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin", SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2", SKULK_ALLOW_EXEC = "{{ if dig "skulk" "allowExec" false . }}1{{ else }}0{{ end }}" }
+env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin", SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2", SKULK_ALLOW_EXEC = "0" }
 retry = true
 boot_start = true
 ready_delay = 2
-{{- end }}
 
 {{- if dig "openCodeServer" false . -}}
 {{- /* When nginxProxy is enabled, daemons bind to loopback on the internal
