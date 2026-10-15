@@ -363,6 +363,37 @@ chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
   jq -e '. == {v1Local: "", v2: ""}' >/dev/null || fail "shared plugin template requires an optional key"
 printf 'PASS: config-template repo persistence and missing-key fleet safety\n'
 
+for data in '{}' '{"openCodeWorkPluginSync":"git pull --ff-only && pnpm build"}'; do
+  jq -n --argjson data "$data" '{data: $data}' > "${TEST_ROOT}/chezmoi-init.json"
+  chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/chezmoi-init.json" \
+    -S "$ROOT" -D "$DESTINATION" -f "${ROOT}/home/.chezmoi.toml.tmpl" > "${TEST_ROOT}/config.toml"
+  expected=$(jq -r '"  openCodeWorkPluginSync = " + (.openCodeWorkPluginSync // "" | tojson)' <<< "$data")
+  [ "$(grep -Fxc "$expected" "${TEST_ROOT}/config.toml")" = 1 ] ||
+    fail "config-template rendering did not preserve/default the sync key as one editable line"
+done
+printf 'PASS: config-template sync command persistence\n'
+
+# The sync script renders only with a work repo and a command, and runs the command there.
+SYNC_REPO_TEMPLATE="${ROOT}/home/.chezmoiscripts/run_after_install-073-sync-work-plugin.sh.tmpl"
+for overrides in '{}' '{"openCodeWorkPluginSync":"true"}' \
+  "$(jq -nc --arg repo "$WORK_PLUGIN_REPO" '{openCodeWorkPluginRepo: $repo}')" \
+  "$(jq -nc --arg repo "$WORK_PLUGIN_REPO" '{machineProfile: "personal", openCodeWorkPluginRepo: $repo, openCodeWorkPluginSync: "true"}')"; do
+  [ -z "$(render_work_plugin "$SYNC_REPO_TEMPLATE" "$overrides" | tr -d '[:space:]')" ] ||
+    fail "work plugin sync rendered without a work repo and a command: ${overrides}"
+done
+mkdir -p "${TEST_ROOT}/plugin-repo" "${TEST_HOME}/.local/lib"
+cp "${ROOT}/home/private_dot_local/lib/bash-logging.sh" "${TEST_HOME}/.local/lib/bash-logging.sh"
+for sync in "pwd > synced" "false"; do
+  render_work_plugin "$SYNC_REPO_TEMPLATE" "$(jq -nc --arg repo "${TEST_ROOT}/plugin-repo" --arg sync "$sync" \
+    '{openCodeWorkPluginRepo: $repo, openCodeWorkPluginSync: $sync}')" > "${TEST_ROOT}/sync-work-plugin.sh"
+  bash -n "${TEST_ROOT}/sync-work-plugin.sh"
+  HOME="$TEST_HOME" bash "${TEST_ROOT}/sync-work-plugin.sh" >/dev/null 2>&1 ||
+    fail "work plugin sync failed the apply for: ${sync}"
+done
+[ "$(cat "${TEST_ROOT}/plugin-repo/synced")" = "${TEST_ROOT}/plugin-repo" ] ||
+  fail "work plugin sync did not run its command inside the repo"
+printf 'PASS: work plugin sync runs the [data] command in the repo and never fails the apply\n'
+
 MCPPROXY_PROFILES=$(chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DESTINATION" \
   --override-data-file "$DATA" '{{ .mcpproxyProfiles | toJson }}')
 jq -e 'length > 0' <<< "$MCPPROXY_PROFILES" >/dev/null || fail "shared MCPProxy profiles are empty"

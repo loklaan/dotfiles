@@ -1,0 +1,37 @@
+{{- /* The repo comes from the shared resolver, so a V2 path ending in a monorepo dist counts too. */ -}}
+{{- $v2 := (includeTemplate "opencode-work-plugin-tmpl" . | fromJson).v2 -}}
+{{- $suffix := "/packages/opencode2-plugin/dist" -}}
+{{- $repo := ternary (trimSuffix $suffix $v2) "" (hasSuffix $suffix $v2) -}}
+{{- $sync := dig "openCodeWorkPluginSync" "" . | trim -}}
+{{- if and (ne $repo "") (ne $sync "") (eq (dig "machineProfile" "personal" .) "work") -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")" "plugins"
+
+#/ Usage:
+#/   run_after_install-073-sync-work-plugin.sh
+#/
+#/ Description:
+#/   Runs the machine-local openCodeWorkPluginSync command inside the local
+#/   work plugin repo on every apply, so the plugin tracks its branch. The
+#/   command lives in [data], not here. A failure warns and leaves the apply
+#/   going. Running OpenCode keeps the old plugin until it restarts.
+
+repo={{ $repo | squote }}
+sync=$(cat <<'WORK_PLUGIN_SYNC'
+{{ $sync }}
+WORK_PLUGIN_SYNC
+)
+[ -d "$repo" ] || { log_skip "work plugin repo ${repo} is missing"; exit 0; }
+
+log_step "Syncing work plugin in ${repo}"
+if (cd "$repo" && bash -euo pipefail -c "$sync" </dev/null); then
+  log_ok "work plugin synced"
+else
+  log_fail "work plugin sync failed in ${repo} (exit $?)"
+fi
+{{ end -}}

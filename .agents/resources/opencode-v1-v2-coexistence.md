@@ -189,6 +189,9 @@ Setting `openCodeWorkPluginRepo = "/path/to/plugin-repo"` overrides both
 `openCodeWorkPluginLocalPath` and `openCodeWorkPluginV2` with the monorepo's
 `packages/opencode-plugin/dist/index.js` and `packages/opencode2-plugin/dist`
 entries respectively; emptying it restores the two explicit keys.
+`openCodeWorkPluginSync` is a shell command that
+`run_after_install-073-sync-work-plugin.sh` runs in that repo on every apply
+(for example, fast-forward and build); a failure warns without failing the apply.
 
 ## Shared TUI plugin package
 
