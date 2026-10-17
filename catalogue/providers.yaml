@@ -30,6 +30,16 @@ providers:
     notices:
       - LICENSE
 
+  cloudflare-security-audit:
+    label: Cloudflare — security-audit
+    upstreamUrl: https://github.com/cloudflare/security-audit-skill
+    permission:
+      _tag: UpstreamOpenSourceLicense
+      spdxId: MIT
+      licenseUrl: https://github.com/cloudflare/security-audit-skill/blob/c1c8a8c1471069fb0e188eeaff69b8e8db6564a8/LICENSE
+    notices:
+      - LICENSE
+
   omo-setup:
     label: OhMyOpenCode setup information
     upstreamUrl: https://www.npmjs.com/package/oh-my-openagent

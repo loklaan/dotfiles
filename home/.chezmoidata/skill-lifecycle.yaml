@@ -79,3 +79,27 @@ skillLifecycleDefaults:
         - id: lochy:coding:architecture
           directory: .
           package: true
+    cloudflare-security-audit:
+      id: cloudflare-security-audit
+      kind: archive
+      path: "{homeDir}/.local/share/dotfiles/skills/cloudflare:security-audit"
+      url: https://github.com/cloudflare/security-audit-skill/archive/c1c8a8c1471069fb0e188eeaff69b8e8db6564a8.tar.gz
+      stripComponents: 3
+      include:
+        - "*/skills/security-audit/**"
+      lock:
+        algorithm: sha256
+        checksum: 53e708ebf770dfe35b57df0586a5058707081a870cd149ce30a2d57c51ed29b6
+        contentDigest: 1d4b96a6d8f0ff19d2bee2ff0b815106f085a19025e77cf64ec37bc9ed60668f
+        ref: c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
+      transforms:
+        - kind: frontmatter-name
+          from: security-audit
+          to: cloudflare:security-audit
+        - kind: logical-directory-rename
+          from: security-audit
+          to: cloudflare:security-audit
+      items:
+        - id: cloudflare:security-audit
+          directory: .
+          package: true
