@@ -16,6 +16,7 @@
 # `completion` subcommand; kept next to pitchfork since they're paired.
 usage = "6.12.0"
 "github:jdx/pitchfork" = { version = "2.29.0", exe = "pitchfork" }
+"npm:@kitlangton/skulk" = "0.1.0"
 age = "latest"
 ast-grep = "latest"
 bitwarden = "2026.9.0"
@@ -44,6 +45,8 @@ uv = "0.12.21"
 [env]
 DISABLE_AUTOUPDATER = "1"
 DENO_NO_UPDATE_CHECK = "1"
+SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2"
+SKULK_ALLOW_EXEC = "0"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node"]

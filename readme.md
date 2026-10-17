@@ -115,31 +115,6 @@ Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/sec
 
 See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
 
-## Per-machine MCP executables
-
-The versioned source owns the standard MCPProxy servers. Add a privileged
-stdio executable without committing its source, URL, or credentials by editing
-the machine-local chezmoi config (`chezmoi edit-config`):
-
-```toml
-[data.mcpStdioServers.private-service]
-command = "/bin/sh"
-args = ["-c", "exec /path/to/private-service-mcp"]
-
-# Optional mcpproxy fields
-enabled = true
-init_timeout = "60s"
-
-[data.mcpStdioServers.private-service.env]
-PRIVATE_SERVICE_TOKEN = "..."
-```
-
-Each table name becomes the MCP server name. The collection always renders as
-`protocol = "stdio"`; `args` defaults to an empty list and `enabled` to true.
-The entry must define `command` and cannot reuse a dotfiles-managed server
-name. Re-run `chezmoi apply` after changing it; the existing MCPProxy lifecycle
-reloads the rendered config.
-
 ## Structure
 
 ```
@@ -341,13 +316,6 @@ can be dragged into Claude Desktop.
 | Vendor projections | Claude, OpenCode, and Otter skill paths select the physical registry | No vendor-specific copies or whole-registry ownership |
 | Packaging | On macOS, explicit eligible file-backed links have deterministic receipt-owned ZIP archives, zipped from the same verified files as the catalogue export, with `SKILL.md` frontmatter reduced to the keys Claude accepts | Ineligible skills, Linux machines, and command/pack runtime state are never archived |
 | Provider/session/auth | Provider `observe` is bounded and read-only | Plugins, auth credentials, and session state are not lifecycle-managed |
-
-Effect v4 documentation and source are deliberately outside this skill
-lifecycle. The hidden `effect-v4:install` mise task installs one checksum-pinned
-upstream tree at `~/.local/share/mise/effect-v4-reference/current`; OpenCode 1
-and 2 advertise that same local directory as `@effect-v4` and read files only
-when requested. `df-setup` reports a missing or stale artifact. The reference
-never enters a skill/config tree or executable PATH.
 
 ## Code Projects
 
