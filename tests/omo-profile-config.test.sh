@@ -367,7 +367,8 @@ printf 'PASS: config-template repo persistence and missing-key fleet safety\n'
 jq -n '{data: {
   checkouts: {example: {path: "{homeDir}/dev/example", build: "make && make check", busyWhen: ["opencode"]}},
   skillSources: {local: {id: "local", kind: "repository", items: [{id: "example:local", package: false}], lock: {strategy: "content-hash"}}},
-  skills: {"example:local": true}}}' > "${TEST_ROOT}/chezmoi-init.json"
+  skills: {"example:local": true},
+  dictationArchive: {destination: {host: "archive.example.invalid"}}}}' > "${TEST_ROOT}/chezmoi-init.json"
 chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/chezmoi-init.json" \
   -S "$ROOT" -D "$DESTINATION" -f "${ROOT}/home/.chezmoi.toml.tmpl" > "${TEST_ROOT}/config.toml"
 for table in checkouts skillSources skills; do
@@ -375,6 +376,10 @@ for table in checkouts skillSources skills; do
     "$(jq -S -c --arg t "$table" '.data[$t]' "${TEST_ROOT}/chezmoi-init.json")" ] ||
     fail "config-template rendering did not carry [data.${table}] across re-init"
 done
+# dictationArchive merges with .chezmoidata defaults on read; only the override is carried.
+[ "$(chezmoi execute-template --config "${TEST_ROOT}/config.toml" -S "$ROOT" -D "$DESTINATION" \
+  '{{ .dictationArchive.destination.host }}|{{ .dictationArchive.destination.port }}')" = "archive.example.invalid|22" ] ||
+  fail "config-template rendering did not carry the dictationArchive override over its defaults"
 chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/config.toml" \
   -S "$ROOT" -D "$DESTINATION" -f "${ROOT}/home/.chezmoi.toml.tmpl" | cmp -s - "${TEST_ROOT}/config.toml" ||
   fail "config-template rendering of machine-local tables is not stable across re-init"

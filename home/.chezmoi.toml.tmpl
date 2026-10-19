@@ -41,9 +41,9 @@
   ephemeralCache = {{ $ephemeralCache }}
 {{- /* Machine-local tables have no prompt, so carry them across re-init whole.
        toToml renders each under its own name; prefix the headers with data.
-       Tables with .chezmoidata defaults (dictationArchive) are left out, so a
-       re-init can never freeze the defaults into this file. */}}
-{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" }}
+       Init data holds only this file's values, not .chezmoidata defaults, so
+       dictationArchive overrides are carried without freezing its defaults. */}}
+{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" "dictationArchive" }}
 {{-   with dig $table nil $ }}
 {{ regexReplaceAll "(?m)^(\\s*\\[\\[?)" (toToml (dict $table .)) "${1}data." | trimSuffix "\n" }}
 {{-   end }}
