@@ -9,6 +9,7 @@ Run everything:
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
+bash tests/checkout-sync.test.sh
 bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
 bash tests/opencode-tui-plugins/install.test.sh

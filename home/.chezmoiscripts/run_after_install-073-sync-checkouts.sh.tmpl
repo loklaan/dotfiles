@@ -1,0 +1,42 @@
+{{- $checkouts := dig "checkouts" (dict) . -}}
+{{- if not (kindIs "map" $checkouts) -}}{{- fail "checkouts must be an object" -}}{{- end -}}
+{{- if gt (len $checkouts) 0 -}}
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+source "${HOME}/.local/lib/bash-logging.sh"
+source "${HOME}/.local/lib/checkout-sync.sh"
+setup_session_logging "$(basename "$0")" "checkouts"
+
+#/ Usage:
+#/   run_after_install-073-sync-checkouts.sh
+#/
+#/ Description:
+#/   Keeps each machine-local [data.checkouts.<name>] git checkout on the tip
+#/   of its branch and runs its build, on every apply. Entries live only in
+#/   the machine's chezmoi.toml:
+#/
+#/     [data.checkouts.<name>]
+#/       path = "{homeDir}/dev/project"   # required
+#/       branch = "main"                  # default: the checked-out branch
+#/       build = "make"                   # default: none
+#/       busyWhen = ["opencode"]          # skip while these run in a terminal
+#/
+#/   A skipped or failed checkout is reported and never fails the apply.
+
+log_step "Syncing local checkouts"
+{{- range $name := keys $checkouts | sortAlpha }}
+{{-   $c := get $checkouts $name }}
+{{-   if not (kindIs "map" $c) }}{{ fail (printf "checkouts.%s must be an object" $name) }}{{ end }}
+{{-   $path := dig "path" "" $c }}
+{{-   if or (not (kindIs "string" $path)) (eq $path "") }}{{ fail (printf "checkouts.%s.path must be a non-empty string" $name) }}{{ end }}
+{{-   $path = replace "{homeDir}" $.chezmoi.homeDir $path }}
+{{-   if not (hasPrefix "/" $path) }}{{ fail (printf "checkouts.%s.path must be absolute or start with {homeDir}" $name) }}{{ end }}
+{{-   $busy := dig "busyWhen" (list) $c }}
+{{-   if not (kindIs "slice" $busy) }}{{ fail (printf "checkouts.%s.busyWhen must be an array" $name) }}{{ end }}
+{{-   $args := concat (list $name $path (dig "branch" "" $c) (dig "build" "" $c)) $busy }}
+cs_sync{{ range $args }} '{{ replace "'" "'\\''" (toString .) }}'{{ end }} || true
+{{- end }}
+{{ end -}}

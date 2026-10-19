@@ -326,3 +326,21 @@ The `~/dev/` directory organizes projects by ownership and purpose:
 - **`~/dev/open/`** - Open source projects. Others, usually.
 
 In repos where I actively develop, I may include a `.me/` directory for helpful scripts, temporary data or jupyter notebooks, etc. These are not managed by chezmoi, and are gitignored globally.
+
+### Tracked Checkouts
+
+A machine can keep any `~/dev/` checkout on the tip of its branch, and built,
+by declaring it in its own `chezmoi.toml`. Every apply fast-forwards it and runs
+the build; nothing here names the project.
+
+```toml
+[data.checkouts.example]
+path = "{homeDir}/dev/example"
+branch = "main"                  # default: the checked-out branch
+build = "make && make check"     # default: none
+busyWhen = ["opencode"]          # skip while these run in a terminal
+```
+
+A checkout that is dirty, ahead of origin, off its branch, or busy is left
+alone. A failed build moves back to the previous commit and rebuilds it. Neither
+ever fails the apply.

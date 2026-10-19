@@ -87,7 +87,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .npmWorkRegistry                  // Scoped npm registry for work packages
 .openCodeWorkPlugin               // OpenCode plugin for work environments
 .openCodeWorkPluginRepo           // Local plugin monorepo; overrides openCodeWorkPluginLocalPath and openCodeWorkPluginV2; empty means off
-.openCodeWorkPluginSync           // Shell command run in openCodeWorkPluginRepo on every apply to update it; empty means off
+.checkouts                        // Machine-local git checkouts kept on their branch tip and built; see 073-sync-checkouts
 .jetbrainsLicenseServer           // JetBrains license server URL
 ```
 
