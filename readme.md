@@ -204,6 +204,9 @@ complete derived tree. Removal requires an unchanged receipt-owned tree.
 Unknown or modified output is preserved and reported as drift, while raw inputs
 remain under chezmoi's separate acquisition ownership.
 Git sources bind both the declared ref and its resolved revision.
+`refPolicy` is `commit` (ref equals the revision) or `tag`; branch refs float,
+so they are rejected. Either way chezmoi clones and pulls the locked revision,
+never the ref.
 Repository targets are content-hashed during observation; they do not acquire a
 remote. Each item is a string ID or a table with `id`, `directory`, and
 `package`; the boolean is deliberately asymmetric: every selected item gets an

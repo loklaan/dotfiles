@@ -77,25 +77,23 @@
 {{-       $ref := dig "ref" "" $lock -}}
 {{-       if or (not (kindIs "string" $ref)) (eq $ref "") (regexMatch "[\\p{Cc}\\p{Cf}{}]" $ref) -}}{{- fail (printf "skillSources.%s.lock.ref must be a non-empty safe string" $entryName) -}}{{- end -}}
 {{-       $refPolicy := dig "refPolicy" "" $lock -}}
-{{-       if not (has $refPolicy (list "branch" "commit" "tag")) -}}{{- fail (printf "skillSources.%s.lock.refPolicy must be branch, commit, or tag" $entryName) -}}{{- end -}}
+{{-       if not (has $refPolicy (list "commit" "tag")) -}}{{- fail (printf "skillSources.%s.lock.refPolicy must be commit or tag (branch refs float and are not allowed)" $entryName) -}}{{- end -}}
 {{-       $revision := dig "revision" "" $lock -}}
 {{-       if not (regexMatch "^[a-f0-9]{40}$" $revision) -}}{{- fail (printf "skillSources.%s.lock.revision must be an immutable lowercase commit" $entryName) -}}{{- end -}}
 {{-       if and (eq $refPolicy "commit") (or (not (regexMatch "^[a-f0-9]{40}$" $ref)) (ne $ref $revision)) -}}{{- fail (printf "skillSources.%s.lock.ref must equal lock.revision for commit policy" $entryName) -}}{{- end -}}
 {{-       $target := trimPrefix (printf "%s/" $root.chezmoi.homeDir) $path }}
+{{- /* Both policies clone and pull the locked revision, never the ref: a tag
+       can be moved upstream, so only the commit is immutable. The tag name
+       is kept in the lock for bumping and reporting. */}}
 
 [{{ $target | quote }}]
     type = "git-repo"
     url = {{ $url | quote }}
     refreshPeriod = "168h"
-{{-       if eq $refPolicy "commit" }}
     [{{ $target | quote }}.clone]
         args = ["--revision", {{ $revision | quote }}]
-{{-       else }}
-    [{{ $target | quote }}.clone]
-        args = ["--branch", {{ $ref | quote }}]
-{{-       end }}
     [{{ $target | quote }}.pull]
-        args = ["--ff-only", "origin", {{ ternary $revision $ref (eq $refPolicy "commit") | quote }}]
+        args = ["--ff-only", "origin", {{ $revision | quote }}]
 {{-     end -}}
 {{-   end -}}
 {{- end }}

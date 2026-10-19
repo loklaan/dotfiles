@@ -134,8 +134,8 @@
 {{-       fail (printf "skillSources.%s.lock.ref must be a non-empty safe string" $entryName) -}}
 {{-     end -}}
 {{-     $refPolicy := dig "refPolicy" "" $lock -}}
-{{-     if not (has $refPolicy (list "branch" "commit" "tag")) -}}
-{{-       fail (printf "skillSources.%s.lock.refPolicy must be branch, commit, or tag" $entryName) -}}
+{{-     if not (has $refPolicy (list "commit" "tag")) -}}
+{{-       fail (printf "skillSources.%s.lock.refPolicy must be commit or tag (branch refs float and are not allowed)" $entryName) -}}
 {{-     end -}}
 {{-     $revision := dig "revision" "" $lock -}}
 {{-     if not (regexMatch "^[a-f0-9]{40}$" $revision) -}}
