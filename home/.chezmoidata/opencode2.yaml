@@ -6,4 +6,4 @@
 # old.
 opencode2:
   # renovate: datasource=npm depName=@opencode/cli
-  version: "2.0.26"
+  version: "2.0.32"
