@@ -26,8 +26,8 @@
 
 {{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
 
-{{- /* Chezmoi owns the installed version (run_after_install-071 tracks the
-     `beta` dist-tag). V2 auto-installs compatible non-major updates by default,
+{{- /* Chezmoi owns the installed version (run_onchange_after_install-071
+     installs the pin in .chezmoidata/opencode2.yaml). V2 auto-installs compatible non-major updates by default,
      which would fight that, so keep it off. */ -}}
 {{- $config = $config | setValueAtPath "autoupdate" false -}}
 {{- $config = $config | setValueAtPath "plugin" (list "oh-my-opencode-slim@3.0.1") -}}

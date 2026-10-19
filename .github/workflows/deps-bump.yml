@@ -1,0 +1,161 @@
+# Weekly dependency bumps. Every job opens or updates a PR; none merges.
+#
+#   bump      re-resolves the global mise requests into
+#             home/private_dot_config/mise/mise.lock (`mise lock --global
+#             --bump`), honouring the config's minimum_release_age, and opens
+#             or updates the deps/mise-lock PR.
+#   verify    replays the lock with `mise install --locked` into an empty data
+#             dir on both locked platforms. Runs after bump (on the PR head),
+#             and on PRs that touch the mise config or lock. It chains off
+#             bump because a PR opened with GITHUB_TOKEN triggers no workflows.
+#   renovate  self-hosted Renovate for GitHub Actions and chezmoi externals
+#             (see renovate.json; mise is disabled there).
+#
+# Every job is gated to the canonical repo so mirrors (canvanauts/...) never
+# run it.
+name: deps-bump
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - home/private_dot_config/mise/config.toml
+      - home/private_dot_config/mise/mise.lock
+      - home/private_dot_config/mise/dot_mise/locks/**
+      - .github/workflows/deps-bump.yml
+
+permissions: {}
+
+concurrency:
+  group: deps-bump-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MISE_CONFIG: home/private_dot_config/mise/config.toml
+
+jobs:
+  bump:
+    if: github.repository == 'loklaan/dotfiles' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      head-sha: ${{ steps.pr.outputs.pull-request-head-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned so the lock is written in a format every machine's mise reads.
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          # Renovate's github-actions manager bumps this input.
+          version: "2026.10.8"
+          install: false
+          cache: false
+
+      # MISE_GLOBAL_CONFIG_FILE makes the repo file the global config, so
+      # `--global` writes mise.lock next to it, inside the checkout. A temp
+      # data dir keeps the runner's own mise state out of the lock.
+      - name: mise lock --global --bump
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export MISE_GLOBAL_CONFIG_FILE="$GITHUB_WORKSPACE/$MISE_CONFIG"
+          export MISE_DATA_DIR="$RUNNER_TEMP/mise-data"
+          export MISE_STATE_DIR="$RUNNER_TEMP/mise-state"
+          export MISE_CACHE_DIR="$RUNNER_TEMP/mise-cache"
+          cd "$RUNNER_TEMP"
+          mise lock --global --bump --json | tee "$RUNNER_TEMP/changes.json"
+          {
+            echo '## Version changes'
+            echo
+            echo '| tool | old | new |'
+            echo '|------|-----|-----|'
+            jq -r '.[] | "| \(.name) | \(.old_versions | join(", ")) | \(.new_versions | join(", ")) |"' "$RUNNER_TEMP/changes.json"
+          } > "$RUNNER_TEMP/body.md"
+          git -C "$GITHUB_WORKSPACE" status --short
+
+      - id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: deps/mise-lock
+          delete-branch: true
+          add-paths: |
+            home/private_dot_config/mise/mise.lock
+            home/private_dot_config/mise/dot_mise/locks/**
+          commit-message: "bump mise.lock"
+          title: "bump mise.lock"
+          body-path: ${{ runner.temp }}/body.md
+          labels: dependencies
+
+  verify:
+    needs: bump
+    # bump is skipped on pull_request; run anyway unless it failed.
+    if: >-
+      !cancelled() && github.repository == 'loklaan/dotfiles' &&
+      (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The bump PR head when bump produced one; else the triggering ref.
+          ref: ${{ needs.bump.outputs.head-sha || github.sha }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          # Renovate's github-actions manager bumps this input.
+          version: "2026.10.8"
+          install: false
+          cache: false
+
+      # ubuntu-latest is linux-x64 and macos-latest is macos-arm64: the two
+      # platforms in lockfile_platforms. An empty data dir proves the lock
+      # alone is enough to install every tool.
+      - name: mise install --locked (empty data dir)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export MISE_GLOBAL_CONFIG_FILE="$GITHUB_WORKSPACE/$MISE_CONFIG"
+          export MISE_DATA_DIR="$RUNNER_TEMP/mise-data"
+          export MISE_STATE_DIR="$RUNNER_TEMP/mise-state"
+          export MISE_CACHE_DIR="$RUNNER_TEMP/mise-cache"
+          export RUSTUP_HOME="$RUNNER_TEMP/rustup"
+          export CARGO_HOME="$RUNNER_TEMP/cargo"
+          cd "$RUNNER_TEMP"
+          mise install --locked -y
+          missing=$(mise ls --missing)
+          if [ -n "$missing" ]; then
+            echo "$missing"
+            exit 1
+          fi
+
+  renovate:
+    if: github.repository == 'loklaan/dotfiles' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: renovatebot/github-action@f0f41e5f2e706165f6814b1d0f0d0e319de7d1d9 # v46.3.8
+        env:
+          RENOVATE_REPOSITORIES: '["loklaan/dotfiles"]'
+          RENOVATE_ONBOARDING: "false"
+          RENOVATE_REQUIRE_CONFIG: required
+          RENOVATE_PLATFORM_COMMIT: enabled
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}

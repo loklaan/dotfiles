@@ -136,7 +136,10 @@ main() {
   export PATH="${HOME}/.local/bin:${PATH}"
   export PATH="$HOME/.local/share/mise/shims:$PATH"
   log_detail "Running mise for chezmoi and bitwarden"
-  run_quiet mise use --global -y chezmoi@2.67.0 'github:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v2.0.0'
+  # MISE_LOCKED=0: on a re-run the managed global config already sets
+  # `locked = true`, and these bootstrap pins are not in its mise.lock, so a
+  # locked `mise use` fails. The apply below rewrites the config and lock.
+  MISE_LOCKED=0 run_quiet mise use --global -y chezmoi@2.67.0 'github:bitwarden/sdk[exe=bws,tag_regex=^bws]@bws-v2.0.0'
 
   # Run chezmoi init (skip scripts - they run after packages are installed)
   #  - Prompts should be kept in-sync with .chezmoi.toml.tmpl config

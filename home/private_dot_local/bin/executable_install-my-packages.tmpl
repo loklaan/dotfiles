@@ -127,76 +127,14 @@ main() {
 
   PATH="$PATH:{{ .brewprefix }}/bin"
 
-  {{ $brews := list
-       "bash"
-       "coreutils"
-       "ffmpeg"
-       "ghostscript"
-       "git"
-       "git-lfs"
-       "gnupg"
-       "handbrake"
-       "htop"
-       "less"
-       "lua"
-       "make"
-       "ncdu"
-       "ncurses"
-       "PeonPing/tap/peon-ping"
-       "pinentry"
-       "pinentry-mac"
-       "readline"
-       "rename"
-       "rsync"
-       "safe-rm"
-       "poppler"
-       "shellcheck"
-       "terminal-notifier"
-       "tesseract"
-       "tree"
-       "wget"
-       "wireguard-tools"
-       "zsh" -}}
-  {{ $casks := list
-       "alfred"
-       "bartender"
-       "brave-browser"
-       "docker"
-       "figma"
-       "finicky"
-       "firefox"
-       "fontgoggles"
-       "glyphs"
-       "google-chrome"
-       "imageoptim"
-       "insomnia"
-       "iterm2"
-       "jetbrains-toolbox"
-       "kap"
-       "logitune"
-       "smart-mcp-proxy/mcpproxy/mcpproxy"
-       "notion"
-       "private-internet-access"
-       "qlcolorcode"
-       "qlimagesize"
-       "qlmarkdown"
-       "quicklook-video"
-       "quicklookase"
-       "rectangle"
-       "rive"
-       "rocket"
-       "slack"
-       "spotify"
-       "sublime-text"
-       "visual-studio-code" -}}
+  {{ $brews := .packages.darwin.brews -}}
+  {{ $casks := .packages.darwin.casks -}}
 
   if ! command -v brew > /dev/null; then
     NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
 
-  {{ $taps := list
-       "peonping/tap"
-       "smart-mcp-proxy/mcpproxy" -}}
+  {{ $taps := .packages.darwin.taps -}}
 
   # Homebrew 6+ refuses to load formulae/casks from non-official taps unless
   # they are explicitly trusted (gated by HOMEBREW_REQUIRE_TAP_TRUST). Trust
@@ -205,8 +143,11 @@ main() {
     run_quiet brew trust --tap "$tap" || true
   done
 
+  # Brew is deliberately unlocked: Homebrew has no lockfile for formulae. The
+  # apply only installs what is missing (--no-upgrade); `mise run update`
+  # (df-task-update) is the one place brew upgrades.
   # Brew managed programs/libraries
-  run_quiet brew bundle --file=/dev/stdin <<EOF
+  run_quiet brew bundle --no-upgrade --file=/dev/stdin <<EOF
 {{ range ($taps | sortAlpha | uniq) -}}
 tap {{ . | quote }}
 {{ end -}}
@@ -217,7 +158,7 @@ EOF
 
   # Brew managed GUI
   if [ $gui -eq 0 ]; then
-    run_quiet brew bundle --file=/dev/stdin <<EOF
+    run_quiet brew bundle --no-upgrade --file=/dev/stdin <<EOF
 {{ range ($casks | sortAlpha | uniq) -}}
 cask {{ . | quote }}
 {{ end -}}
@@ -231,37 +172,14 @@ EOF
   #-----------------------------------------------------------------------------
   #
 
-  {{ $pkgs := list
-  "bash"
-  "bison"
-  "coreutils"
-  "ffmpeg"
-  "git"
-  "ghostscript"
-  "git-lfs"
-  "gnupg"
-  "less"
-  "libevent-dev"
-  "libncurses-dev"
-  "make"
-  "pkg-config"
-  "poppler-utils"
-  "python3"
-  "rename"
-  "rsync"
-  "safe-rm"
-  "tesseract-ocr"
-  "tesseract-ocr-eng"
-  "tree"
-  "wget"
-  "zsh" -}}
+  {{ $pkgs := .packages.linux.common -}}
 
   # Distro-specific package name divergence:
   # - Ubuntu/Debian provides notify-send via the `libnotify-bin` package
   # - Alpine + RHEL/Fedora provide it via `libnotify`
-  {{ $pkgsAptExtra := list "libnotify-bin" -}}
-  {{ $pkgsApkExtra := list "libnotify" -}}
-  {{ $pkgsYumExtra := list "libnotify" -}}
+  {{ $pkgsAptExtra := .packages.linux.apt -}}
+  {{ $pkgsApkExtra := .packages.linux.apk -}}
+  {{ $pkgsYumExtra := .packages.linux.yum -}}
 
   packages=$(cat <<EOF
 {{ range ($pkgs | sortAlpha | uniq) -}}
@@ -333,14 +251,11 @@ EOF
 
   {{ end }}
 
-  log_detail "Running 'mise self-update --yes'"
-  run_quiet mise self-update --yes || true
-
-  log_detail "Running 'mise install'"
-  run_quiet mise install -y
-
-  log_detail "Running 'mise upgrade'"
-  run_quiet mise upgrade -y
+  # --locked: install exactly what ~/.config/mise/mise.lock records, with no
+  # version resolution here. The config also sets `locked = true`; the flag
+  # keeps this call strict even if that setting is overridden.
+  log_detail "Running 'mise install --locked'"
+  run_quiet mise install --locked -y
 
   log_detail "Installing the mise-owned Effect v4 reference"
   run_quiet mise run effect-v4:install

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "completions" }}
+# Regenerates zsh completions for managed CLIs via install-my-completions.
+#
+# run_onchange: re-runs when the mise lock (tool versions) or the completion
+# installer changes.
+# mise.lock: {{ include "private_dot_config/mise/mise.lock" | sha256sum }}
+# install-my-completions: {{ includeTemplate "private_dot_local/bin/executable_install-my-completions.tmpl" . | sha256sum }}
+
+main() {
+  local installer="${HOME}/.local/bin/install-my-completions"
+
+  # Fail rather than warn: chezmoi records a run_onchange script as done when
+  # it exits 0, so a skipped run would not be retried until a hash moves.
+  if [ ! -x "$installer" ]; then
+    fatal "Missing install-my-completions (expected at ${installer})"
+  fi
+
+  "$installer"
+  log_note "Completions available in new terminal sessions (restart, or run 'exec zsh')"
+}
+
+main

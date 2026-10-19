@@ -1,70 +1,25 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "opencode2"
-
-#/ Usage:
-#/   run_after_install-071-opencode2.sh
-#/
-#/ Description:
-#/   Installs and refreshes the OpenCode 2 CLI (`opencode2`) into a private npm
-#/   prefix that only the ~/.local/bin/opencode2 wrapper reads.
-#/
-#/   OpenCode 2 is a SEPARATE binary from OpenCode 1 and is designed to run
-#/   alongside it (https://opencode.ai/v2/docs/migrate-v1). Stable 2.x releases
-#/   are published as @opencode/cli on the `latest` dist-tag. The earlier beta
-#/   package (@opencode-ai/cli, 0.0.0-beta-*) is superseded: the Canva work
-#/   plugin requires @opencode/plugin ^2.0.18 and refuses to load on a beta host,
-#/   which also leaves a running service with stale Bedrock credentials. An
-#/   existing beta install is migrated: its service is stopped, the session
-#/   database is backed up to opencode2.db.pre-stable, and the package removed.
-#/
-#/   Installing into a private prefix (not a mise shim, not a global npm prefix)
-#/   is load-bearing: mise shims sit AHEAD of ~/.local/bin on $PATH, so a shim
-#/   named `opencode2` would shadow the wrapper that supplies the config/db
-#/   isolation env vars, and an unwrapped opencode2 writes into OpenCode 1's
-#/   config directory.
-#/
-#/   npm's postinstall is invoked explicitly rather than through `npm install`.
-#/   Recent npm releases gate install scripts behind an approval prompt
-#/   (`npm approve-scripts`), which would leave the platform binary unselected
-#/   during a non-interactive apply. Running postinstall.mjs directly is
-#/   deterministic and does not depend on npm's approval UX.
-#/
-#/   Best-effort throughout: a missing node or an unreachable registry logs and
-#/   returns success, so `chezmoi apply` never fails on this.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+{{ includeTemplate "script-prelude" "opencode2" }}
+# Installs the pinned OpenCode 2 CLI (@opencode/cli) into a private npm prefix
+# read only by the ~/.local/bin/opencode2 wrapper. A private prefix is
+# load-bearing: a mise shim named opencode2 would sit ahead of the wrapper on
+# PATH and skip its config/db isolation, writing into OpenCode 1's config.
+# postinstall.mjs is run directly because recent npm gates install scripts
+# behind an approval prompt. An existing beta (@opencode-ai/cli) install is
+# migrated: service stopped, database backed up to opencode2.db.pre-stable,
+# package removed.
+#
+# The version is pinned in home/.chezmoidata/opencode2.yaml (Renovate bumps
+# it). run_onchange: this script re-runs only when the pin changes, so a failed
+# install exits non-zero; exiting 0 would record the pin as installed.
+# opencode2 version: {{ .opencode2.version }}
 
 readonly PACKAGE="@opencode/cli"
-readonly DIST_TAG="latest"
+readonly VERSION={{ .opencode2.version | quote }}
 readonly LEGACY_PACKAGE="@opencode-ai/cli"
 readonly PREFIX="${HOME}/.local/share/opencode2"
 readonly PACKAGE_JSON="${PREFIX}/lib/node_modules/${PACKAGE}/package.json"
 readonly DATABASE="${HOME}/.local/share/opencode/opencode2.db"
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-}
 
 installed_version() {
   [ -f "$PACKAGE_JSON" ] || return 0
@@ -141,43 +96,33 @@ migrate_legacy_beta() {
 }
 
 main() {
-  parse_args "$@"
+  # node/npm are mise tools; chezmoi may run this without mise on PATH.
+  export PATH="${HOME}/.local/share/mise/shims:${PATH}"
 
   if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
-    return 0
-  fi
-
-  log_step "Updating OpenCode 2 CLI"
-
-  local available
-  available=$(npm view "${PACKAGE}@${DIST_TAG}" version 2>/dev/null || true)
-
-  if [ -z "$available" ]; then
-    log_warn "Could not resolve ${PACKAGE}@${DIST_TAG} — offline?"
-    return 0
+    fatal "node/npm not on PATH — cannot install OpenCode 2 ${VERSION}"
   fi
 
   local current
   current=$(installed_version)
 
-  if [ "$current" = "$available" ]; then
-    log_detail "Unchanged: OpenCode 2 (${available})"
-    return 0
-  fi
+  # Already at the pin (e.g. the run_onchange state was reset): nothing to do.
+  [ "$current" = "$VERSION" ] && return 0
 
-  if [ -n "$current" ]; then
-    log_detail "Updated OpenCode 2: ${current} → ${available}"
-  else
-    log_detail "Installed OpenCode 2: ${available}"
-  fi
+  log_step "Installing OpenCode 2 CLI"
 
   mkdir -p "$PREFIX"
   migrate_legacy_beta
 
   if ! npm install --global --prefix "$PREFIX" --ignore-scripts \
-    --no-audit --no-fund --loglevel=error "${PACKAGE}@${available}" >/dev/null 2>&1; then
-    log_warn "npm install failed — leaving previous install in place"
-    return 0
+    --no-audit --no-fund --loglevel=error "${PACKAGE}@${VERSION}" >/dev/null 2>&1; then
+    fatal "npm install ${PACKAGE}@${VERSION} failed — previous install left in place"
+  fi
+
+  if [ -n "$current" ]; then
+    log_detail "Updated OpenCode 2: ${current} → ${VERSION}"
+  else
+    log_detail "Installed OpenCode 2: ${VERSION}"
   fi
 
   select_platform_binary
@@ -186,4 +131,4 @@ main() {
   log_detail "Installed wrapper at ~/.local/bin/opencode2 (config: ~/.config/opencode2)"
 }
 
-main "$@"
+main

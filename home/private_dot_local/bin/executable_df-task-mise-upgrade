@@ -1,17 +1,32 @@
-#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-env --allow-read
+#!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-env --allow-read --allow-sys=uid
 
-// df-task-mise-upgrade (Deno + Effect v4). Wrapper around `mise upgrade`
-// (refreshes tools whose pin is `latest`), invoked from the
-// `[tasks."mise:upgrade"]` mise task. Contract: probe `mise` on PATH, fail
-// loudly if absent, otherwise run `mise upgrade -y` with stdio inherited and
-// propagate the child's exit code verbatim.
+// df-task-mise-upgrade (Deno + Effect v4). Bumps the global mise lock in the
+// chezmoi SOURCE repo and installs it, invoked from the `[tasks."mise:upgrade"]`
+// mise task. Contract:
+//   1. probe `mise` and `chezmoi` on PATH (fatal if absent)
+//   2. resolve the source dir via `chezmoi source-path`
+//   3. `mise lock --global --bump` with MISE_GLOBAL_CONFIG_FILE pointing at
+//      <source>/private_dot_config/mise/config.toml, so the bumped mise.lock is
+//      written next to it, in the repo. The config's minimum_release_age holds
+//      back releases younger than 4 days.
+//   4. `mise install --locked -y` against the same config
+//   5. propagate the first non-zero exit code verbatim
+// The next `chezmoi apply` (df-task-update runs one straight after) copies the
+// bumped lock to ~/.config/mise/mise.lock. `mise upgrade` is not used: under
+// the config's `locked = true` it only replays the existing lock.
+//
+// Both mise children run with cwd = the source dir's mise config directory,
+// outside any project config, so `--global` and the install see only the
+// global config. chezmoi-source-path already ends in `home` (.chezmoiroot).
 //
 // SUPERVISE (deno-effect-tools.md §9): the mise child inherits stdout/stderr so
 // its progress streams straight to the terminal, and the parent captures the
 // exit code to mirror it. Run under NodeRuntime.runMain so a Ctrl-C gracefully
 // tears the child down (SIGTERM -> SIGKILL).
 //
-// PERMISSIONS: --allow-run=mise (spawn mise) plus --allow-env for child-process
+// PERMISSIONS: --allow-run (spawn mise, chezmoi), --allow-sys=uid (the Node
+// spawner checks the child `cwd` with fs.access, which calls uid()), plus
+// --allow-env for child-process
 // environment inheritance. NodeRuntime and NodeServices are
 // imported as SUBMODULE paths, never as the bare package, because the package
 // index re-exports cluster/ShardingConfig, which calls
@@ -55,66 +70,116 @@ const fatal = (msg: string): never => {
 // --------------------------------------------------------------------------
 
 const DESCRIPTION =
-  `Runs \`mise upgrade\` to refresh tools whose pin is \`latest\`.
-  Tools with explicit version pins are unaffected; update those pins
-  separately to change their versions.
-
-  Hoisted out of mise.toml so the task body lives next to other
-  dotfiles-task-* scripts and is debuggable in isolation.`;
+  `Bumps the global mise lock in the chezmoi source repo, then installs it.
+  Runs \`mise lock --global --bump\` and \`mise install --locked\` with
+  MISE_GLOBAL_CONFIG_FILE set to the source copy of the mise config, so the
+  new mise.lock lands in the repo (commit it) and the next chezmoi apply
+  deploys it. Requests such as "latest" move; exact pins do not. Releases
+  younger than the config's minimum_release_age are skipped.`;
 
 // --------------------------------------------------------------------------
-// Errors — one cause per error, structured. The "mise absent" decision is a
-// typed failure so the entrypoint (not the core logic) owns the fatal/exit side
-// effect, keeping `program` observable under test.
+// Errors — one cause per error, structured. Each decision is a typed failure
+// so the entrypoint (not the core logic) owns the fatal/exit side effect,
+// keeping `program` observable under test.
 // --------------------------------------------------------------------------
 
-class MiseNotOnPathError
-  extends Data.TaggedError("MiseNotOnPathError")<Record<never, never>> {}
+class MissingCommandError extends Data.TaggedError("MissingCommandError")<{
+  readonly command: string;
+}> {}
+
+class SourcePathError
+  extends Data.TaggedError("SourcePathError")<Record<never, never>> {}
+
+// --------------------------------------------------------------------------
+// Pure helpers
+// --------------------------------------------------------------------------
+
+/** Source-relative path of the managed mise config. */
+const MISE_CONFIG_RELATIVE = "private_dot_config/mise/config.toml";
+
+/**
+ * Absolute path of the managed mise config inside the chezmoi source dir
+ * (the `chezmoi source-path` output, which already includes .chezmoiroot).
+ */
+export const sourceMiseConfig = (sourcePath: string): string =>
+  `${sourcePath.replace(/\/+$/, "")}/${MISE_CONFIG_RELATIVE}`;
+
+/** Directory of a file path (the config's dir: the cwd for both mise runs). */
+export const dirOf = (file: string): string =>
+  file.slice(0, file.lastIndexOf("/"));
+
+/** The two mise steps, in order: bump the lock, then install from it. */
+export const MISE_STEPS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["lock", "--global", "--bump"],
+  ["install", "--locked", "-y"],
+];
 
 // --------------------------------------------------------------------------
 // Runtime program (SUPERVISE). Requires ChildProcessSpawner, supplied by
-// NodeServices.layer at the entrypoint. Returns the exit code to propagate;
-// fails with MiseNotOnPathError when mise is absent.
+// NodeServices.layer at the entrypoint. Returns the exit code to propagate:
+// 0, or the first failing mise step's code.
 // --------------------------------------------------------------------------
 
 const program: Effect.Effect<
   number,
-  MiseNotOnPathError,
+  MissingCommandError | SourcePathError,
   ChildProcessSpawner.ChildProcessSpawner
 > = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  // Probe mise on PATH (mirrors bash `command -v mise`). Any failure to even
+  // Probe a binary on PATH (mirrors bash `command -v`). Any failure to even
   // start the probe counts as absent.
-  const hasMise = yield* spawner
-    .exitCode(
-      ChildProcess.make("mise", ["--version"], {
-        stdout: "ignore",
-        stderr: "ignore",
-      }),
-    )
-    .pipe(
-      Effect.map((code) => code === 0),
-      Effect.orElseSucceed(() => false),
-    );
+  const probe = (command: string) =>
+    spawner
+      .exitCode(
+        ChildProcess.make(command, ["--version"], {
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      )
+      .pipe(
+        Effect.map((code) => code === 0),
+        Effect.orElseSucceed(() => false),
+      );
 
-  if (!hasMise) {
-    return yield* Effect.fail(new MiseNotOnPathError());
+  for (const command of ["mise", "chezmoi"]) {
+    if (!(yield* probe(command))) {
+      return yield* Effect.fail(new MissingCommandError({ command }));
+    }
   }
 
-  yield* Effect.sync(() => step("Upgrading mise tools"));
-
-  // Inherit stdio so mise's progress/output goes straight to the terminal.
-  // Propagate mise's exit code verbatim (bash `set -e` + tail invocation); a
-  // spawner-level failure after the presence probe is treated as exit 1.
-  return yield* spawner
-    .exitCode(
-      ChildProcess.make("mise", ["upgrade", "-y"], {
-        stdout: "inherit",
-        stderr: "inherit",
-      }),
+  // `.string` captures stdout and fails on a non-zero exit; collapse that to
+  // "" and treat an empty result as a failure.
+  const sourcePath = (yield* spawner
+    .string(
+      ChildProcess.make("chezmoi", ["source-path"], { stderr: "inherit" }),
     )
-    .pipe(Effect.orElseSucceed(() => 1));
+    .pipe(Effect.orElseSucceed(() => ""))).trim();
+  if (sourcePath === "") {
+    return yield* Effect.fail(new SourcePathError());
+  }
+
+  const config = sourceMiseConfig(sourcePath);
+
+  for (const args of MISE_STEPS) {
+    yield* Effect.sync(() => step(`Running mise ${args.join(" ")}`));
+    // Inherit stdio so mise's progress goes straight to the terminal. A
+    // spawner-level failure after the probe is treated as exit 1.
+    const code = yield* spawner
+      .exitCode(
+        ChildProcess.make("mise", [...args], {
+          cwd: dirOf(config),
+          env: { MISE_GLOBAL_CONFIG_FILE: config },
+          extendEnv: true,
+          stdout: "inherit",
+          stderr: "inherit",
+        }),
+      )
+      .pipe(Effect.orElseSucceed(() => 1));
+    if (code !== 0) return code;
+  }
+
+  return 0;
 });
 
 // --------------------------------------------------------------------------
@@ -127,10 +192,19 @@ const command = Command.make(
   {},
   () =>
     program.pipe(
-      // mise absent -> "fatal mise not on PATH" + exit 1.
+      // Missing binary -> "fatal <cmd> not on PATH" + exit 1.
       Effect.catchTag(
-        "MiseNotOnPathError",
-        () => Effect.sync(() => fatal("mise not on PATH")),
+        "MissingCommandError",
+        (error) => Effect.sync(() => fatal(`${error.command} not on PATH`)),
+      ),
+      Effect.catchTag(
+        "SourcePathError",
+        () =>
+          Effect.sync(() =>
+            fatal(
+              "could not resolve chezmoi source path (chezmoi source-path failed)",
+            )
+          ),
       ),
       // Propagate mise's exit code verbatim.
       Effect.flatMap((code) => Effect.sync(() => Deno.exit(code))),
@@ -180,8 +254,10 @@ if (import.meta.main) {
 // The import.meta.main guard keeps the CLI (and the Node platform import) from
 // firing under test. These cover argument handling through the real CLI parser
 // (`--help` is handled without reaching the handler; an unrecognised flag is
-// rejected) and the SUPERVISE program against a mock spawner (mise-absent ->
-// fatal mapping, and exit-code propagation) — all without spawning real mise.
+// rejected), the pure path helpers, and the SUPERVISE program against a mock
+// spawner (missing-binary and source-path failures, the lock-then-install
+// sequence with its cwd/env, and exit-code propagation) — all without spawning
+// real mise or chezmoi.
 
 const assertEq = <T>(actual: T, expected: T, msg: string): void => {
   const a = JSON.stringify(actual);
@@ -189,28 +265,67 @@ const assertEq = <T>(actual: T, expected: T, msg: string): void => {
   if (a !== e) throw new Error(`${msg}: ${a} !== ${e}`);
 };
 
-// Mock ChildProcessSpawner whose exit code is decided from the command's args,
-// so the probe (`mise --version`) and the run (`mise upgrade -y`) can be steered
-// independently. Only `exitCode` is exercised by `program`; the rest are
-// deliberately unimplemented stubs that fail loudly if ever reached.
-const argsOf = (command: unknown): ReadonlyArray<string> =>
-  (command as { readonly args?: ReadonlyArray<string> }).args ?? [];
+// What the program asked the spawner to run.
+interface Call {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string;
+  readonly config?: string;
+}
 
-const mockSpawnerLayer = (
-  exitFor: (args: ReadonlyArray<string>) => number,
-): Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> =>
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.ChildProcessSpawner.of({
-      spawn: () => Effect.die("mock spawner: spawn() unused"),
-      exitCode: (command) =>
-        Effect.succeed(ChildProcessSpawner.ExitCode(exitFor(argsOf(command)))),
-      streamString: () => Stream.die("mock spawner: streamString() unused"),
-      streamLines: () => Stream.die("mock spawner: streamLines() unused"),
-      lines: () => Effect.die("mock spawner: lines() unused"),
-      string: () => Effect.die("mock spawner: string() unused"),
-    }),
-  );
+const callOf = (command: unknown): Call => {
+  const c = command as {
+    readonly command?: string;
+    readonly args?: ReadonlyArray<string>;
+    readonly options?: {
+      readonly cwd?: string;
+      readonly env?: Record<string, string | undefined>;
+    };
+  };
+  return {
+    command: c.command ?? "",
+    args: c.args ?? [],
+    cwd: c.options?.cwd,
+    config: c.options?.env?.MISE_GLOBAL_CONFIG_FILE,
+  };
+};
+
+const SOURCE = "/src/chezmoi/home";
+
+// Mock ChildProcessSpawner. `exitFor` decides each exit code from the call, so
+// probes (`<cmd> --version`) and mise steps can be steered independently;
+// `string` answers `chezmoi source-path`. Every call is recorded. The other
+// methods are deliberately unimplemented stubs that fail loudly if reached.
+const mockSpawner = (
+  exitFor: (call: Call) => number,
+  sourcePath: string = SOURCE,
+) => {
+  const calls: Array<Call> = [];
+  const layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner> = Layer
+    .succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.ChildProcessSpawner.of({
+        spawn: () => Effect.die("mock spawner: spawn() unused"),
+        exitCode: (command) =>
+          Effect.sync(() => {
+            const call = callOf(command);
+            calls.push(call);
+            return ChildProcessSpawner.ExitCode(exitFor(call));
+          }),
+        streamString: () => Stream.die("mock spawner: streamString() unused"),
+        streamLines: () => Stream.die("mock spawner: streamLines() unused"),
+        lines: () => Effect.die("mock spawner: lines() unused"),
+        string: (command) =>
+          Effect.sync(() => {
+            calls.push(callOf(command));
+            return `${sourcePath}\n`;
+          }),
+      }),
+    );
+  return { layer, calls };
+};
+
+const isProbe = (call: Call) => call.args.includes("--version");
 
 // Environment the CLI parser needs (FileSystem | Path | Terminal | Stdio |
 // ChildProcessSpawner), assembled from in-memory test implementations so the
@@ -256,38 +371,100 @@ Deno.test("cli: an unrecognised flag is rejected", async () => {
   assertEq(exit._tag, "Failure", "unknown flag exit");
 });
 
-Deno.test(
-  "program: mise absent -> fails with MiseNotOnPathError (entry maps to fatal)",
-  async () => {
-    // Probe (`mise --version`) returns 127 -> mise treated as absent.
-    const err = await Effect.runPromise(
-      program.pipe(
-        Effect.provide(mockSpawnerLayer(() => 127)),
-        Effect.flip,
-      ),
-    );
-    assertEq(err._tag, "MiseNotOnPathError", "error tag");
-  },
-);
-
-Deno.test("program: mise present, upgrade exits 0 -> returns 0", async () => {
-  const code = await Effect.runPromise(
-    program.pipe(Effect.provide(mockSpawnerLayer(() => 0))),
+Deno.test("sourceMiseConfig: joins the source dir and the config path", () => {
+  assertEq(
+    sourceMiseConfig("/src/home"),
+    "/src/home/private_dot_config/mise/config.toml",
+    "plain",
   );
-  assertEq(code, 0, "exit code");
+  assertEq(
+    sourceMiseConfig("/src/home/"),
+    "/src/home/private_dot_config/mise/config.toml",
+    "trailing slash",
+  );
+  assertEq(dirOf("/a/b/config.toml"), "/a/b", "dirOf");
 });
 
 Deno.test(
-  "program: propagates mise upgrade's non-zero exit code verbatim",
+  "program: a missing binary fails with MissingCommandError naming it",
   async () => {
-    // Probe (`mise --version`) -> 0 (present); `mise upgrade -y` -> 7.
-    const code = await Effect.runPromise(
-      program.pipe(
-        Effect.provide(
-          mockSpawnerLayer((args) => (args.includes("upgrade") ? 7 : 0)),
-        ),
-      ),
-    );
-    assertEq(code, 7, "propagated exit code");
+    for (const absent of ["mise", "chezmoi"]) {
+      const { layer } = mockSpawner((call) =>
+        isProbe(call) && call.command === absent ? 127 : 0
+      );
+      const err = await Effect.runPromise(
+        program.pipe(Effect.provide(layer), Effect.flip),
+      );
+      assertEq(err._tag, "MissingCommandError", `${absent} error tag`);
+      assertEq(
+        (err as MissingCommandError).command,
+        absent,
+        `${absent} command`,
+      );
+    }
   },
 );
+
+Deno.test("program: empty chezmoi source-path fails with SourcePathError", async () => {
+  const { layer, calls } = mockSpawner(() => 0, "  ");
+  const err = await Effect.runPromise(
+    program.pipe(Effect.provide(layer), Effect.flip),
+  );
+  assertEq(err._tag, "SourcePathError", "error tag");
+  assertEq(
+    calls.filter((call) => call.command === "mise" && !isProbe(call)).length,
+    0,
+    "no mise step ran",
+  );
+});
+
+Deno.test(
+  "program: locks then installs against the source config, returns 0",
+  async () => {
+    const { layer, calls } = mockSpawner(() => 0);
+    const code = await Effect.runPromise(program.pipe(Effect.provide(layer)));
+    assertEq(code, 0, "exit code");
+    const config = `${SOURCE}/private_dot_config/mise/config.toml`;
+    const steps = calls.filter((call) =>
+      call.command === "mise" && !isProbe(call)
+    );
+    assertEq(steps, [
+      {
+        command: "mise",
+        args: ["lock", "--global", "--bump"],
+        cwd: `${SOURCE}/private_dot_config/mise`,
+        config,
+      },
+      {
+        command: "mise",
+        args: ["install", "--locked", "-y"],
+        cwd: `${SOURCE}/private_dot_config/mise`,
+        config,
+      },
+    ], "mise steps");
+  },
+);
+
+Deno.test(
+  "program: a failed lock bump stops before install and propagates its code",
+  async () => {
+    const { layer, calls } = mockSpawner((call) =>
+      call.args.includes("lock") ? 7 : 0
+    );
+    const code = await Effect.runPromise(program.pipe(Effect.provide(layer)));
+    assertEq(code, 7, "propagated exit code");
+    assertEq(
+      calls.some((call) => call.args.includes("install")),
+      false,
+      "install skipped",
+    );
+  },
+);
+
+Deno.test("program: propagates the install's non-zero exit code", async () => {
+  const { layer } = mockSpawner((call) =>
+    call.args.includes("install") ? 3 : 0
+  );
+  const code = await Effect.runPromise(program.pipe(Effect.provide(layer)));
+  assertEq(code, 3, "propagated exit code");
+});

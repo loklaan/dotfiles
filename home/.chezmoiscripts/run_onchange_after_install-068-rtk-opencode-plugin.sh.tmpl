@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "rtk" }}
+# Generates ~/.config/opencode/plugins/rtk.ts with `rtk init -g --opencode`
+# so the plugin matches the installed rtk binary. The plugin is not a source
+# file in this repo: rtk writes it, and rewrites it only when its content
+# changes.
+#
+# run_onchange: re-runs when the mise lock changes, which is when the rtk
+# version (or any other locked tool) can change.
+# mise.lock: {{ include "private_dot_config/mise/mise.lock" | sha256sum }}
+
+main() {
+  # chezmoi scripts can run without mise on PATH (e.g. a non-login shell or
+  # an apply started outside an activated shell), so activate it here.
+  eval "$(mise activate bash --quiet 2>/dev/null)" || true
+
+  log_step "Syncing rtk plugin for OpenCode"
+
+  if ! command -v rtk >/dev/null 2>&1; then
+    log_detail "Skipping — rtk is not on PATH"
+    return 0
+  fi
+
+  # Ensure the plugins directory exists (rtk init creates it, but being
+  # explicit avoids a race with other scripts that might touch the path).
+  mkdir -p "${HOME}/.config/opencode/plugins"
+
+  local plugin="${HOME}/.config/opencode/plugins/rtk.ts"
+  if ! rtk init -g --opencode --no-patch </dev/null >/dev/null 2>&1; then
+    log_warn "Could not update the plugin — 'rtk init -g --opencode' failed"
+    log_warn_cont "${plugin} may be stale (non-fatal)"
+  fi
+}
+
+main

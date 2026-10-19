@@ -1,17 +1,39 @@
+# Global tools. Every version here is pinned by the committed mise.lock next to
+# this file (~/.config/mise/mise.lock), and installs run with `locked = true`
+# below, so `chezmoi apply` installs exactly what the lock records: no registry
+# or GitHub API resolution happens on the box. Requests such as "latest" or a
+# major prefix ("1") only move when the lock is bumped (weekly CI PR, or
+# `mise lock --global --bump` by hand; see .agents/skills/update-deps).
+#
+# Changing a request here means re-locking in the same change. In locked mode a
+# request with no matching lock entry is an error, not a fallback.
+#
+# npm tools also get a dependency sidecar, <config dir>/.mise/locks/<tool>/<ver>,
+# which a locked install requires. In the source it lives in dot_mise/ (applied
+# to ~/.config/mise/.mise); the committed `.mise -> dot_mise` symlink beside this
+# file makes `mise lock` run against the source config write into it.
+
+[tool_alias]
+# `opencode` keeps its tool name (installs dir, `mise exec -- opencode`, the
+# completion installer and the pitchfork watch path all key on it) but resolves
+# through the github backend. The registry's aqua:anomalyco/opencode lists
+# only the 2.x releases, so it can no longer resolve OpenCode 1.
+opencode = "github:anomalyco/opencode"
+
 [tools]
-# Global tools listed here will be automatically installed.
 "github:bitwarden/sdk" = { version = "bws-v2.1.0", exe = "bws", tag_regex = "^bws" }
 "github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt" }
 # RTK — Rust CLI that rewrites shell commands to compact output, saving 60-90%
 # of token spend on common dev commands (git status, ls, cargo test, etc.).
-# Installed on every machine; the opencode plugin lives in
-# private_dot_config/opencode/plugins/rtk.ts (managed here, not via `rtk init`).
+# Installed on every machine. Its OpenCode plugin (~/.config/opencode/plugins/
+# rtk.ts) is not in this repo: run_onchange_after_install-068 generates it
+# with `rtk init -g --opencode` whenever mise.lock changes.
 "github:rtk-ai/rtk" = { version = "v0.50.0", exe = "rtk" }
 # tmux's official prebuilt binary: no source build; the asdf plugin cannot build 3.7 on macOS.
 "github:tmux/tmux-builds" = "3.7c"
-{{ if eq .chezmoi.os "linux" -}}
-"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.70.0", exe = "mcpproxy" }
-{{ end -}}
+# Linux only: macOS installs mcpproxy from its Homebrew cask. The lock still
+# carries both platforms; `os` only gates install and activation.
+"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.70.0", exe = "mcpproxy", os = ["linux"] }
 # usage — jdx's CLI shell-completion runtime. Required by pitchfork's
 # `completion` subcommand; kept next to pitchfork since they're paired.
 usage = "6.12.0"
@@ -34,7 +56,9 @@ jq = "latest"
 yq = "latest"
 micro = "latest"
 node = "26.10.0"
-opencode = "latest"
+# OpenCode 1. "1" rather than "latest": `latest` on the repo would jump to 2.x,
+# which is a separate binary installed as opencode2 (see below).
+opencode = "1"
 python = "3.14"
 ripgrep = "latest"
 rust = "1.98.1"
@@ -45,10 +69,23 @@ uv = "0.12.21"
 [env]
 DISABLE_AUTOUPDATER = "1"
 DENO_NO_UPDATE_CHECK = "1"
-SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2"
+# mise's own (tera) templating: this file is not a chezmoi template.
+SKULK_OPENCODE = "{{ env.HOME }}/.local/bin/opencode2"
 SKULK_ALLOW_EXEC = "0"
 
 [settings]
+# Supply-chain gate. Installs must come from mise.lock (no resolution on the
+# box). Scoped to this global config only: project configs, such as the canva
+# monorepo's, keep their own lockfile policy and are not forced into locked mode.
+locked = true
+locked_scopes = ["global"]
+# Fuzzy requests ("latest", "3.14") resolve only to releases at least 4 days
+# old. Applies when the lock is bumped, and to npm transitive deps as they are
+# resolved. Exact pins are not filtered, and locked installs replay the lock.
+minimum_release_age = "4d"
+# Every machine is Apple Silicon or an x86-64 Coder box. Bump CI runs on
+# macos-arm64, and mise always adds the current platform.
+lockfile_platforms = ["macos-arm64", "linux-x64"]
 idiomatic_version_file_enable_tools = ["node"]
 experimental = true
 gix = false
@@ -79,13 +116,13 @@ credential_command = "gh auth token"
 # are thin dispatchers + dependency declarations.
 
 [tasks.update]
-description = "Upgrade mise tools, pull dotfiles source, then converge chezmoi state"
+description = "Bump mise.lock in the dotfiles source, upgrade brew, pull the source, then converge chezmoi state"
 # One wrapper owns the whole update so the session log covers the mise and git
 # phases too; see executable_df-task-update.
 run = "df-task-update"
 
 [tasks."mise:upgrade"]
-description = "Refresh tools pinned to `latest` (explicit pins untouched)"
+description = "Bump the source repo's mise.lock (`mise lock --global --bump`), then `mise install --locked`"
 hide = true
 run = "df-task-mise-upgrade"
 
@@ -107,7 +144,7 @@ run = "df-task-chezmoi-update"
 # ── Hooks ────────────────────────────────────────────────────────────────────
 # No postinstall hook here. A `postinstall = { task = "chezmoi:apply" }` hook
 # re-enters chezmoi apply from inside mise install/upgrade, which is itself
-# invoked from `run_after_install-050-install-packages.sh` during an outer
+# invoked from `run_onchange_after_install-050-install-packages.sh` during an outer
 # `chezmoi apply`. Chezmoi serializes apply via a persistent-state lock, so
 # the nested apply deadlocks with "timeout obtaining persistent state lock".
 # Convergence is already delivered by the outer apply: lifecycle scripts run

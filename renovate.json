@@ -1,0 +1,65 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Self-hosted via .github/workflows/deps-bump.yml (global options such as",
+    "repositories and onboarding live there). mise tools are NOT managed here:",
+    "mise.lock is bumped by the same workflow's `mise lock --global --bump` job."
+  ],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "schedule": ["* 0-12 * * 1"],
+  "timezone": "UTC",
+  "minimumReleaseAge": "4 days",
+  "internalChecksFilter": "strict",
+  "automerge": false,
+  "enabledManagers": ["github-actions", "custom.regex"],
+  "mise": { "enabled": false },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "chezmoi externals pinned to a full commit SHA on a branch",
+      "managerFilePatterns": ["/^home/\\.chezmoiexternals/[^/]+\\.toml\\.tmpl$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>git-refs) depName=(?<depName>\\S+) currentValue=(?<currentValue>\\S+)\\s*\\n\\s*url = \"https://github\\.com/[^/]+/[^/]+/archive/(?<currentDigest>[0-9a-f]{40})\\.tar\\.gz\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "chezmoi externals pinned to a GitHub release tag",
+      "managerFilePatterns": ["/^home/\\.chezmoiexternals/[^/]+\\.toml\\.tmpl$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>\\S+)\\s*\\n\\s*url = \"https://github\\.com/[^/]+/[^/]+/releases/download/(?<currentValue>[^/\"]+)/"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Inline pins: `# renovate: datasource=... depName=... [versioning=...]` above a line whose first quoted string is the version. The version may not contain `/`, so the URL lines of the externals managers above never match (Renovate regexes are RE2: no lookahead)",
+      "managerFilePatterns": [
+        "/^home/.+/",
+        "/^install\\.sh$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\s*\\n[^\\n\"]*\"v?(?<currentValue>[^\"\\s/]+)\""
+      ],
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver-coerced{{/if}}",
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Branch heads carry no release timestamp, so the age gate would hold them forever; the weekly schedule and PR review gate them instead.",
+      "matchDatasources": ["git-refs"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "One weekly PR for all chezmoi externals (inline pins elsewhere get their own PRs)",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["home/.chezmoiexternals/**"],
+      "groupName": "chezmoi externals"
+    },
+    {
+      "description": "One weekly PR for all GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
+  ]
+}

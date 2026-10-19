@@ -13,6 +13,20 @@ allowed-tools: Bash,Read,Edit,Glob,Grep,WebFetch,AskUserQuestion
 Check every pinned dependency source in this repo for available updates,
 present a summary, and apply chosen bumps.
 
+Most bumps arrive without this skill. `.github/workflows/deps-bump.yml` runs
+weekly (and on `workflow_dispatch`) on `loklaan/dotfiles` only:
+
+- **bump** runs `mise lock --global --bump` against the repo's mise config and
+  opens or updates the `deps/mise-lock` PR.
+- **verify** runs `mise install --locked` with an empty data dir on
+  `ubuntu-latest` (linux-x64) and `macos-latest` (macos-arm64).
+- **renovate** opens PRs for GitHub Actions and chezmoi externals (see
+  `renovate.json`; its mise manager is disabled).
+
+Nothing auto-merges. Use this skill for an off-cycle bump, for sources CI does
+not cover (Homebrew, Linux packages, the TUI plugin package, model pins), or to
+review a CI PR.
+
 ## Prerequisites
 
 - `gh` CLI must be available and authenticated
@@ -25,10 +39,13 @@ present a summary, and apply chosen bumps.
 
 **Files:** `home/.chezmoiexternals/zsh.toml.tmpl`, `home/.chezmoiexternals/tmux.toml.tmpl`, `home/.chezmoiexternals/micro.toml.tmpl`
 
-These pin GitHub repos to a short commit hash in the archive URL:
+These pin GitHub repos to a full 40-character commit SHA in the archive URL.
+A `# renovate:` comment above each URL names the repo and the branch it
+tracks; Renovate's regex manager reads it:
 
 ```
-url = "https://github.com/{owner}/{repo}/archive/{hash}.tar.gz"
+# renovate: datasource=git-refs depName=https://github.com/{owner}/{repo} currentValue={branch}
+url = "https://github.com/{owner}/{repo}/archive/{sha}.tar.gz"
 ```
 
 **Procedure:**
@@ -39,14 +56,15 @@ url = "https://github.com/{owner}/{repo}/archive/{hash}.tar.gz"
    ```
    gh api repos/{owner}/{repo}/commits?per_page=1 --jq '.[0].sha'
    ```
-3. Compare the first 7 characters of the latest SHA against the pinned hash.
+3. Compare the latest SHA against the pinned SHA.
 4. Record: entry name, repo, pinned hash, latest hash, behind (yes/no).
 
 ### 2. Chezmoi externals — tag-pinned releases
 
 **Files:** `home/.chezmoiexternals/fonts.toml.tmpl`
 
-These pin to a release tag in the URL:
+These pin to a release tag in the URL, under a
+`# renovate: datasource=github-releases depName={owner}/{repo}` comment:
 
 ```
 url = "https://github.com/{owner}/{repo}/releases/download/{tag}/..."
@@ -64,24 +82,45 @@ url = "https://github.com/{owner}/{repo}/releases/download/{tag}/..."
 
 ### 3. Mise tools
 
-**File:** `home/private_dot_config/mise/config.toml.tmpl`
+**Files:** `home/private_dot_config/mise/config.toml` (requests) and
+`home/private_dot_config/mise/mise.lock` (resolved versions, URLs and
+checksums for `macos-arm64` and `linux-x64`)
+
+The config sets `locked = true` (scoped to the global config by
+`locked_scopes = ["global"]`), so every install replays the lock. A request
+such as `"latest"` or `"1"` moves only when the lock is bumped.
+`minimum_release_age = "4d"` holds back fuzzy requests that resolve to a
+release less than 4 days old. Exact pins are not filtered.
+
+Run every mise command below against the repo copy, not the live
+`~/.config/mise`, from a directory outside any project:
+
+```
+export MISE_GLOBAL_CONFIG_FILE="$PWD/home/private_dot_config/mise/config.toml"
+cd "$(mktemp -d)"
+```
 
 **Procedure:**
 
-1. Read the file and identify all tools with explicit version pins (skip
-   entries set to `"latest"`).
-2. Run `mise outdated` and parse the output for tools listed in the config.
-3. Record: tool name, pinned version, latest version, behind (yes/no).
+1. `mise lock --global --bump --dry-run --json` lists the version changes a
+   bump would make to the lock. It prints `[]` when nothing moves.
+2. `mise outdated --bump` lists exact pins that have newer releases.
+3. Record: tool name, request, locked version, latest version, behind (yes/no).
 
 ### 4. Homebrew formulae and casks
 
-**File:** `home/private_dot_local/bin/executable_install-my-packages.tmpl`
+**File:** `home/.chezmoidata/packages.yaml` (`packages.darwin.brews`,
+`.casks`, `.taps`), consumed by
+`home/private_dot_local/bin/executable_install-my-packages.tmpl`
 
-Formulae are defined in the `$brews` template list, casks in `$casks`.
+Brew is unlocked by design. `chezmoi apply` runs `brew bundle --no-upgrade`,
+so it installs only what is missing; `mise run update` (`df-task-update`)
+upgrades formulae and casks. A plain CLI binary that has a mise registry
+backend belongs in the mise config (locked), not here.
 
 **Procedure (macOS only):**
 
-1. Parse the Go template lists to extract formula and cask names.
+1. Read the formula and cask names from `packages.yaml`.
 2. Run `brew outdated --formula` and `brew outdated --cask` to check installed
    versions against upstream.
 3. Check for deprecated/disabled formulae:
@@ -99,14 +138,12 @@ packages and confirming the list is still sensible.
 
 ### 5. Linux packages
 
-**File:** `home/private_dot_local/bin/executable_install-my-packages.tmpl`
-
-Packages are defined in the `$pkgs` template list. These are not
-version-pinned.
+**File:** `home/.chezmoidata/packages.yaml` (`packages.linux.common`, plus
+the per-distro `apt`, `apk` and `yum` lists). These are not version-pinned.
 
 **Procedure:**
 
-1. Parse the Go template list to extract package names.
+1. Read the package names from `packages.yaml`.
 2. Flag any packages that are known to have been renamed or removed from major
    distros (use your knowledge — no automated check needed).
 3. Record: any flagged packages with notes.
@@ -236,13 +273,20 @@ Present a single markdown table grouped by source:
 1. Ask the user which entries to bump (they may say "all", name specific ones,
    or skip).
 2. For each chosen entry, edit the source file:
-   - **Commit-pinned externals:** replace the old hash in the URL with the
-     first 7 characters of the new SHA.
+   - **Commit-pinned externals:** replace the old SHA in the URL with the full
+     40-character new SHA. Keep the `# renovate:` comment above it.
    - **Tag-pinned externals:** replace the old tag with the new tag.
-   - **Mise tools:** replace the version string.
+   - **Mise tools:** to move a fuzzy request (`"latest"`, `"1"`), run
+     `mise lock --global --bump` with `MISE_GLOBAL_CONFIG_FILE` set as in
+     section 3. To change an exact pin, edit the request in `config.toml`, then
+     run `mise lock --global` the same way. Always commit `config.toml` and
+     `mise.lock` together: in locked mode a request with no lock entry fails
+     to install. Then check that the lock installs from an empty data dir:
+     `MISE_DATA_DIR=$(mktemp -d) mise install --locked --dry-run`.
    - **Brew/Linux packages:** no file edit needed (not version-pinned), but
      remove deprecated entries if the user agrees.
    - **opencode model pins:** replace the ID string in place. Preserve
      the provider prefix exactly as models.dev publishes it.
-3. Run `chezmoi apply --dry-run --verbose` to verify no breakage.
+3. Verify with `chezmoi diff` (and, for mise, the empty-data-dir check above).
+   Do not run `chezmoi apply`; that is the user's call.
 4. Commit with a message like `update zsh plugins, mise tools, and nerd-fonts`.

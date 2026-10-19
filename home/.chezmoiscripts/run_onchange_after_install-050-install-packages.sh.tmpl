@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "packages" }}
+# Installs packages via install-my-packages (GUI apps: run it with --gui).
+#
+# run_onchange: re-runs only when one of these hashes changes, i.e. when the
+# mise lock or config, the package lists, or the installer itself changes.
+# Preflight (chezmoi-preflight.sh) still runs `mise install` on every apply,
+# so a tool removed by hand comes back without a re-run here.
+# mise.lock: {{ include "private_dot_config/mise/mise.lock" | sha256sum }}
+# mise config: {{ include "private_dot_config/mise/config.toml" | sha256sum }}
+# packages: {{ .packages | toJson | sha256sum }}
+# install-my-packages: {{ includeTemplate "private_dot_local/bin/executable_install-my-packages.tmpl" . | sha256sum }}
+
+main() {
+  local install_script="${HOME}/.local/bin/install-my-packages"
+
+  # Fail rather than warn: chezmoi records a run_onchange script as done when
+  # it exits 0, so a skipped install would not be retried until a hash moves.
+  if [ ! -x "$install_script" ]; then
+    fatal "Missing install-my-packages (expected at ${install_script})"
+  fi
+
+  "$install_script"
+}
+
+main

@@ -1,0 +1,9 @@
+# OpenCode 2 CLI pin, consumed by
+# home/.chezmoiscripts/run_onchange_after_install-071-opencode2.sh.tmpl, which
+# installs exactly this version into the private prefix ~/.local/share/opencode2
+# and re-runs only when the pin changes. Renovate bumps it (minimumReleaseAge
+# "4 days", see renovate.json); bump by hand only to a release at least 4 days
+# old.
+opencode2:
+  # renovate: datasource=npm depName=@opencode/cli
+  version: "2.0.26"

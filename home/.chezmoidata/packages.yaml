@@ -1,0 +1,116 @@
+# Non-critical package install set, consumed by
+# home/private_dot_local/bin/executable_install-my-packages.tmpl.
+#
+# Lists are resolved at render time (install-my-packages is a chezmoi
+# template), so the rendered ~/.local/bin/install-my-packages stays
+# self-contained. The template applies `sortAlpha | uniq`, so order here is
+# cosmetic.
+packages:
+  darwin:
+    # Third-party Homebrew taps. Each is trusted (`brew trust --tap`) before
+    # `brew bundle` because Homebrew 6+ refuses non-official taps otherwise.
+    taps:
+      - smart-mcp-proxy/mcpproxy
+    # Brew is unlocked by design: install-my-packages runs `brew bundle
+    # --no-upgrade`, so an apply only adds missing formulae, and
+    # `mise run update` is the one place they upgrade. Plain CLI binaries
+    # with a mise registry entry belong in mise/config.toml instead, where
+    # mise.lock pins them; what stays here is system libraries, GNU tools,
+    # macOS-only helpers and tools without a prebuilt mise backend.
+    brews:
+      - bash
+      - coreutils
+      - ffmpeg
+      - ghostscript
+      - git
+      - git-lfs
+      - gnupg
+      - handbrake
+      - htop
+      - less
+      - lua
+      - make
+      - ncdu
+      - ncurses
+      - pinentry
+      - pinentry-mac
+      - readline
+      - rename
+      - rsync
+      - safe-rm
+      - poppler
+      # shellcheck comes from mise (locked), not brew.
+      - terminal-notifier
+      - tesseract
+      - tree
+      - wget
+      - wireguard-tools
+      - zsh
+    # GUI apps; only installed with `install-my-packages --gui`.
+    casks:
+      - alfred
+      - bartender
+      - brave-browser
+      - docker
+      - figma
+      - finicky
+      - firefox
+      - fontgoggles
+      - glyphs
+      - google-chrome
+      - imageoptim
+      - insomnia
+      - iterm2
+      - jetbrains-toolbox
+      - kap
+      - logitune
+      - smart-mcp-proxy/mcpproxy/mcpproxy
+      - notion
+      - private-internet-access
+      - qlcolorcode
+      - qlimagesize
+      - qlmarkdown
+      - quicklook-video
+      - quicklookase
+      - rectangle
+      - rive
+      - rocket
+      - slack
+      - spotify
+      - sublime-text
+      - visual-studio-code
+  linux:
+    # Installed on every supported distro.
+    common:
+      - bash
+      - bison
+      - coreutils
+      - ffmpeg
+      - git
+      - ghostscript
+      - git-lfs
+      - gnupg
+      - less
+      - libevent-dev
+      - libncurses-dev
+      - make
+      - pkg-config
+      - poppler-utils
+      - python3
+      - rename
+      - rsync
+      - safe-rm
+      - tesseract-ocr
+      - tesseract-ocr-eng
+      - tree
+      - wget
+      - zsh
+    # Distro-specific package name divergence:
+    # - Ubuntu/Debian provides notify-send via the `libnotify-bin` package
+    # - Alpine + RHEL/Fedora provide it via `libnotify`
+    apt:
+      - libnotify-bin
+    apk:
+      - libnotify
+    yum:
+      - libnotify

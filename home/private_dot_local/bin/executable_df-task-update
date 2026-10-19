@@ -10,8 +10,12 @@ source "${HOME}/.local/lib/chezmoi-session.sh"
 #/   df-task-update
 #/
 #/ Description:
-#/   Runs the whole dotfiles update as one session: mise upgrade, then the
-#/   chezmoi source fast-forward + apply. Invoked from the `[tasks.update]`
+#/   Runs the whole dotfiles update as one session: bump the source repo's
+#/   mise.lock and install it, Homebrew upgrade (macOS), then the chezmoi
+#/   source fast-forward + apply (which deploys the bumped lock). Upgrades
+#/   live here, not in `chezmoi apply`: the apply only installs what is
+#/   missing. A bumped mise.lock is a working-tree change in the source repo;
+#/   commit it. Invoked from the `[tasks.update]`
 #/   mise task; the task previously chained `mise:upgrade` and
 #/   `chezmoi:update`, which left the mise and git phases out of the session
 #/   log entirely.
@@ -24,6 +28,22 @@ source "${HOME}/.local/lib/chezmoi-session.sh"
 #/ Options:
 #/   --help    Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
+
+# Upgrade Homebrew formulae and casks on macOS. Best-effort: a failed upgrade
+# warns and the update carries on to the chezmoi phase.
+brew_upgrade() {
+  [ "$(uname -s)" = "Darwin" ] || return 0
+  command -v brew >/dev/null 2>&1 || return 0
+
+  log_step "Upgrading Homebrew packages"
+  if ! HOMEBREW_NO_ENV_HINTS=1 run_quiet brew update; then
+    log_warn "brew update failed — skipping brew upgrade"
+    return 0
+  fi
+  if ! HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_AUTO_UPDATE=1 run_quiet brew upgrade; then
+    log_warn "brew upgrade reported errors"
+  fi
+}
 
 main() {
   bl_parse_help "$@"
@@ -40,6 +60,7 @@ main() {
   unset BASH_LOGGING_ACTIVE BASH_LOGGING_FILE BASH_LOGGING_TOPIC
 
   df-task-mise-upgrade
+  brew_upgrade
   df-task-chezmoi-update
 
   chezmoi_session_post

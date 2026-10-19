@@ -1,0 +1,7 @@
+{
+  "name": "mise-npm-install",
+  "private": true,
+  "dependencies": {
+    "@kitlangton/skulk": "0.1.0"
+  }
+}
