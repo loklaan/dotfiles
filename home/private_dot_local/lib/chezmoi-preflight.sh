@@ -295,11 +295,11 @@ _chezmoi_preflight_bws_token() {
 
 # Remind about incomplete setup: no BWS token (from the probe above) or no
 # commit-signing key. The key lives in chezmoi data, which a hook cannot read,
-# so .chezmoi.toml.tmpl exports CHEZMOI_SIGNING_KEY_SET via [scriptEnv]; an
+# so .chezmoi.toml.tmpl exports DF_SIGNING_KEY_SET via [scriptEnv]; an
 # unset value (config predating it) is treated as "set" to avoid a false alarm.
 _chezmoi_preflight_setup_reminder() {
   local no_signing=0
-  [ "${CHEZMOI_SIGNING_KEY_SET:-1}" = "0" ] && no_signing=1
+  [ "${DF_SIGNING_KEY_SET:-1}" = "0" ] && no_signing=1
   [ "$_CHEZMOI_PREFLIGHT_BWS_MISSING" = "1" ] || [ "$no_signing" = "1" ] || return 0
 
   [ "$_CHEZMOI_PREFLIGHT_BWS_MISSING" = "1" ] &&

@@ -31,6 +31,20 @@ pf_boot_enable() {
   return 1
 }
 
+# Restart the supervisor when it runs an older pitchfork than the CLI (after a
+# mise bump). Daemons with boot_start come back with it. The CLI reports the
+# mismatch on stderr.
+pf_restart_stale_supervisor() {
+  if pitchfork list 2>&1 >/dev/null | grep -q 'differs from supervisor version'; then
+    if pitchfork supervisor start --force >/dev/null 2>&1; then
+      log_detail "Restarted the Pitchfork supervisor on the current version"
+    else
+      log_warn "Could not restart the stale Pitchfork supervisor"
+      log_warn_cont "Run: pitchfork supervisor start --force"
+    fi
+  fi
+}
+
 # Start a daemon. A no-op when it is already running; auto-starts the
 # supervisor.
 pf_start() {

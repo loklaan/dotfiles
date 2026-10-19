@@ -18,8 +18,10 @@ source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
 # Registers the Pitchfork login service, starts enabled daemons and stops
 # disabled ones.
 # pitchfork config: {{ includeTemplate "private_dot_config/pitchfork/config.toml.tmpl" . | sha256sum }}
+# pitchfork pin: {{ include "private_dot_config/mise/config.toml" | regexFind "\"github:jdx/pitchfork\" = [^\\n]*" }}
 # enabled: {{ $enabled | join " " }}
 # disabled: {{ $disabled | join " " }}
+pf_restart_stale_supervisor
 {{  if $enabled }}
 pf_boot_enable
 {{-   range $enabled }}
