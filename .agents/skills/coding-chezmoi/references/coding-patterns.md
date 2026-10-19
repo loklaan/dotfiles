@@ -6,7 +6,7 @@ Generic shell scripting patterns are covered by the `lochy:coding:shell` skill. 
 
 ### Boilerplate
 
-ALL executable bash scripts (standalone, lifecycle, bin utilities) MUST include these elements in order. Sourced library files (e.g., `bash-logging.sh`) follow their own conventions.
+Standalone and bin bash scripts MUST include these elements in order. Lifecycle scripts in `home/.chezmoiscripts/` use the shorter prelude form in [Lifecycle scripts](#lifecycle-scripts) instead. Sourced library files (e.g., `bash-logging.sh`) follow their own conventions.
 
 ```bash
 #!/usr/bin/env bash
@@ -71,6 +71,38 @@ main() {
 
 main "$@"
 ```
+
+### Lifecycle scripts
+
+Every script in `home/.chezmoiscripts/` is a `.sh.tmpl` that opens with a
+literal shebang on line 1 (after any `{{- … -}}` gate, which trims to
+nothing), then the shared `script-prelude` partial with the script's log topic,
+then a 1-3 line `#` comment saying what it does:
+
+```bash
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "fonts" }}
+# Refreshes the fontconfig cache after chezmoi unpacks fonts.
+# fonts: {{ include ".chezmoiexternals/fonts.toml.tmpl" | sha256sum }}
+
+main() { ...; }
+
+main
+{{ end -}}
+```
+
+- The prelude supplies `set -euo pipefail`, `IFS`, `TMPDIR` normalisation,
+  `source ~/.local/lib/bash-logging.sh` and `setup_session_logging`. Extra
+  libraries (`pitchfork-lifecycle.sh`, `tool-cache-sync.sh`) are sourced
+  explicitly after it.
+- chezmoi passes no arguments: no `#/` usage block, `usage()`,
+  `bl_parse_help` or `parse_args`; call `main` without `"$@"`.
+- The shebang must stay on line 1 of the rendered output (`df-lint-runtimes`
+  reads it).
+- `run_onchange_` scripts record success whenever they exit 0. A missing
+  prerequisite must render the script empty (`lookPath`/`stat` gate, retried
+  next apply) or exit non-zero — never warn and exit 0.
 
 ### Key Conventions
 
@@ -188,10 +220,12 @@ Or use `.brewprefix` from data variables (defined in `.chezmoi.toml.tmpl`).
 
 ### Package Lists
 
-Always use `sortAlpha | uniq` when processing package lists:
+Package lists live in `home/.chezmoidata/packages.yaml` (`packages.darwin.{taps,brews,casks}`,
+`packages.linux.{common,apt,apk,yum}`), not inline in templates. Always use
+`sortAlpha | uniq` when processing them:
 
 ```go
-{{ $brews := list "bash" "git" "zsh" "tmux" -}}
+{{ $brews := .packages.darwin.brews -}}
 
 brew bundle --no-lock --file=/dev/stdin <<EOF
 {{ range ($brews | sortAlpha | uniq) -}}

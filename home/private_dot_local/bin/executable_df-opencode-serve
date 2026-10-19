@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+#/ Usage:
+#/   df-opencode-serve
+#/
+#/ Description:
+#/   Stable `run` command of the df-opencode-serve Pitchfork daemon. Reads the
+#/   bind address and port from ~/.config/dotfiles/opencode-serve.env (rendered
+#/   by chezmoi), so changing them never changes the command Pitchfork stored;
+#/   Pitchfork watches the env file and restarts this wrapper instead.
+#/
+#/   Before starting, it stops any orphaned `opencode serve` still holding the
+#/   port. The supervisor can lose track of its child (VM resume, kill) while
+#/   the child keeps serving; without this the restart fails with EADDRINUSE
+#/   and, with retry=true, crash-loops forever.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+ENV_FILE="${HOME}/.config/dotfiles/opencode-serve.env"
+
+# PIDs listening on TCP port $1 (empty when none or no tool to ask).
+listeners() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+  elif command -v ss >/dev/null 2>&1; then
+    ss -ltnpH "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 || true
+  fi
+}
+
+# Stop orphaned `opencode serve` processes on the port. Anything else holding
+# it is left alone: opencode then fails to bind and Pitchfork reports it.
+reap_orphans() {
+  local port="$1" pid cmd
+  for pid in $(listeners "$port" | sort -u); do
+    [ "$pid" != "$$" ] || continue
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+    case "$cmd" in
+      *opencode*serve*)
+        echo "df-opencode-serve: stopping orphaned opencode serve (pid ${pid}) on port ${port}" >&2
+        kill "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+  # Give the kernel a moment to release the socket.
+  [ -z "$(listeners "$port")" ] || sleep 1
+}
+
+main() {
+  if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+  fi
+
+  if [ ! -r "$ENV_FILE" ]; then
+    echo "df-opencode-serve: missing ${ENV_FILE} (is openCodeServer enabled?)" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  : "${OPENCODE_SERVE_HOSTNAME:?not set in ${ENV_FILE}}"
+  : "${OPENCODE_SERVE_PORT:?not set in ${ENV_FILE}}"
+
+  reap_orphans "$OPENCODE_SERVE_PORT"
+  exec opencode serve --hostname "$OPENCODE_SERVE_HOSTNAME" --port "$OPENCODE_SERVE_PORT"
+}
+
+main "$@"

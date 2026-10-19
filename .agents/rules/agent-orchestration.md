@@ -120,10 +120,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 
 | Path | Purpose |
 |---|---|
-| `home/private_dot_config/mise/config.toml.tmpl` | Installs Pitchfork, OpenCode, and Linux-gated services |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-opencode-serve` and `df-mcpproxy` when their gates are enabled |
-| `home/.chezmoiscripts/run_after_install-056-mcpproxy-daemon.sh.tmpl` | Lifecycle for the MCP proxy daemon |
-| `home/.chezmoiscripts/run_after_install-063-opencode-serve.sh.tmpl` | Lifecycle for `opencode serve` |
+| `home/private_dot_config/mise/config.toml` + `mise.lock` | Installs Pitchfork, OpenCode, and Linux-only (`os = ["linux"]`) services, from the committed lock |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-skulk` (every machine), plus `df-opencode-serve` and `df-mcpproxy` when their gates are enabled |
+| `home/private_dot_local/bin/executable_df-{opencode,mcpproxy,skulk}-serve` | Stable daemon `run` commands; read `~/.config/dotfiles/{opencode,mcpproxy,skulk}-serve.env` |
+| `home/private_dot_config/private_dotfiles/{opencode,mcpproxy,skulk}-serve.env.tmpl` | Daemon settings (bind, port, flags); Pitchfork watches them and restarts the daemon on change |
+| `home/.chezmoiscripts/run_onchange_after_install-056-pitchfork-daemons.sh.tmpl` | On config/gate change: `pitchfork boot enable`, start enabled daemons, stop disabled ones |
+| `home/.chezmoiscripts/run_once_after_install-055-retire-legacy-daemons.sh.tmpl` | One-time teardown of launchd/systemd units Pitchfork and MCPProxy.app replaced; moves running daemons onto the wrappers |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
 | `home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl` | Installs the shared TUI plugin package's dependencies for OpenCode 1, only when its lockfile changes |
 | `home/private_dot_local/lib/pitchfork-lifecycle.sh` | Shared Pitchfork lifecycle helpers |
@@ -176,7 +178,7 @@ Running boxes converge immediately through the manual fleet update. Stopped boxe
 
 Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, plus the Linux-gated `mcpproxy` daemon.
 
-> **Boot-enabling is an invariant of starting a daemon, not a caller's chore.** `pf_start` in `pitchfork-lifecycle.sh` calls `pf_ensure_supervisor` before every start. It starts the supervisor and enables its boot integration, probing the existing state first so steady state stays quiet. Linux boxes previously did not become boot-enabled, so daemon liveness depended on a successful `chezmoi apply` at boot. `pitchfork start` can auto-start a supervisor, which made the failure look healthy until reboot. Do not move this work back to individual callers. `boot_start = true` in `pitchfork/config.toml` is per-daemon and does nothing until Pitchfork itself is boot-enabled.
+> **Daemons are config-driven.** A running Pitchfork daemon never picks up a changed `run` or `env`; even watch and retry restarts reuse the stored command. So each daemon's `run` is a stable wrapper in `~/.local/bin` that reads a chezmoi-rendered env file, and `watch` lists the env file, the wrapper and the binary's mise install dir. `chezmoi apply` only writes files; Pitchfork restarts the daemon itself. The one lifecycle script (056) runs only when the rendered config or a gate changes: it runs `pitchfork boot enable` (which rewrites the login entry against `[settings.boot] executable`, mise's stable `latest` pitchfork), starts enabled daemons (a no-op when running) and stops disabled ones. `boot_start = true` is per-daemon and does nothing until Pitchfork itself is boot-enabled.
 
 macOS intentionally has one non-Pitchfork service surface:
 - **MCPProxy.app** is a GUI app and cask, not the `mcpproxy-go` CLI daemon.
@@ -204,8 +206,9 @@ cw fleet --include-local update
 
 Where the previous operating model said `mise upgrade -y && chezmoi apply`, the equivalent is `mise run update` locally or `cw fleet --include-local update` for the fleet. The old ritual still upgrades tools and applies, but it does not pull the source. `mise run update` does both:
 - the `update` task runs `df-task-update`
-- `df-task-update` runs `df-task-mise-upgrade`, then `df-task-chezmoi-update`; the latter fetches and fast-forwards the source before applying it
+- `df-task-update` runs `df-task-mise-upgrade`, then a Homebrew upgrade (macOS), then `df-task-chezmoi-update`; the latter fetches and fast-forwards the source before applying it
+- `df-task-mise-upgrade` runs `mise lock --global --bump` and `mise install --locked` against the source repo's mise config, so the bumped `mise.lock` lands in the repo (commit it) and the apply deploys it. `mise upgrade` does nothing useful here: the global config sets `locked = true`, so it only replays the lock
 
-Do not reintroduce a `[hooks].postinstall = { task = "chezmoi:apply" }` mise hook: `mise install` and `mise upgrade` run from `run_after_install-050-install-packages.sh` during an outer `chezmoi apply`, so that hook would re-enter chezmoi apply and deadlock on its persistent-state lock. Lifecycle `run_onchange_*` scripts pick up tool versions later in the same outer apply.
+Do not reintroduce a `[hooks].postinstall = { task = "chezmoi:apply" }` mise hook: `mise install` runs from `run_onchange_after_install-050-install-packages.sh` (and the preflight hook) during an outer `chezmoi apply`, so that hook would re-enter chezmoi apply and deadlock on its persistent-state lock. Lifecycle `run_onchange_*` scripts pick up tool versions later in the same outer apply.
 
 `mise run update` combines these steps and remains discoverable through `mise tasks ls`.

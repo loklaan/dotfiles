@@ -3,169 +3,48 @@
 #|----------------------------------------------------------------------------|
 #| Pitchfork Daemon Lifecycle                                                 |
 #|                                                                            |
-#| One implementation of "resolve pitchfork, restart a daemon, confirm it took, |
-#| probe its port" for the chezmoi scripts that manage Pitchfork daemons:      |
-#| df-opencode-serve, df-mcpproxy.                                             |
-#|                                                                            |
-#| Usage:                                                                     |
-#|   source "${HOME}/.local/lib/bash-logging.sh"                             |
-#|   source "${HOME}/.local/lib/pitchfork-lifecycle.sh"                      |
-#|   pf_resolve || return 0        # sets PITCHFORK_BIN, warns if absent      |
-#|   pf_restart df-opencode-serve                                             |
-#|   pf_probe_http 4096 "opencode server"                                     |
-#|                                                                            |
-#| WHY this exists: verify_pitchfork_installed was byte-identical in three     |
-#| scripts with a fourth renamed copy in a fifth, so every wording or          |
-#| behaviour fix had to be made four times — and reliably was not, which is    |
-#| how the log output drifted apart in the first place.                        |
-#|                                                                            |
-#| STREAM QUIRK, the reason a wrapper earns its keep: pitchfork does NOT put   |
-#| all output on one stream.                                                   |
-#|   `boot status`  -> STDERR   ("pitchfork Boot start is enabled")            |
-#|   `list`         -> STDOUT   (daemon rows) + STDERR (version WARN)          |
-#|   `daemons`      -> STDOUT                                                  |
-#| A `boot status 2>/dev/null | grep` therefore matches NOTHING, silently, and |
-#| that bug shipped: every apply re-enabled boot start and logged it as a      |
-#| change. Capture the right stream here, once.                                |
+#| Helpers for run_onchange_after_install-056-pitchfork-daemons, which only    |
+#| converges daemon state when the rendered Pitchfork config or a gate flips.  |
+#| Running daemons restart themselves through `watch` (see                     |
+#| private_dot_config/pitchfork/config.toml.tmpl). The script only renders     |
+#| when pitchfork is on PATH, so these call `pitchfork` directly. Failures     |
+#| exit non-zero so the run_onchange script is retried next apply.             |
 #|                                                                            |
 #| Requires bash-logging.sh to be sourced first (log_detail / log_warn).       |
 #|----------------------------------------------------------------------------|
 
-PITCHFORK_BIN="${PITCHFORK_BIN:-}"
-
-# Resolve the pitchfork binary into PITCHFORK_BIN: PATH first, then mise (which
-# is where it actually lives on a fresh box, before shims are on PATH).
-# Returns 1 and warns when it cannot be found, so callers can skip cleanly.
-pf_resolve() {
-  if [ -n "$PITCHFORK_BIN" ] && [ -x "$PITCHFORK_BIN" ]; then
+# Register the login service against [settings.boot] executable. `boot enable`
+# rewrites an existing entry, which is what moves a service still pointing at
+# an old pitchfork version. A container/Coder workspace has no user service
+# manager ("Failed to connect to bus"); boot persistence does not apply there.
+pf_boot_enable() {
+  local boot_err
+  if boot_err=$(pitchfork boot enable 2>&1); then
+    log_detail "Registered Pitchfork to start at login"
     return 0
   fi
-
-  if command -v pitchfork >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(command -v pitchfork)
-  elif command -v mise >/dev/null 2>&1; then
-    PITCHFORK_BIN=$(mise which pitchfork 2>/dev/null || echo "")
-  fi
-
-  if [ -z "$PITCHFORK_BIN" ] || [ ! -x "$PITCHFORK_BIN" ]; then
-    log_warn "Missing pitchfork — install with: mise install"
-    return 1
-  fi
+  case "$boot_err" in
+    *"connect to bus"*|*"No medium found"*) return 0 ;;
+  esac
+  log_warn "Could not register Pitchfork to start at login"
+  log_warn_cont "$boot_err"
+  return 1
 }
 
-# Stop a daemon. Idempotent and quiet: stopping an already-stopped daemon is
-# not an event. Callers that want to report the stop should log it themselves,
-# because "opted out, so I stopped it" reads differently from "restarting".
-pf_stop() {
-  local daemon="$1"
-  "$PITCHFORK_BIN" stop "$daemon" >/dev/null 2>&1 || true
-}
-
-# Start a daemon, then confirm the supervisor actually took it. Reports the
-# start with an overridable message; stays silent on a successful confirm and
-# warns only when the supervisor does not report the daemon.
-#
-# Boot-enabling is done HERE rather than left to callers, because a caller that
-# forgets it fails invisibly: `pitchfork start` auto-spawns the supervisor, so
-# the daemon comes up and the apply looks clean — it just never survives a
-# reboot. That gap shipped: Linux boxes were never boot-enabled, and EVERY
-# daemon's liveness silently depended on a successful `chezmoi apply` at boot.
-# Starting a daemon and wanting it to persist are the same intent, so they
-# belong in one place.
+# Start a daemon. A no-op when it is already running; auto-starts the
+# supervisor.
 pf_start() {
   local daemon="$1"
-  local message="${2:-Started ${daemon} daemon}"
-
-  pf_ensure_supervisor
-
-  if ! "$PITCHFORK_BIN" start --quiet "$daemon" >/dev/null 2>&1; then
+  if ! pitchfork start --quiet "$daemon" >/dev/null 2>&1; then
     log_warn "Failed to start ${daemon} — check: pitchfork logs ${daemon}"
     return 1
   fi
-  log_detail "$message"
-
-  sleep 2
-  if ! pf_is_registered "$daemon"; then
-    log_warn "Pitchfork did not report ${daemon} — check: pitchfork logs ${daemon}"
-    return 1
-  fi
+  log_detail "Ensured ${daemon} is running"
 }
 
-# Restart so config changes are picked up. Separate pf_stop / pf_start remain
-# available for callers that must do work between the two (063 reaps orphaned
-# processes holding the daemon's port before it can bind).
-pf_restart() {
-  local daemon="$1"
-  local message="${2:-Restarted ${daemon} daemon}"
-  pf_stop "$daemon"
-  pf_start "$daemon" "$message"
-}
-
-# Is the daemon known to the supervisor? Rows come from stdout; the version WARN
-# on stderr is deliberately discarded so it cannot false-positive the grep.
-pf_is_registered() {
-  local daemon="$1"
-  "$PITCHFORK_BIN" list 2>/dev/null | grep -q "$daemon"
-}
-
-# Ensure the supervisor is up, and boot-enabled so daemons survive a reboot
-# without depending on a `chezmoi apply` to restart them. Only reports the
-# transition — already-enabled is the steady state, not news.
-#
-# Called from pf_start on every apply, so it must stay idempotent and quiet: the
-# `boot status` check short-circuits before `boot enable` precisely so a steady
-# state costs one probe and logs nothing.
-#
-# A container/Coder workspace has no user systemd/D-Bus, so `boot enable` fails
-# with "Failed to connect to bus: No medium found". That is not a problem to
-# report — boot persistence is simply not applicable there — so those failures
-# stay silent; any other failure still warns.
-pf_ensure_supervisor() {
-  "$PITCHFORK_BIN" supervisor start >/dev/null 2>&1 || true
-
-  # `boot status` answers on STDERR; 2>&1 is load-bearing (see header).
-  if "$PITCHFORK_BIN" boot status 2>&1 | grep -qi 'is enabled'; then
-    return 0
-  fi
-
-  local boot_err
-  if boot_err=$("$PITCHFORK_BIN" boot enable 2>&1); then
-    log_detail "Enabled Pitchfork to start at boot"
-    return 0
-  fi
-
-  case "$boot_err" in
-    *"connect to bus"*|*"No medium found"*)
-      # No user manager here (container / Coder workspace); boot persistence
-      # is not applicable, and warning about it every apply is noise.
-      ;;
-    *)
-      log_warn "Could not enable Pitchfork to start at boot — daemons may not survive reboot"
-      ;;
-  esac
-}
-
-# A supervisor left running from an older Pitchfork keeps serving after mise
-# upgrades the CLI. Pitchfork reports the mismatch as a WARN on stderr of any
-# command; relay it with the remedy rather than restarting the supervisor from
-# here, which would kill live daemons.
-pf_warn_if_supervisor_stale() {
-  if "$PITCHFORK_BIN" list 2>&1 >/dev/null | grep -q 'differs from supervisor version'; then
-    log_warn "Pitchfork supervisor version differs from the CLI"
-    log_warn_cont "Restart it with: pitchfork supervisor start --force"
-    return 1
-  fi
-}
-
-# HTTP health probe against a daemon's loopback port. Start already reports the
-# transition; the probe verifies silently and only surfaces failure.
-pf_probe_http() {
-  local port="$1"
-  local label="$2"
-
-  if curl -sf "http://127.0.0.1:${port}/" -o /dev/null 2>/dev/null; then
-    return 0
-  fi
-  log_warn "Health probe failed — ${label} not responding at http://127.0.0.1:${port}/"
-  return 1
+# Stop a daemon that a gate turned off. Pitchfork exits non-zero for a daemon
+# that is no longer in its config, which is the normal case here, so this is
+# best-effort and quiet.
+pf_stop() {
+  pitchfork stop "$1" >/dev/null 2>&1 || true
 }

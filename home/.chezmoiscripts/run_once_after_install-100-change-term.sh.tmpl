@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "shell"
-
-#/ Usage:
-#/   change-term.sh
-#/
-#/ Description:
-#/   Sets the shell for the user.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
+{{ includeTemplate "script-prelude" "shell" }}
+# Sets the user's login shell to zsh (once).
 
 get_login_shell() {
   local user="$1"
@@ -115,4 +100,4 @@ main() {
   log_detail "Shell change complete. Log out and log back in for changes to take effect."
 }
 
-main "$@"
+main

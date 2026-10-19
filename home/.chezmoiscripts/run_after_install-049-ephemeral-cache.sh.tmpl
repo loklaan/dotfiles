@@ -1,20 +1,7 @@
 {{- if and (eq .chezmoi.os "linux") (eq (dig "machineProfile" "personal" .) "work") (dig "ephemeralCache" false .) -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "cache"
-
-#/ Usage:
-#/   run_after_install-049-ephemeral-cache.sh
-#/
-#/ Description:
-#/   Places ~/.cache on ephemeral storage for Coder workspaces.
-#/
-#/ Options:
-#/   --help:      Display this help message
+{{ includeTemplate "script-prelude" "cache" }}
+# Places ~/.cache on ephemeral storage for Coder workspaces.
 
 cache_is_ephemeral() {
   [ -L "${HOME}/.cache" ] \
@@ -30,8 +17,6 @@ restore_session_marker() {
 }
 
 main() {
-  bl_parse_help "$@"
-
   if [ -z "${CODER:-}" ]; then
     return 0
   fi
@@ -76,5 +61,5 @@ main() {
   log_warn "configure-ephemeral-storage completed without linking ~/.cache to /mnt/ephemeral"
 }
 
-main "$@"
+main
 {{- end }}

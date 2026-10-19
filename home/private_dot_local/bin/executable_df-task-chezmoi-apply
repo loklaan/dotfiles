@@ -28,7 +28,7 @@ setup_session_logging "$(basename "$0")" "apply"
 #/
 #/   Note: this script is NOT invoked from any mise `[hooks].postinstall` hook.
 #/   Such a hook would re-enter `chezmoi apply` from inside the
-#/   `mise install`/`mise upgrade` calls that `install-050-install-packages.sh`
+#/   `mise install` call that `install-050-install-packages.sh`
 #/   runs during an outer `chezmoi apply`, deadlocking on chezmoi's
 #/   persistent-state lock. Tool versions are converged by lifecycle scripts
 #/   that run later in the outer apply instead.

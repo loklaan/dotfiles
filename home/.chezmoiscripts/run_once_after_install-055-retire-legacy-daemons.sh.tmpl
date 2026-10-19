@@ -1,0 +1,58 @@
+{{- /* One-time migration to config-driven Pitchfork daemons. Pure file
+       deletions live in .chezmoiremove; these need an unload/stop first.
+       - Tear down the daemon managers Pitchfork (Linux) and MCPProxy.app
+         (macOS) replaced.
+       - Restart running Pitchfork daemons once so they adopt the wrapper `run`
+         command: a running daemon keeps its stored command, and neither
+         `start` nor a watch restart reloads it. */ -}}
+{{- $enabled := list "df-skulk" -}}
+{{- if dig "openCodeServer" false . }}{{ $enabled = append $enabled "df-opencode-serve" }}{{ end -}}
+{{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}{{ $enabled = append $enabled "df-mcpproxy" }}{{ end -}}
+{{- if or (eq .chezmoi.os "darwin") (eq .chezmoi.os "linux") -}}
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "daemons" }}
+# Retires legacy daemon managers and moves running Pitchfork daemons onto
+# their wrapper commands (once).
+{{- if eq .chezmoi.os "darwin" }}
+
+# Unload the io.mcpproxy.* launchd agents that MCPProxy.app replaced.
+domain="gui/$(id -u)"
+for label in io.mcpproxy.serve io.mcpproxy.tray; do
+  if launchctl print "${domain}/${label}" >/dev/null 2>&1; then
+    launchctl bootout "${domain}/${label}" 2>/dev/null || true
+    log_detail "Unloaded legacy ${label}"
+  fi
+  rm -f "${HOME}/Library/LaunchAgents/${label}.plist"
+done
+{{- else }}
+
+# Disable the systemd --user mcpproxy.service that Pitchfork replaced. It holds
+# an exclusive lock on ~/.mcpproxy/config.db, so while enabled df-mcpproxy
+# crash-loops with "database is locked by another process".
+unit="mcpproxy.service"
+if command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$unit" >/dev/null 2>&1; then
+  systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+  rm -f "${HOME}/.config/systemd/user/${unit}"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  log_detail "Disabled legacy systemd --user ${unit}"
+fi
+{{- end }}
+{{- if $enabled }}
+
+# Restart a running daemon so it adopts its wrapper command. Rows come from
+# stdout; stderr carries a version WARN that must not match.
+adopt_wrapper() {
+  local daemon="$1"
+  pitchfork list 2>/dev/null | grep -Eq "(^|/)${daemon}[[:space:]]+running" || return 0
+  pitchfork restart --quiet "$daemon" >/dev/null 2>&1 ||
+    fatal "Failed to restart ${daemon} onto its wrapper — check: pitchfork logs ${daemon}"
+  log_detail "Restarted ${daemon} onto its wrapper command"
+}
+
+if command -v pitchfork >/dev/null 2>&1; then
+{{-   range $enabled }}
+  adopt_wrapper {{ . }}
+{{-   end }}
+fi
+{{- end }}
+{{ end -}}

@@ -42,3 +42,26 @@
        needs no entry: its directory target is now a symlink, and chezmoi
        replaces the directory when it writes the symlink. */}}
 .config/opencode/tui-plugins/changed-files.tsx
+{{- /* OMO config moved to the unified ~/.omo/omo.jsonc (rendered by
+       home/dot_omo/modify_omo.jsonc). These are the orphaned legacy config,
+       its migration ledger, and the backup directories OMO's own
+       config-unification migration left behind. Replaces the deleted
+       run_once_after_install-069-cleanup-legacy-omo-config.sh. */}}
+.config/opencode/oh-my-openagent.json
+.config/opencode/oh-my-openagent.json.migrations.json
+.omo/migration-backup-*-opencode-config
+{{- /* The work plugin used to be delivered as a self-managed on-disk bundle;
+       it is now an npm-managed plugin[] entry, and a leftover bundle loads as
+       a stale duplicate. Moved here from run_after_install-067. */}}
+.config/opencode/plugins/canva-llmproxy.js
+.config/opencode/plugins/canva-llmproxy.js.version
+{{- /* The fonts script called font-install, renamed to df-font-install and
+       then retired: run_onchange_after_install-100-install-fonts now runs
+       fc-cache itself. Both binaries are orphans on disk. */}}
+.local/bin/font-install
+.local/bin/df-font-install
+{{- /* peon-ping was retired: formula, tap, setup script and hook config are
+       gone. Remove its hook install dir and the opencode adapter plugin; the
+       settings.json hook entries are pruned by dot_claude/modify_settings.json. */}}
+.claude/hooks/peon-ping
+.config/opencode/plugins/peon-ping.ts

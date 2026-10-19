@@ -17,32 +17,10 @@
 {{- end -}}
 {{- if and (lookPath "opencode") (ne $have $want) -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "plugins"
-
-#/ Usage:
-#/   run_after_install-072-opencode-tui-plugins.sh
-#/
-#/ Description:
-#/   Installs the npm dependencies of the OpenCode TUI plugin package in
-#/   ~/.local/share/dotfiles/opencode-tui-plugins with
-#/   `bun install --frozen-lockfile`, then writes the hash of the package.json
-#/   and bun.lock it installed into node_modules/.dotfiles-install.sha256.
-#/   chezmoi renders this script only while that hash is stale or missing.
-#/
-#/   Uses a standalone bun when one runs, and otherwise the Bun runtime that
-#/   OpenCode is compiled with (BUN_BE_BUN=1). A failed install warns and
-#/   exits 0 without writing the hash, so the next apply retries.
-#/
-#/ Options:
-#/   --help:      Display this help message
+{{ includeTemplate "script-prelude" "plugins" }}
+# Installs the TUI plugin package's dependencies with `bun install
+# --frozen-lockfile`, then stamps the installed package.json+bun.lock hash.
+# A failed install warns and leaves the stamp stale, so the next apply retries.
 
 readonly PACKAGE_DIR={{ $root | quote }}
 readonly STAMP={{ $stamp | quote }}
@@ -73,8 +51,6 @@ find_bun() {
 }
 
 main() {
-  bl_parse_help "$@"
-
   if ! find_bun; then
     log_warn "Skipped OpenCode TUI plugin dependencies: neither bun nor opencode can run Bun"
     return 0
@@ -90,5 +66,5 @@ main() {
   log_detail "Installed ${PACKAGE_DIR}/node_modules from bun.lock"
 }
 
-main "$@"
+main
 {{- end }}

@@ -1,13 +1,14 @@
 # shellcheck shell=bash
 # chezmoi-preflight.sh — pre-apply checks for chezmoi
 #
-# Sourced by chezmoi hooks (apply.pre, update.pre). Runs three checks:
+# Sourced by chezmoi hooks (apply.pre, update.pre). Runs these checks:
 #
 #   1. mise self-heal (non-fatal): re-renders the managed mise config and
 #      reconciles installed tools, so backend/version drift (e.g. legacy
 #      ubi:bitwarden/sdk vs current github:bitwarden/sdk) is corrected
 #      before any template renders. Without this, `chezmoi update` after
-#      a backend migration leaves stale tools on PATH.
+#      a backend migration leaves stale tools on PATH. Skipped under
+#      --dry-run/-n: chezmoi runs hooks even then, and this step writes.
 #
 #   2. Missing binaries (non-fatal): warns if tools that templates depend
 #      on aren't installed. Templates are written to degrade gracefully.
@@ -17,6 +18,9 @@
 #      already falls through to empty on any failure, so a bad token won't
 #      crash apply. The preflight still surfaces a warning + a pointer to
 #      df-setup so silent degradation is visible to the user.
+#
+#   4. Setup reminder (non-fatal): flags a missing BWS token or commit-signing
+#      key, with a pointer to df-setup.
 #
 # df-setup is the single source of truth for "what state is this
 # machine in and what should the user do next". This script is the hook
@@ -71,6 +75,7 @@ chezmoi_preflight() {
   _chezmoi_preflight_prune_unmanaged
   _chezmoi_preflight_tools
   _chezmoi_preflight_bws_token
+  _chezmoi_preflight_setup_reminder
 }
 
 # ABORT an apply whose PATH is too short to render templates correctly.
@@ -151,6 +156,27 @@ _chezmoi_preflight_prune_unmanaged() {
   done
 }
 
+# True when the running chezmoi was invoked with --dry-run/-n. chezmoi runs
+# hooks even under --dry-run, and exports its argv (space-separated, starting
+# with the chezmoi executable) as CHEZMOI_ARGS. Short flags may be clustered
+# (`-nv`), so any single-dash cluster containing n counts. Parsing stops at
+# `--`, after which everything is a target path.
+_chezmoi_preflight_is_dry_run() {
+  local arg
+  local IFS=$' \t\n'
+  # shellcheck disable=SC2086 # deliberate word split of CHEZMOI_ARGS
+  for arg in ${CHEZMOI_ARGS:-}; do
+    case "$arg" in
+      --) return 1 ;;
+      --dry-run) return 0 ;;
+      --*) ;;
+      # Letters only, so an attached value such as `-S/src/dir` never matches.
+      -*n*) [[ "$arg" =~ ^-[A-Za-z]+$ ]] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # Re-render the managed mise config and reconcile installed tools. Runs
 # first so subsequent checks (and templates) see the correct binaries on
 # PATH after a backend migration or version bump.
@@ -162,6 +188,13 @@ _chezmoi_preflight_sync_mise() {
 
   command -v chezmoi >/dev/null 2>&1 || return 0
   command -v mise >/dev/null 2>&1 || return 0
+
+  # Everything below writes to disk (the mise config, mise installs). A
+  # dry-run must not mutate anything, so skip the whole block.
+  if _chezmoi_preflight_is_dry_run; then
+    _pf_emit info 0 "Skipping mise sync (dry run)"
+    return 0
+  fi
 
   local mise_config="${HOME}/.config/mise/config.toml"
 
@@ -229,6 +262,7 @@ _chezmoi_preflight_tools() {
 # state 2 here with a pointer to df-setup. We do NOT abort: apply with empty
 # secrets is a valid state (e.g. fresh machine, or user intentionally
 # operating without the secret store).
+_CHEZMOI_PREFLIGHT_BWS_MISSING=0
 _chezmoi_preflight_bws_token() {
   local setup_bin="${HOME}/.local/bin/df-setup"
 
@@ -240,7 +274,11 @@ _chezmoi_preflight_bws_token() {
   "$setup_bin" --probe-bws >/dev/null 2>&1 || rc=$?
 
   case "$rc" in
-    0|1)
+    0)
+      return 0
+      ;;
+    1)
+      _CHEZMOI_PREFLIGHT_BWS_MISSING=1
       return 0
       ;;
     2)
@@ -253,6 +291,22 @@ _chezmoi_preflight_bws_token() {
       return 0
       ;;
   esac
+}
+
+# Remind about incomplete setup: no BWS token (from the probe above) or no
+# commit-signing key. The key lives in chezmoi data, which a hook cannot read,
+# so .chezmoi.toml.tmpl exports CHEZMOI_SIGNING_KEY_SET via [scriptEnv]; an
+# unset value (config predating it) is treated as "set" to avoid a false alarm.
+_chezmoi_preflight_setup_reminder() {
+  local no_signing=0
+  [ "${CHEZMOI_SIGNING_KEY_SET:-1}" = "0" ] && no_signing=1
+  [ "$_CHEZMOI_PREFLIGHT_BWS_MISSING" = "1" ] || [ "$no_signing" = "1" ] || return 0
+
+  [ "$_CHEZMOI_PREFLIGHT_BWS_MISSING" = "1" ] &&
+    _pf_emit warn 0 "Missing BWS token (npm auth, GitHub tokens)"
+  [ "$no_signing" = "1" ] &&
+    _pf_emit warn 0 "Missing signing key (git commit signing)"
+  _pf_emit warn 1 "Run 'df-setup' for instructions"
 }
 
 chezmoi_preflight

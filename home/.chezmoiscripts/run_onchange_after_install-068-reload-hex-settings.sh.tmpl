@@ -1,42 +1,10 @@
 {{- if eq .chezmoi.os "darwin" -}}
 {{- $settingsHash := include "Library/Containers/com.kitlangton.Hex/Data/Library/Application Support/com.kitlangton.Hex/modify_hex_settings.json" | sha256sum -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "hex"
-
+{{ includeTemplate "script-prelude" "hex" }}
+# Restarts a RUNNING Hex when its managed settings change: Hex reads
+# hex_settings.json only at launch. Never touches Recordings/ or history.
 # content-hash: {{ $settingsHash }}
-
-#/ Usage:
-#/   run_onchange_after_install-068-reload-hex-settings.sh
-#/
-#/ Description:
-#/   Reloads the Hex dictation app so it picks up chezmoi-managed word
-#/   remappings after they change on disk.
-#/
-#/   Why this exists: Hex (com.kitlangton.Hex) reads its
-#/   hex_settings.json ONCE at launch and does not watch the file for
-#/   external edits. chezmoi's modify-template writes the managed
-#/   wordRemappings/wordRemovals into that file during `chezmoi apply`,
-#/   but a Hex instance that was already running never sees the change —
-#/   the managed remappings silently fail to take effect until the next
-#/   manual restart. This script closes that lifecycle gap: whenever the
-#/   managed settings source changes (content-hash above), it restarts a
-#/   RUNNING Hex so the new settings load. If Hex is not running, it does
-#/   nothing — the settings are already on disk and will load on next
-#/   launch.
-#/
-#/   Safety: this ONLY restarts the app process. It never touches the
-#/   user's Recordings/ directory or transcription_history.json, which
-#/   are not chezmoi-managed and live alongside the settings file.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
 
 HEX_APP="Hex"
 HEX_BUNDLE="com.kitlangton.Hex"
@@ -72,5 +40,5 @@ main() {
   }
 }
 
-main "$@"
+main
 {{- end -}}

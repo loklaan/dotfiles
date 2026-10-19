@@ -33,7 +33,7 @@ and must write or admit no Bedrock provider when the lever is empty or cleared.
 ## Skill reconcile
 
 `skill-reconcile.test.sh` runs
-`run_after_install-060-reconcile-skills.sh.tmpl` against canned
+`run_after_install-060-skills.sh.tmpl` (rendered first) against canned
 `df-skills reconcile` envelopes from a shim. It pins the envelope contract: a
 boundary's `healthy` is `true`, `false`, or `null`, and `null` means not
 observed, which counts as healthy. Linux renders packages as `null` because it

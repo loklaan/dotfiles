@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+#/ Usage:
+#/   df-mcpproxy-serve
+#/
+#/ Description:
+#/   Stable `run` command of the df-mcpproxy Pitchfork daemon (Linux). Reads
+#/   its flags from ~/.config/dotfiles/mcpproxy-serve.env (rendered by
+#/   chezmoi), so changing them never changes the command Pitchfork stored;
+#/   Pitchfork watches the env file and restarts this wrapper instead. The
+#/   listen address comes from ~/.mcpproxy/mcp_config.json.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+ENV_FILE="${HOME}/.config/dotfiles/mcpproxy-serve.env"
+
+main() {
+  if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+  fi
+
+  if [ ! -r "$ENV_FILE" ]; then
+    echo "df-mcpproxy-serve: missing ${ENV_FILE} (is mcpproxyGate enabled?)" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+
+  exec mcpproxy serve --log-level "${MCPPROXY_LOG_LEVEL:-error}"
+}
+
+main "$@"

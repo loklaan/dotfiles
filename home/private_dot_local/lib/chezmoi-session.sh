@@ -92,3 +92,27 @@ chezmoi_session_post() {
   rm -f "$CHEZMOI_SESSION_MARKER" "$tmpdir/.chezmoi-session-current" /tmp/.chezmoi-session-current 2>/dev/null || true
   return 0
 }
+
+#|----------------------------------------------------------------------------|
+#| Shared body of the apply.pre and update.pre hooks: open the session, fix
+#| known permission drift, then run the preflight checks (after the session
+#| exists, so their warnings land in the session log).
+#|
+#| Usage: chezmoi_hook_pre apply|update
+#|
+chezmoi_hook_pre() {
+  chezmoi_session_pre "$1"
+
+  # macOS: normalize directory permissions that drift from chezmoi's expected
+  # modes. launchd resets ~/Library/LaunchAgents to 0744 after plist loading,
+  # but chezmoi expects 0755. Normalizing here prevents the apply-time prompt.
+  # See: https://github.com/twpayne/chezmoi/issues/769
+  if [ "$(uname)" = "Darwin" ]; then
+    chmod 755 "${HOME}/Library/LaunchAgents" 2>/dev/null || true
+  fi
+
+  # Pre-flight checks for required tools
+  local preflight="${HOME}/.local/lib/chezmoi-preflight.sh"
+  # shellcheck source=./chezmoi-preflight.sh
+  [ -f "$preflight" ] && source "$preflight" || true
+}

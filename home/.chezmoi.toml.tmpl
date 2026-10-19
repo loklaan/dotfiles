@@ -49,29 +49,25 @@
 {{-   end }}
 {{- end }}
 
-# Session logging hooks. The bodies live in
-# home/private_dot_local/lib/chezmoi-session.sh so apply and update share one
-# implementation; the hooks source it from the chezmoi source tree (always the
-# current version, and available before targets are materialised on a fresh
-# box). Preflight runs after the session exists so its warnings can land in the
-# session log.
+# Environment for every script and hook. Homebrew must never self-update or
+# print hints mid-apply; upgrades run from `mise run update`.
+[scriptEnv]
+  HOMEBREW_NO_AUTO_UPDATE = "1"
+  HOMEBREW_NO_ENV_HINTS = "1"
+  # Read by chezmoi-preflight.sh's setup reminder (hooks cannot read [data]).
+  CHEZMOI_SIGNING_KEY_SET = "{{ if ne "" $signingKey }}1{{ else }}0{{ end }}"
+
+# Session logging hooks. The bodies (chezmoi_hook_pre, chezmoi_session_post)
+# live in home/private_dot_local/lib/chezmoi-session.sh so apply and update
+# share one implementation; the hooks source it from the chezmoi source tree
+# (always the current version, and available before targets are materialised
+# on a fresh box). chezmoi_hook_pre runs preflight after the session exists so
+# its warnings can land in the session log.
 [hooks.apply.pre]
   command = "bash"
   args = ["-euo", "pipefail", "-c", '''
 source "{{ .chezmoi.sourceDir }}/private_dot_local/lib/chezmoi-session.sh"
-chezmoi_session_pre apply
-
-# macOS: normalize directory permissions that drift from chezmoi's expected
-# modes. launchd resets ~/Library/LaunchAgents to 0744 after plist loading,
-# but chezmoi expects 0755. Normalizing here prevents the apply-time prompt.
-# See: https://github.com/twpayne/chezmoi/issues/769
-if [ "$(uname)" = "Darwin" ]; then
-  chmod 755 "${HOME}/Library/LaunchAgents" 2>/dev/null || true
-fi
-
-# Pre-flight checks for required tools
-PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
-[ -f "$PREFLIGHT" ] && source "$PREFLIGHT" || true
+chezmoi_hook_pre apply
 ''']
 [hooks.apply.post]
   command = "bash"
@@ -83,19 +79,7 @@ chezmoi_session_post
   command = "bash"
   args = ["-euo", "pipefail", "-c", '''
 source "{{ .chezmoi.sourceDir }}/private_dot_local/lib/chezmoi-session.sh"
-chezmoi_session_pre update
-
-# macOS: normalize directory permissions that drift from chezmoi's expected
-# modes. launchd resets ~/Library/LaunchAgents to 0744 after plist loading,
-# but chezmoi expects 0755. Normalizing here prevents the apply-time prompt.
-# See: https://github.com/twpayne/chezmoi/issues/769
-if [ "$(uname)" = "Darwin" ]; then
-  chmod 755 "${HOME}/Library/LaunchAgents" 2>/dev/null || true
-fi
-
-# Pre-flight checks for required tools
-PREFLIGHT="${HOME}/.local/lib/chezmoi-preflight.sh"
-[ -f "$PREFLIGHT" ] && source "$PREFLIGHT" || true
+chezmoi_hook_pre update
 ''']
 [hooks.update.post]
   command = "bash"

@@ -1,0 +1,32 @@
+{{- /* Converges Pitchfork with the rendered config: re-runs when the config or
+       a gate flips. Running daemons pick up their own changes through `watch`
+       (see private_dot_config/pitchfork); this only registers the login
+       service against [settings.boot] executable, starts enabled daemons
+       (a no-op when running) and stops disabled ones. Renders empty — nothing
+       recorded, retried next apply — until pitchfork is on PATH. */ -}}
+{{- $openCode := dig "openCodeServer" false . -}}
+{{- $mcpproxy := and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) -}}
+{{- /* df-skulk is ungated: always enabled. */ -}}
+{{- $enabled := list "df-skulk" -}}
+{{- $disabled := list -}}
+{{- if $openCode }}{{ $enabled = append $enabled "df-opencode-serve" }}{{ else }}{{ $disabled = append $disabled "df-opencode-serve" }}{{ end -}}
+{{- if $mcpproxy }}{{ $enabled = append $enabled "df-mcpproxy" }}{{ else }}{{ $disabled = append $disabled "df-mcpproxy" }}{{ end -}}
+{{- if lookPath "pitchfork" -}}
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "daemons" }}
+source "${HOME}/.local/lib/pitchfork-lifecycle.sh"
+# Registers the Pitchfork login service, starts enabled daemons and stops
+# disabled ones.
+# pitchfork config: {{ includeTemplate "private_dot_config/pitchfork/config.toml.tmpl" . | sha256sum }}
+# enabled: {{ $enabled | join " " }}
+# disabled: {{ $disabled | join " " }}
+{{  if $enabled }}
+pf_boot_enable
+{{-   range $enabled }}
+pf_start {{ . }}
+{{-   end }}
+{{- end }}
+{{- range $disabled }}
+pf_stop {{ . }}
+{{- end }}
+{{ end -}}

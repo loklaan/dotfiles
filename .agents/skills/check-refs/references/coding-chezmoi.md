@@ -63,8 +63,7 @@ The skill lives at `.agents/skills/coding-chezmoi/` with reference files in
 3. Flag any use of a `bwsId*` variable outside such a wrapper call (other than
    its definition in `home/.chezmoi.toml.tmpl`), and any legacy
    `bitwardenSecrets` call.
-4. Shell scripts that call the wrapper directly (for example
-   `run_after_install-065-opencode-auth.sh.tmpl`) must also pass the token-file
+4. Shell scripts that call the wrapper directly must also pass the token-file
    path as the second argument.
 5. Report if the documented pattern has diverged from any usage site.
 

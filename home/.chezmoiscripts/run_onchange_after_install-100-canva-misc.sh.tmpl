@@ -1,59 +1,26 @@
-{{- if eq .machineProfile "work" -}}
+{{- if eq (dig "machineProfile" "personal" .) "work" -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "canva"
-
-#/ Usage:
-#/   canva-misc.sh
-#/
-#/ Description:
-#/   Installs Canva-specific quirks. Some actions are scoped to dev boxes
-#/   via the DEVBOX_EMAIL environment variable.
-#/
-#/ Environment Variables:
-#/   DEVBOX_EMAIL:            Available in Canva dev boxes; if set to your work email, enables dev box quirks.
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
-
-parse_args() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        fatal "Unknown argument: $1"
-        ;;
-    esac
-  done
-
-  config_in_canva_devbox="false"
-  if [ "{{ .machineProfile }}" = "work" ] && [ "${DEVBOX_EMAIL:-}" = "{{ .emailWork }}" ]; then
-    config_in_canva_devbox="true"
-  fi
-}
+{{ includeTemplate "script-prelude" "canva" }}
+# Canva-specific quirks. Dev box quirks apply only when DEVBOX_EMAIL (set on
+# Canva dev boxes) is the work email.
 
 main() {
-  parse_args "$@"
-
-  if [ "$config_in_canva_devbox" = "true" ]; then
+  if [ "${DEVBOX_EMAIL:-}" = {{ .emailWork | quote }} ]; then
     log_step "Applying Canva dev box quirks"
 
-    # Ensure mise for the canva monorepo is installed in the devbox-specific directory structure.
-    cd ~/work/canva && mise trust --quiet .mise.local.toml && ln -s ../../dev/canva/canva/.mise.local.toml .  >/dev/null 2>&1 || true
-
-    log_detail "Trusted the canva monorepo mise config"
+    # Ensure mise for the canva monorepo is installed in the devbox-specific
+    # directory structure: link the config if it is not there yet, then trust it.
+    if (
+      cd ~/work/canva &&
+        { [ -e .mise.local.toml ] || ln -s ../../dev/canva/canva/.mise.local.toml .; } &&
+        mise trust --quiet .mise.local.toml
+    ) >/dev/null 2>&1; then
+      log_detail "Trusted the canva monorepo mise config"
+    else
+      log_warn "Failed to trust the canva monorepo mise config"
+    fi
   fi
 }
 
-main "$@"
+main
 {{ end -}}

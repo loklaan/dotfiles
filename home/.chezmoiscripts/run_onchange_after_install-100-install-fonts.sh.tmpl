@@ -1,0 +1,26 @@
+{{- if eq .chezmoi.os "linux" -}}
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "fonts" }}
+# Refreshes the fontconfig cache after the fonts in
+# .chezmoiexternals/fonts.toml.tmpl land in ~/.local/share/fonts. macOS Core
+# Text reads ~/Library/Fonts directly, so this renders only on Linux.
+# fonts: {{ include ".chezmoiexternals/fonts.toml.tmpl" | sha256sum }}
+
+main() {
+  local font_dir="${HOME}/.local/share/fonts"
+  if ! command -v fc-cache >/dev/null 2>&1; then
+    log_warn "fc-cache not found — font cache not updated"
+    log_warn_cont "Install the fontconfig package to enable font cache updates"
+    return 0
+  fi
+  if [ ! -d "$font_dir" ]; then
+    log_warn "Missing font directory (expected at ${font_dir})"
+    return 0
+  fi
+
+  log_step "Updating font cache"
+  run_quiet fc-cache -f "$font_dir"
+}
+
+main
+{{ end -}}

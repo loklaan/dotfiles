@@ -1,41 +1,15 @@
 {{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) -}}
 {{- /* Build a content-hash from all rendered nginx site configs so this
        script re-runs only when one of them actually changes. */ -}}
-{{- $oc := include "private_dot_config/nginx/opencode.conf.tmpl" -}}
-{{- $mp := include "private_dot_config/nginx/mcpproxy.conf.tmpl" -}}
-{{- $ei := include "private_dot_config/nginx/exe-index.conf.tmpl" -}}
+{{- $oc := includeTemplate "private_dot_config/nginx/opencode.conf.tmpl" . -}}
+{{- $mp := includeTemplate "private_dot_config/nginx/mcpproxy.conf.tmpl" . -}}
+{{- $ei := includeTemplate "private_dot_config/nginx/exe-index.conf.tmpl" . -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "nginx"
-
+{{ includeTemplate "script-prelude" "nginx" }}
+# Installs the rendered nginx site configs from ~/.config/nginx/ into
+# /etc/nginx/sites-available/ (owning those files and their sites-enabled
+# links), validates with `nginx -t` and reloads. Needs passwordless sudo.
 # content-hash: {{ printf "%s|%s|%s" ($oc | sha256sum) ($mp | sha256sum) ($ei | sha256sum) | sha256sum }}
-
-#/ Usage:
-#/   run_onchange_after_install-066-nginx-sites.sh
-#/
-#/ Description:
-#/   Installs chezmoi-rendered nginx site configs from ~/.config/nginx/ into
-#/   /etc/nginx/sites-available/, manages sites-enabled symlinks, validates
-#/   with `nginx -t`, and reloads nginx.
-#/
-#/   The nginx site configs are rendered by chezmoi from templates in
-#/   private_dot_config/nginx/*.conf.tmpl, which consume the shared port
-#/   definitions in .chezmoidata/ports.toml. nginx owns the external (nice)
-#/   ports; pitchfork daemons bind to the internal ports.
-#/
-#/   This script OWNS /etc/nginx/sites-available/{opencode,mcpproxy,
-#/   exe-index}.conf and their sites-enabled symlinks. Hand-edits
-#/   to those files will be overwritten on the next chezmoi apply.
-#/
-#/   Requires passwordless sudo (already available on Coder/exe.dev boxes).
-#/
-#/ Options:
-#/   --help:      Display this help message
-usage() { grep '^#/' "$0" | cut -c4-; }
 
 SRC_DIR="${HOME}/.config/nginx"
 SITES_AVAILABLE="/etc/nginx/sites-available"
@@ -107,5 +81,5 @@ main() {
   log_detail "Reloaded nginx"
 }
 
-main "$@"
+main
 {{- end }}

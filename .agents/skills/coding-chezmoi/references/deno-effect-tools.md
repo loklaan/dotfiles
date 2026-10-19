@@ -64,8 +64,8 @@ For the Effect v4 deep dive (module docs, migration guides, annotated examples):
   process-group management. `df-effect-v4-reference` is also exempt: it
   relaunches itself with per-operation grants, so its narrow first-stage grant
   is the design.
-- Deno version: **2.9.5** (pinned in
-  `home/private_dot_config/mise/config.toml.tmpl`)
+- Deno version: **2.9.7** (pinned in `home/private_dot_config/mise/config.toml`
+  and its `mise.lock`)
 - Minimal grants: only add permissions the tool actually uses
 
 ---
@@ -1167,8 +1167,8 @@ Deno is unavailable only during base-OS bootstrap. After initial install it is
 guaranteed. So the bash-only set is small and specific:
 
 - **`install.sh`** — entry point, runs before mise/deno exist.
-- **`run_after_install-050-install-packages`** (+ `bash-logging.sh`) — installs
-  deno; cannot depend on it.
+- **`run_onchange_after_install-050-install-packages`** (+ `bash-logging.sh`) —
+  installs deno; cannot depend on it.
 - **`chezmoi-preflight.sh`** — apply/update pre-hook, runs on the bootstrap
   apply.
 - **`safe-rm`** — early-PATH safety, deliberately portable.

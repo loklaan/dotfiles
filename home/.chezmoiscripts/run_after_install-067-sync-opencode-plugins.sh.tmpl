@@ -4,33 +4,13 @@
 {{- $machineProfile := dig "machineProfile" "personal" . -}}
 {{- $workRegistry := dig "npmWorkRegistry" "" . -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-source "${HOME}/.local/lib/bash-logging.sh"
+{{ includeTemplate "script-prelude" "plugins" }}
 source "${HOME}/.local/lib/tool-cache-sync.sh"
-setup_session_logging "$(basename "$0")" "plugins"
 
-#/ Usage:
-#/   run_after_install-067-sync-opencode-plugins.sh
-#/
-#/ Description:
-#/   Clears OpenCode's cached @latest plugin package dirs on every apply so
-#/   OpenCode re-resolves them on next launch. OpenCode owns plugin
-#/   installation; chezmoi only invalidates the sticky cache.
-#/
-#/   OpenCode installs plugins with npm. npm resolves the @canva depot scope
-#/   from ~/.config/.npmrc (npm's XDG userconfig path). BUT npm's HTTP cache
-#/   (~/.npm/_cacache) can hold a STALE packument whose `latest` dist-tag points
-#/   at an old version; OpenCode only re-resolves @latest when its package cache
-#/   dir is absent, and on that re-resolve it reads npm's cached packument. So a
-#/   frozen plugin needs BOTH levers: bust OpenCode's package dir AND invalidate
-#/   npm's cached packument for that package, so the next launch resolves the
-#/   current @latest from the depot.
-#/
-#/   The work plugin cache is skipped when a local dist path overrides it.
-usage() { grep '^#/' "$0" | cut -c4-; }
+# Clears OpenCode's cached @latest plugin package dirs every apply so OpenCode
+# re-resolves them on next launch. For the work plugin it also invalidates
+# npm's cached packument, whose stale `latest` would otherwise be re-read on
+# that re-resolve. Skipped when a local dist path overrides the work plugin.
 
 cache_dir=$(tcs_get_opencode_cache) || exit 0
 packages_dir="${cache_dir}/packages"
@@ -59,13 +39,4 @@ if command -v npm >/dev/null 2>&1; then
   fi
 fi
 {{- end }}
-
-# Remove any leftover self-managed on-disk bundle from the previous delivery
-# approach so OpenCode doesn't load a stale duplicate alongside the npm-managed
-# plugin[] entry. No-op once migrated.
-legacy_bundle="${HOME}/.config/opencode/plugins/canva-llmproxy.js"
-if [ -f "$legacy_bundle" ]; then
-  rm -f "$legacy_bundle" "${legacy_bundle}.version"
-  log_detail "Removed legacy self-managed bundle: ${legacy_bundle}"
-fi
 {{- end }}

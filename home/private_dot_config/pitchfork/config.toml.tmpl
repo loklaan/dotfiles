@@ -1,41 +1,62 @@
 #:schema https://pitchfork.jdx.dev/schema.json
+{{- /* Daemons are config-driven. A running daemon never picks up a changed
+      `run`/`env` (even watch/retry restarts reuse the stored command), so each
+      `run` is a stable chezmoi-managed wrapper that reads its settings from a
+      chezmoi-rendered env file. `watch` lists that env file, the wrapper and
+      the binary's mise install dir: chezmoi only writes files, and Pitchfork
+      restarts the daemon when any of them changes. The lifecycle script
+      run_onchange_after_install-056-pitchfork-daemons only starts/stops
+      daemons when a gate flips and keeps the login service registered. */ -}}
+{{- $home := .chezmoi.homeDir -}}
+{{- $mise := joinPath $home ".local/share/mise/installs" -}}
+{{- $path := printf "%s/.local/bin:%s/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" $home $home -}}
+{{- /* Login service binary, written by `pitchfork boot enable`. mise's
+      `latest` link survives pitchfork upgrades; rendered only once it exists
+      so a fresh box never points at a missing file. */ -}}
+{{- $pitchforkBin := joinPath $mise "github-jdx-pitchfork/latest/pitchfork" -}}
+{{- if stat $pitchforkBin }}
+[settings.boot]
+executable = "{{ $pitchforkBin }}"
+{{  end -}}
+{{- /* Ungated: skulk runs on every machine. */}}
 [daemons.df-skulk]
-run = "skulk daemon"
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin", SKULK_OPENCODE = "{{ .chezmoi.homeDir }}/.local/bin/opencode2", SKULK_ALLOW_EXEC = "0" }
+run = "{{ $home }}/.local/bin/df-skulk-serve"
+watch = [
+  "{{ $home }}/.config/dotfiles/skulk-serve.env",
+  "{{ $home }}/.local/bin/df-skulk-serve",
+  "{{ $mise }}/npm-kitlangton-skulk/**",
+]
+dir = "{{ $home }}"
+env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }
 retry = true
 boot_start = true
 ready_delay = 2
-
-{{- if dig "openCodeServer" false . -}}
-{{- /* When nginxProxy is enabled, daemons bind to loopback on the internal
-      port and nginx reverse-proxies the external port. When disabled, daemons
-      bind directly to 0.0.0.0 on Linux/Coder. macOS stays loopback-only. */ -}}
-{{- $ocBind := "127.0.0.1" -}}
-{{- $ocPort := .ports.opencode.external -}}
-{{- if and (eq .chezmoi.os "linux") (not (dig "nginxProxy" false .)) -}}
-{{-   $ocBind = "0.0.0.0" -}}
-{{- end -}}
-{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) -}}
-{{-   $ocBind = "127.0.0.1" -}}
-{{-   $ocPort = .ports.opencode.internal -}}
-{{- end }}
+{{  if dig "openCodeServer" false . }}
 [daemons.df-opencode-serve]
-run = "opencode serve --hostname {{ $ocBind }} --port {{ $ocPort }}"
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
+run = "{{ $home }}/.local/bin/df-opencode-serve"
+watch = [
+  "{{ $home }}/.config/dotfiles/opencode-serve.env",
+  "{{ $home }}/.local/bin/df-opencode-serve",
+  "{{ $mise }}/opencode/**",
+]
+dir = "{{ $home }}"
+env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }
 retry = true
 boot_start = true
 ready_delay = 2
-{{- end }}
-
+{{  end -}}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
 [daemons.df-mcpproxy]
-run = "mcpproxy serve --log-level error"
-watch = ["{{ .chezmoi.homeDir }}/.mcpproxy/mcp_config.json"]
-dir = "{{ .chezmoi.homeDir }}"
-env = { HOME = "{{ .chezmoi.homeDir }}", PATH = "{{ .chezmoi.homeDir }}/.local/bin:{{ .chezmoi.homeDir }}/.local/share/mise/shims:/usr/bin:/usr/local/bin:/bin" }
+run = "{{ $home }}/.local/bin/df-mcpproxy-serve"
+watch = [
+  "{{ $home }}/.config/dotfiles/mcpproxy-serve.env",
+  "{{ $home }}/.local/bin/df-mcpproxy-serve",
+  "{{ $home }}/.mcpproxy/mcp_config.json",
+  "{{ $mise }}/github-smart-mcp-proxy-mcpproxy-go/**",
+]
+dir = "{{ $home }}"
+env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }
 retry = true
 boot_start = true
 ready_delay = 2
-{{- end }}
+{{  end -}}

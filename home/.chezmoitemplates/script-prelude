@@ -1,0 +1,13 @@
+{{- /* Shared prelude for home/.chezmoiscripts. The data is the script's log
+       topic (a string): {{ includeTemplate "script-prelude" "topic" }}.
+       The shebang stays literal on the script's first line (df-lint-runtimes
+       reads line 1); include this right after it. */ -}}
+set -euo pipefail
+
+IFS=$'\n\t'
+
+TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
+
+source "${HOME}/.local/lib/bash-logging.sh"
+setup_session_logging "$(basename "$0")" {{ . | quote }}

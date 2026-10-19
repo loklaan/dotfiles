@@ -2,7 +2,7 @@
 # zsh bytecode is generated at runtime beside sourced plugin files.
 *.zwc
 **/*.zwc
-{{ if ne (dig "machineProfile" "personal" .) "work" }}
+{{ if and (ne (dig "machineProfile" "personal" .) "work") (ne .chezmoi.os "linux") }}
 .local/share/opencode/auth.json
 {{ end }}
 {{ if not (stat (joinPath .chezmoi.homeDir "work/canva/tools/dotslash/bin/gh")) }}
@@ -12,4 +12,14 @@
 Library/**
 .local/bin/df-dictation-archive
 .config/dotfiles/dictation-archive.json
+{{ end }}
+{{- /* Pitchfork daemon wrappers and their env files exist only where the
+       daemon is enabled (see private_dot_config/pitchfork). */}}
+{{ if not (dig "openCodeServer" false .) }}
+.local/bin/df-opencode-serve
+.config/dotfiles/opencode-serve.env
+{{ end }}
+{{ if not (and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .)) }}
+.local/bin/df-mcpproxy-serve
+.config/dotfiles/mcpproxy-serve.env
 {{ end }}

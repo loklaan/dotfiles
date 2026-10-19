@@ -5,7 +5,7 @@
 // scripts in a `chezmoi apply` use. Without a shared module every TS tool that
 // prints into the same apply output re-derives the ANSI/prefix handling, so
 // changing a prefix — or dropping colour when stdout is not a TTY — means
-// editing install-my-completions, install-my-packages, df-font-install, cw
+// editing install-my-completions, install-my-packages, cw
 // and df-setup one by one.
 //
 // This module is the single TS source of truth. It MUST stay behaviourally

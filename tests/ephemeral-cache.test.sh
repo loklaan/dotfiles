@@ -43,7 +43,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sed '1d;$d' "$LIFECYCLE" > "$rendered"
+printf '%s\n' '{"chezmoi":{"os":"linux"},"machineProfile":"work","ephemeralCache":true}' > "$test_root/data.json"
+chezmoi execute-template -S "$ROOT" --override-data-file "$test_root/data.json" -f "$LIFECYCLE" > "$rendered"
 bash -n "$rendered"
 
 mkdir -p "$test_root/home/.local/lib" "$test_root/bin"

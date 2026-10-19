@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "skills" }}
+# Reconciles skill registry links and providers, then packages eligible skills
+# as Claude Desktop ZIPs in ~/.cache/claude-skill-packs (macOS only; Linux
+# removes packs an earlier apply built) and observes overall skill health.
+
+stderr_files=()
+cleanup_skill_temps() {
+  local path
+  for path in "${stderr_files[@]+"${stderr_files[@]}"}"; do
+    rm -f -- "$path"
+  done
+}
+trap cleanup_skill_temps EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+MANIFEST="$HOME/.config/dotfiles/skill-lifecycle.json"
+PACKAGE_DIR="$HOME/.cache/claude-skill-packs"
+
+# Runs `df-skills <args>`, stores stdout in SKILLS_RAW and the exit status in
+# SKILLS_STATUS, and appends stdout+stderr to the session log.
+SKILLS_RAW=""
+SKILLS_STATUS=0
+run_df_skills() {
+  local stderr_file
+  stderr_file="$(mktemp "${TMPDIR}/df-skills-$1.XXXXXX")"
+  stderr_files+=("$stderr_file")
+  SKILLS_STATUS=0
+  SKILLS_RAW="$(df-skills "$@" 2>"$stderr_file")" || SKILLS_STATUS=$?
+  if [ -n "${BASH_LOGGING_FILE:-}" ]; then
+    printf '%s\n' "$SKILLS_RAW" >> "$BASH_LOGGING_FILE"
+    cat "$stderr_file" >> "$BASH_LOGGING_FILE"
+  fi
+}
+
+reconcile() {
+  local raw source_count source_names provider_count
+
+  run_df_skills reconcile --manifest "$MANIFEST"
+  raw="$SKILLS_RAW"
+  if [ "$SKILLS_STATUS" -ne 0 ]; then
+    log_fail "Skill reconciliation failed (exit $SKILLS_STATUS)"
+    log_warn_cont "Run: df-skills reconcile --manifest $MANIFEST"
+    return "$SKILLS_STATUS"
+  fi
+
+  # Boundary health is true, false, or null: df-skills renders null for a
+  # boundary it did not observe (packages on Linux, which builds no packs) and
+  # counts it as healthy.
+  if ! source_count="$(printf '%s' "$raw" | jq -er '.sources | length' 2>/dev/null)" ||
+    ! source_names="$(printf '%s' "$raw" | jq -er '.sources | keys | join(", ")' 2>/dev/null)" ||
+    ! provider_count="$(printf '%s' "$raw" | jq -er '.providers | length' 2>/dev/null)" ||
+    ! printf '%s' "$raw" | jq -e '(.reconcileHealthy | type == "boolean") and all(.registry, .packages; has("healthy") and (.healthy | type == "boolean" or type == "null"))' >/dev/null 2>&1; then
+    log_fail "Skill reconciliation returned malformed JSON"
+    log_warn_cont "Run: df-skills reconcile --manifest $MANIFEST"
+    return 1
+  fi
+  if ! printf '%s' "$raw" | jq -e '(.reconcileHealthy == true) and (.registry.healthy != false)' >/dev/null 2>&1; then
+    log_fail "Skill reconciliation reported a failure"
+    log_warn_cont "Run: df-skills reconcile --manifest $MANIFEST"
+    return 1
+  fi
+
+  log_ok "Reconciled: $source_count sources"
+  [ "$source_count" -eq 0 ] || log_cont "$source_names"
+  if [ "$provider_count" -gt 0 ]; then
+    log_detail "Providers: $provider_count"
+  fi
+  log_detail "Registry healthy; package drift deferred to packaging"
+}
+
+# Opens the pack directory in Finder so new packs can be dragged into Claude
+# Desktop. The packs are already in place, so a failed open only warns.
+reveal_packages() {
+  [ "$(uname -s)" = "Darwin" ] || return 0
+  if ! open "$PACKAGE_DIR" >/dev/null 2>&1; then
+    log_warn "Could not open ${PACKAGE_DIR} in Finder"
+  fi
+}
+
+package_and_observe() {
+  local package_status observe_status package_raw observe_raw
+
+  run_df_skills package --manifest "$MANIFEST" --package-dir "$PACKAGE_DIR"
+  package_raw="$SKILLS_RAW" package_status="$SKILLS_STATUS"
+  run_df_skills observe --manifest "$MANIFEST" --package-dir "$PACKAGE_DIR"
+  observe_raw="$SKILLS_RAW" observe_status="$SKILLS_STATUS"
+
+  if [ "$package_status" -eq 0 ]; then
+    if ! printf '%s' "$package_raw" | jq -e '(.changed | type == "boolean") and (.packaged | type == "number") and (.removed | type == "number")' >/dev/null 2>&1; then
+      package_status=1
+      log_fail "Skill packaging returned malformed JSON"
+    elif [ "$(printf '%s' "$package_raw" | jq -er '.changed' 2>/dev/null)" = "false" ]; then
+      log_skip "Packages unchanged"
+    else
+      log_ok "Packages updated: $(printf '%s' "$package_raw" | jq -er '.packaged' 2>/dev/null) packaged, $(printf '%s' "$package_raw" | jq -er '.removed' 2>/dev/null) removed"
+      if printf '%s' "$package_raw" | jq -e '.packaged > 0' >/dev/null 2>&1; then
+        log_note "${PACKAGE_DIR}/"
+        reveal_packages
+      fi
+    fi
+  else
+    log_fail "Skill packaging failed (exit $package_status)"
+  fi
+
+  if [ "$observe_status" -eq 0 ]; then
+    if ! printf '%s' "$observe_raw" | jq -e '.healthy == true' >/dev/null 2>&1; then
+      observe_status=1
+      log_fail "Skill observation found unresolved drift"
+    else
+      log_detail "Skill health: sources, providers, registry, and packages healthy"
+    fi
+  else
+    log_fail "Skill observation failed (exit $observe_status)"
+  fi
+
+  [ "$package_status" -eq 0 ] || return "$package_status"
+  return "$observe_status"
+}
+
+main() {
+  if [ ! -f "$MANIFEST" ]; then
+    log_skip "Skills are disabled because no manifest was projected"
+    return 0
+  fi
+  if ! command -v df-skills >/dev/null 2>&1; then
+    fatal "Cannot reconcile skills: df-skills is not installed"
+  fi
+
+  reconcile
+  package_and_observe
+}
+
+main

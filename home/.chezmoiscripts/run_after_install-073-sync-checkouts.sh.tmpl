@@ -2,29 +2,12 @@
 {{- if not (kindIs "map" $checkouts) -}}{{- fail "checkouts must be an object" -}}{{- end -}}
 {{- if gt (len $checkouts) 0 -}}
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-source "${HOME}/.local/lib/bash-logging.sh"
+{{ includeTemplate "script-prelude" "checkouts" }}
 source "${HOME}/.local/lib/checkout-sync.sh"
-setup_session_logging "$(basename "$0")" "checkouts"
-
-#/ Usage:
-#/   run_after_install-073-sync-checkouts.sh
-#/
-#/ Description:
-#/   Keeps each machine-local [data.checkouts.<name>] git checkout on the tip
-#/   of its branch and runs its build, on every apply. Entries live only in
-#/   the machine's chezmoi.toml:
-#/
-#/     [data.checkouts.<name>]
-#/       path = "{homeDir}/dev/project"   # required
-#/       branch = "main"                  # default: the checked-out branch
-#/       build = "make"                   # default: none
-#/       busyWhen = ["opencode"]          # skip while these run in a terminal
-#/
-#/   A skipped or failed checkout is reported and never fails the apply.
+# Fast-forwards each machine-local [data.checkouts.<name>] checkout and builds
+# it (see readme "Tracked Checkouts"). run_after_, not run_onchange_: the
+# input is the remote branch tip, which no source hash can track.
+# A skipped or failed checkout is reported and never fails the apply.
 
 log_step "Syncing local checkouts"
 {{- range $name := keys $checkouts | sortAlpha }}

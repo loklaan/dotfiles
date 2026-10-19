@@ -34,7 +34,7 @@
 #|   the log reads as one column even through foreign output.                  |
 #|                                                                            |
 #| SECTION BOUNDARIES — one per script, same text in terminal and log:         |
-#|     [HH:MM:SS] ──── install-060-reconcile-skills.sh ────                    |
+#|     [HH:MM:SS] ──── install-060-skills.sh ────                              |
 #|   chezmoi runs lifecycle scripts from <numeric-id>.<name>; the id is        |
 #|   stripped. Nested calls (a script spawning another logging script inside   |
 #|   its own tee) do not open a second section.                                |
@@ -57,8 +57,8 @@
 #| run_before_install SCRIPTS: they run before chezmoi materialises targets,   |
 #|   so ~/.local/lib is the PREVIOUS apply's copy and a newly added helper     |
 #|   here would abort their apply with exit 127. They must source this file    |
-#|   from {{ .chezmoi.sourceDir }} instead. See                                |
-#|   run_after_install-060-reconcile-skills.sh.tmpl.                           |
+#|   from {{ .chezmoi.sourceDir }} instead (the shared script-prelude          |
+#|   template sources ~/.local/lib, so it is for run_after_ scripts only).     |
 #|                                                                            |
 #| Environment Variables:                                                     |
 #|   DEBUG=1              Enable command tracing (set -x) in logs            |

@@ -100,9 +100,9 @@ Run automatically during chezmoi operations.
 3-digit numbers control execution order within a phase:
 
 ```
-run_after_install-050-install-packages.sh.tmpl     # Every time, order 050
-run_once_after_install-100-change-term.sh.tmpl     # Once only, order 100
-run_onchange_after_install-100-canva-misc.sh.tmpl  # When changed, order 100
+run_after_install-058-fix-system-gitconfig-refspec.sh.tmpl  # Every time, order 058
+run_once_after_install-100-change-term.sh.tmpl              # Once only, order 100
+run_onchange_after_install-050-install-packages.sh.tmpl     # When changed, order 050
 ```
 
 ### `.chezmoiexternals/` — External Archives
@@ -143,6 +143,8 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 ├── mcp-servers-claude-json-tmpl
 ├── mcp-servers-codex-toml-tmpl
 ├── mcp-servers-opencode-mcpproxy-json-tmpl
+├── opencode-work-plugin-tmpl
+├── script-prelude
 ├── zprofile-body
 └── zshrc-body
 ```
@@ -155,6 +157,7 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 | `mcp-servers-claude-json-tmpl` | Claude-format definition of the local MCP proxy server. | `home/modify_dot_claude.json`, `home/Library/Application Support/Claude/modify_claude_desktop_config.json` |
 | `mcp-servers-codex-toml-tmpl` | Codex TOML definition of the local MCP proxy server. | None currently. |
 | `mcp-servers-opencode-mcpproxy-json-tmpl` | OpenCode-format definition of the local MCP proxy server. | `home/private_dot_config/opencode/modify_opencode.json`, `home/private_dot_config/opencode2/modify_opencode.json` |
+| `script-prelude` | Bash prelude for every `home/.chezmoiscripts` script (strict mode, IFS, TMPDIR, bash-logging, session logging). Its data is the log topic string. | Every script in `home/.chezmoiscripts/` |
 | `zprofile-body` | Managed `~/.zprofile` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zprofile` |
 | `zshrc-body` | Managed `~/.zshrc` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zshrc` |
 
@@ -260,7 +263,7 @@ Template files in `.chezmoitemplates/` do NOT have `.tmpl` suffix.
 {{ $list | reverse }}           # Reverse order
 ```
 
-Always use `sortAlpha | uniq` when processing package lists.
+Always use `sortAlpha | uniq` when processing package lists (sourced from `home/.chezmoidata/packages.yaml`).
 
 ### Dictionaries
 

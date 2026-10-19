@@ -71,9 +71,10 @@ mise cannot manage V2:
   at all.
 
 So a `[tools]` entry installs the wrong package.
-`run_after_install-071-opencode2.sh` installs into the private prefix
-`~/.local/share/opencode2` instead, tracking the `beta` tag rather than pinning
-because the beta ships near-daily.
+`run_onchange_after_install-071-opencode2.sh.tmpl` installs into the private
+prefix `~/.local/share/opencode2` instead. It installs the exact version pinned
+in `home/.chezmoidata/opencode2.yaml`, which Renovate bumps once a release is 4
+days old, and re-runs only when that pin changes.
 
 The private prefix is load-bearing: **mise shims sit ahead of `~/.local/bin` on
 `$PATH`** (see `env.zsh.tmpl`), so a mise shim named `opencode2` would shadow
@@ -230,7 +231,8 @@ unwritten, so the next apply retries.
 
 | Path | Purpose |
 |---|---|
-| `home/.chezmoiscripts/run_after_install-071-opencode2.sh` | Installs/refreshes the `opencode2` beta into `~/.local/share/opencode2` on every apply |
+| `home/.chezmoiscripts/run_onchange_after_install-071-opencode2.sh.tmpl` | Installs the pinned `@opencode/cli` into `~/.local/share/opencode2` when the pin changes |
+| `home/.chezmoidata/opencode2.yaml` | The `@opencode/cli` version pin (Renovate-bumped) |
 | `home/private_dot_local/bin/executable_opencode2` | Wrapper supplying `OPENCODE_CONFIG_DIR` + `OPENCODE_DB` so V2 never touches V1 state |
 | `home/private_dot_config/opencode2/modify_opencode.json` | V2's global config in native V2 shape, separate from V1's |
 | `home/private_dot_local/share/dotfiles/opencode-tui-plugins/` | The `/changes` TUI plugin package both versions load, with its `package.json` and `bun.lock` |

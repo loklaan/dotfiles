@@ -115,7 +115,7 @@ Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it 
 - `home/` — all managed files and directories
 - `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
 - `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, packaging, and catalogue export (`df-skills export --out <dir>`); Claude pack ZIPs and the catalogue share one verified skill-file reader (`exportedFiles`)
-- `catalogue/` — repo-root publication facts that chezmoi never applies: `setups/*.md` (curated setup entries, checked against the rendered OpenCode plugin list), `providers.yaml` (label, upstream and permission basis per provider), and `notices/<provider>/` (licence texts that travel with that provider's items)
+- `.agents/catalogue/` — repo-level publication facts that chezmoi never applies: `setups/*.md` (curated setup entries, checked against the rendered OpenCode plugin list), `providers.yaml` (label, upstream and permission basis per provider), and `notices/<provider>/` (licence texts that travel with that provider's items)
 - `home/private_dot_local/share/dotfiles/skills/` — repository/Git/archive skill store acquired or materialized by chezmoi; `df-skills` owns only receipt-recorded derived archive trees and individual links in the mixed `~/.agents/skills/` registry
 - `home/.chezmoitemplates/zshrc-body` — zsh entry point; `home/modify_private_dot_zshrc` renders it as a marked section so installer-appended lines survive and apply never prompts (same for `zprofile-body`)
 - `home/private_dot_config/private_zsh/init/*.zsh.tmpl` — zsh init modules
@@ -142,6 +142,7 @@ live in `home/private_dot_local/lib/chezmoi-session.sh`:
    appends to that file instead — so `df-task-update` and `install.sh` produce
    one log for the whole run instead of a near-empty hook log.
 2. **`setup_session_logging "$(basename "$0")" "<topic>"`** in each script
+   (lifecycle scripts get it from the `script-prelude` partial)
    reads the marker, opens a tee to the log, prints the section boundary
    (`[HH:MM:SS] ──── script-name ────`, chezmoi's `<numeric-id>.` temp prefix
    stripped), and tags every structured line with the padded topic column
@@ -171,29 +172,24 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 
 | Topic | Scripts |
 |---|---|
-| `skills` | reconcile skills (060) and package/observe eligible skills (070) |
-| `packages` | install-050 + install-my-packages |
+| `skills` | skills (060): reconcile, then package/observe eligible skills |
+| `packages` | install-packages (050) + install-my-packages |
 | `cache` | ephemeral-cache (049) |
 | `tmux` | tmux-continuum-boot (054) |
-| `peon-ping` | setup-peon-ping (055) |
-| `mcpproxy` | mcpproxy-daemon (056) |
+| `daemons` | retire-legacy-daemons (055), pitchfork-daemons (056) |
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
-| `opencode` | opencode-serve (063) |
-| `auth` | opencode-auth (065) |
 | `plugins` | sync-opencode-plugins + opencode-tui-plugins (067/072) |
 | `nginx` | nginx-sites (066) |
 | `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
-| `omo` | cleanup-legacy-omo-config (069) |
 | `opencode2` | opencode2 (071) |
-| `fonts` | install-fonts (100) |
+| `fonts` | install-fonts (100, Linux) |
 | `completions` | install-zsh-completions (100) |
 | `shell` | change-term (100) |
 | `canva` | canva-misc (100) |
-| `status` | setup-status (900) |
 | `install` | install.sh |
 | `github` | github-token |
-| `mise` | df-task-mise-upgrade |
+| `mise` | df-task-mise-upgrade (bumps the source mise.lock) |
 | `dotfiles` | df-task-chezmoi-update |
 | `apply` | df-task-chezmoi-apply |
 
@@ -214,9 +210,11 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 
 ### Adding a Lifecycle Script
 
-1. Create: `home/.chezmoiscripts/run_after_name-NNN-description.sh.tmpl`
-2. Use bash boilerplate
-3. Choose prefix: `run_`, `run_once_`, `run_onchange_`
+1. Create: `home/.chezmoiscripts/run_after_install-NNN-description.sh.tmpl`
+2. Use the lifecycle prelude (see coding-patterns.md § Lifecycle scripts)
+3. Choose prefix: `run_` (every apply), `run_once_`, or `run_onchange_` with
+   a content-hash comment of everything the script depends on
+4. Add it to `home/.chezmoidata/runtime-tiers.yaml` and the topic map above
 
 ### Adding External Archives
 

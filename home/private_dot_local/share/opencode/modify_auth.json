@@ -1,13 +1,25 @@
 {{- /* chezmoi:modify-template */ -}}
-{{- /* Auth placeholders for @canva/opencode-plugin-llmproxy. Only rendered on
-       work machines — .chezmoiignore skips this file on every other profile.
+{{- /* Chezmoi's keys in ~/.local/share/opencode/auth.json. .chezmoiignore
+       skips this file unless the machine is on the work profile or Linux.
 
-       A modify_ template, not a plain file: other writers own other keys here.
-       run_after_install-065-opencode-auth writes the opencode/opencode-go API
-       keys on Linux, and `opencode auth login` may add more. A plain file made
-       every apply either prompt ("has changed since chezmoi last wrote it") or
-       wipe those keys. Only the keys below are chezmoi's; the rest is kept.
+       A modify_ template, not a plain file: other writers own other keys here
+       (`opencode auth login` may add more). A plain file made every apply
+       either prompt ("has changed since chezmoi last wrote it") or wipe those
+       keys. Only the keys below are chezmoi's; the rest is kept.
 
+       Shape MUST be { type: "api", key: ... }: this is what opencode's own
+       Auth.set writes and what `opencode auth list` reads (it filters entries
+       by .type==="api" && typeof .key==="string").
+
+       --- opencode / opencode-go API key (Linux) ---------------------------
+       The opencode-family providers share one account key, fetched from BWS.
+       When the key does not resolve (no token, expired, no access) the
+       existing entries are left exactly as they are. opencode key
+       *resolution* for API calls does not read this file — it uses
+       options.apiKey in config (see modify_opencode.json); this keeps
+       `opencode auth list` accurate. macOS handles opencode auth differently.
+
+       --- @canva/opencode-plugin-llmproxy placeholders (work) --------------
        opencode (V1) only invokes a plugin's auth.loader for providers that
        have an entry in auth.json (provider.ts: `if (!stored) continue`).
        Without these placeholders the plugin loads but never wires up its
@@ -29,8 +41,30 @@
        opencode2 needs none of these: it imports this file once into its own
        database, and the plugin routes Bedrock without a stored credential. */ -}}
 {{- $auth := fromJson (default "{}" .chezmoi.stdin) -}}
-{{- $placeholder := dict "type" "api" "key" "llmproxy" -}}
-{{- $_ := set $auth "amazon-bedrock" $placeholder -}}
-{{- $_ := set $auth "google" $placeholder -}}
-{{- $_ := set $auth "openai" $placeholder -}}
+{{- if eq .chezmoi.os "linux" -}}
+{{-   $bwsToken := "" -}}
+{{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-     $bwsToken = include .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{-   $bwsIdOpencodeApiKey := dig "bwsIdOpencodeApiKey" "" . -}}
+{{-   $opencodeApiKey := "" -}}
+{{-   if and (ne "" $bwsToken) (ne "" $bwsIdOpencodeApiKey) (stat $bwsGet) -}}
+{{-     $opencodeApiKey = output $bwsGet $bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   if ne "" $opencodeApiKey -}}
+{{-     $_ := set $auth "opencode" (dict "type" "api" "key" $opencodeApiKey) -}}
+{{-     $_ := set $auth "opencode-go" (dict "type" "api" "key" $opencodeApiKey) -}}
+{{-   end -}}
+{{- end -}}
+{{- if eq (dig "machineProfile" "personal" .) "work" -}}
+{{-   $placeholder := dict "type" "api" "key" "llmproxy" -}}
+{{-   $_ := set $auth "amazon-bedrock" $placeholder -}}
+{{-   $_ := set $auth "google" $placeholder -}}
+{{-   $_ := set $auth "openai" $placeholder -}}
+{{- end -}}
+{{- /* Nothing to write and no file yet: render empty so chezmoi creates
+       nothing (065, which this replaces, never created an empty file). */ -}}
+{{- if or (ne "" (default "" .chezmoi.stdin | trim)) (gt (len $auth) 0) -}}
 {{ toPrettyJson $auth | trim }}
+{{- end }}

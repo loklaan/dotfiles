@@ -1,45 +1,18 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-IFS=$'\n\t'
-
-# Normalize TMPDIR (strip trailing slash for consistent path construction)
-TMPDIR="${TMPDIR:-/tmp}"
-TMPDIR="${TMPDIR%/}"
-
-# Source shared logging library and setup session logging
-source "${HOME}/.local/lib/bash-logging.sh"
-setup_session_logging "$(basename "$0")" "tmux"
-
-#/ Usage:
-#/   run_after_install-054-tmux-continuum-boot.sh
-#/
-#/ Description:
-#/   Removes the boot integration tmux-continuum's @continuum-boot option
-#/   installs. tmux.conf now sets @continuum-boot 'off' on every platform, so
-#/   continuum stops re-arming it at the next tmux start — but it never deletes
-#/   what it already wrote, so both platforms need an explicit sweep.
-#/
-#/   Linux: a systemd user unit with a booby-trapped ExecStop chain
-#/   (`resurrect/scripts/save.sh` then `tmux kill-server`) that anyone could
-#/   restart. That save runs against a dying server, writes a 0-byte snapshot,
-#/   and resurrect still claims it as `last`, which is how a restored session
-#/   comes back as one blank window.
-#/
-#/   Deliberately never stops an ACTIVE unit: `systemctl stop` would execute
-#/   exactly that destructive ExecStop chain, including killing the tmux server
-#/   the user may currently be attached to. An active unit is only disabled and
-#/   left to expire at the next boot.
-#/
-#/   macOS: a `Tmux.Start.plist` LaunchAgent whose damage is in the START
-#/   action. At every login it AppleScripts Terminal.app open and runs a bare
-#/   `tmux`, creating a NEW session rather than attaching to the restored one;
-#/   the next autosave then writes that stub over `last`. Unlike the Linux unit
-#/   this has no stop action, so booting it out is safe and it is removed
-#/   outright.
-#/
-#/ Options:
-#/   --help:      Display this help message
+{{ includeTemplate "script-prelude" "tmux" }}
+# Removes the boot integration tmux-continuum's @continuum-boot option left
+# behind (tmux.conf now sets it 'off', but continuum never deletes what it wrote).
+#
+# Linux: a systemd user unit whose ExecStop runs resurrect's save.sh then
+# `tmux kill-server`. That save runs against a dying server, writes a 0-byte
+# snapshot that resurrect still claims as `last`, so a restore comes back as one
+# blank window. An ACTIVE unit is never stopped (that would run the chain and
+# kill the server the user may be attached to); it is disabled and left to
+# expire at the next boot.
+#
+# macOS: a Tmux.Start.plist LaunchAgent that, at every login, opens Terminal.app
+# and runs a bare `tmux`, creating a NEW session the next autosave writes over
+# `last`. It has no stop action, so booting it out is safe.
 {{ if eq .chezmoi.os "linux" -}}
 UNIT_NAME="tmux.service"
 UNIT_FILE="${HOME}/.config/systemd/user/${UNIT_NAME}"
@@ -92,8 +65,6 @@ remove_continuum_boot_launchagent() {
 {{- end }}
 
 main() {
-  bl_parse_help "$@"
-
   case "$(uname -s)" in
 {{ if eq .chezmoi.os "linux" -}}
     Linux)  remove_continuum_boot_unit ;;
@@ -107,4 +78,4 @@ main() {
   esac
 }
 
-main "$@"
+main

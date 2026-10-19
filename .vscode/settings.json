@@ -4,7 +4,6 @@
   "deno.enablePaths": ["home/private_dot_local/bin"],
   "files.associations": {
     "**/home/private_dot_local/bin/executable_cw": "typescript",
-    "**/home/private_dot_local/bin/executable_df-font-install": "typescript",
     "**/home/private_dot_local/bin/executable_df-json-escape": "typescript",
     "**/home/private_dot_local/bin/executable_df-lint-runtimes": "typescript",
     "**/home/private_dot_local/bin/executable_df-omo-profile": "typescript",

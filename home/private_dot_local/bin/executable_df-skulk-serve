@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+#/ Usage:
+#/   df-skulk-serve
+#/
+#/ Description:
+#/   Stable `run` command of the df-skulk Pitchfork daemon. Reads its settings
+#/   from ~/.config/dotfiles/skulk-serve.env (rendered by chezmoi), so
+#/   changing them never changes the command Pitchfork stored; Pitchfork
+#/   watches the env file and restarts this wrapper instead.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+ENV_FILE="${HOME}/.config/dotfiles/skulk-serve.env"
+
+main() {
+  if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+  fi
+
+  if [ ! -r "$ENV_FILE" ]; then
+    echo "df-skulk-serve: missing ${ENV_FILE}" >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+  set +a
+  : "${SKULK_OPENCODE:?not set in ${ENV_FILE}}"
+
+  exec skulk daemon
+}
+
+main "$@"

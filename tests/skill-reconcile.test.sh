@@ -10,14 +10,14 @@ IFS=$'\n\t'
 # against another revision of the script.
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SCRIPT="${SKILL_RECONCILE_SCRIPT:-${ROOT}/home/.chezmoiscripts/run_after_install-060-reconcile-skills.sh.tmpl}"
+TEMPLATE="${SKILL_RECONCILE_SCRIPT:-${ROOT}/home/.chezmoiscripts/run_after_install-060-skills.sh.tmpl}"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
-[ -f "$SCRIPT" ] || fail "missing lifecycle script: ${SCRIPT}"
+[ -f "$TEMPLATE" ] || fail "missing lifecycle script: ${TEMPLATE}"
 
 test_root=$(mktemp -d)
 cleanup() {
@@ -28,6 +28,10 @@ trap cleanup EXIT
 home="${test_root}/home"
 mkdir -p "${home}/.local/lib" "${home}/.config/dotfiles" "${test_root}/bin"
 cp "${ROOT}/home/private_dot_local/lib/bash-logging.sh" "${home}/.local/lib/bash-logging.sh"
+
+# The lifecycle script is a template (it includes the shared prelude).
+SCRIPT="${test_root}/skills.sh"
+chezmoi execute-template -S "$ROOT" -f "$TEMPLATE" > "$SCRIPT" || fail "could not render ${TEMPLATE}"
 printf '{}\n' > "${home}/.config/dotfiles/skill-lifecycle.json"
 
 # The script runs under a temporary HOME, where a mise shim would try to
@@ -35,9 +39,15 @@ printf '{}\n' > "${home}/.config/dotfiles/skill-lifecycle.json"
 jq_bin=$(mise which jq 2>/dev/null || command -v jq) || fail "jq is not on PATH"
 ln -s "$jq_bin" "${test_root}/bin/jq"
 
+# reconcile returns the case's envelope; package and observe report a healthy
+# no-op so only the reconcile contract decides each case.
 cat > "${test_root}/bin/df-skills" <<'SHIM'
 #!/usr/bin/env bash
-cat "$SKILL_RECONCILE_TEST_ENVELOPE"
+case "$1" in
+  reconcile) cat "$SKILL_RECONCILE_TEST_ENVELOPE" ;;
+  package) printf '{"changed":false,"packaged":0,"removed":0}\n' ;;
+  observe) printf '{"healthy":true}\n' ;;
+esac
 SHIM
 chmod +x "${test_root}/bin/df-skills"
 

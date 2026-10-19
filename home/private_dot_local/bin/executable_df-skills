@@ -2916,13 +2916,17 @@ function* inspectState(active: Active, locations: Locations) {
 // === Catalogue export =====================================================
 // `df-skills export --out <dir>` writes the publishable catalogue: every skill
 // and rule the repository itself declares, the curated setups in
-// catalogue/setups/, and the provider facts in catalogue/providers.yaml, as
-// finished files plus a manifest. The repository defaults in
-// home/.chezmoidata/skill-lifecycle.yaml are the allow-list: machine-local
+// .agents/catalogue/setups/, and the provider facts in
+// .agents/catalogue/providers.yaml, as finished files plus a manifest. The
+// repository defaults in home/.chezmoidata/skill-lifecycle.yaml are the
+// allow-list: machine-local
 // skillSources are never exported. Applied state is exported only after
 // `chezmoi verify` confirms it matches the source, and archive skills only after
 // their acquisition matches the declared lock.
 export const catalogueFormat = "dotfiles-catalogue/v1";
+// Repo-relative home of the publication facts; outside home/ so chezmoi never
+// applies it.
+export const catalogueDir = ".agents/catalogue";
 const version = "0.4.0";
 const LifecycleItem = Schema.Union([
   Id,
@@ -3289,13 +3293,13 @@ const collectRules = Effect.fn(function* (repoRoot: string, home: string) {
 });
 const collectSetups = Effect.fn(function* (repoRoot: string, home: string) {
   const fs = yield* FileSystem;
-  const directory = `${repoRoot}/catalogue/setups`;
+  const directory = `${repoRoot}/${catalogueDir}/setups`;
   const files = ((yield* fs.readDirectory(directory).pipe(absent)) ?? [])
     .filter((name) => name.endsWith(".md")).toSorted();
   const setups: Array<Record<string, Schema.Json>> = [];
   let plugins: unknown = undefined;
   for (const file of files) {
-    const relative = `catalogue/setups/${file}`;
+    const relative = `${catalogueDir}/setups/${file}`;
     const { frontmatter, steps } = yield* parseSetupDocument(
       yield* readRepoText(repoRoot, relative),
     );
@@ -3392,13 +3396,13 @@ const collectProviders = Effect.fn(function* (
   const declared = (yield* readYaml(
     CatalogueProviders,
     repoRoot,
-    "catalogue/providers.yaml",
+    `${catalogueDir}/providers.yaml`,
   )).providers;
   for (const id of used) {
     if (!(id in declared)) {
       return yield* exportFault(
         "ProviderUndeclared",
-        `catalogue/providers.yaml has no entry for provider ${id}`,
+        `${catalogueDir}/providers.yaml has no entry for provider ${id}`,
       );
     }
   }
@@ -3412,13 +3416,13 @@ const collectProviders = Effect.fn(function* (
     if (!used.has(id)) {
       return yield* exportFault(
         "ProviderUnused",
-        `catalogue/providers.yaml declares ${id}, which no exported item or setup uses; remove it`,
+        `${catalogueDir}/providers.yaml declares ${id}, which no exported item or setup uses; remove it`,
       );
     }
     const archive = archives.find((candidate) => candidate.id === id);
     const listed: ExportFile[] = [];
     for (const name of entry.notices ?? []) {
-      const source = `${repoRoot}/catalogue/notices/${id}/${name}`;
+      const source = `${repoRoot}/${catalogueDir}/notices/${id}/${name}`;
       const info = yield* physical(source, "File");
       if (info === null) {
         return yield* exportFault(
@@ -5464,7 +5468,7 @@ Deno.test("export expands lifecycle path placeholders and normalises file modes"
   assert.equal(exportMode(0o700), "0755");
 });
 // deno-fmt-ignore
-const catalogueIntegration = [architectureCatalogPath, new URL("catalogue/", architectureRepoRoot)].every((path) => Deno.permissions.querySync({ name: "read", path }).state === "granted");
+const catalogueIntegration = [architectureCatalogPath, new URL(`${catalogueDir}/`, architectureRepoRoot)].every((path) => Deno.permissions.querySync({ name: "read", path }).state === "granted");
 Deno.test({
   name:
     "repository catalogue declares every exported provider and parses its setups",
@@ -5476,7 +5480,7 @@ Deno.test({
       parseYaml(await read("home/.chezmoidata/skill-lifecycle.yaml")),
     );
     const declared = Schema.decodeUnknownSync(CatalogueProviders)(
-      parseYaml(await read("catalogue/providers.yaml")),
+      parseYaml(await read(`${catalogueDir}/providers.yaml`)),
     ).providers;
     const used = new Set(["authored"]);
     for (
@@ -5489,19 +5493,21 @@ Deno.test({
     }
     for await (
       const entry of Deno.readDir(
-        new URL("catalogue/setups/", architectureRepoRoot),
+        new URL(`${catalogueDir}/setups/`, architectureRepoRoot),
       )
     ) {
       if (!entry.name.endsWith(".md")) continue;
       const setup = await Effect.runPromise(
-        parseSetupDocument(await read(`catalogue/setups/${entry.name}`)),
+        parseSetupDocument(await read(`${catalogueDir}/setups/${entry.name}`)),
       );
       used.add(setup.frontmatter.provider);
     }
     assert.deepEqual([...used].toSorted(), Object.keys(declared).toSorted());
     for (const [id, provider] of Object.entries(declared)) {
       for (const notice of provider.notices ?? []) {
-        assert.ok((await read(`catalogue/notices/${id}/${notice}`)).length > 0);
+        assert.ok(
+          (await read(`${catalogueDir}/notices/${id}/${notice}`)).length > 0,
+        );
       }
     }
   },
