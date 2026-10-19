@@ -196,13 +196,25 @@ _chezmoi_preflight_sync_mise() {
     return 0
   fi
 
-  local mise_config="${HOME}/.config/mise/config.toml"
-
-  # Render the managed mise config to disk first, so `mise install` below
-  # picks up version/backend migrations before any template renders.
-  if ! chezmoi apply --force "$mise_config" >/dev/null 2>&1; then
-    _pf_emit warn 0 "Failed to apply managed mise config"
+  # Copy the managed mise config, lock and lock sidecars to disk first, so
+  # `mise install` below sees version/backend changes before any template
+  # renders. A nested `chezmoi apply` cannot do this: the outer apply holds
+  # chezmoi's persistent-state lock, so it always failed here. The files are
+  # plain (not templates), so a copy from the source dir is the same output.
+  local src="${CHEZMOI_SOURCE_DIR:-$(chezmoi source-path 2>/dev/null)}"
+  local from="${src}/private_dot_config/mise" to="${HOME}/.config/mise"
+  if [ ! -f "${from}/config.toml" ] || [ ! -f "${from}/mise.lock" ]; then
+    _pf_emit warn 0 "Missing managed mise config in ${from}"
     return 0
+  fi
+  mkdir -p "$to"
+  local f
+  for f in config.toml mise.lock; do
+    cmp -s "${from}/${f}" "${to}/${f}" || cp "${from}/${f}" "${to}/${f}"
+  done
+  if [ -d "${from}/dot_mise" ]; then
+    mkdir -p "${to}/.mise"
+    cp -R "${from}/dot_mise/." "${to}/.mise/"
   fi
 
   # Remove the deprecated ubi:bitwarden/sdk install if a machine was
