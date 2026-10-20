@@ -1,5 +1,36 @@
 [tools]
 
+# OpenCode 2's oh-my-opencode-slim plugin layers <project>/.opencode/
+# oh-my-opencode-slim.json over the user config, so sessions in this repo
+# default to a cheaper agent preset. Every profile's rendered user config
+# defines the preset (work: Haiku/Luna on Bedrock; personal: a copy of
+# `personal`). The file is generated and gitignored, never committed, so a
+# temporary edit stays local: the task only creates it when it is missing, and
+# skips while the user config lacks the preset (the plugin warns on an unknown
+# one). Recreate it with `mise run opencode:slim --force`.
+[hooks]
+postinstall = { task = "opencode:slim" }
+enter = { task = "opencode:slim" }
+
+[tasks."opencode:slim"]
+description = "Create .opencode/oh-my-opencode-slim.json (repo default agent preset) if missing"
+usage = 'flag "-f --force" help="Overwrite an existing file"'
+quiet = true
+env = { SLIM_PRESET = "cheap" }
+run = '''
+set -eu
+f=.opencode/oh-my-opencode-slim.json
+user=$HOME/.config/opencode2/oh-my-opencode-slim.json
+if [ -e "$f" ] && [ "${usage_force:-false}" != "true" ]; then exit 0; fi
+if ! jq -e --arg p "$SLIM_PRESET" '.presets[$p]' "$user" >/dev/null 2>&1; then
+  echo "opencode:slim: $user has no \"$SLIM_PRESET\" preset yet; not writing $f" >&2
+  exit 0
+fi
+mkdir -p .opencode
+printf '{\n  "preset": "%s"\n}\n' "$SLIM_PRESET" > "$f"
+echo "opencode:slim: wrote $f (preset \"$SLIM_PRESET\")" >&2
+'''
+
 # The linter is the manifest's only parser: `list-deno` emits the deno file list
 # for the lint task below, so there is no second YAML implementation to keep in
 # step (and no PyYAML dependency).

@@ -207,6 +207,10 @@ _chezmoi_preflight_sync_mise() {
     _pf_emit warn 0 "Missing managed mise config in ${from}"
     return 0
   fi
+  # The repo's own .mise.toml defines [hooks], which mise refuses to load from
+  # an untrusted directory, so every mise call inside the checkout would fail.
+  # chezmoi already runs this repo's code, so trusting it adds no exposure.
+  [ -f "${src%/home}/.mise.toml" ] && mise trust --quiet "${src%/home}/.mise.toml" >/dev/null 2>&1
   mkdir -p "$to"
   local f
   for f in config.toml mise.lock; do

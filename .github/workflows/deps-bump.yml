@@ -36,6 +36,10 @@ concurrency:
 
 env:
   MISE_CONFIG: home/private_dot_config/mise/config.toml
+  # The repo .mise.toml defines [hooks]: mise only loads it when trusted, and
+  # its hooks are for local checkouts, so CI trusts it and skips them.
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  MISE_NO_HOOKS: "1"
 
 jobs:
   bump:

@@ -9,6 +9,8 @@ SB=$(mktemp -d)
 trap 'rm -rf "$SB"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export HOME="$SB/home" BR=feat
+# The repo .mise.toml has [hooks], so mise needs it trusted; this HOME is fresh.
+export MISE_TRUSTED_CONFIG_PATHS="$ROOT" MISE_NO_HOOKS=1
 BOX="$SB/box"
 FAILED=0
 
