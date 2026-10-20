@@ -43,7 +43,7 @@ Smithers is agent-driven: the human asks for an outcome and the coding agent
 starts, watches, verifies, and steers the durable run. Never run `smthrs skills
 add` or `smthrs mcp add`: chezmoi manages these dotfiles, including agent
 workflow instructions and MCP entries. This skill owns the preferred workflow
-instructions, and its own MCP entry owns the preferred structured tools.
+instructions, and the Smithers CLI is the interface.
 
 Smithers becomes the execution layer only after the decision gate is met. At
 that point, avoid ad-hoc background subagents for the work Smithers owns;

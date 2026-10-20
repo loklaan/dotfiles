@@ -60,7 +60,9 @@
         "skills" false
         "agents" false
         "plugins" false)) -}}
-{{- $block = set $block "disabled_mcps" (list "context7" "websearch" "webfetch" "grep_app") -}}
+{{- /* Built-in MCPs the proxy already serves (context7, websearch, grep_app),
+       generated from the shared catalogue. lsp and ast_grep stay enabled. */ -}}
+{{- $block = set $block "disabled_mcps" (includeTemplate "mcp-client-tmpl" (dict "data" . "client" "oh-my-openagent") | fromJson) -}}
 {{- $block = mergeOverwrite $block (dict
       "team_mode" (dict
         "enabled" false

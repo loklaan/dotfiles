@@ -1,0 +1,71 @@
+{{- /* One client's MCP entries: the same lane set for every client, projected
+     into that client's config shape.
+
+       mp-codemode   -> <origin>/mcp/
+       mp-<profile>  -> <origin>/mcp/p/<profile>, one per .mcpproxyProfiles entry
+
+     <origin> is loopback plus .ports.mcpproxy.internal, which MCPProxy binds
+     (its `listen` in ~/.mcpproxy/mcp_config.json). With nginxProxy on, nginx
+     also listens on the external port. Local clients still dial the internal
+     loopback port, so they never depend on nginx.
+
+     Arguments (dict):
+       data    the template root context (`.`)
+       client  opencode | opencode2 | claude-code | claude-desktop | codex
+               | oh-my-opencode-slim | oh-my-openagent
+
+     Output: a JSON object of entries keyed by name. For codex the output is
+     TOML text: one [mcp_servers.<name>] table per lane. For the two OpenCode
+     plugins the output is their `disabled_mcps` JSON list: each built-in MCP
+     the plugin would register directly (.mcpPluginBuiltins) whose
+     replacement is in the merged catalogue, so it is reached via the proxy. */ -}}
+{{- $d := .data -}}
+{{- $client := .client -}}
+
+{{- $builtins := dig "mcpPluginBuiltins" (dict) $d -}}
+{{- if hasKey $builtins $client -}}
+{{-   $catalogue := includeTemplate "mcp-catalogue-tmpl" (dict "data" $d) | fromJson -}}
+{{-   $disabled := list -}}
+{{-   range $builtin, $replacement := get $builtins $client -}}
+{{-     if hasKey $catalogue $replacement -}}
+{{-       $disabled = append $disabled $builtin -}}
+{{-     end -}}
+{{-   end -}}
+{{    $disabled | sortAlpha | toJson }}
+{{- else -}}
+{{- $origin := printf "http://127.0.0.1:%v" $d.ports.mcpproxy.internal -}}
+{{- $lanes := list (list "mp-codemode" (printf "%s/mcp/" $origin)) -}}
+{{- range $profile := (dig "mcpproxyProfiles" (list) $d) -}}
+{{-   $slug := dig "name" "" $profile -}}
+{{-   if ne "" $slug -}}
+{{-     $lanes = append $lanes (list (printf "mp-%s" $slug) (printf "%s/mcp/p/%s" $origin $slug)) -}}
+{{-   end -}}
+{{- end -}}
+
+{{- if eq $client "codex" -}}
+{{-   $tables := list -}}
+{{-   range $lane := $lanes -}}
+{{-     $tables = append $tables (printf "[mcp_servers.%s]\nurl = %s" (index $lane 0) (index $lane 1 | quote)) -}}
+{{-   end -}}
+{{    join "\n\n" $tables }}
+{{- else -}}
+{{-   $out := dict -}}
+{{-   range $lane := $lanes -}}
+{{-     $name := index $lane 0 -}}
+{{-     $url := index $lane 1 -}}
+{{-     if eq $client "opencode" -}}
+{{-       $out = set $out $name (dict "type" "remote" "enabled" true "url" $url) -}}
+{{-     else if eq $client "opencode2" -}}
+{{-       $out = set $out $name (dict "type" "remote" "url" $url "disabled" false) -}}
+{{-     else if eq $client "claude-code" -}}
+{{-       $out = set $out $name (dict "type" "http" "url" $url) -}}
+{{-     else if eq $client "claude-desktop" -}}
+{{- /* Claude Desktop's config is stdio-only; bridge with mcp-remote. */ -}}
+{{-       $out = set $out $name (dict "command" "npx" "args" (list "-y" "mcp-remote" $url)) -}}
+{{-     else -}}
+{{-       fail (printf "mcp-client-tmpl: unknown client %q" $client) -}}
+{{-     end -}}
+{{-   end -}}
+{{    $out | toJson }}
+{{- end -}}
+{{- end -}}

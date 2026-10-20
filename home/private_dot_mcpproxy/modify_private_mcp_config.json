@@ -1,151 +1,11 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* Resolve API keys from Bitwarden Secrets via the soft-fail wrapper so
-       per-secret access gaps (a machine account without Context7 access,
-       for example) produce an empty key rather than aborting apply. */ -}}
-{{- $bwsToken := "" -}}
-{{- if and (lookPath "bws") (stat .bwsTokenPath) -}}
-{{-   $bwsToken = include .bwsTokenPath | trim -}}
-{{- end -}}
-{{- $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
-{{- $context7Key := "" -}}
-{{- $exaKey := "" -}}
-{{- $pushbulletToken := "" -}}
-{{- /* dig the data var so machines whose active config predates it (not yet
-       re-inited) degrade gracefully instead of aborting apply on a missing key. */ -}}
-{{- $pushbulletSecretId := dig "bwsIdPushbulletAccessToken" "" . -}}
-{{- if and (ne "" $bwsToken) (stat $bwsGet) -}}
-{{-   $context7Key = output $bwsGet .bwsIdContext7ApiKey .bwsTokenPath | trim -}}
-{{-   $exaKey = output $bwsGet .bwsIdExaApiKey .bwsTokenPath | trim -}}
-{{-   if ne "" $pushbulletSecretId -}}
-{{-     $pushbulletToken = output $bwsGet $pushbulletSecretId .bwsTokenPath | trim -}}
-{{-   end -}}
-{{- end -}}
-
-{{- /* Build our managed server list */ -}}
-{{- $servers := list -}}
-{{- /* Per-machine stdio servers belong in chezmoi's local config, not this
-       source model. Each [data.mcpStdioServers.<name>] table supplies the
-       executable fields; this template supplies the mcpproxy identity and
-       transport fields. `dig` keeps older machine configs valid. */ -}}
-{{- $localStdioServers := dig "mcpStdioServers" (dict) . -}}
-{{- $reservedServerNames := list "otter" "pushbullet" "smithers" "pdf-tools" "chrome-devtools" "figma-desktop" "context7" "websearch" "notion" -}}
-{{- range $name, $server := $localStdioServers -}}
-{{-   if has $name $reservedServerNames -}}
-{{-     fail (printf "mcpStdioServers.%s conflicts with a dotfiles-managed MCP server" $name) -}}
-{{-   end -}}
-{{-   if not (hasKey $server "command") -}}
-{{-     fail (printf "mcpStdioServers.%s must define command" $name) -}}
-{{-   end -}}
-{{-   $server = merge (dict) $server -}}
-{{-   if not (hasKey $server "enabled") -}}
-{{-     $server = set $server "enabled" true -}}
-{{-   end -}}
-{{-   if not (hasKey $server "args") -}}
-{{-     $server = set $server "args" (list) -}}
-{{-   end -}}
-{{-   $server = set $server "name" $name -}}
-{{-   $server = set $server "protocol" "stdio" -}}
-{{-   $servers = append $servers $server -}}
-{{- end -}}
-
-{{- if eq .machineProfile "work" -}}
-{{-   $servers = append $servers (dict
-        "name" "otter"
-        "command" "otter"
-        "args" (list "mcp" "serve")
-        "protocol" "stdio"
-        "enabled" true
-      ) -}}
-{{- end -}}
-
-{{- /* Pushbullet MCP: local single-file Deno server. Only registered when the
-       access token resolves from Bitwarden, since the server is useless without
-       it; a missing token therefore omits the server rather than registering a
-       broken one. The token is passed via env (read by Config.Redacted). The
-       deno invocation lives in the script's shebang, so we exec it directly. */ -}}
-{{- if ne "" $pushbulletToken -}}
-{{-   $servers = append $servers (dict
-        "name" "pushbullet"
-        "command" (joinPath .chezmoi.homeDir ".local/bin/pushbullet-mcp")
-        "args" (list)
-        "protocol" "stdio"
-        "enabled" true
-        "env" (dict "PUSHBULLET_ACCESS_TOKEN" $pushbulletToken)
-      ) -}}
-{{- end -}}
-
-{{- /* Smithers: durable, code-defined workflow orchestrator. Exposed as an MCP
-       server so the lead agent can OPERATE it — run deterministic workflow
-       graphs (Sequence/Branch/Ralph-with-predicate, schema-validated handoffs)
-       for by-step mid-horizon work, with opencode as the worker. Runs on bun
-       (its CLI shebang is bun); bunx resolves via the mise shim like npx/uvx. */ -}}
-{{- $servers = append $servers (dict
-      "name" "smithers"
-      "command" "bunx"
-      "args" (list "smithers-orchestrator" "--mcp")
-      "protocol" "stdio"
-      "enabled" true
-    ) -}}
-
-{{- $servers = append $servers (dict
-      "name" "pdf-tools"
-      "command" "uvx"
-      "args" (list "mcp-pdf")
-      "protocol" "stdio"
-      "enabled" true
-    ) -}}
-
-{{- $servers = append $servers (dict
-      "name" "chrome-devtools"
-      "command" "npx"
-      "args" (list "-y" "chrome-devtools-mcp@latest")
-      "protocol" "stdio"
-      "enabled" true
-    ) -}}
-
-{{- $servers = append $servers (dict
-      "name" "figma-desktop"
-      "url" "http://127.0.0.1:3845/mcp"
-      "protocol" "http"
-      "enabled" true
-    ) -}}
-
-{{- /* Remote MCP servers (moved from oh-my-openagent defaults) */ -}}
-{{- $context7Headers := dict -}}
-{{- if ne "" $context7Key -}}
-{{-   $context7Headers = dict "CONTEXT7_API_KEY" $context7Key -}}
-{{- end -}}
-{{- $servers = append $servers (dict
-      "name" "context7"
-      "url" "https://mcp.context7.com/mcp"
-      "protocol" "http"
-      "headers" $context7Headers
-      "enabled" true
-    ) -}}
-
-{{- $exaHeaders := dict -}}
-{{- if ne "" $exaKey -}}
-{{-   $exaHeaders = dict "x-api-key" $exaKey -}}
-{{- end -}}
-{{- $servers = append $servers (dict
-      "name" "websearch"
-      "url" "https://mcp.exa.ai"
-      "protocol" "http"
-      "headers" $exaHeaders
-      "enabled" true
-    ) -}}
-
-{{- /* Notion: hosted, actively-maintained remote MCP. Streamable HTTP with
-       user-based OAuth (no API key / bearer token), so first use prompts an
-       OAuth flow whose grant the proxy persists in its own runtime state. */ -}}
-{{- $servers = append $servers (dict
-      "name" "notion"
-      "url" "https://mcp.notion.com/mcp"
-      "protocol" "http"
-      "enabled" true
-    ) -}}
+{{- /* The server set comes from the shared catalogue (.chezmoidata/mcpproxy.yaml)
+       merged with machine-local [data.mcpServersLocal.<name>] tables (legacy
+       [data.mcpStdioServers.<name>] still read), filtered by each entry's
+       conditions. Secrets resolve from BWS here, at render time. */ -}}
+{{- $catalogue := includeTemplate "mcp-catalogue-tmpl" (dict "data" . "secrets" true) | fromJson -}}
 
 {{- /* Project the optional machine-local host allowlist. MCPProxy accepts
        loopback separately; these entries cover non-loopback Host/Origin values. */ -}}
@@ -237,16 +97,22 @@
 {{-   $existingServers = get $base "mcpServers" -}}
 {{- end -}}
 
+{{- /* Keep the deployed order for servers that already exist, so an apply
+       with no catalogue change rewrites nothing; new servers follow by name.
+       Servers absent from the catalogue are dropped. */ -}}
 {{- $mergedServers := list -}}
-{{- range $our := $servers -}}
-{{-   $merged := dict -}}
-{{-   range $existing := $existingServers -}}
-{{-     if eq (get $existing "name") (get $our "name") -}}
-{{-       $merged = $existing -}}
-{{-     end -}}
+{{- $placed := list -}}
+{{- range $existing := $existingServers -}}
+{{-   $name := get $existing "name" -}}
+{{-   if and (hasKey $catalogue $name) (not (has $name $placed)) -}}
+{{-     $mergedServers = append $mergedServers (merge (get $catalogue $name) $existing) -}}
+{{-     $placed = append $placed $name -}}
 {{-   end -}}
-{{-   $merged = merge $our $merged -}}
-{{-   $mergedServers = append $mergedServers $merged -}}
+{{- end -}}
+{{- range $name := keys $catalogue | sortAlpha -}}
+{{-   if not (has $name $placed) -}}
+{{-     $mergedServers = append $mergedServers (get $catalogue $name) -}}
+{{-   end -}}
 {{- end -}}
 
 {{- /* Overlay our managed keys, preserve everything else */ -}}
@@ -256,14 +122,7 @@
 {{- $config = $config | setValueAtPath "data_dir" (printf "%s/.mcpproxy" .chezmoi.homeDir) -}}
 {{- $config = $config | setValueAtPath "tools_limit" 15 -}}
 {{- $config = $config | setValueAtPath "tool_response_limit" 20000 -}}
-{{- $trustedServers := list -}}
-{{- range $server := $mergedServers -}}
-{{-   if ne (get $server "name") "pushbullet" -}}
-{{-     $server = set $server "trust_mode" "auto" -}}
-{{-   end -}}
-{{-   $trustedServers = append $trustedServers $server -}}
-{{- end -}}
-{{- $config = $config | setValueAtPath "mcpServers" $trustedServers -}}
+{{- $config = $config | setValueAtPath "mcpServers" $mergedServers -}}
 {{- $config = $config | setValueAtPath "routing_mode" "code_execution" -}}
 {{- $config = $config | setValueAtPath "enable_code_execution" true -}}
 {{- /* mcpproxy's built-in prompts surface as MCP prompts, which OpenCode turns

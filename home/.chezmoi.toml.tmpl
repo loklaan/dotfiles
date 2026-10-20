@@ -43,7 +43,7 @@
        toToml renders each under its own name; prefix the headers with data.
        Init data holds only this file's values, not .chezmoidata defaults, so
        dictationArchive overrides are carried without freezing its defaults. */}}
-{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" "dictationArchive" }}
+{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" "dictationArchive" "mcpServersLocal" "mcpStdioServers" }}
 {{-   with dig $table nil $ }}
 {{ regexReplaceAll "(?m)^(\\s*\\[\\[?)" (toToml (dict $table .)) "${1}data." | trimSuffix "\n" }}
 {{-   end }}

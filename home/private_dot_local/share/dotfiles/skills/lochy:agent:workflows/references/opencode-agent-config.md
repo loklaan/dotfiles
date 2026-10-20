@@ -1,11 +1,10 @@
 # OpenCode Agent Configuration for Smithers
 
-Smithers is wired here as an MCP server named `smithers`, but do not launch or
-register it directly with `<runner> smthrs --mcp`, `smithers --mcp`, or
-`smthrs mcp add`. Chezmoi manages MCP entries in the user's AI tools, typically
-through Mcpproxy; use that managed entry so the CLI verbs are reachable as MCP
-tools. OpenCode is a first-class worker agent; prefer it inside `G.step` nodes
-on these machines.
+Smithers is not registered as an MCP server on these machines: drive it through
+its CLI. Do not register it yourself with `<runner> smthrs --mcp`,
+`smithers --mcp`, or `smthrs mcp add`; chezmoi owns the MCP entries in the
+user's AI tools. OpenCode is a first-class worker agent; prefer it inside
+`G.step` nodes on these machines.
 
 ## OpenCodeAgent
 

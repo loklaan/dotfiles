@@ -52,35 +52,11 @@
 
 {{- $config = $config | setValueAtPath "websearch" false -}}
 
-{{- /* Base `mp-codemode` entry, plus one `mp-<slug>` per profile in shared
+{{- /* MCPProxy lanes: `mp-codemode` plus one `mp-<slug>` per profile in shared
      .chezmoidata/mcpproxy.yaml, independent of deployed config and apply order.
-     `/mcp/p/<slug>` scopes that lane; V1 keeps its original `mcpproxy` name. */ -}}
-{{- $v1Mcp := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
-{{- $servers := dict -}}
-{{- $origin := "" -}}
-{{- range $name, $entry := $v1Mcp -}}
-{{-   $server := dict "type" (dig "type" "remote" $entry) -}}
-{{-   if hasKey $entry "url" -}}
-{{-     $server = set $server "url" (get $entry "url") -}}
-{{-     $origin = trimSuffix "/mcp/" (get $entry "url") | trimSuffix "/mcp" -}}
-{{-   end -}}
-{{-   if hasKey $entry "command" -}}
-{{-     $server = set $server "command" (get $entry "command") -}}
-{{-   end -}}
-{{-   $server = set $server "disabled" (not (dig "enabled" true $entry)) -}}
-{{-   $servers = set $servers "mp-codemode" $server -}}
-{{- end -}}
-{{- if ne "" $origin -}}
-{{-   range $profile := (dig "mcpproxyProfiles" (list) .) -}}
-{{-     $slug := dig "name" "" $profile -}}
-{{-     if ne "" $slug -}}
-{{-       $servers = set $servers (printf "mp-%s" $slug) (dict "type" "remote" "url" (printf "%s/mcp/p/%s" $origin $slug) "disabled" false) -}}
-{{-     end -}}
-{{-   end -}}
-{{- end -}}
-{{- if gt (len $servers) 0 -}}
-{{-   $config = $config | setValueAtPath "mcp.servers" $servers -}}
-{{- end -}}
+     The same lane set every client gets, from mcp-client-tmpl. */ -}}
+{{- $servers := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "opencode2") | fromJson -}}
+{{- $config = $config | setValueAtPath "mcp.servers" $servers -}}
 
 {{- /* Providers. Only the opencode-family providers (`opencode` Zen and
      `opencode-go`) are portable to V2 today: they are built into V2's registry

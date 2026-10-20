@@ -117,9 +117,10 @@ opencode2 service restart
 `snapshots` not `snapshot`, `mcp.servers` not `mcp`, `settings` not `options`,
 and an ordered `permissions` array instead of a per-tool `permission` map.
 
-The MCP endpoint is translated from the same
-`mcp-servers-opencode-mcpproxy-json-tmpl` shared template V1 consumes, so the
-URL stays single-sourced.
+Both versions get the same MCPProxy lanes (`mp-codemode` plus one
+`mp-<profile>` per profile) from the shared `mcp-client-tmpl` partial, each in
+its own field shape (V1 `mcp.<name>.enabled`, V2 `mcp.servers.<name>.disabled`),
+so the URLs stay single-sourced.
 
 Both configs also register the same local `references.effect-v4` path. Mise
 owns the checksum-pinned source tree and its stable pointer; neither OpenCode

@@ -9,6 +9,7 @@ Run everything:
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
 bash tests/omo-profile-config.test.sh
+bash tests/mcp-catalogue.test.sh
 bash tests/checkout-sync.test.sh
 bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
@@ -29,6 +30,19 @@ map carries limits only for models that define one (Opus), and Haiku 5.5 must
 carry none, so it uses its catalogue context window. The OpenCode 2
 template must carry each Bedrock model limit when the work plugin lever is set,
 and must write or admit no Bedrock provider when the lever is empty or cleared.
+
+## MCP catalogue
+
+`mcp-catalogue.test.sh` renders the MCPProxy config and every client projection
+(OpenCode 1/2, Claude Code, Claude Desktop, Codex, and both plugins'
+`disabled_mcps`) for darwin/linux × work/personal. Every client must get the
+same lane set. It checks the catalogue conditions (otter work-only, pushbullet
+only when its token resolves, and untrusted). A shim `bws` and a fake
+`bws-get-or-empty` stand in for real secret resolution. It covers machine-local
+`mcpServersLocal`/`mcpStdioServers` merging and conflicts, and that Claude Code
+keeps `projects.*.mcpServers`. It checks the one-time Codex legacy-block
+migration and that re-rendering is stable, and that re-init carries the local
+tables.
 
 ## Skill reconcile
 

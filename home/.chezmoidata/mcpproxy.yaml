@@ -1,9 +1,71 @@
-# Shared intent for MCPProxy profiles and OpenCode 2's mp-<name> lanes.
+# Single source of truth for MCP servers. The flow is:
+#
+#   1. Catalogue: `mcpServers` below, shared by every machine. Each entry is
+#      filtered by its `when` conditions.
+#   2. Local additions: machine-local chezmoi.toml `[data.mcpServersLocal.<name>]`
+#      tables (same shape, any protocol) are layered on top. The legacy
+#      `[data.mcpStdioServers.<name>]` tables are still read as a fallback.
+#      A local name may not reuse a catalogue name.
+#   3. Projection: `.chezmoitemplates/mcp-catalogue-tmpl` returns the merged,
+#      filtered set. Only MCPProxy (~/.mcpproxy/mcp_config.json) receives the
+#      server details. `.chezmoitemplates/mcp-client-tmpl` gives every client
+#      (OpenCode 1/2, Claude Code, Claude Desktop, Codex) the same proxy lanes:
+#      `mp-codemode` -> /mcp/, plus one `mp-<profile>` -> /mcp/p/<profile> for
+#      each profile below.
+#
+# Entry shape (every key other than the meta keys passes through to MCPProxy):
+#   protocol       stdio | http (defaults to stdio with command, http with url)
+#   command, args  stdio servers; a leading `~/` in command expands to $HOME
+#   url            http servers
+#   env, headers   literal values (never secrets)
+#   envSecrets     {VAR: <bwsId data key>}, resolved from BWS at render time
+#   headerSecrets  {Header: <bwsId data key>}, resolved from BWS at render time
+#   when           machineProfile: work|personal (or a list), os: darwin|linux
+#                  (or a list), requiresSecret: <bwsId data key>. The last one
+#                  drops the server unless that secret resolves.
+#   trust          auto (default) sets trust_mode=auto; none leaves it unset
+#
+# Data holds BWS id KEY NAMES only (e.g. bwsIdExaApiKey), never secret values.
+mcpServers:
+  otter:
+    command: otter
+    args: [mcp, serve]
+    when: {machineProfile: work}
+  # Local single-file Deno server; useless without its token, so it is only
+  # registered when the token resolves.
+  pushbullet:
+    command: ~/.local/bin/pushbullet-mcp
+    args: []
+    envSecrets: {PUSHBULLET_ACCESS_TOKEN: bwsIdPushbulletAccessToken}
+    when: {requiresSecret: bwsIdPushbulletAccessToken}
+    trust: none
+  pdf-tools:
+    command: uvx
+    args: [mcp-pdf]
+  chrome-devtools:
+    command: npx
+    args: [-y, chrome-devtools-mcp@latest]
+  figma-desktop:
+    url: http://127.0.0.1:3845/mcp
+  context7:
+    url: https://mcp.context7.com/mcp
+    headerSecrets: {CONTEXT7_API_KEY: bwsIdContext7ApiKey}
+  websearch:
+    url: https://mcp.exa.ai
+    headerSecrets: {x-api-key: bwsIdExaApiKey}
+  # grep.app public code search (streamable HTTP, no auth).
+  gh_grep:
+    url: https://mcp.grep.app
+  # Hosted remote MCP with user OAuth; MCPProxy persists the grant.
+  notion:
+    url: https://mcp.notion.com/mcp
+
+# Shared intent for MCPProxy profiles and every client's mp-<name> lanes.
 mcpproxyProfiles:
   - name: docs
     servers: [context7]
   - name: research
-    servers: [websearch, context7]
+    servers: [websearch, context7, gh_grep]
   - name: browser
     servers: [chrome-devtools]
   - name: design
@@ -14,5 +76,16 @@ mcpproxyProfiles:
     servers: [notion]
   - name: notify
     servers: [pushbullet]
-  - name: flows
-    servers: [smithers]
+
+# MCP servers that OpenCode plugins register themselves, bypassing the proxy,
+# mapped to the catalogue server that replaces each one. A built-in is put in
+# the plugin's disabled_mcps when its catalogue server is in the merged set.
+# OMO's lsp and ast_grep are local tools, so they stay enabled.
+mcpPluginBuiltins:
+  oh-my-opencode-slim:
+    context7: context7
+    gh_grep: gh_grep
+  oh-my-openagent:
+    context7: context7
+    websearch: websearch
+    grep_app: gh_grep

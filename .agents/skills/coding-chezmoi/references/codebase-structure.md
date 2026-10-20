@@ -89,7 +89,43 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .openCodeWorkPluginRepo           // Local plugin monorepo; overrides openCodeWorkPluginLocalPath and openCodeWorkPluginV2; empty means off
 .checkouts                        // Machine-local git checkouts kept on their branch tip and built; see 073-sync-checkouts
 .jetbrainsLicenseServer           // JetBrains license server URL
+.mcpServersLocal                  // Machine-local MCP servers layered on the shared catalogue (any protocol)
+.mcpStdioServers                  // Legacy machine-local stdio MCP servers (still read)
 ```
+
+## MCP servers
+
+One dataset feeds every MCP client:
+
+1. **Catalogue.** `home/.chezmoidata/mcpproxy.yaml` holds `mcpServers`, the
+   shared server list, plus `mcpproxyProfiles` and `mcpPluginBuiltins`. Each
+   entry has `when` conditions (`machineProfile`, `os`, `requiresSecret`) and
+   a `trust` setting. Secrets appear only as BWS id key names (`envSecrets`,
+   `headerSecrets`).
+2. **Local additions.** Machine-local chezmoi.toml `[data.mcpServersLocal.<name>]`
+   tables use the same shape. Legacy `[data.mcpStdioServers.<name>]` tables are
+   still read. A local name that reuses a catalogue name fails the render. The
+   `.chezmoi.toml.tmpl` write-back loop carries both tables across re-init.
+3. **Merge point.** `.chezmoitemplates/mcp-catalogue-tmpl` returns the merged,
+   condition-filtered set. Only MCPProxy (`~/.mcpproxy/mcp_config.json`) asks
+   it to resolve secrets.
+4. **Projection.** `.chezmoitemplates/mcp-client-tmpl` gives every client the
+   same lanes: `mp-codemode` → `http://127.0.0.1:<ports.mcpproxy.internal>/mcp/`,
+   plus `mp-<profile>` → `/mcp/p/<profile>`. Clients always dial the loopback
+   internal port, even when nginx also fronts it.
+
+| Client | Target | Entry shape |
+|---|---|---|
+| OpenCode 1 | `~/.config/opencode/opencode.json` `mcp` | `{type: remote, enabled, url}` |
+| OpenCode 2 | `~/.config/opencode2/opencode.json` `mcp.servers` | `{type: remote, url, disabled}` |
+| Claude Code | `~/.claude.json` top-level `mcpServers` only | `{type: http, url}` |
+| Claude Desktop | `claude_desktop_config.json` `mcpServers` | `npx -y mcp-remote <url>` (stdio-only) |
+| Codex | `~/.codex/config.toml` marked section (last in file) | `[mcp_servers.<lane>] url = ...` |
+
+`mcp-client-tmpl` also generates the `disabled_mcps` lists for
+oh-my-opencode-slim (V2) and oh-my-openagent (`~/.omo/omo.jsonc`). A plugin
+built-in is disabled when its catalogue replacement is in the merged set.
+`tests/mcp-catalogue.test.sh` covers the contract.
 
 ### Adding a new data-variable key (fleet apply hazard)
 

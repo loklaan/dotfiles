@@ -1,0 +1,182 @@
+{{- /* Merged, condition-filtered MCP server catalogue, as a JSON object keyed by
+     server name. It is the one merge point for MCP data (see the comment at
+     the top of home/.chezmoidata/mcpproxy.yaml).
+
+     Arguments (dict):
+       data     the template root context (`.`)
+       secrets  true to resolve envSecrets/headerSecrets from BWS into env and
+                headers. Only MCPProxy needs the values. When false, no secret
+                is fetched. `requiresSecret` then counts as met when its BWS
+                id is set and BWS is usable, and env/headers carry literal
+                values only.
+
+     Output: {<name>: {name, protocol, command|url, args, env, headers,
+     enabled, trust_mode?, ...pass-through keys}}. The meta keys (when, trust,
+     envSecrets, headerSecrets) are consumed here and never emitted. */ -}}
+{{- $d := .data -}}
+{{- $resolve := dig "secrets" false . -}}
+{{- $profile := dig "machineProfile" "personal" $d -}}
+{{- $os := $d.chezmoi.os -}}
+{{- $home := $d.chezmoi.homeDir -}}
+
+{{- /* Soft-fail BWS access, as in coding-patterns.md § Bitwarden Secrets Guard:
+       the token path, never the value, goes to the wrapper. */ -}}
+{{- $bwsTokenPath := dig "bwsTokenPath" "" $d -}}
+{{- $bwsGet := joinPath $home ".local/lib/bws-get-or-empty" -}}
+{{- $bwsUsable := false -}}
+{{- if and (ne "" $bwsTokenPath) (lookPath "bws") (stat $bwsTokenPath) (stat $bwsGet) -}}
+{{-   $bwsUsable = ne "" (include $bwsTokenPath | trim) -}}
+{{- end -}}
+{{- $secretCache := dict -}}
+
+{{- $catalogue := dig "mcpServers" (dict) $d -}}
+{{- $localNew := dig "mcpServersLocal" (dict) $d -}}
+{{- $localLegacy := dig "mcpStdioServers" (dict) $d -}}
+{{- range $label, $table := dict "mcpServers" $catalogue "mcpServersLocal" $localNew "mcpStdioServers" $localLegacy -}}
+{{-   if not (kindIs "map" $table) -}}
+{{-     fail (printf "%s must be a table of servers" $label) -}}
+{{-   end -}}
+{{- end -}}
+
+{{- /* Local additions may only add names. Legacy entries are stdio-only. */ -}}
+{{- $sources := list -}}
+{{- range $name, $_ := $catalogue -}}
+{{-   $sources = append $sources (list $name "mcpServers") -}}
+{{- end -}}
+{{- range $name, $_ := $localNew -}}
+{{-   if hasKey $catalogue $name -}}
+{{-     fail (printf "mcpServersLocal.%s conflicts with a dotfiles-managed MCP server" $name) -}}
+{{-   end -}}
+{{-   $sources = append $sources (list $name "mcpServersLocal") -}}
+{{- end -}}
+{{- range $name, $_ := $localLegacy -}}
+{{-   if hasKey $catalogue $name -}}
+{{-     fail (printf "mcpStdioServers.%s conflicts with a dotfiles-managed MCP server" $name) -}}
+{{-   end -}}
+{{-   if hasKey $localNew $name -}}
+{{-     fail (printf "mcpStdioServers.%s is also defined in mcpServersLocal; keep one" $name) -}}
+{{-   end -}}
+{{-   $sources = append $sources (list $name "mcpStdioServers") -}}
+{{- end -}}
+
+{{- $out := dict -}}
+{{- range $source := $sources -}}
+{{-   $name := index $source 0 -}}
+{{-   $label := index $source 1 -}}
+{{-   $raw := index (dict "mcpServers" $catalogue "mcpServersLocal" $localNew "mcpStdioServers" $localLegacy) $label $name -}}
+{{-   if not (kindIs "map" $raw) -}}
+{{-     fail (printf "%s.%s must be a table" $label $name) -}}
+{{-   end -}}
+{{-   $server := deepCopy $raw -}}
+{{-   if eq $label "mcpStdioServers" -}}
+{{-     if not (hasKey $server "command") -}}
+{{-       fail (printf "mcpStdioServers.%s must define command" $name) -}}
+{{-     end -}}
+{{-     $server = set $server "protocol" "stdio" -}}
+{{-   else if not (or (hasKey $server "command") (hasKey $server "url")) -}}
+{{-     fail (printf "%s.%s must define command or url" $label $name) -}}
+{{-   end -}}
+
+{{- /* Conditions */ -}}
+{{-   $keep := true -}}
+{{-   $when := dig "when" (dict) $server -}}
+{{-   if hasKey $when "machineProfile" -}}
+{{-     $want := get $when "machineProfile" -}}
+{{-     if not (has $profile (concat (list) (ternary $want (list $want) (kindIs "slice" $want)))) -}}
+{{-       $keep = false -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if hasKey $when "os" -}}
+{{-     $want := get $when "os" -}}
+{{-     if not (has $os (concat (list) (ternary $want (list $want) (kindIs "slice" $want)))) -}}
+{{-       $keep = false -}}
+{{-     end -}}
+{{-   end -}}
+
+{{- /* Secrets: resolve each referenced BWS id key at most once. */ -}}
+{{-   $needed := list -}}
+{{-   if hasKey $when "requiresSecret" -}}
+{{-     $needed = append $needed (get $when "requiresSecret") -}}
+{{-   end -}}
+{{-   if $resolve -}}
+{{-     range $_, $key := dig "envSecrets" (dict) $server -}}
+{{-       $needed = append $needed $key -}}
+{{-     end -}}
+{{-     range $_, $key := dig "headerSecrets" (dict) $server -}}
+{{-       $needed = append $needed $key -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if $keep -}}
+{{-     range $key := $needed -}}
+{{-       if not (hasKey $secretCache $key) -}}
+{{-         $id := dig $key "" $d -}}
+{{-         $value := "" -}}
+{{-         if and $bwsUsable (ne "" $id) -}}
+{{-           if $resolve -}}
+{{-             $value = output $bwsGet $id $bwsTokenPath | trim -}}
+{{-           else -}}
+{{-             $value = "unresolved" -}}
+{{-           end -}}
+{{-         end -}}
+{{-         $_ := set $secretCache $key $value -}}
+{{-       end -}}
+{{-     end -}}
+{{-     if hasKey $when "requiresSecret" -}}
+{{-       if eq "" (get $secretCache (get $when "requiresSecret")) -}}
+{{-         $keep = false -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+
+{{-   if $keep -}}
+{{-     if hasKey $server "envSecrets" -}}
+{{-       $env := deepCopy (dig "env" (dict) $server) -}}
+{{-       if $resolve -}}
+{{-         range $var, $key := get $server "envSecrets" -}}
+{{-           $value := get $secretCache $key -}}
+{{-           if ne "" $value -}}
+{{-             $env = set $env $var $value -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-       $server = set $server "env" $env -}}
+{{-     end -}}
+{{-     if hasKey $server "headerSecrets" -}}
+{{-       $headers := deepCopy (dig "headers" (dict) $server) -}}
+{{-       if $resolve -}}
+{{-         range $header, $key := get $server "headerSecrets" -}}
+{{-           $value := get $secretCache $key -}}
+{{-           if ne "" $value -}}
+{{-             $headers = set $headers $header $value -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-       $server = set $server "headers" $headers -}}
+{{-     end -}}
+{{-     $trust := dig "trust" "auto" $server -}}
+{{-     $server = omit $server "when" "trust" "envSecrets" "headerSecrets" -}}
+{{-     if hasKey $server "command" -}}
+{{-       $command := get $server "command" -}}
+{{-       if hasPrefix "~/" $command -}}
+{{-         $server = set $server "command" (joinPath $home (trimPrefix "~/" $command)) -}}
+{{-       end -}}
+{{-       if not (hasKey $server "args") -}}
+{{-         $server = set $server "args" (list) -}}
+{{-       end -}}
+{{-     end -}}
+{{-     if not (hasKey $server "protocol") -}}
+{{-       $server = set $server "protocol" (ternary "stdio" "http" (hasKey $server "command")) -}}
+{{-     end -}}
+{{-     if not (hasKey $server "enabled") -}}
+{{-       $server = set $server "enabled" true -}}
+{{-     end -}}
+{{-     if eq $trust "auto" -}}
+{{-       $server = set $server "trust_mode" "auto" -}}
+{{-     else if ne $trust "none" -}}
+{{-       fail (printf "%s.%s.trust must be auto or none" $label $name) -}}
+{{-     end -}}
+{{-     $server = set $server "name" $name -}}
+{{-     $out = set $out $name $server -}}
+{{-   end -}}
+{{- end -}}
+{{ $out | toJson }}

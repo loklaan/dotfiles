@@ -12,9 +12,13 @@
                  with no markers then still holds the previous managed body
                  verbatim; strip it instead of preserving it as foreign content,
                  or it would be duplicated beneath the new section.
+       position  "start" (default) or "end". Use "end" for TOML whose managed
+                 body holds only tables: foreign top-level keys must come
+                 before the first table header, so they cannot follow it.
 
-     Output: the managed section first, then any preserved foreign content,
-     separated by one blank line, ending in a single newline. */ -}}
+     Output: the managed section first (or last with position "end"), plus
+     any preserved foreign content, separated by one blank line, ending in a
+     single newline. */ -}}
 {{- $begin := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
 {{- $end := "# --- END CHEZMOI MANAGED SECTION ---" -}}
 {{- $existing := .existing | default "" -}}
@@ -39,11 +43,19 @@
 {{-   $foreign = append $foreign ($existing | trim) -}}
 {{- end -}}
 
-{{- $out := list (printf "%s\n%s\n\n%s" $begin $body $end) -}}
+{{- $section := printf "%s\n%s\n\n%s" $begin $body $end -}}
+{{- $atEnd := eq (dig "position" "start" .) "end" -}}
+{{- $out := list -}}
+{{- if not $atEnd -}}
+{{-   $out = append $out $section -}}
+{{- end -}}
 {{- range $foreign -}}
 {{-   if ne "" . -}}
 {{-     $out = append $out . -}}
 {{-   end -}}
+{{- end -}}
+{{- if $atEnd -}}
+{{-   $out = append $out $section -}}
 {{- end -}}
 {{ join "\n\n" $out }}{{ "\n" }}
 {{- /* callers must close with -}} so this is the only trailing newline */ -}}

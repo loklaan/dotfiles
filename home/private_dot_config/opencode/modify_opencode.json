@@ -1,8 +1,9 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* Load MCP servers from template (unchanged) */ -}}
-{{- $mcpServers := includeTemplate "mcp-servers-opencode-mcpproxy-json-tmpl" . | fromJson -}}
+{{- /* MCPProxy lanes (mp-codemode + one mp-<profile> per profile), projected
+      from the shared catalogue by mcp-client-tmpl. `mcp` is replaced whole. */ -}}
+{{- $mcpServers := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "opencode") | fromJson -}}
 
 {{- /* Configure instructions to reference shared agent rules and project rules directories.
       .agents-only: no CLAUDE.md / .claude/rules/*.md entries here. */ -}}

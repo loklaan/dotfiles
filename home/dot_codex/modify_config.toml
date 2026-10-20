@@ -1,0 +1,70 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* Codex (desktop app, CLI and IDE share ~/.codex/config.toml).
+
+     Chezmoi owns only the marked section: the MCPProxy lanes from
+     mcp-client-tmpl, the same set every client gets. Everything else (model
+     and feature settings, [mcp_servers.<other>], tool approvals, [projects.*],
+     plugins) is Codex- or user-owned and preserved verbatim.
+
+     The section goes LAST (position "end"). It holds only tables, and
+     foreign top-level keys must stay above the first table header.
+
+     One-time migration: the pre-d5780b2 managed block mixed user settings in
+     with a single `[mcp_servers.mcpproxy]` entry. When the managed block
+     still contains that entry, every line of it except the old header
+     comments and `[mcp_servers.mcpproxy]` + url moves verbatim outside the
+     new section. `mcp_servers.mcpproxy.tools.*` approval tables are renamed
+     to `mcp_servers.mp-codemode.tools.*`. A migrated file no longer matches,
+     so re-rendering is stable. */ -}}
+{{- $begin := "# --- BEGIN CHEZMOI MANAGED SECTION ---" -}}
+{{- $end := "# --- END CHEZMOI MANAGED SECTION ---" -}}
+{{- $existing := default "" .chezmoi.stdin -}}
+
+{{- if and (contains $begin $existing) (contains $end $existing) -}}
+{{-   $parts := splitn $begin 2 $existing -}}
+{{-   $before := $parts._0 | trim -}}
+{{-   $rest := splitn $end 2 $parts._1 -}}
+{{-   $legacy := $rest._0 -}}
+{{-   $after := $rest._1 | trim -}}
+{{-   if regexMatch "(?m)^\\[mcp_servers\\.mcpproxy\\]\\s*$" $legacy -}}
+{{-     $oldHeaders := list
+          "# This section is managed by chezmoi. Do not edit manually."
+          "# Keys set by Codex CLI (model, projects, notice, etc.) are preserved"
+          "# outside this section and will not be overwritten." -}}
+{{-     $kept := list -}}
+{{-     $inProxyTable := false -}}
+{{-     range $line := splitList "\n" $legacy -}}
+{{-       $t := trim $line -}}
+{{-       if hasPrefix "[" $t -}}
+{{-         $inProxyTable = eq $t "[mcp_servers.mcpproxy]" -}}
+{{-       end -}}
+{{-       if $inProxyTable -}}
+{{- /* drop the old table header and its url */ -}}
+{{-         if not (or (eq $t "[mcp_servers.mcpproxy]") (hasPrefix "url" $t) (eq $t "")) -}}
+{{-           $kept = append $kept $line -}}
+{{-         end -}}
+{{-       else if not (has $t $oldHeaders) -}}
+{{-         $kept = append $kept (regexReplaceAll "^(\\s*)\\[mcp_servers\\.mcpproxy\\.tools\\." $line "${1}[mcp_servers.mp-codemode.tools.") -}}
+{{-       end -}}
+{{-     end -}}
+{{-     $salvaged := regexReplaceAll "\\n{3,}" (join "\n" $kept) "\n\n" | trim -}}
+{{-     $foreign := list -}}
+{{-     range (list $before $salvaged $after) -}}
+{{-       if ne "" . -}}
+{{-         $foreign = append $foreign . -}}
+{{-       end -}}
+{{-     end -}}
+{{-     $existing = join "\n\n" $foreign -}}
+{{-   end -}}
+{{- end -}}
+
+{{- $body := printf "%s\n%s\n\n%s"
+      "# This section is managed by chezmoi. Do not edit manually."
+      "# MCPProxy lanes (see home/.chezmoidata/mcpproxy.yaml); everything else is preserved."
+      (includeTemplate "mcp-client-tmpl" (dict "data" . "client" "codex") | trim) -}}
+{{- includeTemplate "marked-section-tmpl" (dict
+      "existing" $existing
+      "body" $body
+      "target" ".codex/config.toml"
+      "adopt" false
+      "position" "end") -}}
