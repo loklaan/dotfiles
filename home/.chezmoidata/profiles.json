@@ -209,6 +209,62 @@
                         "reasoning": "low"
                     }
                 }
+            },
+            "oh_my_opencode_slim": {
+                "presets": {
+                    "cheap": {
+                        "orchestrator": {
+                            "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                            "variant": "high",
+                            "skills": [
+                                "*"
+                            ],
+                            "mcps": [
+                                "*"
+                            ]
+                        },
+                        "oracle": {
+                            "model": "amazon-bedrock/global.xai.grok-4.7",
+                            "variant": "xhigh",
+                            "skills": [
+                                "simplify"
+                            ],
+                            "mcps": []
+                        },
+                        "librarian": {
+                            "model": "amazon-bedrock/global.openai.gpt-6-luna",
+                            "variant": "high",
+                            "skills": [],
+                            "mcps": [
+                                "mp-research"
+                            ]
+                        },
+                        "explorer": {
+                            "model": "amazon-bedrock/global.openai.gpt-6-luna",
+                            "variant": "medium",
+                            "skills": [],
+                            "mcps": []
+                        },
+                        "designer": {
+                            "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                            "variant": "high",
+                            "skills": [],
+                            "mcps": []
+                        },
+                        "fixer": {
+                            "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                            "variant": "high",
+                            "skills": [],
+                            "mcps": []
+                        },
+                        "observer": {
+                            "model": "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+                            "variant": "medium",
+                            "skills": [],
+                            "mcps": []
+                        }
+                    }
+                }
             }
         },
         "personal": {
@@ -232,10 +288,6 @@
                 "preset": "personal",
                 "disabled_agents": [],
                 "autoUpdate": false,
-                "disabled_mcps": [
-                    "context7",
-                    "gh_grep"
-                ],
                 "presets": {
                     "personal": {
                         "orchestrator": {
@@ -318,6 +370,9 @@
                         "observer": {
                             "model": "opencode-go/mimo-v2.5"
                         }
+                    },
+                    "cheap": {
+                        "extends": "personal"
                     }
                 }
             },
