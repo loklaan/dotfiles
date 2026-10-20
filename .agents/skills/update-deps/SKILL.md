@@ -20,8 +20,10 @@ weekly (and on `workflow_dispatch`) on `loklaan/dotfiles` only:
   opens or updates the `deps/mise-lock` PR.
 - **verify** runs `mise install --locked` with an empty data dir on
   `ubuntu-latest` (linux-x64) and `macos-latest` (macos-arm64).
-- **renovate** opens PRs for GitHub Actions and chezmoi externals (see
-  `renovate.json`; its mise manager is disabled).
+- **Renovate** is not a workflow job. The hosted Renovate GitHub App, installed
+  on `loklaan/dotfiles` only, opens PRs for GitHub Actions, chezmoi externals
+  and inline `# renovate:` pins (see `renovate.json`; its mise manager is
+  disabled).
 
 Nothing auto-merges. Use this skill for an off-cycle bump, for sources CI does
 not cover (Homebrew, Linux packages, the TUI plugin package, model pins), or to

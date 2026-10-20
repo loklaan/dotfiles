@@ -1,9 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
-    "Self-hosted via .github/workflows/deps-bump.yml (global options such as",
-    "repositories and onboarding live there). mise tools are NOT managed here:",
-    "mise.lock is bumped by the same workflow's `mise lock --global --bump` job."
+    "Run by the hosted Renovate GitHub App, installed on loklaan/dotfiles only,",
+    "so mirrors never run it. mise tools are NOT managed here: mise.lock is",
+    "bumped by .github/workflows/deps-bump.yml (`mise lock --global --bump`).",
+    "The repo has issues disabled, so the dependency dashboard is off."
   ],
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "schedule": ["* 0-12 * * 1"],
@@ -11,6 +12,7 @@
   "minimumReleaseAge": "4 days",
   "internalChecksFilter": "strict",
   "automerge": false,
+  "dependencyDashboard": false,
   "enabledManagers": ["github-actions", "custom.regex"],
   "mise": { "enabled": false },
   "customManagers": [

@@ -8,8 +8,10 @@
 #             dir on both locked platforms. Runs after bump (on the PR head),
 #             and on PRs that touch the mise config or lock. It chains off
 #             bump because a PR opened with GITHUB_TOKEN triggers no workflows.
-#   renovate  self-hosted Renovate for GitHub Actions and chezmoi externals
-#             (see renovate.json; mise is disabled there).
+#
+# Renovate (GitHub Actions, chezmoi externals, inline pins) is NOT run here:
+# the hosted Renovate GitHub App is installed on the canonical repo and reads
+# renovate.json. mise is disabled there; this workflow owns mise.lock.
 #
 # Every job is gated to the canonical repo so mirrors (canvanauts/...) never
 # run it.
@@ -143,19 +145,3 @@ jobs:
             echo "$missing"
             exit 1
           fi
-
-  renovate:
-    if: github.repository == 'loklaan/dotfiles' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: renovatebot/github-action@f0f41e5f2e706165f6814b1d0f0d0e319de7d1d9 # v46.3.8
-        env:
-          RENOVATE_REPOSITORIES: '["loklaan/dotfiles"]'
-          RENOVATE_ONBOARDING: "false"
-          RENOVATE_REQUIRE_CONFIG: required
-          RENOVATE_PLATFORM_COMMIT: enabled
-        with:
-          token: ${{ secrets.RENOVATE_TOKEN }}
