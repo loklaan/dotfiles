@@ -123,6 +123,18 @@ sync "" ""
 check "no build: exit 0" rc_is 0
 check "no build: fast-forwarded" head_is "$(git -C "$SB/work" rev-parse HEAD)"
 
+# A detached build worktree with a configured branch follows origin/<branch>.
+git -C "$BOX" checkout -q --detach HEAD
+C8=$(push c8)
+sync "$BR" ""
+check "detached + branch: exit 0" rc_is 0
+check "detached + branch: fast-forwarded" head_is "$C8"
+check "detached + branch: stays detached" bash -c '! git -C "$1" symbolic-ref -q HEAD' _ "$BOX"
+sync "" ""
+check "detached, no branch: skipped" rc_is 3
+check "detached, no branch: says why" said 'no branch configured'
+git -C "$BOX" checkout -q "$BR" && git -C "$BOX" merge -q --ff-only "$C8"
+
 # The rendered apply script never fails the apply, even when a build fails.
 touch "$SB/work/BROKEN"
 push c7 >/dev/null

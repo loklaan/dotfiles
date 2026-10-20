@@ -345,5 +345,5 @@ busyWhen = ["opencode"]          # skip while these run in a terminal
 ```
 
 A checkout that is dirty, ahead of origin, off its branch, or busy is left
-alone. A failed build moves back to the previous commit and rebuilds it. Neither
+alone. A detached checkout (a build worktree) is synced when `branch` is set. A failed build moves back to the previous commit and rebuilds it. Neither
 ever fails the apply.

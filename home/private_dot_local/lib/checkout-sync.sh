@@ -45,8 +45,14 @@ cs_sync() {
     cd "$dir" 2>/dev/null || skip "no checkout at ${dir}"
     local gitdir cur want lock stamp log
     gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || skip "${dir} is not a git checkout"
-    [ -n "$branch" ] || branch=$(git symbolic-ref -q --short HEAD) || skip "detached HEAD"
-    [ "$(git symbolic-ref -q --short HEAD)" = "$branch" ] || skip "not on ${branch}"
+    # A detached HEAD is allowed when the branch is named: that is a build
+    # worktree whose branch is checked out in another worktree (git allows a
+    # branch in only one). It still only fast-forwards to origin/<branch>.
+    local head
+    head=$(git symbolic-ref -q --short HEAD) || head=""
+    [ -n "$branch" ] || branch=$head
+    [ -n "$branch" ] || skip "detached HEAD and no branch configured"
+    [ -z "$head" ] || [ "$head" = "$branch" ] || skip "not on ${branch}"
 
     lock="${gitdir}/checkout-sync.lock" # a symlink whose target is the apply script's PID
     if ! ln -s "$$" "$lock" 2>/dev/null; then
