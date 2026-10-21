@@ -29,6 +29,8 @@ skillLifecycleDefaults:
           package: true
         - id: lochy:compress
           package: true
+        - id: lochy:diagram-kit
+          package: true
         - id: lochy:env:architecture
           package: true
         - id: lochy:env:autonomous
