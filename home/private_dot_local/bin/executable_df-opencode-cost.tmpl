@@ -1,22 +1,28 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-env=HOME,PATH,SSH_AUTH_SOCK,NODE_V8_COVERAGE --allow-read
 
-// df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
+// df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts
+// and ACROSS opencode generations (v1 = opencode.db, v2 = opencode2.db).
 // Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0
 // (repo-wide canonical version; the frozen deno.lock projected into ~/.local/bin
 // resolves it — no --minimum-dependency-age needed, unlike a standalone script).
 //
-// Each host runs a node:sqlite snippet over `zsh -lc` (login shell surfaces the
-// mise-activated deno on Coder boxes) that sums opencode's own recorded
-// per-session cost + tokens. The coordinator normalizes paths, folds worktrees
-// into their parent repo, folds devbox ~/work/<repo> into ~/dev/canva/<repo>,
-// and renders a heatmap table with per-host + per-worktree granularity.
+// Each (host × source) runs a node:sqlite snippet over `zsh -lc` (login shell
+// surfaces the mise-activated deno on Coder boxes). Each source is one
+// `UsageSource` service with two layers that differ only in DB file + SQL; both
+// emit the same normalized UsageRow. A missing DB file on a host is "absent"
+// (source skipped for that host), not a failure. The coordinator normalizes
+// paths, folds worktrees into their parent repo, folds devbox ~/work/<repo> into
+// ~/dev/canva/<repo>, and renders a heatmap table with per-host, per-source and
+// per-worktree granularity.
 
 import {
   Console,
+  Context,
   Deferred,
   Effect,
   Fiber,
   Layer,
+  Option,
   PlatformError,
   Result,
   Schema,
@@ -47,15 +53,36 @@ class BoxFailure extends Schema.TaggedError<BoxFailure>()("BoxFailure", {
   detail: Schema.String,
 }) {}
 
-const SessionRow = Schema.Struct({
+const SOURCE_IDS = ["v1", "v2"] as const;
+type SourceId = (typeof SOURCE_IDS)[number];
+type SourceSelection = SourceId | "all";
+
+type Basis = "created" | "updated";
+type Window = {
+  readonly sinceMs: number;
+  readonly untilMs: number;
+  readonly basis: Basis;
+};
+
+// The one normalized row every source produces. Token counts follow opencode's
+// convention: input EXCLUDES cache; cacheRead/cacheWrite are separate.
+const UsageRow = Schema.Struct({
   dir: Schema.String,
   cost: Schema.Number,
   input: Schema.Number,
   output: Schema.Number,
+  reasoning: Schema.Number,
+  cacheRead: Schema.Number,
+  cacheWrite: Schema.Number,
 });
-const HostPayload = Schema.Array(SessionRow);
-const decodePayload = Schema.decodeUnknownEffect(HostPayload);
-type SessionRow = typeof SessionRow.Type;
+type UsageRow = typeof UsageRow.Type;
+
+// Snippet payload. `absent: true` means this host has no DB file for the source.
+const SourcePayload = Schema.Struct({
+  absent: Schema.Boolean,
+  rows: Schema.Array(UsageRow),
+});
+const decodePayload = Schema.decodeUnknownEffect(SourcePayload);
 
 const HOST_QUERY_TIMEOUT_SECONDS = 60;
 const MAX_STDOUT_BYTES = 1024 * 1024;
@@ -115,19 +142,71 @@ const splitWorktree = (
     : { project: rel, worktree: null };
 };
 
-// --- Remote query --------------------------------------------------------
-const remoteCommand = (
-  sinceMs: number,
-  untilMs: number,
-  basis: string,
-): string => {
-  const col = basis === "updated" ? "time_updated" : "time_created";
+// --- Sources: SQL + DB path (the only per-source differences) ------------
+type SourceSpec = {
+  readonly id: SourceId;
+  readonly label: string;
+  // File name under $HOME/.local/share/opencode/.
+  readonly dbFile: string;
+  // SELECT grouped by directory, with two `?` placeholders for the window on
+  // the chosen time column (`col` is the bare column name).
+  readonly select: (col: string) => string;
+};
+
+const V1_SPEC: SourceSpec = {
+  id: "v1",
+  label: "OpenCode 1",
+  dbFile: "opencode.db",
+  select: (col) =>
+    "SELECT directory AS dir, " +
+    "COALESCE(SUM(cost), 0) AS cost, " +
+    "COALESCE(SUM(tokens_input), 0) AS input, " +
+    "COALESCE(SUM(tokens_output), 0) AS output, " +
+    "COALESCE(SUM(tokens_reasoning), 0) AS reasoning, " +
+    "COALESCE(SUM(tokens_cache_read), 0) AS cacheRead, " +
+    "COALESCE(SUM(tokens_cache_write), 0) AS cacheWrite " +
+    "FROM session WHERE directory IS NOT NULL AND " +
+    col + " >= ? AND " + col + " <= ? " +
+    "GROUP BY directory",
+};
+
+// session_v2 token rollups are unreliable, so sum the authoritative per-message
+// assistant rows instead. Window is on the owning session's time column.
+const V2_SPEC: SourceSpec = {
+  id: "v2",
+  label: "OpenCode 2",
+  dbFile: "opencode2.db",
+  select: (col) => {
+    const t = "s." + col;
+    const sum = (path: string) =>
+      "COALESCE(SUM(json_extract(m.data, '" + path + "')), 0)";
+    return "SELECT s.directory AS dir, " +
+      sum("$.cost") + " AS cost, " +
+      sum("$.tokens.input") + " AS input, " +
+      sum("$.tokens.output") + " AS output, " +
+      sum("$.tokens.reasoning") + " AS reasoning, " +
+      sum("$.tokens.cache.read") + " AS cacheRead, " +
+      sum("$.tokens.cache.write") + " AS cacheWrite " +
+      "FROM session_message m JOIN session_v2 s ON s.id = m.session_id " +
+      "WHERE m.type = 'assistant' AND s.directory IS NOT NULL AND " +
+      t + " >= ? AND " + t + " <= ? " +
+      "GROUP BY s.directory";
+  },
+};
+
+const timeColumn = (basis: Basis): string =>
+  basis === "updated" ? "time_updated" : "time_created";
+
+// Shared snippet builder. Missing DB → {"absent":true}; never creates the file.
+const usageScript = (spec: SourceSpec, window: Window): string => {
+  const sql = spec.select(timeColumn(window.basis));
   const snippet = `import { DatabaseSync } from "node:sqlite"; ` +
-    `const path = Deno.env.get("HOME") + "/.local/share/opencode/opencode.db"; ` +
+    `import { existsSync } from "node:fs"; ` +
+    `const path = Deno.env.get("HOME") + "/.local/share/opencode/${spec.dbFile}"; ` +
+    `if (!existsSync(path)) { console.log(JSON.stringify({ absent: true, rows: [] })); } else { ` +
     `const db = new DatabaseSync(path, { readOnly: true }); ` +
-    `const q = db.prepare("SELECT directory dir, cost, tokens_input input, tokens_output output FROM session WHERE directory IS NOT NULL AND ${col} >= ? AND ${col} <= ?"); ` +
-    `const rows = q.all(${sinceMs}, ${untilMs}).map((r) => ({ dir: r.dir, cost: r.cost ?? 0, input: r.input ?? 0, output: r.output ?? 0 })); ` +
-    `console.log(JSON.stringify(rows));`;
+    `const rows = db.prepare(${JSON.stringify(sql)}).all(${window.sinceMs}, ${window.untilMs}); ` +
+    `console.log(JSON.stringify({ absent: false, rows })); }`;
   return `deno eval ${JSON.stringify(snippet)}`;
 };
 
@@ -257,15 +336,65 @@ const runHostCommand = (
     }),
   );
 
-type HostRows = { host: string; rows: readonly SessionRow[] };
-
-const collectHost = Effect.fn("collectHost")(
-  function* (
+// Transport: runs one script on one host. Live = spawner + allowlisted env;
+// tests build the same service over a mock spawner and a fixed env record, so
+// no test reads Deno.env.
+class HostTransport extends Context.Service<HostTransport, {
+  readonly run: (
     host: string,
     script: string,
-    environment: ChildEnvironment = {},
-  ) {
-    const out = yield* runHostCommand(host, script, environment);
+  ) => Effect.Effect<CommandOutput, BoxFailure>;
+}>()("df-opencode-cost/HostTransport") {
+  // Binds the spawner to an explicit environment record. Tests use this, so no
+  // test ever reads Deno.env.
+  static readonly spawned = (environment: ChildEnvironment) =>
+    Layer.effect(
+      HostTransport,
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        return HostTransport.of({
+          run: (host, script) =>
+            runHostCommand(host, script, environment).pipe(
+              Effect.provideService(
+                ChildProcessSpawner.ChildProcessSpawner,
+                spawner,
+              ),
+            ),
+        });
+      }),
+    );
+  // Live: reads the allowlisted env when the layer builds (CLI path only).
+  static readonly live = Layer.effect(
+    HostTransport,
+    Effect.gen(function* () {
+      const environment = yield* childEnvironment;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return HostTransport.of({
+        run: (host, script) =>
+          runHostCommand(host, script, environment).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              spawner,
+            ),
+          ),
+      });
+    }),
+  );
+}
+
+// Last JSON-object line of stdout. Deno may print diagnostics before it.
+const payloadLine = (stdout: string): string => {
+  const objects = stdout.split("\n").map((l) => l.trim()).filter((l) =>
+    l.startsWith("{")
+  );
+  return objects.at(-1) ?? stdout.trim();
+};
+
+// Returns None when the host has no DB file for this source (skipped, not failed).
+const collectHost = Effect.fn("collectHost")(
+  function* (host: string, script: string) {
+    const transport = yield* HostTransport;
+    const out = yield* transport.run(host, script);
     const stderr = out.stderr.trim();
     if (!out.success) {
       return yield* new BoxFailure({
@@ -273,9 +402,7 @@ const collectHost = Effect.fn("collectHost")(
         detail: stderr || `exited ${out.code}`,
       });
     }
-    const rawOut = out.stdout;
-    const start = rawOut.lastIndexOf("[");
-    const raw = start >= 0 ? rawOut.slice(start).trim() : rawOut.trim();
+    const raw = payloadLine(out.stdout);
     const parsed = yield* Effect.try({
       try: () => JSON.parse(raw) as unknown,
       catch: () =>
@@ -284,36 +411,142 @@ const collectHost = Effect.fn("collectHost")(
           detail: `non-JSON output: ${raw.slice(0, 120)}`,
         }),
     });
-    const rows = yield* decodePayload(parsed).pipe(
+    const payload = yield* decodePayload(parsed).pipe(
       Effect.mapError((e) =>
         new BoxFailure({ host, detail: `schema mismatch: ${e}` })
       ),
     );
-    return { host, rows } satisfies HostRows;
+    return payload.absent
+      ? Option.none<readonly UsageRow[]>()
+      : Option.some<readonly UsageRow[]>(payload.rows);
   },
 );
 
+// --- UsageSource service: one interface, two layers (v1 / v2) -----------
+type UsageSourceService = {
+  readonly id: SourceId;
+  readonly label: string;
+  readonly script: (window: Window) => string;
+  readonly query: (
+    host: string,
+    window: Window,
+  ) => Effect.Effect<
+    Option.Option<readonly UsageRow[]>,
+    BoxFailure,
+    HostTransport
+  >;
+};
+
+const makeUsageSource = (spec: SourceSpec): UsageSourceService => ({
+  id: spec.id,
+  label: spec.label,
+  script: (window) => usageScript(spec, window),
+  query: (host, window) => collectHost(host, usageScript(spec, window)),
+});
+
+class UsageSource extends Context.Service<UsageSource, UsageSourceService>()(
+  "df-opencode-cost/UsageSource",
+) {
+  static readonly v1 = Layer.succeed(
+    UsageSource,
+    UsageSource.of(makeUsageSource(V1_SPEC)),
+  );
+  static readonly v2 = Layer.succeed(
+    UsageSource,
+    UsageSource.of(makeUsageSource(V2_SPEC)),
+  );
+}
+
+const sourceLayer = (id: SourceId) =>
+  id === "v1" ? UsageSource.v1 : UsageSource.v2;
+
+const queryPair = (source: SourceId, host: string, window: Window) =>
+  Effect.gen(function* () {
+    const usage = yield* UsageSource;
+    return yield* usage.query(host, window);
+  }).pipe(Effect.provide(sourceLayer(source)));
+
+const selectedSources = (
+  selection: SourceSelection,
+): readonly SourceId[] => selection === "all" ? SOURCE_IDS : [selection];
+
+// --- Settlement: partition per-(host × source) outcomes ------------------
+type PairOutcome = {
+  readonly host: string;
+  readonly source: SourceId;
+  readonly result: Result.Result<
+    Option.Option<readonly UsageRow[]>,
+    BoxFailure
+  >;
+};
+type SourceRows = {
+  readonly host: string;
+  readonly source: SourceId;
+  readonly rows: readonly UsageRow[];
+};
+type Failure = { readonly host: string; readonly source: SourceId; readonly detail: string };
+
+const settle = (outcomes: readonly PairOutcome[]) => {
+  const rows: SourceRows[] = [];
+  const answered: string[] = [];
+  const failed: Failure[] = [];
+  for (const o of outcomes) {
+    if (!Result.isSuccess(o.result)) {
+      failed.push({
+        host: o.host,
+        source: o.source,
+        detail: o.result.failure.detail,
+      });
+      continue;
+    }
+    if (!answered.includes(o.host)) answered.push(o.host);
+    if (Option.isSome(o.result.success)) {
+      rows.push({ host: o.host, source: o.source, rows: o.result.success.value });
+    }
+  }
+  const sources = SOURCE_IDS.filter((s) => rows.some((r) => r.source === s));
+  return { rows, answered, sources, failed };
+};
+
 // --- Aggregation ---------------------------------------------------------
-type Bucket = { cost: number; input: number; output: number };
-const emptyBucket = (): Bucket => ({ cost: 0, input: 0, output: 0 });
-const addTo = (b: Bucket, r: SessionRow): void => {
+type Bucket = {
+  cost: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+const emptyBucket = (): Bucket => ({
+  cost: 0,
+  input: 0,
+  output: 0,
+  reasoning: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+const addTo = (b: Bucket, r: UsageRow): void => {
   b.cost += r.cost;
   b.input += r.input;
   b.output += r.output;
+  b.reasoning += r.reasoning;
+  b.cacheRead += r.cacheRead;
+  b.cacheWrite += r.cacheWrite;
 };
 type ProjectAgg = {
   project: string;
   total: Bucket;
+  bySource: Map<SourceId, Bucket>;
   byHost: Map<string, Bucket>;
   byWorktree: Map<string, Bucket>;
 };
 
 const aggregate = (
-  hostRows: readonly HostRows[],
+  sourceRows: readonly SourceRows[],
 ): { projects: ProjectAgg[]; grand: Bucket } => {
   const projects = new Map<string, ProjectAgg>();
   const grand = emptyBucket();
-  for (const { host, rows } of hostRows) {
+  for (const { host, source, rows } of sourceRows) {
     for (const row of rows) {
       const { project, worktree } = splitWorktree(
         canonProject(homeRel(row.dir)),
@@ -323,6 +556,7 @@ const aggregate = (
         agg = {
           project,
           total: emptyBucket(),
+          bySource: new Map(),
           byHost: new Map(),
           byWorktree: new Map(),
         };
@@ -330,6 +564,8 @@ const aggregate = (
       }
       addTo(agg.total, row);
       addTo(grand, row);
+      if (!agg.bySource.has(source)) agg.bySource.set(source, emptyBucket());
+      addTo(agg.bySource.get(source)!, row);
       if (!agg.byHost.has(host)) agg.byHost.set(host, emptyBucket());
       addTo(agg.byHost.get(host)!, row);
       if (worktree) {
@@ -389,9 +625,8 @@ const render = (
   projects: readonly ProjectAgg[],
   grand: Bucket,
   hosts: readonly string[],
-  sinceMs: number,
-  untilMs: number,
-  basis: string,
+  sources: readonly SourceId[],
+  window: Window,
 ): string[] => {
   const PW = Math.max(24, ...projects.map((p) => [...p.project].length)) + 2;
   // Cell width adapts to the widest hostname header (e.g. for-tasks-1.coder) so
@@ -401,17 +636,35 @@ const render = (
   const maxCost = Math.max(1, ...projects.map((p) => p.total.cost));
   const spark = (v: number) =>
     BLOCKS[Math.min(7, Math.max(0, Math.round((v / maxCost) * 7)))];
+  // Source split is only worth a row when more than one generation contributes.
+  const multi = sources.length > 1;
+  const sourceLine = (costOf: (s: SourceId) => number | undefined): string =>
+    sources
+      .flatMap((s) => {
+        const c = costOf(s);
+        return c === undefined ? [] : [`${s} ${usd(c)}`];
+      })
+      .join(" · ");
   const lines: string[] = [];
 
   lines.push(
     `\n${PBG}${tfg(40, 30, 20)}${BOLD}  ◈ opencode spend  ${RESET}` +
-      `${PBG}${tfg(120, 100, 80)}${IT}${day(sinceMs)} → ${
-        day(untilMs)
+      `${PBG}${tfg(120, 100, 80)}${IT}${day(window.sinceMs)} → ${
+        day(window.untilMs)
       }${RESET}` +
       `${PBG}${
         tfg(170, 150, 120)
-      }${IT}  · by ${basis} · ${hosts.length} host(s) ${RESET}`,
+      }${IT}  · by ${window.basis} · sources ${
+        sources.join("+") || "none"
+      } · ${hosts.length} host(s) ${RESET}`,
   );
+
+  if (projects.length === 0) {
+    lines.push(
+      `${DIM}${tfg(150, 135, 112)}${IT}  no session rows in window on answering hosts${RESET}`,
+    );
+    return lines;
+  }
 
   let head = `${PBG}${tfg(150, 130, 105)}${IT}  ${
     padR("project", PW)
@@ -437,6 +690,13 @@ const render = (
       } ${RESET}${rule}` +
       `${PBG}${tfg(150, 40, 30)} ${spark(p.total.cost)} ${RESET}`;
     lines.push(ln);
+    if (multi) {
+      lines.push(
+        `${PBG}${tfg(150, 135, 112)}${IT}${DIM}  ⇢ ${
+          sourceLine((s) => p.bySource.get(s)?.cost)
+        }${RESET}`,
+      );
+    }
     for (
       const [wt, b] of [...p.byWorktree.entries()].sort((a, b) =>
         b[1].cost - a[1].cost
@@ -468,14 +728,29 @@ const render = (
     } ${RESET}${rule}` +
     `${PBG}${tfg(150, 40, 30)} ${spark(maxCost)} ${RESET}`;
   lines.push(foot);
+  if (multi) {
+    lines.push(
+      `${PBG}${tfg(90, 70, 50)}${BOLD}  ${padR("Σ source", PW)}${RESET}` +
+        `${PBG}${tfg(90, 70, 50)}${IT}${
+          sourceLine((s) =>
+            projects.reduce((t, p) => t + (p.bySource.get(s)?.cost ?? 0), 0)
+          )
+        }${RESET}`,
+    );
+  }
 
   lines.push(
     `${DIM}${tfg(150, 135, 112)}${IT}  · unused   ${
       tfg(120, 105, 85)
     }░ <10  ▒ <100  ▓ <500  █ 500+ (heat)  ` +
-      `${tfg(150, 135, 112)}│ trend = row total vs top spend · in ${
-        num(grand.input)
-      } / out ${num(grand.output)} tok${RESET}`,
+      `${tfg(150, 135, 112)}│ trend = row total vs top spend${RESET}`,
+  );
+  lines.push(
+    `${DIM}${tfg(150, 135, 112)}${IT}  · tokens in ${num(grand.input)} · out ${
+      num(grand.output)
+    } · cache-read ${num(grand.cacheRead)} · cache-write ${
+      num(grand.cacheWrite)
+    }${RESET}`,
   );
   lines.push(
     `${DIM}${
@@ -509,14 +784,22 @@ const untilFlag = Flag.String("until").pipe(
 );
 const concurrencyFlag = Flag.Int("concurrency").pipe(
   Flag.withAlias("c"),
-  Flag.withDescription("Max hosts queried in parallel. [default: 4]"),
+  Flag.withDescription(
+    "Max host×source queries in parallel. [default: 4]",
+  ),
   Flag.withDefault(4),
 );
 const basisFlag = Flag.Literals("time-basis", ["created", "updated"]).pipe(
   Flag.withDescription(
     "Filter by session start (created) or last activity (updated). [default: created]",
   ),
-  Flag.withDefault("created" as "created" | "updated"),
+  Flag.withDefault("created" as Basis),
+);
+const sourceFlag = Flag.Literals("source", ["v1", "v2", "all"]).pipe(
+  Flag.withDescription(
+    "OpenCode generation: v1 (opencode.db), v2 (opencode2.db), or all. [default: all]",
+  ),
+  Flag.withDefault("all" as SourceSelection),
 );
 
 const costCommand = Command.make(
@@ -527,6 +810,7 @@ const costCommand = Command.make(
     until: untilFlag,
     concurrency: concurrencyFlag,
     "time-basis": basisFlag,
+    source: sourceFlag,
   },
   (opts) =>
     Effect.gen(function* () {
@@ -558,36 +842,39 @@ const costCommand = Command.make(
         return yield* Effect.sync(() => Deno.exit(2));
       }
 
-      const script = remoteCommand(sinceMs, untilMs, basis);
-      const environment = yield* childEnvironment;
-      const results = yield* Effect.forEach(
-        hosts,
-        (h) => Effect.result(collectHost(h, script, environment)),
+      const window: Window = { sinceMs, untilMs, basis };
+      const sources = selectedSources(opts.source);
+      // Host-major so answered hosts keep their configured order.
+      const pairs = hosts.flatMap((host) =>
+        sources.map((source) => ({ host, source }))
+      );
+      const outcomes = yield* Effect.forEach(
+        pairs,
+        ({ host, source }) =>
+          queryPair(source, host, window).pipe(
+            Effect.result,
+            Effect.map((result): PairOutcome => ({ host, source, result })),
+          ),
         { concurrency: opts.concurrency },
       );
-      const ok: HostRows[] = [];
-      const failed: BoxFailure[] = [];
-      for (const r of results) {
-        Result.isSuccess(r) ? ok.push(r.success) : failed.push(r.failure);
-      }
 
-      const { projects, grand } = aggregate(ok);
+      const settled = settle(outcomes);
+      const { projects, grand } = aggregate(settled.rows);
       for (
         const line of render(
           projects,
           grand,
-          hosts.filter((h) => ok.some((o) => o.host === h)),
-          sinceMs,
-          untilMs,
-          basis,
+          settled.answered,
+          settled.sources,
+          window,
         )
       ) {
         yield* Console.log(line);
       }
-      for (const f of failed) {
-        yield* Console.error(`  ! ${f.host}: ${f.detail}`);
+      for (const f of settled.failed) {
+        yield* Console.error(`  ! ${f.host}[${f.source}]: ${f.detail}`);
       }
-    }),
+    }).pipe(Effect.provide(HostTransport.live)),
 );
 
 // --- Entry point ---------------------------------------------------------
@@ -604,7 +891,7 @@ if (import.meta.main) {
   const NodeServices = await import(
     "npm:@effect/platform-node@4.0.0/NodeServices"
   );
-  Command.run(costCommand, { version: "1.0.0" }).pipe(
+  Command.run(costCommand, { version: "2.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
   );
@@ -656,6 +943,22 @@ if (!import.meta.main) {
         );
       }),
     );
+  // HostTransport over a mock spawner and a fixed env, so no test reads Deno.env.
+  const testEnvironment: ChildEnvironment = {
+    HOME: "/home/test",
+    PATH: "/usr/bin:/bin",
+  };
+  const transportFor = (
+    fixture: MockProcess,
+    commands: ChildProcess.Command[] = [],
+    onRelease: () => void = () => {},
+  ) =>
+    HostTransport.spawned(testEnvironment).pipe(
+      Layer.provide(mockProcessLayer(fixture, commands, onRelease)),
+    );
+  const testWindow: Window = { sinceMs: 1, untilMs: 2, basis: "created" };
+  const payloadOf = (rows: readonly unknown[], absent = false) =>
+    JSON.stringify({ absent, rows });
 
   Deno.test("parseWhen: relative spans", () => {
     const now = 1_000_000_000_000;
@@ -691,52 +994,81 @@ if (!import.meta.main) {
       throw new Error("worktree");
     }
   });
-  Deno.test("aggregate: work/canva + dev/canva/canva merge, per-host preserved", () => {
-    const { projects, grand } = aggregate([
-      {
-        host: "local",
-        rows: [{
-          dir: "/Users/lochlan/dev/canva/canva",
-          cost: 13.41,
-          input: 100,
-          output: 50,
-        }],
-      },
-      {
-        host: "for-tasks-1.coder",
-        rows: [{
-          dir: "/home/coder/work/canva",
-          cost: 15.36,
-          input: 200,
-          output: 80,
-        }],
-      },
-    ]);
-    if (projects.length !== 1) {
-      throw new Error(`expected 1 merged project, got ${projects.length}`);
+
+  Deno.test("sources: v1 and v2 scripts differ only in DB path and SQL", () => {
+    const v1 = makeUsageSource(V1_SPEC).script(testWindow);
+    const v2 = makeUsageSource(V2_SPEC).script(testWindow);
+    const must = (ok: boolean, what: string) => {
+      if (!ok) throw new Error(what);
+    };
+    must(
+      v1.includes("/.local/share/opencode/opencode.db") &&
+        !v1.includes("opencode2.db"),
+      "v1 path",
+    );
+    must(
+      v2.includes("/.local/share/opencode/opencode2.db") &&
+        !v2.includes("/opencode.db"),
+      "v2 path",
+    );
+    must(
+      v1.includes("FROM session WHERE") && !v1.includes("session_message"),
+      "v1 sql",
+    );
+    must(
+      v2.includes("FROM session_message m JOIN session_v2 s") &&
+        !v2.includes("FROM session WHERE"),
+      "v2 sql",
+    );
+    must(
+      v1.includes("tokens_cache_read") && v1.includes("tokens_reasoning"),
+      "v1 cache/reasoning columns",
+    );
+    must(
+      v2.includes("$.tokens.cache.read") && v2.includes("$.tokens.reasoning") &&
+        v2.includes("m.type = 'assistant'"),
+      "v2 per-message tokens",
+    );
+    must(
+      v1.includes("existsSync(path)") && v2.includes("existsSync(path)"),
+      "absent-file guard",
+    );
+    must(
+      v1.startsWith("deno eval ") && v2.startsWith("deno eval "),
+      "transport prefix",
+    );
+  });
+
+  Deno.test("sources: basis selects the matching time column", () => {
+    const updated: Window = { ...testWindow, basis: "updated" };
+    const v1 = makeUsageSource(V1_SPEC).script(updated);
+    const v2 = makeUsageSource(V2_SPEC).script(updated);
+    if (!v1.includes("time_updated >= ?") || v1.includes("time_created >= ?")) {
+      throw new Error("v1 basis");
     }
-    const p = projects[0];
-    if (p.project !== "dev/canva/canva") throw new Error(p.project);
-    if (Math.abs(p.total.cost - 28.77) > 0.001) {
-      throw new Error(`total ${p.total.cost}`);
+    if (!v2.includes("s.time_updated >= ?") || v2.includes("s.time_created >= ?")) {
+      throw new Error("v2 basis");
     }
-    if (Math.abs((p.byHost.get("local")?.cost ?? 0) - 13.41) > 0.001) {
-      throw new Error("local host");
-    }
-    if (Math.abs(grand.cost - 28.77) > 0.001) {
-      throw new Error(`grand ${grand.cost}`);
-    }
+  });
+
+  Deno.test("sources: --source selects v1, v2 or both", () => {
+    if (selectedSources("all").join() !== "v1,v2") throw new Error("all");
+    if (selectedSources("v1").join() !== "v1") throw new Error("v1");
+    if (selectedSources("v2").join() !== "v2") throw new Error("v2");
   });
 
   Deno.test("collectHost: local and SSH argv pass through the process spawner", async () => {
     const commands: ChildProcess.Command[] = [];
-    const payload = JSON.stringify([{
+    const payload = payloadOf([{
       dir: "/Users/test/dev/example",
       cost: 1,
       input: 2,
       output: 3,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
     }]);
-    const layer = mockProcessLayer(
+    const layer = transportFor(
       { stdout: payload, stderr: "", exitCode: 0 },
       commands,
     );
@@ -816,6 +1148,194 @@ if (!import.meta.main) {
     }
   });
 
+  Deno.test("decode: V2 payload yields normalized rows incl. cache + reasoning", async () => {
+    const payload = payloadOf([{
+      dir: "/home/coder/work/canva",
+      cost: 1.5,
+      input: 10,
+      output: 2,
+      reasoning: 7,
+      cacheRead: 300,
+      cacheWrite: 5,
+    }]);
+    // A deno diagnostic line before the payload must not break decoding.
+    const stdout = `Warning something\n${payload}\n`;
+    const result = await Effect.runPromise(
+      collectHost("box", "query").pipe(
+        Effect.provide(transportFor({ stdout, stderr: "", exitCode: 0 })),
+      ),
+    );
+    if (Option.isNone(result)) throw new Error("expected rows, got absent");
+    const row = result.value[0];
+    if (
+      result.value.length !== 1 || row.cost !== 1.5 || row.reasoning !== 7 ||
+      row.cacheRead !== 300 || row.cacheWrite !== 5 ||
+      row.dir !== "/home/coder/work/canva"
+    ) {
+      throw new Error(`unexpected decode: ${JSON.stringify(result.value)}`);
+    }
+  });
+
+  Deno.test("UsageSource.v2: queries opencode2.db through the service", async () => {
+    const commands: ChildProcess.Command[] = [];
+    const payload = payloadOf([{
+      dir: "/Users/lochlan/dev/canva/x",
+      cost: 2,
+      input: 1,
+      output: 1,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    }]);
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const usage = yield* UsageSource;
+        return yield* usage.query("local", testWindow);
+      }).pipe(
+        Effect.provide(UsageSource.v2),
+        Effect.provide(
+          transportFor({ stdout: payload, stderr: "", exitCode: 0 }, commands),
+        ),
+      ),
+    );
+    if (Option.isNone(result) || result.value[0].cost !== 2) {
+      throw new Error("v2 query did not decode");
+    }
+    const [command] = commands;
+    if (
+      command?._tag !== "StandardCommand" ||
+      !command.args.join(" ").includes("opencode2.db")
+    ) {
+      throw new Error("v2 source did not query opencode2.db");
+    }
+  });
+
+  Deno.test("absent DB: source is skipped on that host, not failed", async () => {
+    const absent = await Effect.runPromise(
+      Effect.result(collectHost("box", "query")).pipe(
+        Effect.provide(
+          transportFor({ stdout: payloadOf([], true), stderr: "", exitCode: 0 }),
+        ),
+      ),
+    );
+    const present = await Effect.runPromise(
+      Effect.result(collectHost("box", "query")).pipe(
+        Effect.provide(transportFor({
+          stdout: payloadOf([{
+            dir: "/home/coder/work/canva",
+            cost: 3,
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          }]),
+          stderr: "",
+          exitCode: 0,
+        })),
+      ),
+    );
+    const settled = settle([
+      { host: "box", source: "v1", result: absent },
+      { host: "box", source: "v2", result: present },
+    ]);
+    if (settled.failed.length !== 0) throw new Error("absent counted as failure");
+    if (settled.sources.join() !== "v2") {
+      throw new Error(`sources should be v2 only, got ${settled.sources}`);
+    }
+    if (settled.answered.join() !== "box") {
+      throw new Error("absent host should still count as answered");
+    }
+    if (settled.rows.length !== 1 || settled.rows[0].source !== "v2") {
+      throw new Error("only the present source should contribute rows");
+    }
+  });
+
+  Deno.test("settle: failures keep their source label", async () => {
+    const failed = await Effect.runPromise(
+      Effect.result(collectHost("box", "query")).pipe(
+        Effect.provide(
+          transportFor({ stdout: "", stderr: "unable to open database", exitCode: 1 }),
+        ),
+      ),
+    );
+    const settled = settle([{ host: "box", source: "v2", result: failed }]);
+    if (
+      settled.failed.length !== 1 || settled.failed[0].source !== "v2" ||
+      settled.failed[0].detail !== "unable to open database"
+    ) {
+      throw new Error(`unexpected failure: ${JSON.stringify(settled.failed)}`);
+    }
+    if (settled.answered.length !== 0) throw new Error("failed host answered");
+  });
+
+  Deno.test("aggregate: v1 + v2 merge per project, keep per-source split", () => {
+    const { projects, grand } = aggregate([
+      {
+        host: "local",
+        source: "v1",
+        rows: [{
+          dir: "/Users/lochlan/dev/canva/canva",
+          cost: 13.41,
+          input: 100,
+          output: 50,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        }],
+      },
+      {
+        host: "local",
+        source: "v2",
+        rows: [{
+          dir: "/Users/lochlan/dev/canva/canva",
+          cost: 4,
+          input: 10,
+          output: 5,
+          reasoning: 2,
+          cacheRead: 40,
+          cacheWrite: 6,
+        }],
+      },
+      {
+        host: "for-tasks-1.coder",
+        source: "v1",
+        rows: [{
+          dir: "/home/coder/work/canva",
+          cost: 15.36,
+          input: 200,
+          output: 80,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        }],
+      },
+    ]);
+    if (projects.length !== 1) {
+      throw new Error(`expected 1 merged project, got ${projects.length}`);
+    }
+    const p = projects[0];
+    if (p.project !== "dev/canva/canva") throw new Error(p.project);
+    if (Math.abs(p.total.cost - 32.77) > 0.001) {
+      throw new Error(`total ${p.total.cost}`);
+    }
+    if (Math.abs((p.bySource.get("v1")?.cost ?? 0) - 28.77) > 0.001) {
+      throw new Error("v1 split");
+    }
+    if (Math.abs((p.bySource.get("v2")?.cost ?? 0) - 4) > 0.001) {
+      throw new Error("v2 split");
+    }
+    if (Math.abs((p.byHost.get("local")?.cost ?? 0) - 17.41) > 0.001) {
+      throw new Error("local host");
+    }
+    if (
+      grand.cacheRead !== 40 || grand.cacheWrite !== 6 || grand.reasoning !== 2 ||
+      grand.input !== 310
+    ) {
+      throw new Error(`grand tokens ${JSON.stringify(grand)}`);
+    }
+  });
+
   Deno.test("collectHost: whole query timeout returns BoxFailure context", async () => {
     let released = false;
     await Effect.runPromise(
@@ -823,7 +1343,7 @@ if (!import.meta.main) {
         const acquired = yield* Deferred.make<void>();
         const fiber = yield* Effect.result(collectHost("slow-box", "query"))
           .pipe(
-            Effect.provide(mockProcessLayer(
+            Effect.provide(transportFor(
               {
                 stdout: "",
                 stderr: "",
@@ -865,11 +1385,11 @@ if (!import.meta.main) {
     const stdoutFailure = await Effect.runPromise(
       collectHost("stdout-box", "query").pipe(
         Effect.flip,
-        Effect.provide(mockProcessLayer({
+        Effect.provide(transportFor({
           stdout: "x".repeat(MAX_STDOUT_BYTES + 1),
           stderr: "",
           exitCode: 0,
-        }, [])),
+        })),
       ),
     );
     if (
@@ -882,11 +1402,11 @@ if (!import.meta.main) {
     const stderrFailure = await Effect.runPromise(
       collectHost("stderr-box", "query").pipe(
         Effect.flip,
-        Effect.provide(mockProcessLayer({
+        Effect.provide(transportFor({
           stdout: "",
           stderr: "x".repeat(MAX_STDERR_BYTES + 1),
           exitCode: 1,
-        }, [])),
+        })),
       ),
     );
     if (
@@ -901,11 +1421,11 @@ if (!import.meta.main) {
     const stderrFailure = await Effect.runPromise(
       collectHost("stderr-box", "query").pipe(
         Effect.flip,
-        Effect.provide(mockProcessLayer({
+        Effect.provide(transportFor({
           stdout: "ignored",
           stderr: "permission denied\n",
           exitCode: 17,
-        }, [])),
+        })),
       ),
     );
     if (
@@ -920,11 +1440,11 @@ if (!import.meta.main) {
     const exitFailure = await Effect.runPromise(
       collectHost("exit-box", "query").pipe(
         Effect.flip,
-        Effect.provide(mockProcessLayer({
+        Effect.provide(transportFor({
           stdout: "ignored",
           stderr: "",
           exitCode: 23,
-        }, [])),
+        })),
       ),
     );
     if (exitFailure.host !== "exit-box" || exitFailure.detail !== "exited 23") {
@@ -941,10 +1461,12 @@ if (!import.meta.main) {
       method: "spawn",
       pathOrDescriptor: "missing-command",
     });
-    const layer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() => Effect.fail(cause)),
-    );
+    const layer = HostTransport.spawned({}).pipe(Layer.provide(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(cause)),
+      ),
+    ));
     const failure = await Effect.runPromise(
       collectHost("missing-box", "query").pipe(
         Effect.flip,
@@ -963,7 +1485,7 @@ if (!import.meta.main) {
       Effect.gen(function* () {
         const acquired = yield* Deferred.make<void>();
         const fiber = yield* collectHost("slow-box", "query").pipe(
-          Effect.provide(mockProcessLayer(
+          Effect.provide(transportFor(
             {
               stdout: "",
               stderr: "",

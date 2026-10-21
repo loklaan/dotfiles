@@ -97,7 +97,7 @@ The directory name MUST match the `name:` field in frontmatter exactly.
 | `lochy:coding:frontend-design`             | coding             | Frontend design quality    |
 | `lochy:coding:shell`                       | coding             | Bash script patterns       |
 | `lochy:agent:authoring`                    | agent              | Authoring agent extensions |
-| `lochy:agent:costs`                        | agent              | Claude Code cost reporting |
+| `lochy:agent:costs`                        | agent              | OpenCode cost reporting    |
 | `lochy:agent:extract`                      | agent              | Session transcript extraction |
 | `lochy:pm`                                 | pm                 | Milestones, tickets, and facilitated scoping |
 | `lochy:agent:workflows`                    | agent              | Durable agent workflows    |

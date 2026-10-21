@@ -1,41 +1,47 @@
 ---
 name: lochy:agent:costs
 description: >-
-  Analyse Claude Code session costs from local JSONL logs in ~/.claude/.
-  Reports cost per directory, daily breakdown for the past week, weekly
-  breakdown for older sessions, and session age range.
-  Use when asking about Claude Code spending, costs, usage, or token consumption.
-allowed-tools: Bash, Read
+  Report OpenCode spend (OpenCode 1 and OpenCode 2) grouped by project across
+  hosts via `df-opencode-cost`. Use when asking about OpenCode/agent spending,
+  costs, usage, or token consumption.
+allowed-tools: Bash
 ---
 
-# Claude Code Cost Report
+# OpenCode Cost Report
 
-Analyse token usage and estimated costs from Claude Code's local session logs.
+Thin wrapper around the `df-opencode-cost` CLI (on PATH, `~/.local/bin`).
 
-## Data Sources
-
-- **Session metadata**: `~/.claude/sessions/*.json` — maps sessionId to cwd and startedAt
-- **Conversation logs**: `~/.claude/projects/<project-dir>/<session-id>.jsonl` — contains per-turn usage
-- **Subagent logs**: `~/.claude/projects/<project-dir>/<session-id>/subagents/*.jsonl`
-
-Usage data lives inside JSONL entries where `data.message.message.usage` exists, alongside `data.message.message.model`.
-
-Sessions are retained for ~30 days before automatic purge.
-
-## Report
+## Usage
 
 ```bash
-python3 ~/.agents/skills/lochy:agent:costs/scripts/cost-report.py
+df-opencode-cost [flags]
 ```
 
-Display the full output to the user without summarising.
+Defaults: configured hosts (chezmoi `openCodeCostHosts`), window `30d`, both
+OpenCode generations.
 
-## Pricing
+## Flags
 
-The script uses published Anthropic API pricing. When new models ship, update the `PRICING` dict in the script.
+Run `df-opencode-cost --help` for the authoritative list.
 
-| Model | Input | Output | Cache Write | Cache Read |
-|-------|-------|--------|-------------|------------|
-| Sonnet 4.6 | $3/M | $15/M | $3.75/M | $0.30/M |
-| Opus 4.7 | $15/M | $75/M | $18.75/M | $1.50/M |
-| Haiku 4.5 | $0.80/M | $4/M | $1.00/M | $0.08/M |
+- `--host, -H a,b` — comma-separated hosts. `local` is this machine; others are ssh targets.
+- `--since, -s` — window start: a date (`2026-01-01`) or a span (`30d`, `2w`, `3m`).
+- `--until, -u` — window end: date or span.
+- `--time-basis created|updated` — filter by session start or last activity.
+- `--concurrency, -c N` — max host×source queries in parallel.
+- `--source v1|v2|all` — OpenCode 1 (`~/.local/share/opencode/opencode.db`),
+  OpenCode 2 (`~/.local/share/opencode/opencode2.db`), or both (default).
+
+## Notes
+
+- A host without a database for a source skips that source silently.
+- Unreachable hosts and failed queries are listed at the bottom as `! host[source]: detail`.
+- Cost is OpenCode's own recorded cost. Subagent sessions are separate rows, so
+  summing them does not double count.
+- With both sources, each project gets a `⇢ v1 $x · v2 $y` split line.
+- Worktrees fold into their parent project.
+- Devbox `~/work/<repo>` folds into `~/dev/canva/<repo>`.
+
+## Output
+
+Show the full output to the user without summarising, unless they ask for a summary. Output contains ANSI colour codes.
