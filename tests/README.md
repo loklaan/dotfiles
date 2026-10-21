@@ -40,9 +40,8 @@ same lane set. It checks the catalogue conditions (otter work-only, pushbullet
 only when its token resolves, and untrusted). A shim `bws` and a fake
 `bws-get-or-empty` stand in for real secret resolution. It covers machine-local
 `mcpServersLocal`/`mcpStdioServers` merging and conflicts, and that Claude Code
-keeps `projects.*.mcpServers`. It checks the one-time Codex legacy-block
-migration and that re-rendering is stable, and that re-init carries the local
-tables.
+keeps `projects.*.mcpServers`. It checks the Codex legacy-block migration and
+that re-rendering is stable, and that re-init carries the local tables.
 
 ## Skill reconcile
 

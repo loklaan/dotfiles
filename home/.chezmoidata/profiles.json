@@ -236,7 +236,7 @@
                             "variant": "high",
                             "skills": [],
                             "mcps": [
-                                "mp-research"
+                                "mcpproxy"
                             ]
                         },
                         "explorer": {
@@ -313,7 +313,7 @@
                             "variant": "high",
                             "skills": [],
                             "mcps": [
-                                "mp-research"
+                                "mcpproxy"
                             ]
                         },
                         "explorer": {
@@ -353,7 +353,7 @@
                             "model": "opencode-go/deepseek-v4-flash",
                             "variant": "high",
                             "mcps": [
-                                "mp-research"
+                                "mcpproxy"
                             ]
                         },
                         "explorer": {

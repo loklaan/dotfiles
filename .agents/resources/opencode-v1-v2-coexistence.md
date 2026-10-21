@@ -117,8 +117,8 @@ opencode2 service restart
 `snapshots` not `snapshot`, `mcp.servers` not `mcp`, `settings` not `options`,
 and an ordered `permissions` array instead of a per-tool `permission` map.
 
-Both versions get the same MCPProxy lanes (`mp-codemode` plus one
-`mp-<profile>` per profile) from the shared `mcp-client-tmpl` partial, each in
+Both versions get the same single MCPProxy lane (`mcpproxy`) from the shared
+`mcp-client-tmpl` partial, each in
 its own field shape (V1 `mcp.<name>.enabled`, V2 `mcp.servers.<name>.disabled`),
 so the URLs stay single-sourced.
 

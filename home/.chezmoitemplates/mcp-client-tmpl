@@ -1,8 +1,7 @@
-{{- /* One client's MCP entries: the same lane set for every client, projected
+{{- /* One client's MCP entries: the same single lane for every client, projected
      into that client's config shape.
 
-       mp-codemode   -> <origin>/mcp/
-       mp-<profile>  -> <origin>/mcp/p/<profile>, one per .mcpproxyProfiles entry
+       mcpproxy   -> <origin>/mcp/
 
      <origin> is loopback plus .ports.mcpproxy.internal, which MCPProxy binds
      (its `listen` in ~/.mcpproxy/mcp_config.json). With nginxProxy on, nginx
@@ -34,13 +33,7 @@
 {{    $disabled | sortAlpha | toJson }}
 {{- else -}}
 {{- $origin := printf "http://127.0.0.1:%v" $d.ports.mcpproxy.internal -}}
-{{- $lanes := list (list "mp-codemode" (printf "%s/mcp/" $origin)) -}}
-{{- range $profile := (dig "mcpproxyProfiles" (list) $d) -}}
-{{-   $slug := dig "name" "" $profile -}}
-{{-   if ne "" $slug -}}
-{{-     $lanes = append $lanes (list (printf "mp-%s" $slug) (printf "%s/mcp/p/%s" $origin $slug)) -}}
-{{-   end -}}
-{{- end -}}
+{{- $lanes := list (list "mcpproxy" (printf "%s/mcp/" $origin)) -}}
 
 {{- if eq $client "codex" -}}
 {{-   $tables := list -}}

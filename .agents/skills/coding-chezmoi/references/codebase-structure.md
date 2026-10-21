@@ -98,7 +98,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 One dataset feeds every MCP client:
 
 1. **Catalogue.** `home/.chezmoidata/mcpproxy.yaml` holds `mcpServers`, the
-   shared server list, plus `mcpproxyProfiles` and `mcpPluginBuiltins`. Each
+   shared server list, plus `mcpPluginBuiltins`. Each
    entry has `when` conditions (`machineProfile`, `os`, `requiresSecret`) and
    a `trust` setting. Secrets appear only as BWS id key names (`envSecrets`,
    `headerSecrets`).
@@ -110,9 +110,9 @@ One dataset feeds every MCP client:
    condition-filtered set. Only MCPProxy (`~/.mcpproxy/mcp_config.json`) asks
    it to resolve secrets.
 4. **Projection.** `.chezmoitemplates/mcp-client-tmpl` gives every client the
-   same lanes: `mp-codemode` → `http://127.0.0.1:<ports.mcpproxy.internal>/mcp/`,
-   plus `mp-<profile>` → `/mcp/p/<profile>`. Clients always dial the loopback
-   internal port, even when nginx also fronts it.
+   same single lane: `mcpproxy` → `http://127.0.0.1:<ports.mcpproxy.internal>/mcp/`.
+   Clients always dial the loopback internal port, even when nginx also fronts
+   it. MCPProxy's own config carries no `profiles` key.
 
 | Client | Target | Entry shape |
 |---|---|---|

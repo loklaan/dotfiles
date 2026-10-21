@@ -17,7 +17,7 @@
 # (Linux) or ?? (macOS); a trailing .exe on the program name is ignored.
 cs_busy() {
   [ "$#" -gt 0 ] || return 1
-  local procs
+  local procs IFS=' ' # callers set IFS=$'\n\t'; "$*" must join with spaces
   procs=$(ps -axo tty=,comm= 2>/dev/null) || return 0
   printf '%s\n' "$procs" | awk -v names=" $* " '
     $1 !~ /^\?+$/ { n = split($2, a, "/"); c = a[n]; sub(/\.exe$/, "", c); if (index(names, " " c " ")) hit = 1 }

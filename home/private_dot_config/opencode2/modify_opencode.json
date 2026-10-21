@@ -52,9 +52,8 @@
 
 {{- $config = $config | setValueAtPath "websearch" false -}}
 
-{{- /* MCPProxy lanes: `mp-codemode` plus one `mp-<slug>` per profile in shared
-     .chezmoidata/mcpproxy.yaml, independent of deployed config and apply order.
-     The same lane set every client gets, from mcp-client-tmpl. */ -}}
+{{- /* MCPProxy lane: `mcpproxy` only, from mcp-client-tmpl, the same lane every
+     client gets, independent of deployed config and apply order. */ -}}
 {{- $servers := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "opencode2") | fromJson -}}
 {{- $config = $config | setValueAtPath "mcp.servers" $servers -}}
 

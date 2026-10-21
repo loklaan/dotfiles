@@ -53,10 +53,7 @@ render() {
       --override-data-file "$data" --with-stdin -f "$template"
 }
 
-PROFILES=$(chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DEST" '{{ .mcpproxyProfiles | toJson }}')
-LANES=$(jq -c '["mp-codemode"] + [.[].name | "mp-" + .] | sort' <<< "$PROFILES")
-jq -e 'all(.[]; .name != "flows") and ([.[].servers[]] | index("smithers") | not)' <<< "$PROFILES" >/dev/null ||
-  fail "smithers/flows still present in profiles"
+LANES='["mcpproxy"]'
 
 # --- MCPProxy server set per os x machine profile -----------------------------
 for os in darwin linux; do
@@ -71,23 +68,23 @@ for os in darwin linux; do
       fail "trust_mode/enabled missing for ${os}/${profile}"
     jq -e 'all(.mcpServers[]; has("when") or has("trust") or has("envSecrets") or has("headerSecrets") | not)' \
       <<< "$proxy" >/dev/null || fail "catalogue meta keys leaked into MCPProxy for ${os}/${profile}"
-    jq -e --argjson p "$PROFILES" '.profiles == $p' <<< "$proxy" >/dev/null ||
-      fail "MCPProxy profiles differ from shared data for ${os}/${profile}"
+    jq -e 'has("profiles") | not' <<< "$proxy" >/dev/null ||
+      fail "MCPProxy config still has a profiles key for ${os}/${profile}"
     again=$(render "$MCPPROXY" "$o" "$proxy")
     [ "$again" = "$proxy" ] || fail "MCPProxy render not stable for ${os}/${profile}"
 
     # Every client: identical lane names.
     jq -e --argjson l "$LANES" '.mcp | keys == $l and
-      .["mp-codemode"] == {type: "remote", enabled: true, url: "http://127.0.0.1:18321/mcp/"}' \
+      .["mcpproxy"] == {type: "remote", enabled: true, url: "http://127.0.0.1:18321/mcp/"}' \
       <<< "$(render "$OC1" "$o")" >/dev/null || fail "OpenCode 1 lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" '.mcp.servers | keys == $l and
-      .["mp-docs"] == {type: "remote", url: "http://127.0.0.1:18321/mcp/p/docs", disabled: false}' \
+      .["mcpproxy"] == {type: "remote", url: "http://127.0.0.1:18321/mcp/", disabled: false}' \
       <<< "$(render "$OC2" "$o")" >/dev/null || fail "OpenCode 2 lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" '.mcpServers | keys == $l and
-      .["mp-research"] == {type: "http", url: "http://127.0.0.1:18321/mcp/p/research"}' \
+      .["mcpproxy"] == {type: "http", url: "http://127.0.0.1:18321/mcp/"}' \
       <<< "$(render "$CLAUDE" "$o")" >/dev/null || fail "Claude Code lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" '.mcpServers | keys == $l and
-      .["mp-codemode"] == {command: "npx", args: ["-y", "mcp-remote", "http://127.0.0.1:18321/mcp/"]}' \
+      .["mcpproxy"] == {command: "npx", args: ["-y", "mcp-remote", "http://127.0.0.1:18321/mcp/"]}' \
       <<< "$(render "$DESKTOP" "$o")" >/dev/null || fail "Claude Desktop lanes wrong for ${os}/${profile}"
     codex_lanes=$(render "$CODEX" "$o" "" | grep -E '^\[mcp_servers\.' | sed -E 's/^\[mcp_servers\.([^]]+)\]$/\1/' | jq -Rsc 'split("\n") | map(select(. != "")) | sort')
     [ "$codex_lanes" = "$LANES" ] || fail "Codex lanes wrong for ${os}/${profile}: ${codex_lanes}"
@@ -194,9 +191,8 @@ assert doc["model_instructions_file"] == "/home/example/.codex/instructions.md"
 assert doc["notify"] == ["notifier", "turn-ended"] and doc["model"] == "example-model"
 assert doc["features"] == {"codex_hooks": True, "js_repl": False}
 servers = doc["mcp_servers"]
-assert "mcpproxy" not in servers, servers
 assert sorted(servers) == sorted(lanes + ["Canva"]), sorted(servers)
-assert servers["mp-codemode"] == {"url": "http://127.0.0.1:18321/mcp/",
+assert servers["mcpproxy"] == {"url": "http://127.0.0.1:18321/mcp/",
     "tools": {"call_tool_write": {"approval_mode": "approve"}}}
 assert servers["Canva"] == {"type": "http", "url": "https://mcp.canva.com/mcp"}
 assert doc["projects"] == {"/home/example/dev": {"trust_level": "trusted"}}

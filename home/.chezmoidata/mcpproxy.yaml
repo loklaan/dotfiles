@@ -9,9 +9,8 @@
 #   3. Projection: `.chezmoitemplates/mcp-catalogue-tmpl` returns the merged,
 #      filtered set. Only MCPProxy (~/.mcpproxy/mcp_config.json) receives the
 #      server details. `.chezmoitemplates/mcp-client-tmpl` gives every client
-#      (OpenCode 1/2, Claude Code, Claude Desktop, Codex) the same proxy lanes:
-#      `mp-codemode` -> /mcp/, plus one `mp-<profile>` -> /mcp/p/<profile> for
-#      each profile below.
+#      (OpenCode 1/2, Claude Code, Claude Desktop, Codex) the single proxy
+#      lane `mcpproxy` -> /mcp/. MCPProxy itself gets no profiles.
 #
 # Entry shape (every key other than the meta keys passes through to MCPProxy):
 #   protocol       stdio | http (defaults to stdio with command, http with url)
@@ -59,23 +58,6 @@ mcpServers:
   # Hosted remote MCP with user OAuth; MCPProxy persists the grant.
   notion:
     url: https://mcp.notion.com/mcp
-
-# Shared intent for MCPProxy profiles and every client's mp-<name> lanes.
-mcpproxyProfiles:
-  - name: docs
-    servers: [context7]
-  - name: research
-    servers: [websearch, context7, gh_grep]
-  - name: browser
-    servers: [chrome-devtools]
-  - name: design
-    servers: [figma-desktop, chrome-devtools]
-  - name: pdf
-    servers: [pdf-tools]
-  - name: memory
-    servers: [notion]
-  - name: notify
-    servers: [pushbullet]
 
 # MCP servers that OpenCode plugins register themselves, bypassing the proxy,
 # mapped to the catalogue server that replaces each one. A built-in is put in

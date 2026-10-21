@@ -1,8 +1,8 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* MCPProxy lanes (mp-codemode + one mp-<profile> per profile), projected
-      from the shared catalogue by mcp-client-tmpl. `mcp` is replaced whole. */ -}}
+{{- /* MCPProxy lane (mcpproxy only), projected from the shared catalogue by
+      mcp-client-tmpl. `mcp` is replaced whole. */ -}}
 {{- $mcpServers := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "opencode") | fromJson -}}
 
 {{- /* Configure instructions to reference shared agent rules and project rules directories.
