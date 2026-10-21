@@ -65,3 +65,8 @@
        settings.json hook entries are pruned by dot_claude/modify_settings.json. */}}
 .claude/hooks/peon-ping
 .config/opencode/plugins/peon-ping.ts
+{{- /* The v1 `webfetch` tool (tools/webfetch.ts) is replaced by the web-tools host
+       entry, which OpenCode 1 loads from plugins/webtools.js. Left in place, v1
+       would register two `webfetch` tools. Remove the stale copy on every machine.
+       Keep this line for one release cycle after every machine has applied. */}}
+.config/opencode/tools/webfetch.ts

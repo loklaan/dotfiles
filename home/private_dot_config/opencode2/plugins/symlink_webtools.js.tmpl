@@ -1,0 +1,8 @@
+{{- /* web-tools host entry for OpenCode 2 (see run_onchange_after_install-074-web-tools).
+       OpenCode 2 autoloads plugins/*.js from its config dir, so this link is picked up
+       with no `plugins` key. The link is written only once the bundle exists, so a
+       fresh machine never has a dangling plugin link. */ -}}
+{{- $bundle := joinPath .chezmoi.homeDir ".local/share/dotfiles/web-tools/dist/entry.js" -}}
+{{- if stat $bundle -}}
+{{ $bundle }}
+{{- end -}}

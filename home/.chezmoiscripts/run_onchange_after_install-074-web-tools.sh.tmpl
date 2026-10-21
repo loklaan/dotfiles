@@ -1,0 +1,94 @@
+{{- /* Builds the web-fetch host entry (dist/entry.js) that OpenCode 1 and OpenCode 2
+       load through the plugin symlinks, after `bun install --frozen-lockfile`.
+
+       The template renders empty, and chezmoi runs nothing, unless OpenCode 1 or
+       OpenCode 2 is installed. A host without the bundle would load nothing.
+
+       Rebuild gate: a content hash over the build inputs (src/**, package.json,
+       bun.lock, tsconfig.json). The hash is embedded in this script, so a change to
+       any input re-renders the script and chezmoi re-runs it. The test/ tree is
+       deliberately excluded: tests do not change the bundle, and a test edit must not
+       trigger a rebuild. `glob` + `include` lists the tree, which is the house
+       pattern (coding-patterns.md, "Content-Hash Embedding"). */ -}}
+{{- $hostsInstalled := or (lookPath "opencode") (lookPath "opencode2") -}}
+{{- if $hostsInstalled -}}
+{{- $root := joinPath .chezmoi.homeDir ".local/share/dotfiles/web-tools" -}}
+{{- $source := "private_dot_local/share/dotfiles/web-tools" -}}
+{{- $srcDir := joinPath .chezmoi.sourceDir $source -}}
+{{- $prefix := printf "%s/" .chezmoi.sourceDir -}}
+{{- $want := "" -}}
+{{- range (glob (joinPath $srcDir "src" "**") | sortAlpha) -}}
+{{-   if and (stat .) (not (stat .).isDir) -}}
+{{-     $want = printf "%s%s" $want (include (trimPrefix $prefix .) | sha256sum) -}}
+{{-   end -}}
+{{- end -}}
+{{- $want = printf "%s%s%s%s" $want (include (joinPath $source "package.json")) (include (joinPath $source "bun.lock")) (include (joinPath $source "tsconfig.json")) | sha256sum -}}
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "web-tools" }}
+# Installs the web-tools dependencies with `bun install --frozen-lockfile`, then
+# bundles src/host/entry.ts to dist/entry.js. A failed install or build warns and
+# exits 0: the apply never fails on this, and the next apply retries.
+#
+# content-hash: {{ $want }}
+
+readonly ROOT={{ $root | quote }}
+readonly ENTRY_OUT="${ROOT}/dist/entry.js"
+readonly STAMP="${ROOT}/dist/.dotfiles-build.sha256"
+readonly WANT={{ $want | quote }}
+
+BUN_COMMAND=()
+BUN_LABEL=""
+
+# Sets BUN_COMMAND to a command that runs Bun, or fails when none does. Same probe
+# order as the OpenCode TUI plugin install: a bun on PATH, else the Bun built into
+# opencode (BUN_BE_BUN=1). Only --version is run through the opencode binary.
+find_bun() {
+  local version
+  if version=$(bun --version 2>/dev/null) && [ -n "$version" ]; then
+    BUN_COMMAND=(bun)
+    BUN_LABEL="bun ${version}"
+    return 0
+  fi
+
+  local opencode own_version
+  opencode=$(command -v opencode) || return 1
+  version=$(BUN_BE_BUN=1 "$opencode" --version 2>/dev/null) || return 1
+  own_version=$("$opencode" --version 2>/dev/null) || return 1
+  [ -n "$version" ] && [ "$version" != "$own_version" ] || return 1
+  BUN_COMMAND=(env BUN_BE_BUN=1 "$opencode")
+  BUN_LABEL="the Bun ${version} built into opencode"
+}
+
+main() {
+  if [ -f "$STAMP" ] && [ -f "$ENTRY_OUT" ] && [ "$(cat "$STAMP")" = "$WANT" ]; then
+    log_detail "web-tools bundle is current"
+    return 0
+  fi
+
+  if ! find_bun; then
+    log_warn "Skipped web-tools build: neither bun nor opencode can run Bun"
+    return 0
+  fi
+
+  log_step "Installing web-tools dependencies with ${BUN_LABEL}"
+  if ! run_quiet "${BUN_COMMAND[@]}" install --cwd "$ROOT" --frozen-lockfile --ignore-scripts; then
+    log_warn "Could not install web-tools dependencies; the next apply retries"
+    return 0
+  fi
+
+  log_step "Bundling web-tools host entry"
+  mkdir -p "${ROOT}/dist"
+  if ! run_quiet "${BUN_COMMAND[@]}" build --cwd "$ROOT" --target node --format esm \
+    --outfile "$ENTRY_OUT" src/host/entry.ts; then
+    rm -f "$STAMP"
+    log_warn "Could not bundle web-tools; OpenCode loads nothing from it until the next apply succeeds"
+    return 0
+  fi
+  printf '%s\n' "$WANT" > "$STAMP"
+  log_detail "Built ${ENTRY_OUT}"
+}
+
+main
+{{- else -}}
+{{- /* Neither OpenCode host is installed: render nothing, so chezmoi runs no script. */ -}}
+{{- end -}}

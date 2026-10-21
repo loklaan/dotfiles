@@ -23,3 +23,10 @@ Library/**
 .local/bin/df-mcpproxy-serve
 .config/dotfiles/mcpproxy-serve.env
 {{ end }}
+{{- /* web-tools (OpenCode 1/2 web fetch): the source tree deploys so the install
+       script can build it. Tests and the bundle stay out of the deployed tree:
+       dist/ is written by the build, node_modules/ by bun install, and tests are
+       repo-only. */}}
+.local/share/dotfiles/web-tools/test
+.local/share/dotfiles/web-tools/dist
+.local/share/dotfiles/web-tools/node_modules

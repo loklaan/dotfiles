@@ -1,0 +1,45 @@
+# Web-fetch capability (the `webfetch` tool for OpenCode 1 and 2).
+# Projected to ~/.config/dotfiles/web-tools.json by
+# private_dot_config/private_dotfiles/private_web-tools.json.tmpl. The entry
+# reads that file once, and WEBTOOLS_* / EXA_API_KEY environment variables
+# override it.
+#
+# extractionModels: secondary models that answer the optional `prompt` over
+#   fetched pages, as "provider/model" strings, tried in order. EMPTY disables
+#   extraction: the tool then returns the raw page and says why. The host's
+#   default model is never used, so extraction cannot spend an expensive model
+#   unless you name one here.
+#   This is the FALLBACK list, used when extractionModelsByProfile has no entry
+#   for the active machine profile.
+#
+# extractionModelsByProfile: the same, per machine profile (work, personal).
+#   The active profile is `machineProfile`. An entry here wins over
+#   extractionModels for that profile. An empty list for a profile disables
+#   extraction on that profile only.
+#
+# extractionModelsByProfile is set to each profile's cheap explorer/librarian
+# model (home/.chezmoidata/profiles.json: the `cheap` preset on work, the
+# `personal` preset on personal). The flat extractionModels stays [], so a machine
+# profile with no entry keeps extraction OFF. The summariser spends tokens on these.
+#
+# llmsTxt: try the docs site's /llms.txt on docs-like hosts (default true).
+#
+# limits: optional overrides, all integers. Omitted keys use the core defaults.
+#   maxBytes: wire cap per response (default 2097152).
+#   maxDecodedChars: cap on decoded text (default 524288).
+#   maxRedirects: redirect hops followed (default 5).
+#   thinWords: fewer visible words than this is "too thin" (default 25).
+#   requestTimeoutSeconds: per request (default 30).
+#   cacheTtlSeconds: cache lifetime for good pages (default 300).
+#   cacheCapacity: cached pages kept (default 256).
+#   exaMaxCharacters: text requested from Exa (default 20000).
+#   globalConcurrency: URLs fetched at once across one batch (default 8).
+#   perHostConcurrency: URLs fetched at once from one host (default 6).
+#     The template passes `limits` through untouched; the host schema validates it.
+webtools:
+  extractionModels: []
+  extractionModelsByProfile:
+    work: ["amazon-bedrock/global.openai.gpt-6-luna"]
+    personal: ["opencode-go/deepseek-v4.1-flash"]
+  llmsTxt: true
+  limits: {}

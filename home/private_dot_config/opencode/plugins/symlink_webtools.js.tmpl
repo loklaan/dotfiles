@@ -1,0 +1,12 @@
+{{- /* web-tools host entry for OpenCode 1 (see run_onchange_after_install-074-web-tools).
+       OpenCode 1 autoloads plugins/*.{ts,js} from its config dir. OpenCode 1 keeps
+       both this plugin's `webfetch` and the built-in in its registry list and does
+       not dedupe by id. At call time the plugin's entry ran in every test (the
+       later registration wins), so the duplicate in the list is harmless. Do not
+       add `permission: {webfetch: "deny"}` to hide the built-in: permission is keyed
+       by id and would hide this tool too. The link is written only once the bundle
+       exists, so a fresh machine never has a dangling plugin link. */ -}}
+{{- $bundle := joinPath .chezmoi.homeDir ".local/share/dotfiles/web-tools/dist/entry.js" -}}
+{{- if stat $bundle -}}
+{{ $bundle }}
+{{- end -}}

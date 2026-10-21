@@ -1,0 +1,64 @@
+{{- /* Runtime config for the web-fetch host entry (~/.local/share/dotfiles/web-tools/dist/entry.js),
+       read once at plugin activation. Non-secret: the BWS secret id is an identifier, the token
+       and wrapper are paths, and the models and limits are plain settings. The key VALUE is never
+       rendered here; the entry resolves it lazily through the BWS wrapper.
+
+       Source of the values: home/.chezmoidata/webtools.yaml (webtools.*; extraction models
+       resolve per machineProfile, see extractionModelsByProfile there), and the chezmoi data
+       keys bwsIdExaApiKey and bwsTokenPath (.chezmoi.toml.tmpl). Environment overrides win at
+       runtime (WEBTOOLS_*, EXA_API_KEY). */ -}}
+{{- $config := dig "webtools" (dict) . -}}
+{{- if not (kindIs "map" $config) -}}
+{{-   fail "webtools must be an object" -}}
+{{- end -}}
+{{- /* extractionModels is the fallback list. extractionModelsByProfile.<profile> wins
+       for the active machine profile when present. Both are validated the same way. The
+       rendered file carries ONE resolved list, so the host contract is unchanged. An
+       empty list disables extraction; the host default model is never used. */ -}}
+{{- $fallback := dig "extractionModels" (list) $config -}}
+{{- if not (kindIs "slice" $fallback) -}}
+{{-   fail "webtools.extractionModels must be an array" -}}
+{{- end -}}
+{{- range $model := $fallback -}}
+{{-   if or (not (kindIs "string" $model)) (not (regexMatch "^[^/]+/[^/]+$" $model)) -}}
+{{-     fail (printf "webtools.extractionModels entries must be \"provider/model\" strings, got %v" $model) -}}
+{{-   end -}}
+{{- end -}}
+{{- $byProfile := dig "extractionModelsByProfile" (dict) $config -}}
+{{- if not (kindIs "map" $byProfile) -}}
+{{-   fail "webtools.extractionModelsByProfile must be an object keyed by profile" -}}
+{{- end -}}
+{{- range $profile, $list := $byProfile -}}
+{{-   if not (kindIs "slice" $list) -}}
+{{-     fail (printf "webtools.extractionModelsByProfile.%s must be an array" $profile) -}}
+{{-   end -}}
+{{-   range $model := $list -}}
+{{-     if or (not (kindIs "string" $model)) (not (regexMatch "^[^/]+/[^/]+$" $model)) -}}
+{{-       fail (printf "webtools.extractionModelsByProfile.%s entries must be \"provider/model\" strings, got %v" $profile $model) -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- $activeProfile := dig "machineProfile" "personal" . -}}
+{{- $models := $fallback -}}
+{{- if hasKey $byProfile $activeProfile -}}
+{{-   $models = index $byProfile $activeProfile -}}
+{{- end -}}
+{{- $limits := dig "limits" (dict) $config -}}
+{{- if not (kindIs "map" $limits) -}}
+{{-   fail "webtools.limits must be an object" -}}
+{{- end -}}
+{{- $llmsTxt := dig "llmsTxt" true $config -}}
+{{- if not (kindIs "bool" $llmsTxt) -}}
+{{-   fail "webtools.llmsTxt must be a boolean" -}}
+{{- end -}}
+{{- $secretId := .bwsIdExaApiKey | default "" -}}
+{{- $tokenFile := .bwsTokenPath | default "" -}}
+{{- $wrapper := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{- $out := dict
+      "secretId" $secretId
+      "tokenFile" $tokenFile
+      "wrapper" $wrapper
+      "extractionModels" $models
+      "llmsTxt" $llmsTxt
+      "limits" $limits -}}
+{{ $out | toPrettyJson }}

@@ -3,6 +3,12 @@
 {{- /* Built-in MCPs the proxy already serves, generated from the shared
        catalogue for every machine profile. */ -}}
 {{- $config = set $config "disabled_mcps" (includeTemplate "mcp-client-tmpl" (dict "data" . "client" "oh-my-opencode-slim") | fromJson) -}}
+{{- /* Slim's own `webfetch` (smartfetch) registers under the same name as the
+       dotfiles web-tools plugin and wins on OpenCode 2. Turn it off so only
+       web-tools' tiered fetch is registered. Slim's version also picks an
+       extraction model from the explorer/librarian models on its own, which
+       web-tools deliberately never does. */ -}}
+{{- $config = set $config "webfetch" (merge (dict "enabled" false) (dig "webfetch" (dict) $config)) -}}
 {{- /* Expanded TUI sidebar layout (the plugin defaults to compact). */ -}}
 {{- $config = set $config "compactSidebar" false -}}
 {{- $config = set $config "$schema" "https://unpkg.com/oh-my-opencode-slim@3.0.1/oh-my-opencode-slim.schema.json" -}}

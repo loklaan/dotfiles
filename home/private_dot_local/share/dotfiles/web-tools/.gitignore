@@ -1,0 +1,3 @@
+# Build output and installed deps: generated, never source.
+/dist/
+/node_modules/
