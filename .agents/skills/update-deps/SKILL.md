@@ -19,7 +19,8 @@ weekly (and on `workflow_dispatch`) on `loklaan/dotfiles` only:
 - **bump** runs `mise lock --global --bump` against the repo's mise config and
   opens or updates the `deps/mise-lock` PR.
 - **verify** runs `mise install --locked` with an empty data dir on
-  `ubuntu-latest` (linux-x64) and `macos-latest` (macos-arm64).
+  `ubuntu-latest` (linux-x64), `macos-latest` (macos-arm64) and
+  `macos-15-intel` (macos-x64).
 - **Renovate** is not a workflow job. The hosted Renovate GitHub App, installed
   on `loklaan/dotfiles` only, opens PRs for GitHub Actions, chezmoi externals
   and inline `# renovate:` pins (see `renovate.json`; its mise manager is
@@ -86,7 +87,12 @@ url = "https://github.com/{owner}/{repo}/releases/download/{tag}/..."
 
 **Files:** `home/private_dot_config/mise/config.toml` (requests) and
 `home/private_dot_config/mise/mise.lock` (resolved versions, URLs and
-checksums for `macos-arm64` and `linux-x64`)
+checksums for `macos-x64`, `macos-arm64` and `linux-x64`)
+
+Three tools have no `macos-x64` upstream artifact and are gated with
+`os = ["macos-arm64", "linux-x64"]`: `delta`, `pitchfork` (Homebrew fallbacks
+in `packages.darwin.x64_brews`) and `sarif-rs` (not installed on Intel Macs).
+Keep that gate when bumping them; a missing asset in the lock is expected.
 
 The config sets `locked = true` (scoped to the global config by
 `locked_scopes = ["global"]`), so every install replays the lock. A request
@@ -119,6 +125,10 @@ Brew is unlocked by design. `chezmoi apply` runs `brew bundle --no-upgrade`,
 so it installs only what is missing; `mise run update` (`df-task-update`)
 upgrades formulae and casks. A plain CLI binary that has a mise registry
 backend belongs in the mise config (locked), not here.
+
+`packages.darwin.x64_brews` holds Intel-only fallbacks (`git-delta`,
+`pitchfork`) and is rendered only on non-arm64 Macs; check those too when
+reviewing brew packages.
 
 **Procedure (macOS only):**
 

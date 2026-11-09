@@ -5,7 +5,7 @@
 #             --bump`), honouring the config's minimum_release_age, and opens
 #             or updates the deps/mise-lock PR.
 #   verify    replays the lock with `mise install --locked` into an empty data
-#             dir on both locked platforms. Runs after bump (on the PR head),
+#             dir on every locked platform. Runs after bump (on the PR head),
 #             and on PRs that touch the mise config or lock. It chains off
 #             bump because a PR opened with GITHUB_TOKEN triggers no workflows.
 #
@@ -109,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -128,9 +128,9 @@ jobs:
           install: false
           cache: false
 
-      # ubuntu-latest is linux-x64 and macos-latest is macos-arm64: the two
-      # platforms in lockfile_platforms. An empty data dir proves the lock
-      # alone is enough to install every tool.
+      # ubuntu-latest is linux-x64, macos-latest is macos-arm64 and
+      # macos-15-intel is macos-x64: every platform in lockfile_platforms. An
+      # empty data dir proves the lock alone is enough to install every tool.
       - name: mise install --locked (empty data dir)
         env:
           GITHUB_TOKEN: ${{ github.token }}

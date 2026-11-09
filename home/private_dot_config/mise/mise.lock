@@ -19,6 +19,12 @@ url = "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-da
 url_api = "https://api.github.com/repos/FiloSottile/age/releases/assets/535541897"
 provenance = "github-attestations"
 
+[tools.age."platforms.macos-x64"]
+checksum = "sha256:1d1e4bc66e1427edad7739ae7616157de0e79db8b6d2a1497d7d9925fb06a539"
+url = "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/FiloSottile/age/releases/assets/535541887"
+provenance = "github-attestations"
+
 [[tools.ast-grep]]
 version = "0.50.0"
 backend = "aqua:ast-grep/ast-grep"
@@ -34,6 +40,11 @@ checksum = "sha256:b7de40f9c4a29b1c6e26619b776d02b432902550de9a79e4a71a416e86cc4
 url = "https://github.com/ast-grep/ast-grep/releases/download/0.50.0/app-aarch64-apple-darwin.zip"
 url_api = "https://api.github.com/repos/ast-grep/ast-grep/releases/assets/625198087"
 
+[tools.ast-grep."platforms.macos-x64"]
+checksum = "sha256:b057d51bc3b0fa55c71c40774cdef687656e57b630a891c1a7d4e96e57b27d35"
+url = "https://github.com/ast-grep/ast-grep/releases/download/0.50.0/app-x86_64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/ast-grep/ast-grep/releases/assets/625198978"
+
 [[tools.bitwarden]]
 version = "2026.9.0"
 backend = "aqua:bitwarden/clients"
@@ -48,6 +59,11 @@ url_api = "https://api.github.com/repos/bitwarden/clients/releases/assets/570320
 checksum = "sha256:014bc4c093e586197013fac79b9d0f1df1da6004003293c8930406bf1ffde45b"
 url = "https://github.com/bitwarden/clients/releases/download/cli-v2026.9.0/bw-macos-arm64-2026.9.0.zip"
 url_api = "https://api.github.com/repos/bitwarden/clients/releases/assets/570320204"
+
+[tools.bitwarden."platforms.macos-x64"]
+checksum = "sha256:d2a1865c2c1f49c34e6f1b38a42c5b95dcf22e34f81121c4962ebda32f708a3e"
+url = "https://github.com/bitwarden/clients/releases/download/cli-v2026.9.0/bw-macos-2026.9.0.zip"
+url_api = "https://api.github.com/repos/bitwarden/clients/releases/assets/570320154"
 
 [[tools.bun]]
 version = "1.4.2"
@@ -74,6 +90,14 @@ url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64
 checksum = "sha256:90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f"
 url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-aarch64.zip"
 
+[tools.bun."platforms.macos-x64"]
+checksum = "sha256:80520d7e17526308c9185d261679ac6d27798d3803a0e9f7ff9121ab8affb012"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64.zip"
+
+[tools.bun."platforms.macos-x64-baseline"]
+checksum = "sha256:bad5bbd6cf14d0980d115f5954c9ff904df619d5e994d2da1ffccd3f316300b0"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64-baseline.zip"
+
 [[tools.chezmoi]]
 version = "2.73.0"
 backend = "aqua:twpayne/chezmoi"
@@ -91,6 +115,12 @@ url = "https://github.com/twpayne/chezmoi/releases/download/v2.73.0/chezmoi_2.73
 url_api = "https://api.github.com/repos/twpayne/chezmoi/releases/assets/596270971"
 provenance = "cosign"
 
+[tools.chezmoi."platforms.macos-x64"]
+checksum = "sha256:55e7b0823b40966a239cb418b37201c5f0961bab1b797c933550c97b1ab08221"
+url = "https://github.com/twpayne/chezmoi/releases/download/v2.73.0/chezmoi_2.73.0_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/twpayne/chezmoi/releases/assets/596270751"
+provenance = "cosign"
+
 [[tools.claude]]
 version = "2.1.296"
 backend = "aqua:anthropics/claude-code"
@@ -106,6 +136,11 @@ checksum = "sha256:60f97cde7f7e078b424138e34ecf1ad620bd81ac3866984fb8996623a36a0
 url = "https://github.com/anthropics/claude-code/releases/download/v2.1.296/claude-darwin-arm64.tar.gz"
 url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/625598716"
 
+[tools.claude."platforms.macos-x64"]
+checksum = "sha256:3851a1f6a6a28870615e2b76bc0e85af020b9ac7d6b71c9e6f2b35817a012451"
+url = "https://github.com/anthropics/claude-code/releases/download/v2.1.296/claude-darwin-x64.tar.gz"
+url_api = "https://api.github.com/repos/anthropics/claude-code/releases/assets/625598721"
+
 [[tools.d2]]
 version = "0.9.0"
 backend = "aqua:d2lang/d2"
@@ -120,6 +155,11 @@ url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/549448945"
 checksum = "sha256:eaf6c0c143e56dd9fa97bfb6df25ea9c1ebce40245f056a0768cf1a6c15d3064"
 url = "https://github.com/d2lang/d2/releases/download/v0.9.0/d2-v0.9.0-macos-arm64.tar.gz"
 url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/549449061"
+
+[tools.d2."platforms.macos-x64"]
+checksum = "sha256:cad39576a480d6bb02ea142fef1726647914b0d2da51ccc9b30b660a2b1babf0"
+url = "https://github.com/d2lang/d2/releases/download/v0.9.0/d2-v0.9.0-macos-amd64.tar.gz"
+url_api = "https://api.github.com/repos/d2lang/d2/releases/assets/549449033"
 
 [[tools.delta]]
 version = "0.19.2"
@@ -149,6 +189,10 @@ url = "https://dl.deno.land/release/v2.9.7/deno-x86_64-unknown-linux-gnu.zip"
 checksum = "sha256:5cd46d6268f6f78f5d88bdc7159d20bd44cdaa4b3303474839f87ec6fe7ae25c"
 url = "https://dl.deno.land/release/v2.9.7/deno-aarch64-apple-darwin.zip"
 
+[tools.deno."platforms.macos-x64"]
+checksum = "sha256:95daaff11c116a52ad54785e7914c8e9c9cdcaba793c5ed929c74ca2d8e6259a"
+url = "https://dl.deno.land/release/v2.9.7/deno-x86_64-apple-darwin.zip"
+
 [[tools.difftastic]]
 version = "0.71.0"
 backend = "aqua:Wilfred/difftastic"
@@ -164,6 +208,11 @@ checksum = "sha256:92acf8890543b6d6f436a87a7a5ec64f82a4b8dbe3a7e564c1e5cbfe60823
 url = "https://github.com/Wilfred/difftastic/releases/download/0.71.0/difft-0.71.0-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/Wilfred/difftastic/releases/assets/573540714"
 
+[tools.difftastic."platforms.macos-x64"]
+checksum = "sha256:390b5299b0bc5059b5617f448eb1f3cb42c689933258fc57770c24d257a5d8a8"
+url = "https://github.com/Wilfred/difftastic/releases/download/0.71.0/difft-0.71.0-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/Wilfred/difftastic/releases/assets/573540008"
+
 [[tools.fzf]]
 version = "0.74.4"
 backend = "aqua:junegunn/fzf"
@@ -178,6 +227,11 @@ url_api = "https://api.github.com/repos/junegunn/fzf/releases/assets/558287768"
 checksum = "sha256:4f6a113bfc0c7959e0005c78d566a51afc4fcefc956f43735c62a9deb19e92ae"
 url = "https://github.com/junegunn/fzf/releases/download/v0.74.4/fzf-0.74.4-darwin_arm64.tar.gz"
 url_api = "https://api.github.com/repos/junegunn/fzf/releases/assets/558287774"
+
+[tools.fzf."platforms.macos-x64"]
+checksum = "sha256:2d392b50be66e2ab104ccd52a6072df692b1f9b9c5b449a9c098de885f32c4c5"
+url = "https://github.com/junegunn/fzf/releases/download/v0.74.4/fzf-0.74.4-darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/junegunn/fzf/releases/assets/558287717"
 
 [[tools.gh]]
 version = "2.102.0"
@@ -196,6 +250,12 @@ url = "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_ar
 url_api = "https://api.github.com/repos/cli/cli/releases/assets/599854720"
 provenance = "github-attestations"
 
+[tools.gh."platforms.macos-x64"]
+checksum = "sha256:b245f24eb2bf5f75b426b4c26da3651a107f8d5b6f4fddfbfccc5679041378b3"
+url = "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_macOS_amd64.zip"
+url_api = "https://api.github.com/repos/cli/cli/releases/assets/599854716"
+provenance = "github-attestations"
+
 [[tools."github:bitwarden/sdk"]]
 version = "bws-v2.1.0"
 backend = "github:bitwarden/sdk"
@@ -210,6 +270,11 @@ url_api = "https://api.github.com/repos/bitwarden/sdk/releases/assets/426507282"
 checksum = "sha256:9cb1c1c6e6164d83b2e339883ba02b4cbb37188ce9a484b1ce8249443163e066"
 url = "https://github.com/bitwarden/sdk/releases/download/bws-v2.1.0/bws-aarch64-apple-darwin-2.1.0.zip"
 url_api = "https://api.github.com/repos/bitwarden/sdk/releases/assets/426507211"
+
+[tools."github:bitwarden/sdk"."platforms.macos-x64"]
+checksum = "sha256:6f626b3971368902af1b9847c02791a1b4666969d7561e2047681cded7997537"
+url = "https://github.com/bitwarden/sdk/releases/download/bws-v2.1.0/bws-x86_64-apple-darwin-2.1.0.zip"
+url_api = "https://api.github.com/repos/bitwarden/sdk/releases/assets/426507196"
 
 [[tools."github:jdx/pitchfork"]]
 version = "2.29.0"
@@ -259,6 +324,11 @@ checksum = "sha256:fe54761a9950266e3a78ddb66a8af5e067251169da306a288e0751de63d83
 url = "https://github.com/rtk-ai/rtk/releases/download/v0.50.0/rtk-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/rtk-ai/rtk/releases/assets/585679940"
 
+[tools."github:rtk-ai/rtk"."platforms.macos-x64"]
+checksum = "sha256:ac23e20024ab3c71e7f50069f8b34190aec1b2d8f0c2cc19834039b3dac73373"
+url = "https://github.com/rtk-ai/rtk/releases/download/v0.50.0/rtk-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/rtk-ai/rtk/releases/assets/585679941"
+
 [[tools."github:smart-mcp-proxy/mcpproxy-go"]]
 version = "0.70.0"
 backend = "github:smart-mcp-proxy/mcpproxy-go"
@@ -273,6 +343,11 @@ url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/ass
 checksum = "sha256:077d2ec0c783aa7bf0f724fec6e257018320d07abfa051315bf2f12a17e1eaf7"
 url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.70.0/mcpproxy-0.70.0-darwin-arm64.tar.gz"
 url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/609028940"
+
+[tools."github:smart-mcp-proxy/mcpproxy-go"."platforms.macos-x64"]
+checksum = "sha256:8c2e3016f3f21e1482e74b92e12179ab6044eb0d36ba7661816b175ed33c5366"
+url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.70.0/mcpproxy-0.70.0-darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/609028952"
 
 [[tools."github:tmux/tmux-builds"]]
 version = "3.7c"
@@ -289,6 +364,11 @@ checksum = "sha256:0a763dd0380aa980d239509654da1bc7455843706a3c050f6709c8cd2e13d
 url = "https://github.com/tmux/tmux-builds/releases/download/v3.7c/tmux-3.7c-macos-arm64.tar.gz"
 url_api = "https://api.github.com/repos/tmux/tmux-builds/releases/assets/528734861"
 
+[tools."github:tmux/tmux-builds"."platforms.macos-x64"]
+checksum = "sha256:1c21f9ade964e4a539be05ffe3a4e95854ab76a0a9c4c05d0ffbe7fc6c4d783f"
+url = "https://github.com/tmux/tmux-builds/releases/download/v3.7c/tmux-3.7c-macos-x86_64.tar.gz"
+url_api = "https://api.github.com/repos/tmux/tmux-builds/releases/assets/528734867"
+
 [[tools.go]]
 version = "1.27.1"
 backend = "core:go"
@@ -301,6 +381,10 @@ url = "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz"
 [tools.go."platforms.macos-arm64"]
 checksum = "sha256:ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12"
 url = "https://dl.google.com/go/go1.27.1.darwin-arm64.tar.gz"
+
+[tools.go."platforms.macos-x64"]
+checksum = "sha256:8f8f52c6649542cf027bbc9b9c68d1ec042f9f34808a40413f0b8b3f66f3caa4"
+url = "https://dl.google.com/go/go1.27.1.darwin-amd64.tar.gz"
 
 [[tools.jq]]
 version = "1.8.2"
@@ -319,6 +403,12 @@ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-arm64"
 url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012783"
 provenance = "github-attestations"
 
+[tools.jq."platforms.macos-x64"]
+checksum = "sha256:e94b266e3c26690550006abe63152b782280f4e14374accdf04cbde844f00bc0"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-amd64"
+url_api = "https://api.github.com/repos/jqlang/jq/releases/assets/453012782"
+provenance = "github-attestations"
+
 [[tools.micro]]
 version = "2.0.15"
 backend = "aqua:micro-editor/micro"
@@ -334,6 +424,11 @@ checksum = "sha256:2ff285cc49f2ac3f7a6e9110e2dabd3c848b73eed56a8396d627c0af80a34
 url = "https://github.com/micro-editor/micro/releases/download/v2.0.15/micro-2.0.15-macos-arm64.tar.gz"
 url_api = "https://api.github.com/repos/micro-editor/micro/releases/assets/334842985"
 
+[tools.micro."platforms.macos-x64"]
+checksum = "sha256:d765b9bdd6478c4f5a3cbd5a93ebe7bab2b9cec30b5350016975cf1045855cee"
+url = "https://github.com/micro-editor/micro/releases/download/v2.0.15/micro-2.0.15-osx.tar.gz"
+url_api = "https://api.github.com/repos/micro-editor/micro/releases/assets/334842967"
+
 [[tools.node]]
 version = "26.10.0"
 backend = "core:node"
@@ -346,6 +441,10 @@ url = "https://nodejs.org/dist/v26.10.0/node-v26.10.0-linux-x64.tar.gz"
 [tools.node."platforms.macos-arm64"]
 checksum = "sha256:751fdf7439f115d87ee2a8f3f18c065b6151852068e3e666ac60ac2996f75ac9"
 url = "https://nodejs.org/dist/v26.10.0/node-v26.10.0-darwin-arm64.tar.gz"
+
+[tools.node."platforms.macos-x64"]
+checksum = "sha256:ebbe9ab9b58ad6bb54390d6e2c862c1afa7d4475fb7e8ae8146acde211bf70df"
+url = "https://nodejs.org/dist/v26.10.0/node-v26.10.0-darwin-x64.tar.gz"
 
 [[tools."npm:@kitlangton/skulk"]]
 version = "0.1.0"
@@ -370,6 +469,12 @@ url = "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-
 url_api = "https://api.github.com/repos/anomalyco/opencode/releases/assets/629459345"
 provenance = "github-attestations"
 
+[tools.opencode."platforms.macos-x64"]
+checksum = "sha256:515380b03f3410f2178c8c1c7ba6d1e9556a3bdee2a01d114e7b1681952131a0"
+url = "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-darwin-x64.zip"
+url_api = "https://api.github.com/repos/anomalyco/opencode/releases/assets/629459348"
+provenance = "github-attestations"
+
 [[tools.python]]
 version = "3.14.8"
 backend = "core:python"
@@ -383,6 +488,11 @@ provenance = "github-attestations"
 [tools.python."platforms.macos-arm64"]
 checksum = "sha256:994adadc202c5df0b4570192cc9a70e3f2c131e512f4a125c56efa8562f44b28"
 url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.14.8+20261013-aarch64-apple-darwin-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.macos-x64"]
+checksum = "sha256:e862bbef6f5109f464323c6827d14717b4d8e3ff2e0050f4452ba770fcd0d0b2"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261020/cpython-3.14.8+20261020-x86_64-apple-darwin-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.ripgrep]]
@@ -399,6 +509,11 @@ url_api = "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/47812
 checksum = "sha256:3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4"
 url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/478118851"
+
+[tools.ripgrep."platforms.macos-x64"]
+checksum = "sha256:af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1"
+url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/478119585"
 
 [[tools.rust]]
 version = "1.98.1"
@@ -420,6 +535,11 @@ checksum = "sha256:56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0
 url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.aarch64.tar.xz"
 url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056932"
 
+[tools.shellcheck."platforms.macos-x64"]
+checksum = "sha256:3c89db4edcab7cf1c27bff178882e0f6f27f7afdf54e859fa041fca10febe4c6"
+url = "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.darwin.x86_64.tar.xz"
+url_api = "https://api.github.com/repos/koalaman/shellcheck/releases/assets/279056930"
+
 [[tools.starship]]
 version = "1.26.0"
 backend = "aqua:starship/starship"
@@ -435,6 +555,11 @@ checksum = "sha256:c40b27b11f580411e068f2fa6c1be7830a387c0bc47a94d1d37f32b054c53
 url = "https://github.com/starship/starship/releases/download/v1.26.0/starship-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/starship/starship/releases/assets/460374577"
 
+[tools.starship."platforms.macos-x64"]
+checksum = "sha256:5548f406a4b6f5695903bdea83f77ce47ec12c8c0e62dabd33122d8f133e4207"
+url = "https://github.com/starship/starship/releases/download/v1.26.0/starship-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/starship/starship/releases/assets/460374608"
+
 [[tools.usage]]
 version = "6.12.0"
 backend = "packslip:github.com/jdx/usage"
@@ -446,6 +571,11 @@ url = "https://github.com/jdx/usage/releases/download/v6.12.0/usage-x86_64-unkno
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
 
 [tools.usage."platforms.macos-arm64"]
+checksum = "sha256:1e43be745db2fd81259e2b0e68d689d7f55b93da815f452c2154710f6de6ec52"
+url = "https://github.com/jdx/usage/releases/download/v6.12.0/usage-universal-apple-darwin.tar.gz"
+signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
+
+[tools.usage."platforms.macos-x64"]
 checksum = "sha256:1e43be745db2fd81259e2b0e68d689d7f55b93da815f452c2154710f6de6ec52"
 url = "https://github.com/jdx/usage/releases/download/v6.12.0/usage-universal-apple-darwin.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/usage/.github/workflows/publish-cli.yml"
@@ -467,6 +597,12 @@ url = "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-aarch64-appl
 url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/599237829"
 provenance = "github-attestations"
 
+[tools.uv."platforms.macos-x64"]
+checksum = "sha256:2b336763b396ec6afa20c5a8b083538ca7402445b868311979d740a4344c17d8"
+url = "https://github.com/astral-sh/uv/releases/download/0.12.21/uv-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/599237993"
+provenance = "github-attestations"
+
 [[tools.yq]]
 version = "4.54.1"
 backend = "aqua:mikefarah/yq"
@@ -482,4 +618,10 @@ provenance = "cosign"
 checksum = "sha256:fee511a181bd8b3e6b7da98842b41973bfac8cd3bcd341ed29a584620b5b2844"
 url = "https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_darwin_arm64"
 url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/597222609"
+provenance = "cosign"
+
+[tools.yq."platforms.macos-x64"]
+checksum = "sha256:3a812fce205a4d67014fb71b7fa297092210e580df3d8f52dddc2cf3a599c22b"
+url = "https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_darwin_amd64"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/597222619"
 provenance = "cosign"

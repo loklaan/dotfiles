@@ -77,6 +77,21 @@ main() {
     case $os_kind in
       windows|android) fatal "Nope, $os_kind is not supported." ;;
       macos)
+        # Homebrew's prefix is arch-specific (/opt/homebrew on arm64,
+        # /usr/local on x86-64). This runs before the user's shell startup
+        # files, so `brew shellenv` may not have added it to PATH yet.
+        if [ "$(uname -m)" = "arm64" ]; then
+          brew_prefixes="/opt/homebrew /usr/local"
+        else
+          brew_prefixes="/usr/local /opt/homebrew"
+        fi
+        for brew_prefix in $brew_prefixes; do
+          if [ -x "${brew_prefix}/bin/brew" ]; then
+            PATH="${brew_prefix}/bin:${PATH}"
+            export PATH
+            break
+          fi
+        done
         log_detail "Running 'brew install git zsh'"
         if ! command -v brew >/dev/null 2>&1; then
           fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"

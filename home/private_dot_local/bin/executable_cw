@@ -953,7 +953,11 @@ echo "GPG_SOCKET:${"${gpg_socket}"}"
     );
     if (ghosttyResources !== "") {
       const homebrewPrefix = yield* Config.String("HOMEBREW_PREFIX").pipe(
-        Config.withDefault("/opt/homebrew"),
+        // Homebrew uses /usr/local on Intel Macs and /opt/homebrew on Apple
+        // Silicon. The shell does not always export HOMEBREW_PREFIX.
+        Config.withDefault(
+          Deno.build.arch === "aarch64" ? "/opt/homebrew" : "/usr/local",
+        ),
       );
       const path = yield* Path;
       const infocmp = path.join(homebrewPrefix, "opt/ncurses/bin/infocmp");

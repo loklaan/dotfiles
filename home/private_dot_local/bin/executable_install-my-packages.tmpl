@@ -121,18 +121,28 @@ main() {
   #
 
   log_detail "Running 'brew install'"
+  # Homebrew's prefix is arch-specific (/opt/homebrew on arm64, /usr/local on
+  # x86-64). A non-interactive apply may not have sourced `brew shellenv`, so
+  # probe the known prefixes instead of trusting PATH.
+  for brew_prefix in "{{ .brewprefix }}" /opt/homebrew /usr/local; do
+    if [ -x "${brew_prefix}/bin/brew" ]; then
+      PATH="${brew_prefix}/bin:${PATH}"
+      break
+    fi
+  done
+  export PATH
+
   if ! command -v brew >/dev/null 2>&1; then
     fatal "Homebrew is not installed. Please install Homebrew first: https://brew.sh"
   fi
 
-  PATH="$PATH:{{ .brewprefix }}/bin"
-
   {{ $brews := .packages.darwin.brews -}}
+  {{ $x64Brews := list -}}
+  {{ if ne .chezmoi.arch "arm64" -}}
+  {{   $x64Brews = dig "x64_brews" (list) .packages.darwin -}}
+  {{- end }}
+  {{ $brews = concat $brews $x64Brews -}}
   {{ $casks := .packages.darwin.casks -}}
-
-  if ! command -v brew > /dev/null; then
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  fi
 
   {{ $taps := .packages.darwin.taps -}}
 

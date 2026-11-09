@@ -11,13 +11,17 @@
 # Also registers `managedconfig.optout` for both keys, a convention some
 # provisioning tools honour to stop re-managing them.
 system_gitconfig() {
-  # Prefer Homebrew-prefixed system gitconfig (arm64 and x86_64 cellars).
-  # Fall back to /etc/gitconfig if neither exists — git's own default.
-  if [ -f /opt/homebrew/etc/gitconfig ]; then
-    echo /opt/homebrew/etc/gitconfig
-  elif [ -f /usr/local/etc/gitconfig ]; then
-    echo /usr/local/etc/gitconfig
-  elif [ -f /etc/gitconfig ]; then
+  # Prefer this machine's Homebrew-prefixed system gitconfig ({{ .brewprefix }}:
+  # /opt/homebrew on arm64, /usr/local on x86_64), then the other cellar, then
+  # /etc/gitconfig — git's own default.
+  local prefix
+  for prefix in "{{ .brewprefix }}" /opt/homebrew /usr/local; do
+    if [ -f "${prefix}/etc/gitconfig" ]; then
+      echo "${prefix}/etc/gitconfig"
+      return
+    fi
+  done
+  if [ -f /etc/gitconfig ]; then
     echo /etc/gitconfig
   else
     echo ""

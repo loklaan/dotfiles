@@ -60,6 +60,11 @@ import {
 
 setTopic("completions");
 
+{{- /* On Intel Macs delta and pitchfork come from Homebrew (their mise
+       backends publish no macos-x64 artifact), so resolve them through PATH
+       instead of `mise exec`. */}}
+{{- $brewBacked := and (eq .chezmoi.os "darwin") (ne .chezmoi.arch "arm64") }}
+
 const REL_COMPLETION_DIR = ".local/share/zsh-completions";
 const JOB_TIMEOUT_SECONDS = 15;
 const CONCURRENCY = 4;
@@ -115,7 +120,7 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
   { toolName: "cw", kind: "path", command: ["completion", "zsh"] },
   {
     toolName: "delta",
-    kind: "mise",
+    kind: "{{ if $brewBacked }}path{{ else }}mise{{ end }}",
     miseToolName: "delta",
     command: ["--generate-completion", "zsh"],
   },
@@ -160,7 +165,7 @@ const completionJobs: ReadonlyArray<CompletionJob> = [
   },
   {
     toolName: "pitchfork",
-    kind: "mise",
+    kind: "{{ if $brewBacked }}path{{ else }}mise{{ end }}",
     miseToolName: "pitchfork",
     command: ["completion", "zsh"],
   },
@@ -583,7 +588,7 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     ["chezmoi", "mise", "chezmoi"],
     ["coder", "path", ""],
     ["cw", "path", ""],
-    ["delta", "mise", "delta"],
+    ["delta", "{{ if $brewBacked }}path{{ else }}mise{{ end }}", "delta"],
     ["deno", "mise", "deno"],
     ["fzf", "mise", "fzf"],
     ["mise", "path", ""],
@@ -593,7 +598,7 @@ Deno.test("completion job inventory matches the bash implementation", () => {
     ["npm", "mise", "npm"],
     ["opencode", "mise", "opencode"],
     ["otter", "path", ""],
-    ["pitchfork", "mise", "pitchfork"],
+    ["pitchfork", "{{ if $brewBacked }}path{{ else }}mise{{ end }}", "pitchfork"],
     ["pnpm", "mise", "pnpm"],
     ["rustup", "mise", "rustup"],
     ["starship", "mise", "starship"],
@@ -655,6 +660,9 @@ Deno.test("completion commands match bash command lines", () => {
   ]]);
 {{- end }}
   assertCommand("opencode", ["mise", ["exec", "--", "opencode", "completion"]]);
+{{- if $brewBacked }}
+  assertCommand("pitchfork", ["pitchfork", ["completion", "zsh"]]);
+{{- else }}
   assertCommand("pitchfork", ["mise", [
     "exec",
     "--",
@@ -662,6 +670,7 @@ Deno.test("completion commands match bash command lines", () => {
     "completion",
     "zsh",
   ]]);
+{{- end }}
   assertCommand("pnpm", ["mise", ["exec", "--", "pnpm", "completion", "zsh"]]);
 });
 

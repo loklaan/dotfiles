@@ -46,6 +46,16 @@ packages:
       - wget
       - wireguard-tools
       - zsh
+    # Intel-only fallbacks for mise tools whose pinned backend publishes no
+    # macos-x64 artifact (see mise/config.toml). install-my-packages adds this
+    # list only when .chezmoi.arch is not arm64, so Apple Silicon keeps the
+    # locked mise build. Homebrew has no Intel macOS bottles for these (Intel
+    # is Tier 3 since September 2026), so an Intel box builds them from source.
+    x64_brews:
+      # dandavison/delta has no x86_64-apple-darwin release.
+      - git-delta
+      # jdx/pitchfork has no x86_64-apple-darwin release.
+      - pitchfork
     # GUI apps; only installed with `install-my-packages --gui`.
     casks:
       - alfred
