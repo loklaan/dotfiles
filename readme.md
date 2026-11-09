@@ -128,7 +128,9 @@ MCPProxy requires its own machine-local bearer key, even on loopback. A full
 apply with `jq` available seeds a missing key and configures clients in one pass,
 leaving existing keys alone. See [MCP Authentication](.agents/resources/mcp-authentication.md)
 for client setup, safe checks and rotation. Codex config is supported without
-installing the Codex CLI. Rotate the key headlessly with `mise run mcp:rotate-key`.
+installing the Codex CLI. Rotate the key headlessly with `mise run mcp:rotate-key`;
+`df-mcpproxy-rotate-key --check` shows age/exposure, and `mise run update`
+rotates automatically when the check says it is due.
 
 ### Moving to a new devbox
 

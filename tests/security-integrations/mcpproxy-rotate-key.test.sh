@@ -157,6 +157,80 @@ else
   ok "second key is absent from command output"
 fi
 
+printf '\ncheck signals health and if-due is a no-op when healthy\n'
+if rotate "$HOME_OK" --check > "$HOME_OK/check-ok" 2>&1; then
+  ok "healthy key passes --check"
+else
+  no "healthy key passes --check"
+  cat "$HOME_OK/check-ok" >&2
+fi
+grep -q 'status ok' "$HOME_OK/check-ok" || no "healthy check reports status ok"
+BEFORE_IF_DUE="$(key_of "$HOME_OK")"
+if rotate "$HOME_OK" --if-due > "$HOME_OK/if-due-ok" 2>&1; then
+  ok "--if-due exits successfully when healthy"
+else
+  no "--if-due exits successfully when healthy"
+fi
+check "--if-due leaves a healthy key unchanged" "$(key_of "$HOME_OK")" "$BEFORE_IF_DUE"
+grep -q 'not due' "$HOME_OK/if-due-ok" || no "--if-due reports not due"
+
+printf '\nage and exposure make --check due, and --if-due rotates\n'
+RECEIPT="$HOME_OK/.local/state/dotfiles/mcpproxy/rotation.json"
+OLD_EPOCH=$(( $(date +%s) - 100 * 86400 ))
+tmp_receipt="$HOME_OK/receipt.tmp"
+jq --argjson epoch "$OLD_EPOCH" '.updated_epoch = $epoch' "$RECEIPT" > "$tmp_receipt"
+chmod 600 "$tmp_receipt"
+mv "$tmp_receipt" "$RECEIPT"
+if rotate "$HOME_OK" --check > "$HOME_OK/check-age" 2>&1; then
+  no "aged key makes --check fail"
+else
+  ok "aged key makes --check fail"
+fi
+grep -q 'status due (age' "$HOME_OK/check-age" || no "aged check reports age reason"
+AGED_KEY="$(key_of "$HOME_OK")"
+if rotate "$HOME_OK" --if-due > "$HOME_OK/if-due-age" 2>&1; then
+  ok "aged key rotates via --if-due"
+else
+  no "aged key rotates via --if-due"
+  cat "$HOME_OK/if-due-age" >&2
+fi
+if [[ "$(key_of "$HOME_OK")" != "$AGED_KEY" ]]; then
+  ok "aged --if-due changes the key"
+else
+  no "aged --if-due changes the key"
+fi
+
+HOME_EXPOSURE="$ROOT/exposure"
+prepare_home "$HOME_EXPOSURE"
+rotate "$HOME_EXPOSURE" > "$HOME_EXPOSURE/rotate" 2>&1 || no "exposure fixture rotation failed"
+EXPOSURE_KEY="$(key_of "$HOME_EXPOSURE")"
+mkdir -p "$HOME_EXPOSURE/.cache/dotfiles/logs"
+chmod 700 "$HOME_EXPOSURE/.cache/dotfiles" "$HOME_EXPOSURE/.cache/dotfiles/logs"
+printf 'leaked test material %s\n' "$EXPOSURE_KEY" > "$HOME_EXPOSURE/.cache/dotfiles/logs/test.log"
+if rotate "$HOME_EXPOSURE" --check > "$HOME_EXPOSURE/check-exposure" 2>&1; then
+  no "logged key makes --check fail"
+else
+  ok "logged key makes --check fail"
+fi
+grep -q 'exposure logs' "$HOME_EXPOSURE/check-exposure" || no "exposure check reports logs"
+if rotate "$HOME_EXPOSURE" --if-due > "$HOME_EXPOSURE/if-due-exposure" 2>&1; then
+  ok "exposed key rotates via --if-due"
+else
+  no "exposed key rotates via --if-due"
+  cat "$HOME_EXPOSURE/if-due-exposure" >&2
+fi
+if [[ "$(key_of "$HOME_EXPOSURE")" != "$EXPOSURE_KEY" ]]; then
+  ok "exposed --if-due changes the key"
+else
+  no "exposed --if-due changes the key"
+fi
+if rotate "$HOME_EXPOSURE" --check > "$HOME_EXPOSURE/check-after" 2>&1; then
+  ok "old leaked key no longer marks the new key as exposed"
+else
+  no "old leaked key no longer marks the new key as exposed"
+  cat "$HOME_EXPOSURE/check-after" >&2
+fi
+
 printf '\ninterrupted verification resumes without rotating again\n'
 HOME_RESUME="$ROOT/resume"
 prepare_home "$HOME_RESUME"

@@ -483,6 +483,19 @@ const checkMcpproxy: Effect.Effect<
 ]).pipe(Effect.map((result) => result.ok));
 {{- end }}
 
+const checkMcpproxyKey: Effect.Effect<
+  { readonly ok: boolean; readonly message: string },
+  never,
+  DoctorServices
+> = Effect.gen(function* () {
+  if (!(yield* hasCommand("df-mcpproxy-rotate-key"))) {
+    return { ok: true, message: "rotation check not deployed yet" };
+  }
+  const result = yield* run("df-mcpproxy-rotate-key", ["--check"]);
+  const message = `${result.stdout}${result.stderr}`.trim();
+  return { ok: result.ok, message };
+});
+
 {{- if eq .machineProfile "work" }}
 
 const checkGhAuth: Effect.Effect<
@@ -661,6 +674,17 @@ const printStatus = (
       print("white", ["dim"], "    MCPProxy.app not found in /Applications");
     }
 {{- end }}
+
+    const keyStatus = yield* checkMcpproxyKey;
+    printPlain();
+    if (keyStatus.ok) {
+      print("green", [], "  ✓ MCPProxy key rotation");
+    } else {
+      print("yellow", [], "  ✗ MCPProxy key rotation due");
+    }
+    if (keyStatus.message) {
+      print("white", ["dim"], `    ${keyStatus.message}`);
+    }
 
     yield* printEffectReferenceHealth();
 

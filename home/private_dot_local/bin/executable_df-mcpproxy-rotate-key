@@ -28,7 +28,15 @@ source "${HOME}/.local/lib/bash-logging.sh"
 #/   secret-safe 401/200 probe. If no proxy is running, clients pick up the new
 #/   key on their next launch.
 #/
+#/   `--check` reports key age plus exposure findings (file modes, logs, shell
+#/   history, process argv) and exits non-zero when rotation is due. `--if-due`
+#/   is the automation entry point: it rotates only when that signal says so.
+#/   The default maximum age is 90 days; override with
+#/   DF_MCPPROXY_KEY_MAX_AGE_DAYS.
+#/
 #/ Options:
+#/   --check:     Report age/exposure only; exit 0 when healthy, 1 when due.
+#/   --if-due:    Rotate only when --check reports due.
 #/   --force:     Ignore a resumable receipt and rotate a fresh key.
 #/   --help:      Display this help message
 usage() { grep '^#/' "$0" | cut -c4-; }
@@ -39,9 +47,15 @@ RECEIPT_FILE="${STATE_DIR}/rotation.json"
 MCPPROXY_DIR="${HOME}/.mcpproxy"
 CONFIG_FILE="${MCPPROXY_DIR}/mcp_config.json"
 HEADER_FILE="${MCPPROXY_DIR}/mcp-client-headers"
+LOG_DIR="${HOME}/.cache/dotfiles/logs"
 
+MODE="rotate"
 FORCE=0
 KEY_FILE=""
+MAX_AGE_DAYS="${DF_MCPPROXY_KEY_MAX_AGE_DAYS:-90}"
+DUE=0
+DUE_REASON=""
+AGE_DAYS=0
 
 usage_error() {
   usage
@@ -51,7 +65,15 @@ usage_error() {
 parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --force) FORCE=1 ;;
+      --check)
+        MODE="check"
+        ;;
+      --if-due)
+        MODE="if-due"
+        ;;
+      --force)
+        FORCE=1
+        ;;
       --help)
         usage
         exit 0
@@ -113,6 +135,106 @@ generate_key() {
   head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
 }
 
+file_mode() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    stat -f '%Lp' "$1" 2>/dev/null
+  else
+    stat -c '%a' "$1" 2>/dev/null
+  fi
+}
+
+mtime_epoch() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    stat -f '%m' "$1" 2>/dev/null
+  else
+    stat -c '%Y' "$1" 2>/dev/null
+  fi
+}
+
+scan_exposure() {
+  local key_file="$1"
+  local found=""
+  local mode history
+
+  mode=$(file_mode "$MCPPROXY_DIR" || true)
+  [ "$mode" = "700" ] || found="${found}dir-mode=${mode:-unknown}; "
+  mode=$(file_mode "$CONFIG_FILE" || true)
+  [ "$mode" = "600" ] || found="${found}config-mode=${mode:-unknown}; "
+  if [ -f "$HEADER_FILE" ]; then
+    mode=$(file_mode "$HEADER_FILE" || true)
+    [ "$mode" = "600" ] || found="${found}header-mode=${mode:-unknown}; "
+  fi
+
+  if [ -d "$LOG_DIR" ] && grep -RIqF -f "$key_file" "$LOG_DIR" 2>/dev/null; then
+    found="${found}logs; "
+  fi
+  for history in "$HOME/.zsh_history" "$HOME/.bash_history"; do
+    if [ -f "$history" ] && grep -Fq -f "$key_file" "$history" 2>/dev/null; then
+      found="${found}${history##*/}; "
+    fi
+  done
+  if ps -axo args= 2>/dev/null | grep -Fq -f "$key_file"; then
+    found="${found}process-argv; "
+  fi
+
+  printf '%s' "${found}"
+}
+
+evaluate_rotation() {
+  local key="$1" hash="$2"
+  local phase stored last now key_file exposure
+
+  phase=$(receipt_phase)
+  stored=$(receipt_hash)
+  DUE=0
+  DUE_REASON=""
+  AGE_DAYS=0
+
+  if [ "$phase" != "" ] && [ "$phase" != "verified" ] \
+    && [ "$stored" = "$hash" ]; then
+    DUE=1
+    DUE_REASON="incomplete rotation phase ${phase}"
+  fi
+
+  key_file=$(umask 077; mktemp "${STATE_DIR}/.key-check.XXXXXX")
+  chmod 0600 "$key_file"
+  printf '%s' "$key" > "$key_file"
+  exposure=$(scan_exposure "$key_file")
+  rm -f "$key_file"
+  if [ -n "$exposure" ]; then
+    DUE=1
+    DUE_REASON="${DUE_REASON:+${DUE_REASON}; }exposure ${exposure%; }"
+  fi
+
+  now=$(date +%s)
+  last=""
+  if [ "$phase" = "verified" ] && [ -f "$RECEIPT_FILE" ]; then
+    last=$(jq -r '.updated_epoch // empty' "$RECEIPT_FILE" 2>/dev/null || true)
+  fi
+  if [ -z "$last" ]; then
+    last=$(mtime_epoch "$CONFIG_FILE" || true)
+  fi
+  case "$last" in
+    "" | *[!0-9]*) last="$now" ;;
+  esac
+  [ "$last" -gt "$now" ] && last="$now"
+  AGE_DAYS=$(( (now - last) / 86400 ))
+  if [ "$AGE_DAYS" -ge "$MAX_AGE_DAYS" ]; then
+    DUE=1
+    DUE_REASON="${DUE_REASON:+${DUE_REASON}; }age ${AGE_DAYS}d"
+  fi
+}
+
+print_check() {
+  local line="MCPProxy key: ${AGE_DAYS} days old (max ${MAX_AGE_DAYS})"
+  if [ "$DUE" -eq 0 ]; then
+    printf '%s; status ok\n' "$line"
+    return 0
+  fi
+  printf '%s; status due (%s)\n' "$line" "$DUE_REASON"
+  return 1
+}
+
 write_receipt() {
   local phase="$1" key_hash="$2" tmp
   tmp=$(umask 077; mktemp "${STATE_DIR}/.rotation.XXXXXX")
@@ -121,7 +243,8 @@ write_receipt() {
     --arg phase "$phase" \
     --arg hash "$key_hash" \
     --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-    '{schema: 1, phase: $phase, key_sha256: $hash, updated_at: $at}' > "$tmp"; then
+    --argjson epoch "$(date +%s)" \
+    '{schema: 1, phase: $phase, key_sha256: $hash, updated_at: $at, updated_epoch: $epoch}' > "$tmp"; then
     rm -f "$tmp"
     fail "Could not write rotation receipt"
   fi
@@ -267,8 +390,11 @@ main() {
   trap cleanup EXIT INT TERM
 
   command -v jq >/dev/null 2>&1 || fail "jq is not on PATH"
+  case "$MAX_AGE_DAYS" in
+    "" | *[!0-9]* | 0) fail "DF_MCPPROXY_KEY_MAX_AGE_DAYS must be a positive integer" ;;
+  esac
   ensure_private_dir "$STATE_DIR"
-  acquire_lock
+  ensure_private_dir "$MCPPROXY_DIR"
 
   [ -f "$CONFIG_FILE" ] \
     || fail "Missing ${CONFIG_FILE}; run a full chezmoi apply once first"
@@ -278,6 +404,23 @@ main() {
   [ -n "$current_key" ] \
     || fail "No api_key in ${CONFIG_FILE}; run a full chezmoi apply to bootstrap it"
   current_hash=$(printf '%s' "$current_key" | sha256_hex)
+
+  if [ "$MODE" = "check" ]; then
+    evaluate_rotation "$current_key" "$current_hash"
+    print_check
+    exit $?
+  fi
+
+  acquire_lock
+  if [ "$MODE" != "rotate" ]; then
+    evaluate_rotation "$current_key" "$current_hash"
+    if [ "$MODE" = "if-due" ] && [ "$DUE" -eq 0 ]; then
+      info "MCPProxy key rotation not due: ${AGE_DAYS} days old (max ${MAX_AGE_DAYS})"
+      exit 0
+    fi
+    [ "$MODE" = "if-due" ] \
+      && info "MCPProxy key rotation due: ${DUE_REASON}"
+  fi
 
   phase=$(receipt_phase)
   stored_hash=$(receipt_hash)

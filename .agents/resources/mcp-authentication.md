@@ -77,11 +77,36 @@ mcp_probe --header "@${HOME}/.mcpproxy/mcp-client-headers"          # expect 200
 
 ## Rotation
 
-Run the headless rotation task:
+Run the headless rotation task when you want a fresh key:
 
 ```bash
 mise run mcp:rotate-key
 ```
+
+### When to rotate
+
+Use `--check` as the signal:
+
+```bash
+df-mcpproxy-rotate-key --check
+```
+
+It reports the key's age (default max 90 days, override with
+`DF_MCPPROXY_KEY_MAX_AGE_DAYS`) and scans for exposure: wrong config/header/dir
+modes, the current key in session logs or shell history, and the current key in
+process argv. Exit status is 0 when healthy and 1 when rotation is due.
+
+`--if-due` is the automation entry point: it rotates only when `--check` is due,
+and exits immediately otherwise. `df-task-update` (the normal `mise run update`
+path) calls it after every apply. Any scheduler can call the same command:
+
+```bash
+df-mcpproxy-rotate-key --if-due
+```
+
+Calendar rotation is optional; the stronger triggers are exposure, a device or
+account lifecycle change, and an interrupted rotation. The exposure scan makes
+those event triggers visible without polling you.
 
 `df-mcpproxy-rotate-key` owns the whole operation:
 

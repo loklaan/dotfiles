@@ -63,6 +63,16 @@ main() {
   brew_upgrade
   df-task-chezmoi-update
 
+  # Rotation is an explicit policy check, not an every-apply side effect. The
+  # script exits immediately when the key is healthy, and rotates only when age,
+  # exposure, or an interrupted rotation says it is due.
+  if command -v df-mcpproxy-rotate-key >/dev/null 2>&1; then
+    log_step "Checking MCPProxy key rotation"
+    if ! df-mcpproxy-rotate-key --if-due; then
+      log_warn "MCPProxy key rotation failed — re-run: mise run mcp:rotate-key"
+    fi
+  fi
+
   chezmoi_session_post
 }
 
