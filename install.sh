@@ -179,6 +179,10 @@ main() {
   config_ephemeral_cache="$(chezmoi execute-template "{{ dig \"ephemeralCache\" false . }}" 2>/dev/null || echo "false")"
 
   # BWS token setup - save to file if provided
+  bws_xtrace_was_enabled=0
+  case "$-" in
+    *x*) bws_xtrace_was_enabled=1; set +x ;;
+  esac
   bws_token_path="${HOME}/.config/chezmoi/secrets/bws-access-token.txt"
   config_bws_token="${CONFIG_BWS_ACCESS_TOKEN:-}"
 
@@ -200,6 +204,9 @@ main() {
     fi
   else
     log_warn "Missing BWS token — secrets will not be available"
+  fi
+  if [ "$bws_xtrace_was_enabled" -eq 1 ]; then
+    set -x
   fi
 
   # --data must stay true (default): with --data=false, promptStringOnce can't
