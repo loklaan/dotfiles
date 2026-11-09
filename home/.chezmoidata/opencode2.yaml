@@ -6,7 +6,7 @@
 # old.
 opencode2:
   # renovate: datasource=npm depName=@opencode/cli
-  version: "2.0.32"
+  version: "2.2.5"
   # `serve` bind hostname. Empty means the same posture as OpenCode 1: loopback
   # on macOS and behind nginx, 0.0.0.0 on Linux without an nginx front. Override
   # per machine in the machine-local chezmoi config (`chezmoi edit-config`):
