@@ -135,6 +135,34 @@ machine's token file. `chezmoi apply` tolerates stale tokens (empty
 secrets), so there's no flag-day requirement — rotate one machine at a
 time.
 
+## MCP Authentication
+
+- Keep `require_mcp_auth=true`; loopback is not a substitute (`nginxProxy` can
+  expose it). The machine-local `api_key` lives in `~/.mcpproxy/mcp_config.json`
+  (0600, directory 0700).
+- Seed a missing key **before targets render**, preserving existing keys. A full
+  apply with `jq` provisions clients in one pass; missing `jq` leaves existing
+  state untouched.
+- Never put the key in argv: Claude Code/Desktop use `--header-file`; Codex and
+  OpenCode carry it in config. Codex's config has a private file attribute;
+  OpenCode relies on its private `.config` parent.
+
+See [MCP Authentication](../resources/mcp-authentication.md) for ownership,
+failure cases, secret-safe probes and rotation. Upstream credentials and
+quarantine state are separate.
+
+## Logging and local credential files
+
+- Secret stdout APIs (`github-token`) must skip `setup_session_logging`; callers
+  must not log captured values. Suspend xtrace around secrets; existence probes
+  return booleans only.
+- Logs live in `~/.cache/dotfiles/logs/` (0700 directory, 0600 files). Keep
+  ownership, regular-file, symlink and destination checks; do not restore
+  shared-temp or newest-log discovery.
+- Credential merges use private same-directory intermediates and atomic
+  replacement. OpenCode's auth modifier is a `private_` file; empty BWS results
+  leave existing credentials unchanged. Never dump credential-bearing configs.
+
 ## Files
 
 | Path | Purpose |
