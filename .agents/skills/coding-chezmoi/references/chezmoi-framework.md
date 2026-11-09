@@ -142,6 +142,7 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 ├── marked-section-tmpl
 ├── mcp-catalogue-tmpl
 ├── mcp-client-tmpl
+├── mcpproxy-api-key-tmpl
 ├── opencode-work-plugin-tmpl
 ├── script-prelude
 ├── zprofile-body
@@ -152,9 +153,10 @@ Included via `includeTemplate`. Files do NOT have `.tmpl` suffix.
 | --- | --- | --- |
 | `git-config-tmpl` | Managed Git include section for personal and work configuration. | `home/private_dot_config/private_git/modify_config` |
 | `hooks-json-tmpl` | Shared Claude notification and session-start hook definitions. | `home/dot_claude/modify_settings.json`, `home/Library/Application Support/Otter/claude-code-user/modify_settings.json` |
-| `marked-section-tmpl` | Shared marked-section merge for `modify_` templates. It replaces the managed region and preserves content outside it (`position` `"end"` puts the section last, for TOML tables). | `home/private_dot_config/private_git/modify_config`, `home/modify_private_dot_zprofile`, `home/modify_private_dot_zshrc`, `home/dot_codex/modify_config.toml` |
+| `marked-section-tmpl` | Shared marked-section merge for `modify_` templates. It replaces the managed region and preserves content outside it (`position` `"end"` puts the section last, for TOML tables). | `home/private_dot_config/private_git/modify_config`, `home/modify_private_dot_zprofile`, `home/modify_private_dot_zshrc`, `home/dot_codex/modify_private_config.toml` |
 | `mcp-catalogue-tmpl` | The merged, condition-filtered MCP server catalogue as JSON (shared `mcpServers` + machine-local `mcpServersLocal`/`mcpStdioServers`), optionally with BWS secrets resolved. | `home/private_dot_mcpproxy/modify_private_mcp_config.json`, `mcp-client-tmpl` |
-| `mcp-client-tmpl` | One client's MCPProxy lane (`mcpproxy`) in that client's shape, or an OpenCode plugin's generated `disabled_mcps`. | OpenCode 1/2 `modify_opencode.json`, `home/modify_dot_claude.json`, `home/Library/Application Support/Claude/modify_claude_desktop_config.json`, `home/dot_codex/modify_config.toml`, `home/private_dot_config/opencode2/oh-my-opencode-slim.json.tmpl`, `home/dot_omo/modify_omo.jsonc` |
+| `mcp-client-tmpl` | One client's MCPProxy lane (`mcpproxy`) in that client's shape, including `mcpproxy-api-key-tmpl` auth, or an OpenCode plugin's generated `disabled_mcps`. | OpenCode 1/2 `modify_opencode.json`, `home/modify_dot_claude.json`, `home/Library/Application Support/Claude/modify_claude_desktop_config.json`, `home/dot_codex/modify_private_config.toml`, `home/private_dot_config/opencode2/oh-my-opencode-slim.json.tmpl`, `home/dot_omo/modify_omo.jsonc` |
+| `mcpproxy-api-key-tmpl` | Machine-local MCPProxy `api_key` lookup from `~/.mcpproxy/mcp_config.json`, empty when absent. | `mcp-client-tmpl`, `home/private_dot_mcpproxy/private_mcp-client-headers.tmpl` |
 | `script-prelude` | Bash prelude for every `home/.chezmoiscripts` script (strict mode, IFS, TMPDIR, bash-logging, session logging). Its data is the log topic string. | Every script in `home/.chezmoiscripts/` |
 | `zprofile-body` | Managed `~/.zprofile` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zprofile` |
 | `zshrc-body` | Managed `~/.zshrc` startup body, wrapped in a marked section by its `modify_` template. | `home/modify_private_dot_zshrc` |
