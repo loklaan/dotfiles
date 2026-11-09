@@ -115,13 +115,18 @@ runtimeTiers:
       tier: runtime
       lang: deno
 
-    # --- home/.chezmoiscripts (17) ---
+    # --- home/.chezmoiscripts (20) ---
     #
     # POLICY: The post-050 chezmoiscripts (056 and above) are INTENTIONALLY
     # tier:runtime / lang:bash — this is deliberate policy, NOT a conversion backlog.
     # Rationale: deno cold-start latency on every-apply, run_onchange hash churn from
     # deno import maps, and unattended-exec risk outweigh any benefit for lifecycle glue.
     #
+    # run_before scripts execute before any target is materialised, so they are
+    # bootstrap-tier and must not depend on deno or freshly deployed libs.
+    - path: home/.chezmoiscripts/run_before_install-056-generate-mcpproxy-api-key.sh.tmpl
+      tier: bootstrap
+      lang: bash
     - path: home/.chezmoiscripts/run_after_install-049-ephemeral-cache.sh.tmpl
       tier: runtime
       lang: bash
@@ -162,6 +167,9 @@ runtimeTiers:
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_after_install-073-sync-checkouts.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-074-web-tools.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-100-install-zsh-completions.sh.tmpl
