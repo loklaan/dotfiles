@@ -13,7 +13,8 @@ OC1="${H}/private_dot_config/opencode/modify_opencode.json"
 OC2="${H}/private_dot_config/opencode2/modify_opencode.json"
 CLAUDE="${H}/modify_dot_claude.json"
 DESKTOP="${H}/Library/Application Support/Claude/modify_claude_desktop_config.json"
-CODEX="${H}/dot_codex/modify_config.toml"
+CODEX="${H}/dot_codex/modify_private_config.toml"
+HEADERS="${H}/private_dot_mcpproxy/private_mcp-client-headers.tmpl"
 SLIM="${H}/private_dot_config/opencode2/oh-my-opencode-slim.json.tmpl"
 OMO="${H}/dot_omo/modify_omo.jsonc"
 
@@ -78,13 +79,13 @@ for os in darwin linux; do
       .["mcpproxy"] == {type: "remote", enabled: true, url: "http://127.0.0.1:18321/mcp/"}' \
       <<< "$(render "$OC1" "$o")" >/dev/null || fail "OpenCode 1 lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" '.mcp.servers | keys == $l and
-      .["mcpproxy"] == {type: "remote", url: "http://127.0.0.1:18321/mcp/", disabled: false}' \
+      .["mcpproxy"] == {type: "remote", url: "http://127.0.0.1:18321/mcp/all/", disabled: false}' \
       <<< "$(render "$OC2" "$o")" >/dev/null || fail "OpenCode 2 lanes wrong for ${os}/${profile}"
-    jq -e --argjson l "$LANES" '.mcpServers | keys == $l and
-      .["mcpproxy"] == {type: "http", url: "http://127.0.0.1:18321/mcp/"}' \
+    jq -e --argjson l "$LANES" --arg home "$TEST_HOME" '.mcpServers | keys == $l and
+      .["mcpproxy"] == {command: "npx", args: ["-y", "mcp-remote@latest", "http://127.0.0.1:18321/mcp/", "--header-file", ($home + "/.mcpproxy/mcp-client-headers")]}' \
       <<< "$(render "$CLAUDE" "$o")" >/dev/null || fail "Claude Code lanes wrong for ${os}/${profile}"
-    jq -e --argjson l "$LANES" '.mcpServers | keys == $l and
-      .["mcpproxy"] == {command: "npx", args: ["-y", "mcp-remote", "http://127.0.0.1:18321/mcp/"]}' \
+    jq -e --argjson l "$LANES" --arg home "$TEST_HOME" '.mcpServers | keys == $l and
+      .["mcpproxy"] == {command: "npx", args: ["-y", "mcp-remote@latest", "http://127.0.0.1:18321/mcp/", "--header-file", ($home + "/.mcpproxy/mcp-client-headers")]}' \
       <<< "$(render "$DESKTOP" "$o")" >/dev/null || fail "Claude Desktop lanes wrong for ${os}/${profile}"
     codex_lanes=$(render "$CODEX" "$o" "" | grep -E '^\[mcp_servers\.' | sed -E 's/^\[mcp_servers\.([^]]+)\]$/\1/' | jq -Rsc 'split("\n") | map(select(. != "")) | sort')
     [ "$codex_lanes" = "$LANES" ] || fail "Codex lanes wrong for ${os}/${profile}: ${codex_lanes}"
@@ -97,6 +98,40 @@ for os in darwin linux; do
   done
 done
 printf 'PASS: catalogue conditions and identical lanes for every client (darwin/linux x work/personal)\n'
+
+# --- MCPProxy auth: the seeded key reaches every client; missing key fails closed
+MCPPROXY_CONFIG="${TEST_HOME}/.mcpproxy/mcp_config.json"
+mkdir -p "$(dirname "$MCPPROXY_CONFIG")"
+printf '{"api_key":"test-key"}\n' > "$MCPPROXY_CONFIG"
+o='{"machineProfile":"personal"}'
+
+jq -e '.mcp.mcpproxy.headers == {Authorization: "Bearer test-key"}' \
+  <<< "$(render "$OC1" "$o")" >/dev/null || fail "OpenCode 1 did not receive the MCPProxy api_key"
+jq -e '.mcp.servers.mcpproxy.headers == {Authorization: "Bearer test-key"}' \
+  <<< "$(render "$OC2" "$o")" >/dev/null || fail "OpenCode 2 did not receive the MCPProxy api_key"
+for client in "$CLAUDE" "$DESKTOP"; do
+  jq -e --arg home "$TEST_HOME" '.mcpServers.mcpproxy.args[-2:] == ["--header-file", ($home + "/.mcpproxy/mcp-client-headers")]' \
+    <<< "$(render "$client" "$o")" >/dev/null || fail "Claude client did not use the private header file"
+done
+grep -q 'http_headers = { Authorization = "Bearer test-key" }' <<< "$(render "$CODEX" "$o" "")" ||
+  fail "Codex did not receive the MCPProxy api_key"
+[ "$(render "$HEADERS" "$o" "")" = "Authorization: Bearer test-key" ] ||
+  fail "mcp-client-headers did not render the bearer token"
+jq -e '.require_mcp_auth == true' <<< "$(render "$MCPPROXY" "$o")" >/dev/null ||
+  fail "MCPProxy auth was not required"
+
+rm -f "$MCPPROXY_CONFIG"
+jq -e '.mcp.mcpproxy | has("headers") | not' <<< "$(render "$OC1" "$o")" >/dev/null ||
+  fail "OpenCode 1 sent headers without an api_key"
+jq -e '.mcp.servers.mcpproxy | has("headers") | not' <<< "$(render "$OC2" "$o")" >/dev/null ||
+  fail "OpenCode 2 sent headers without an api_key"
+if grep -q 'http_headers' <<< "$(render "$CODEX" "$o" "")"; then
+  fail "Codex sent headers without an api_key"
+fi
+if grep -q 'Bearer' <<< "$(render "$HEADERS" "$o" "")"; then
+  fail "header file contained a bearer token without an api_key"
+fi
+printf 'PASS: MCPProxy auth key reaches clients; missing key fails closed\n'
 
 # --- Secrets: resolved from BWS ids only in MCPProxy; pushbullet gated --------
 o=$(jq -nc --arg t "$TEST_HOME/token" '{machineProfile: "personal", bwsTokenPath: $t,

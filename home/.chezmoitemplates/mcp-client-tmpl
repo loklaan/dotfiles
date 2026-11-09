@@ -20,6 +20,12 @@
      replacement is in the merged catalogue, so it is reached via the proxy. */ -}}
 {{- $d := .data -}}
 {{- $client := .client -}}
+{{- $apiKey := includeTemplate "mcpproxy-api-key-tmpl" $d | trim -}}
+{{- $authHeaders := dict -}}
+{{- if ne "" $apiKey -}}
+{{-   $authHeaders = dict "Authorization" (printf "Bearer %s" $apiKey) -}}
+{{- end -}}
+{{- $headerFile := joinPath $d.chezmoi.homeDir ".mcpproxy/mcp-client-headers" -}}
 
 {{- $builtins := dig "mcpPluginBuiltins" (dict) $d -}}
 {{- if hasKey $builtins $client -}}
@@ -48,7 +54,11 @@
 {{- if eq $client "codex" -}}
 {{-   $tables := list -}}
 {{-   range $lane := $lanes -}}
-{{-     $tables = append $tables (printf "[mcp_servers.%s]\nurl = %s" (index $lane 0) (index $lane 1 | quote)) -}}
+{{-     $table := printf "[mcp_servers.%s]\nurl = %s" (index $lane 0) (index $lane 1 | quote) -}}
+{{-     if ne "" $apiKey -}}
+{{-       $table = printf "%s\nhttp_headers = { Authorization = %s }" $table (printf "Bearer %s" $apiKey | quote) -}}
+{{-     end -}}
+{{-     $tables = append $tables $table -}}
 {{-   end -}}
 {{    join "\n\n" $tables }}
 {{- else -}}
@@ -56,15 +66,23 @@
 {{-   range $lane := $lanes -}}
 {{-     $name := index $lane 0 -}}
 {{-     $url := index $lane 1 -}}
+{{-     $bridgeArgs := list "-y" "mcp-remote@latest" $url "--header-file" $headerFile -}}
 {{-     if eq $client "opencode" -}}
-{{-       $out = set $out $name (dict "type" "remote" "enabled" true "url" $url) -}}
+{{-       $server := dict "type" "remote" "enabled" true "url" $url -}}
+{{-       if ne "" $apiKey -}}
+{{-         $server = set $server "headers" $authHeaders -}}
+{{-       end -}}
+{{-       $out = set $out $name $server -}}
 {{-     else if eq $client "opencode2" -}}
-{{-       $out = set $out $name (dict "type" "remote" "url" $url "disabled" false) -}}
-{{-     else if eq $client "claude-code" -}}
-{{-       $out = set $out $name (dict "type" "http" "url" $url) -}}
-{{-     else if eq $client "claude-desktop" -}}
-{{- /* Claude Desktop's config is stdio-only; bridge with mcp-remote. */ -}}
-{{-       $out = set $out $name (dict "command" "npx" "args" (list "-y" "mcp-remote" $url)) -}}
+{{-       $server := dict "type" "remote" "url" $url "disabled" false -}}
+{{-       if ne "" $apiKey -}}
+{{-         $server = set $server "headers" $authHeaders -}}
+{{-       end -}}
+{{-       $out = set $out $name $server -}}
+{{-     else if or (eq $client "claude-code") (eq $client "claude-desktop") -}}
+{{- /* Both Claude clients bridge over stdio with mcp-remote. The key stays in
+       ~/.mcpproxy/mcp-client-headers, never in argv or a world-readable config. */ -}}
+{{-       $out = set $out $name (dict "command" "npx" "args" $bridgeArgs) -}}
 {{-     else -}}
 {{-       fail (printf "mcp-client-tmpl: unknown client %q" $client) -}}
 {{-     end -}}

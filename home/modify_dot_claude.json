@@ -1,7 +1,8 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
-{{- /* Top-level mcpServers only: native HTTP lanes to MCPProxy. Per-project
+{{- /* Top-level mcpServers only: MCPProxy lanes bridged through mcp-remote so the
+       API key stays in ~/.mcpproxy/mcp-client-headers. Per-project
        projects.*.mcpServers belong to Claude Code and are never touched. */ -}}
 {{- $serversConfigDict := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "claude-code") | fromJson -}}
 {{- $envDict := dict "CLAUDE_CODE_DISABLE_TERMINAL_TITLE" "1" "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "1" "ENABLE_LSP_TOOL" "1" -}}
