@@ -14,6 +14,37 @@ bash tests/checkout-sync.test.sh
 bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
 bash tests/opencode-tui-plugins/install.test.sh
+(for test in tests/security-integrations/*.test.sh; do
+  bash "$test" || exit
+done)
+deno test -A --no-check home/private_dot_local/bin/executable_cw
+```
+
+## Security integrations
+
+Run an individual suite with `bash tests/security-integrations/<name>.test.sh`.
+These require Bash, chezmoi, jq and standard Unix utilities. The MCP protocol
+suite requires Node, curl and the `mcpproxy` CLI; the `cw` suite requires Deno and
+its pinned Effect dependencies.
+
+| File | Covers |
+|---|---|
+| `secret-logging.test.sh` | Secret-output utilities, private logs, marker trust and hook fixtures |
+| `mcpproxy-api-key-bootstrap.test.sh` | Fresh key seeding, existing-key preservation, private modes and boolean-only DEBUG probe |
+| `mcp-auth.test.sh` | Client template headers, private header file and a real isolated proxy rejecting missing/wrong credentials while accepting the test key |
+
+Security fixtures never run `chezmoi apply` or `chezmoi init`. They render with
+`chezmoi execute-template`, use synthetic credentials and private temporary
+homes, and replace service managers or tool shims with PATH-prepended fakes. The
+MCP suite starts an upstream-free proxy on a random loopback port, then stops it
+and removes its scratch state. It does not contact the user's running proxy.
+
+The `cw` in-file tests cover archive privacy, partial-transfer cleanup, preserved
+error causes and explicit tar consent using injected filesystem/process
+implementations. They do not migrate real state. Run just these cases with:
+
+```bash
+deno test -A --filter migrate home/private_dot_local/bin/executable_cw
 ```
 
 ## OMO profile config
@@ -41,7 +72,9 @@ only when its token resolves, and untrusted). A shim `bws` and a fake
 `bws-get-or-empty` stand in for real secret resolution. It covers machine-local
 `mcpServersLocal`/`mcpStdioServers` merging and conflicts, and that Claude Code
 keeps `projects.*.mcpServers`. It checks the Codex legacy-block migration and
-that re-rendering is stable, and that re-init carries the local tables.
+that re-rendering is stable, and that re-init carries the local tables. It also
+checks that a seeded MCPProxy key reaches every client and that a missing key
+fails closed.
 
 ## Skill reconcile
 
@@ -156,11 +189,14 @@ Both of these are silent-wrong-answer traps, not crashes:
 - **Never truncate `PATH`** to simulate a missing binary. It changes which real
   binaries resolve everywhere else, so the harness ends up exercising something
   other than production behaviour. Put a shim **earlier** in `PATH` instead.
-- **Never override `HOME` or `XDG_DATA_HOME`.** mise resolves its tool installs
-  under `XDG_DATA_HOME`, so overriding it makes every mise-shimmed binary (`jq`,
-  `deno`, …) try to reinstall itself and **block forever**. `liveness.test.sh`
-  redirects the snapshot directory through tmux's own `@resurrect-dir` option for
-  exactly this reason. `XDG_STATE_HOME` is safe to override.
+- **Do not casually override `HOME` or `XDG_DATA_HOME`.** mise resolves installs
+  through these locations; changing them under a shim can trigger a reinstall
+  or hang rather than exercise the intended tool. Security fixtures deliberately
+  use isolated homes and must keep working tool resolution: preserve PATH and use
+  resolved real binaries when shim behaviour would change. Never use a HOME
+  override to sandbox `chezmoi init`; it can still overwrite the real machine
+  config. `liveness.test.sh` redirects the snapshot directory through tmux's own
+  `@resurrect-dir` option for this reason. `XDG_STATE_HOME` is safe to override.
 
 And per `.agents/rules/chezmoi-apply-safety.md`: **no test may run
 `chezmoi apply`**. It writes rendered templates into `$HOME`, and templates

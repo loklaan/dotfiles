@@ -111,9 +111,31 @@ Runs end-to-end installation test in Docker (Alpine Linux) with dummy data from 
 
 ## Secret Management
 
-Secrets are stored in [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/) and fetched at template render time. Each machine stores its BWS access token locally (`~/.config/chezmoi/secrets/bws-access-token.txt`, mode 0600). Templates call the `bws-get-or-empty` wrapper with a secret ID and token-file path to resolve secret values during `chezmoi apply`.
+Secrets come from [Bitwarden Secrets Manager](https://bitwarden.com/help/secrets-manager-cli/)
+at render time. Each machine keeps its access token in
+`~/.config/chezmoi/secrets/bws-access-token.txt` (0600); `bws-get-or-empty`
+receives the file path, never the token in command arguments. Missing secrets
+don't block templates, and `df-setup` helps you work out what's missing.
 
-See `.agents/rules/secrets-architecture.md` for detailed architecture documentation.
+Logs stay private under `~/.cache/dotfiles/logs/` (0700 directory, 0600 files).
+Secret-output utilities skip logging, and credential writers suppress secret
+tracing even with `DEBUG=1`. The details live in
+[Secrets Architecture](.agents/rules/secrets-architecture.md).
+
+### MCP authentication
+
+MCPProxy requires its own machine-local bearer key, even on loopback. A full
+apply with `jq` available seeds a missing key and configures clients in one pass,
+leaving existing keys alone. See [MCP Authentication](.agents/resources/mcp-authentication.md)
+for client setup, safe checks and rotation. Codex config is supported without
+installing the Codex CLI.
+
+### Moving to a new devbox
+
+Run `cw migrate` on your new devbox to pull working state over SSH. Read the
+[migration runbook](.agents/resources/cw-migration.md) first: sessions and shell
+history may contain credentials, and tar mode leaves an **unencrypted** archive
+you must extract and delete yourself.
 
 ## Structure
 

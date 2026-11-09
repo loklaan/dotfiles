@@ -110,17 +110,23 @@ One dataset feeds every MCP client:
    condition-filtered set. Only MCPProxy (`~/.mcpproxy/mcp_config.json`) asks
    it to resolve secrets.
 4. **Projection.** `.chezmoitemplates/mcp-client-tmpl` gives every client the
-   same single lane: `mcpproxy` → `http://127.0.0.1:<ports.mcpproxy.internal>/mcp/`.
-   Clients always dial the loopback internal port, even when nginx also fronts
-   it. MCPProxy's own config carries no `profiles` key.
+   same single lane: `mcpproxy` → `http://127.0.0.1:<ports.mcpproxy.internal>/mcp/`
+   (`/mcp/all/` for OpenCode 2). Clients always dial the loopback internal port,
+   even when nginx also fronts it. MCPProxy's own config carries no `profiles`
+   key.
+5. **Authentication.** `run_before_install-056-generate-mcpproxy-api-key.sh.tmpl`
+   seeds a missing machine-local `api_key` before any target renders.
+   `mcpproxy-api-key-tmpl` reads it; `mcp-client-tmpl` adds the bearer header or
+   passes the private `~/.mcpproxy/mcp-client-headers` file. MCPProxy renders
+   `require_mcp_auth=true`. See `.agents/resources/mcp-authentication.md`.
 
 | Client | Target | Entry shape |
 |---|---|---|
-| OpenCode 1 | `~/.config/opencode/opencode.json` `mcp` | `{type: remote, enabled, url}` |
-| OpenCode 2 | `~/.config/opencode2/opencode.json` `mcp.servers` | `{type: remote, url, disabled}` |
-| Claude Code | `~/.claude.json` top-level `mcpServers` only | `{type: http, url}` |
-| Claude Desktop | `claude_desktop_config.json` `mcpServers` | `npx -y mcp-remote <url>` (stdio-only) |
-| Codex | `~/.codex/config.toml` marked section (last in file) | `[mcp_servers.<lane>] url = ...` |
+| OpenCode 1 | `~/.config/opencode/opencode.json` `mcp` | `{type: remote, enabled, url, headers?}` |
+| OpenCode 2 | `~/.config/opencode2/opencode.json` `mcp.servers` | `{type: remote, url, disabled, headers?}` |
+| Claude Code | `~/.claude.json` top-level `mcpServers` only | `npx -y mcp-remote@latest <url> --header-file <file>` (stdio) |
+| Claude Desktop | `claude_desktop_config.json` `mcpServers` | `npx -y mcp-remote@latest <url> --header-file <file>` (stdio-only) |
+| Codex | `~/.codex/config.toml` marked section (private file) | `[mcp_servers.<lane>] url = ...` + `http_headers.Authorization` |
 
 `mcp-client-tmpl` also generates the `disabled_mcps` lists for
 oh-my-opencode-slim (V2) and oh-my-openagent (`~/.omo/omo.jsonc`). A plugin
@@ -172,12 +178,13 @@ All bash scripts use a shared logging library at `home/private_dot_local/lib/bas
 Session logging is driven by the hooks in `.chezmoi.toml.tmpl`, whose bodies
 live in `home/private_dot_local/lib/chezmoi-session.sh`:
 
-1. **`chezmoi_session_pre apply|update`** creates a session log at
-   `$TMPDIR/chezmoi-session.<timestamp>.log`, writes the section header, and
-   points `~/.cache/dotfiles/chezmoi-session-current` at it. When the caller
-   already owns a session (`CHEZMOI_SESSION_LOG` or `BASH_LOGGING_FILE`), it
-   appends to that file instead — so `df-task-update` and `install.sh` produce
-   one log for the whole run instead of a near-empty hook log.
+1. **`chezmoi_session_pre apply|update`** creates a private session log under
+   `~/.cache/dotfiles/logs/` (0700 directory, 0600 files), writes the section
+   header, and points `~/.cache/dotfiles/chezmoi-session-current` at it. When
+   the caller already owns a trusted session (`CHEZMOI_SESSION_LOG` or
+   `BASH_LOGGING_FILE`), it appends to that file instead — so `df-task-update`
+   and `install.sh` produce one log for the whole run instead of a near-empty
+   hook log. Untrusted paths and symlinks are rejected.
 2. **`setup_session_logging "$(basename "$0")" "<topic>"`** in each script
    (lifecycle scripts get it from the `script-prelude` partial)
    reads the marker, opens a tee to the log, prints the section boundary
@@ -198,7 +205,8 @@ The Deno/TS mirror of the format is `home/private_dot_local/lib/df-log.ts`
 tools call `setTopic` with their own topic constant; do not read env inside
 `df-log.ts` (it must stay importable with zero permission flags).
 
-Standalone execution (no marker): output goes to terminal only.
+Standalone execution (no marker): creates a private log under
+`~/.cache/dotfiles/logs/` while still printing to the terminal.
 
 `DEBUG=1` enables `set -x` tracing. Do NOT manually create `LOG_FILE`
 variables or use `trap cleanup EXIT` — the library handles all logging setup.
@@ -214,6 +222,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `cache` | ephemeral-cache (049) |
 | `tmux` | tmux-continuum-boot (054) |
 | `daemons` | retire-legacy-daemons (055), pitchfork-daemons (056) |
+| `mcpproxy` | run_before MCPProxy API-key seed (056) |
 | `gitconfig` | fix-system-gitconfig-refspec (058) |
 | `plugins` | sync-opencode-plugins + opencode-tui-plugins (067/072) |
 | `nginx` | nginx-sites (066) |
@@ -225,7 +234,7 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 | `shell` | change-term (100) |
 | `canva` | canva-misc (100) |
 | `install` | install.sh |
-| `github` | github-token |
+| `github` | github-token (no session logging; stdout is a secret) |
 | `mise` | df-task-mise-upgrade (bumps the source mise.lock) |
 | `dotfiles` | df-task-chezmoi-update |
 | `apply` | df-task-chezmoi-apply |
