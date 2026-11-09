@@ -135,6 +135,10 @@ description = "Bump the source repo's mise.lock (`mise lock --global --bump`), t
 hide = true
 run = "df-task-mise-upgrade"
 
+[tasks."mcp:rotate-key"]
+description = "Rotate MCPProxy's bearer key, re-render clients, restart the daemon, and verify auth"
+run = "df-mcpproxy-rotate-key"
+
 [tasks."effect-v4:install"]
 description = "Install the checksum-pinned Effect v4 source reference"
 hide = true

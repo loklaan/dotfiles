@@ -31,6 +31,7 @@ its pinned Effect dependencies.
 |---|---|
 | `secret-logging.test.sh` | Secret-output utilities, private logs, marker trust and hook fixtures |
 | `mcpproxy-api-key-bootstrap.test.sh` | Fresh key seeding, existing-key preservation, private modes and boolean-only DEBUG probe |
+| `mcpproxy-rotate-key.test.sh` | Headless rotation, atomic key/config update, client render, daemon restart, resumable phases and secret-free output |
 | `mcp-auth.test.sh` | Client template headers, private header file and a real isolated proxy rejecting missing/wrong credentials while accepting the test key |
 
 Security fixtures never run `chezmoi apply` or `chezmoi init`. They render with

@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+# Source shared logging for terminal output only. Deliberately no
+# setup_session_logging: this command is adjacent to credential material and
+# must never tee anything into a session log.
+source "${HOME}/.local/lib/bash-logging.sh"
+
+#/ Usage:
+#/   df-mcpproxy-rotate-key [--force]
+#/
+#/ Description:
+#/   Rotate MCPProxy's machine-local bearer key without manual editing.
+#/
+#/   The rotation is a resumable state machine:
+#/     key-written -> clients-rendered -> verified
+#/
+#/   A lock serialises concurrent rotations, the key moves from a private temp
+#/   file to mcp_config.json atomically, and a hash-only receipt lets a re-run
+#/   continue after a crash instead of rotating again. The key is never printed,
+#/   passed in argv, or written to a session log.
+#/
+#/   Clients are re-rendered with `chezmoi apply --exclude=scripts`, so no
+#/   lifecycle script (package install, daemon teardown, opencode2 update) runs
+#/   as a side effect. The running proxy is then restarted and checked with a
+#/   secret-safe 401/200 probe. If no proxy is running, clients pick up the new
+#/   key on their next launch.
+#/
+#/ Options:
+#/   --force:     Ignore a resumable receipt and rotate a fresh key.
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/dotfiles/mcpproxy"
+LOCK_DIR="${STATE_DIR}/rotate.lock"
+RECEIPT_FILE="${STATE_DIR}/rotation.json"
+MCPPROXY_DIR="${HOME}/.mcpproxy"
+CONFIG_FILE="${MCPPROXY_DIR}/mcp_config.json"
+HEADER_FILE="${MCPPROXY_DIR}/mcp-client-headers"
+
+FORCE=0
+KEY_FILE=""
+
+usage_error() {
+  usage
+  fatal "Unknown argument: $1"
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --force) FORCE=1 ;;
+      --help)
+        usage
+        exit 0
+        ;;
+      *) usage_error "$1" ;;
+    esac
+    shift
+  done
+}
+
+cleanup() {
+  [ -z "$KEY_FILE" ] || rm -f "$KEY_FILE"
+  rm -rf "$LOCK_DIR"
+}
+
+fail() {
+  error "$1"
+  warning "Rotation is resumable; re-run: mise run mcp:rotate-key"
+  exit 1
+}
+
+ensure_private_dir() {
+  local path="$1"
+  if [ -L "$path" ]; then
+    fail "Refusing to use ${path}: symbolic links are not accepted"
+  fi
+  if [ -e "$path" ] && [ ! -d "$path" ]; then
+    fail "Refusing to use ${path}: not a directory"
+  fi
+  (umask 077 && mkdir -p "$path")
+  chmod 0700 "$path"
+}
+
+acquire_lock() {
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    local pid
+    pid=$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      fail "MCPProxy key rotation is already running (PID ${pid})"
+    fi
+    warning "Removing stale MCPProxy rotation lock"
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR" || fail "Could not acquire ${LOCK_DIR}"
+  fi
+  printf '%s\n' "$$" > "${LOCK_DIR}/pid"
+  chmod 0700 "$LOCK_DIR"
+  chmod 0600 "${LOCK_DIR}/pid"
+}
+
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+generate_key() {
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+write_receipt() {
+  local phase="$1" key_hash="$2" tmp
+  tmp=$(umask 077; mktemp "${STATE_DIR}/.rotation.XXXXXX")
+  chmod 0600 "$tmp"
+  if ! jq -n \
+    --arg phase "$phase" \
+    --arg hash "$key_hash" \
+    --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    '{schema: 1, phase: $phase, key_sha256: $hash, updated_at: $at}' > "$tmp"; then
+    rm -f "$tmp"
+    fail "Could not write rotation receipt"
+  fi
+  chmod 0600 "$tmp"
+  mv "$tmp" "$RECEIPT_FILE"
+  chmod 0600 "$RECEIPT_FILE"
+}
+
+receipt_phase() {
+  [ -f "$RECEIPT_FILE" ] || return 0
+  jq -r '.phase // ""' "$RECEIPT_FILE" 2>/dev/null || true
+}
+
+receipt_hash() {
+  [ -f "$RECEIPT_FILE" ] || return 0
+  jq -r '.key_sha256 // ""' "$RECEIPT_FILE" 2>/dev/null || true
+}
+
+write_config_key() {
+  local key_file="$1" tmp
+  tmp=$(umask 077; mktemp "${MCPPROXY_DIR}/.mcp_config.XXXXXX")
+  chmod 0600 "$tmp"
+  if [ -f "$CONFIG_FILE" ]; then
+    if ! jq --rawfile key "$key_file" '.api_key = $key' "$CONFIG_FILE" > "$tmp"; then
+      rm -f "$tmp"
+      fail "Could not update ${CONFIG_FILE}"
+    fi
+  else
+    if ! jq -n --rawfile key "$key_file" '{api_key: $key}' > "$tmp"; then
+      rm -f "$tmp"
+      fail "Could not create ${CONFIG_FILE}"
+    fi
+  fi
+  chmod 0600 "$tmp"
+  mv "$tmp" "$CONFIG_FILE"
+  chmod 0600 "$CONFIG_FILE"
+}
+
+render_clients() {
+  command -v chezmoi >/dev/null 2>&1 || fail "chezmoi is not on PATH"
+  if ! chezmoi apply --force --no-tty --exclude=scripts --refresh-externals=never; then
+    fail "chezmoi apply failed while rendering MCP clients"
+  fi
+}
+
+proxy_running() {
+  case "$(uname -s)" in
+    Darwin)
+      pgrep -f 'MCPProxy' >/dev/null 2>&1
+      ;;
+    *)
+      if command -v pitchfork >/dev/null 2>&1; then
+        pitchfork list 2>/dev/null | grep -Eq '(^|/)df-mcpproxy[[:space:]]+running'
+        return
+      fi
+      if command -v systemctl >/dev/null 2>&1 \
+        && systemctl --user is-active --quiet mcpproxy.service 2>/dev/null; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+}
+
+restart_proxy() {
+  case "$(uname -s)" in
+    Darwin)
+      pgrep -f 'MCPProxy' >/dev/null 2>&1 || return 0
+      osascript -e 'tell application "MCPProxy" to quit' >/dev/null 2>&1 \
+        || pkill -f 'MCPProxy' >/dev/null 2>&1 \
+        || true
+      local _ i
+      for i in $(seq 1 25); do
+        pgrep -f 'MCPProxy' >/dev/null 2>&1 || break
+        sleep 0.2
+      done
+      open -a MCPProxy >/dev/null 2>&1 \
+        || fail "Could not reopen MCPProxy.app"
+      ;;
+    *)
+      if command -v pitchfork >/dev/null 2>&1 \
+        && pitchfork list 2>/dev/null | grep -Eq '(^|/)df-mcpproxy[[:space:]]+running'; then
+        pitchfork restart --quiet df-mcpproxy \
+          || fail "pitchfork could not restart df-mcpproxy"
+        return 0
+      fi
+      if command -v systemctl >/dev/null 2>&1 \
+        && systemctl --user is-active --quiet mcpproxy.service 2>/dev/null; then
+        systemctl --user restart mcpproxy.service \
+          || fail "systemctl could not restart mcpproxy.service"
+        return 0
+      fi
+      ;;
+  esac
+}
+
+proxy_port() {
+  local listen port
+  listen=$(jq -r '.listen // empty' "$CONFIG_FILE" 2>/dev/null || true)
+  case "$listen" in
+    :*) port="${listen#:}" ;;
+    *:*) port="${listen##*:}" ;;
+    *) port=18321 ;;
+  esac
+  printf '%s\n' "$port"
+}
+
+wait_ready() {
+  local port="$1" i
+  for i in $(seq 1 75); do
+    if curl -sS --max-time 1 -o /dev/null "http://127.0.0.1:${port}/ready" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+verify_proxy() {
+  local port url body noauth auth
+  port=$(proxy_port)
+  url="http://127.0.0.1:${port}/mcp/"
+  [ -r "$HEADER_FILE" ] \
+    || fail "Missing ${HEADER_FILE}; clients were not rendered with the new key"
+  body='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"rotation-check","version":"1.0"}}}'
+  noauth=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    --data "$body" "$url" 2>/dev/null || true)
+  auth=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -H "@${HEADER_FILE}" \
+    --data "$body" "$url" 2>/dev/null || true)
+  [ "$noauth" = "401" ] \
+    || fail "Unauthenticated probe returned ${noauth:-no response}, expected 401"
+  [ "$auth" = "200" ] \
+    || fail "Authenticated probe returned ${auth:-no response}, expected 200"
+}
+
+main() {
+  parse_args "$@"
+  trap cleanup EXIT INT TERM
+
+  command -v jq >/dev/null 2>&1 || fail "jq is not on PATH"
+  ensure_private_dir "$STATE_DIR"
+  acquire_lock
+
+  [ -f "$CONFIG_FILE" ] \
+    || fail "Missing ${CONFIG_FILE}; run a full chezmoi apply once first"
+
+  local current_key current_hash phase stored_hash key_file
+  current_key=$(jq -r '.api_key // ""' "$CONFIG_FILE" 2>/dev/null || true)
+  [ -n "$current_key" ] \
+    || fail "No api_key in ${CONFIG_FILE}; run a full chezmoi apply to bootstrap it"
+  current_hash=$(printf '%s' "$current_key" | sha256_hex)
+
+  phase=$(receipt_phase)
+  stored_hash=$(receipt_hash)
+
+  if [ "$FORCE" -eq 0 ] && [ "$phase" != "" ] && [ "$phase" != "verified" ] \
+    && [ "$stored_hash" = "$current_hash" ]; then
+    info "Resuming MCPProxy key rotation from phase: ${phase}"
+  else
+    phase=""
+    key_file=$(umask 077; mktemp "${STATE_DIR}/.new-key.XXXXXX")
+    chmod 0600 "$key_file"
+    KEY_FILE="$key_file"
+    generate_key > "$key_file"
+    write_config_key "$key_file"
+    current_hash=$(sha256_hex < "$key_file")
+    rm -f "$key_file"
+    KEY_FILE=""
+    write_receipt "key-written" "$current_hash"
+    phase="key-written"
+    info "Generated a new MCPProxy key"
+  fi
+
+  if [ "$phase" = "key-written" ]; then
+    render_clients
+    write_receipt "clients-rendered" "$current_hash"
+    phase="clients-rendered"
+  fi
+
+  if [ "$phase" = "clients-rendered" ]; then
+    if proxy_running; then
+      restart_proxy
+      wait_ready "$(proxy_port)" || true
+      verify_proxy
+      write_receipt "verified" "$current_hash"
+      info "MCPProxy key rotation verified"
+    else
+      write_receipt "verified" "$current_hash"
+      info "MCPProxy is not running; clients will use the new key on next launch"
+    fi
+  fi
+}
+
+main "$@"

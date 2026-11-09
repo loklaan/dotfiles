@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (28) ---
+    # --- home/private_dot_local/bin (29) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -55,6 +55,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-mcpproxy-serve
+      tier: runtime
+      lang: bash
+    - path: home/private_dot_local/bin/executable_df-mcpproxy-rotate-key
       tier: runtime
       lang: bash
     - path: home/private_dot_local/bin/executable_df-omo-profile

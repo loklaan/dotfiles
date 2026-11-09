@@ -77,15 +77,34 @@ mcp_probe --header "@${HOME}/.mcpproxy/mcp-client-headers"          # expect 200
 
 ## Rotation
 
-Deliberate maintenance, separate from probes and upstream credential rotation:
-1. Coordinate with clients; stop `df-mcpproxy` via `pitchfork stop df-mcpproxy`
-   on Linux, or quit MCPProxy.app on macOS. Keep host recovery access.
-2. In a trusted local editor, remove **only `api_key`**. Retain server/OAuth/
-   quarantine state; never delete the config or copy it into the repository.
-3. Full `chezmoi apply` with `jq` reseeds and re-renders clients; startup follows
-   `mcpproxyGate`. Start manually through the usual manager only if intended.
-4. Restart/reconnect clients and repeat the probes. Never paste keys into commands,
-   reports or tickets.
+Run the headless rotation task:
+
+```bash
+mise run mcp:rotate-key
+```
+
+`df-mcpproxy-rotate-key` owns the whole operation:
+
+1. Acquires `~/.local/state/dotfiles/mcpproxy/rotate.lock` so concurrent rotations
+   cannot overlap.
+2. Generates a key into a private temp file, writes it into `mcp_config.json`
+   atomically with mode 0600, and records only its SHA-256 in a phase receipt.
+3. Re-renders every client with `chezmoi apply --force --exclude=scripts`, so no
+   package install or daemon lifecycle script runs as a side effect.
+4. Restarts the running proxy (`pitchfork restart df-mcpproxy` on Linux;
+   quit/reopen MCPProxy.app on macOS).
+5. Verifies the live boundary: **401** without the header file and **200** with it.
+
+The receipt makes the operation resumable. If a phase is interrupted, re-running
+the same command continues from `key-written` or `clients-rendered` without
+rotating again, as long as the config still holds the receipt's key hash.
+`--force` ignores a resumable receipt and rotates a fresh key.
+
+The command never prints the key, never passes it in argv, and does not open
+session logging. Clients pick up the new key when the apply renders them; already
+running client sessions may need a reconnect after the proxy restart. If the
+proxy is not running, rotation still completes and the next launch uses the new
+key.
 
 ## Related credentials and logs
 
