@@ -90,7 +90,7 @@ url = "https://github.com/{owner}/{repo}/releases/download/{tag}/..."
 checksums for `macos-x64`, `macos-arm64` and `linux-x64`)
 
 Three tools have no `macos-x64` upstream artifact and are gated with
-`os = ["macos-arm64", "linux-x64"]`: `delta`, `pitchfork` (Homebrew fallbacks
+`os = ["macos/arm64", "linux/x64"]`: `delta`, `pitchfork` (Homebrew fallbacks
 in `packages.darwin.x64_brews`) and `sarif-rs` (not installed on Intel Macs).
 Keep that gate when bumping them; a missing asset in the lock is expected.
 

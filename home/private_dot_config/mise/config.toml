@@ -25,7 +25,7 @@ opencode = "github:anomalyco/opencode"
 # No macos-x64 release asset: psastras/sarif-rs publishes only aarch64-apple-darwin
 # and x86_64-unknown-linux-gnu. Gate Intel Macs off so locked install succeeds;
 # ARM Macs and x86-64 Linux still get the pinned build.
-"github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt", os = ["macos-arm64", "linux-x64"] }
+"github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt", os = ["macos/arm64", "linux/x64"] }
 # RTK — Rust CLI that rewrites shell commands to compact output, saving 60-90%
 # of token spend on common dev commands (git status, ls, cargo test, etc.).
 # Installed on every machine. Its OpenCode plugin (~/.config/opencode/plugins/
@@ -43,7 +43,7 @@ usage = "6.12.0"
 # No macos-x64 release asset: jdx/pitchfork publishes only aarch64-apple-darwin.
 # Intel Macs install the Homebrew formula instead (packages.darwin.x64_brews);
 # the `os` list only gates mise install/activation.
-"github:jdx/pitchfork" = { version = "2.29.0", exe = "pitchfork", os = ["macos-arm64", "linux-x64"] }
+"github:jdx/pitchfork" = { version = "2.29.0", exe = "pitchfork", os = ["macos/arm64", "linux/x64"] }
 "npm:@kitlangton/skulk" = "0.1.0"
 age = "latest"
 ast-grep = "latest"
@@ -55,7 +55,7 @@ d2 = "0.9.0"
 # No macos-x64 release asset: dandavison/delta ships no x86_64-apple-darwin
 # build. Intel Macs install the Homebrew `git-delta` formula instead
 # (packages.darwin.x64_brews); ARM Macs and x86-64 Linux use this pin.
-delta = { version = "0.19.2", os = ["macos-arm64", "linux-x64"] }
+delta = { version = "0.19.2", os = ["macos/arm64", "linux/x64"] }
 deno = "2.9.7"
 difftastic = "0.71.0"
 fzf = "0.74.4"
