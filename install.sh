@@ -172,6 +172,7 @@ main() {
   config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
   config_machine_profile="$(chezmoi execute-template "{{ .machineProfile }}" 2>/dev/null || echo "personal")"
   config_opencode_server="$(chezmoi execute-template "{{ .openCodeServer }}" 2>/dev/null || echo "false")"
+  config_opencode2_server="$(chezmoi execute-template "{{ dig \"openCode2Server\" false . }}" 2>/dev/null || echo "false")"
   config_code_server="$(chezmoi execute-template "{{ .codeServer }}" 2>/dev/null || echo "false")"
   config_mcpproxy_gate="$(chezmoi execute-template "{{ .mcpproxyGate }}" 2>/dev/null || echo "true")"
   config_nginx_proxy="$(chezmoi execute-template "{{ .nginxProxy }}" 2>/dev/null || echo "false")"
@@ -229,6 +230,7 @@ main() {
     --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
     --promptString="Machine profile (work|personal)=${config_machine_profile}" \
     --promptBool="Run opencode serve as a pitchfork daemon?=${config_opencode_server}" \
+    --promptBool="Run opencode2 serve (web UI) as a pitchfork daemon?=${config_opencode2_server}" \
     --promptBool="Run code-server on this machine?=${config_code_server}" \
     --promptBool="Run mcpproxy on this machine?=${config_mcpproxy_gate}" \
     --promptBool="Put nginx reverse proxy in front of services (gzip, loopback daemons)?=${config_nginx_proxy}" \

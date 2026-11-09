@@ -459,6 +459,18 @@ const checkOpencodeServe: Effect.Effect<boolean, never, DoctorServices> = Effect
 });
 {{- end }}
 
+{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCode2Server" false .) }}
+
+const checkOpencode2Serve: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
+  const pitchfork = (yield* hasCommand("pitchfork"))
+    ? "pitchfork"
+    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
+  if (pitchfork === "") return false;
+  const result = yield* run(pitchfork, ["status", "df-opencode2-serve"]);
+  return result.ok && /Status:\s*running/.test(result.stdout);
+});
+{{- end }}
+
 {{- if eq .chezmoi.os "linux" }}
 
 const checkMcpproxy: Effect.Effect<
@@ -579,6 +591,29 @@ const printStatus = (
     } else {
       print("yellow", [], "  ✗ opencode serve");
       print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode-serve");
+    }
+{{- end }}
+{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCode2Server" false .) }}
+{{-   $bind := includeTemplate "opencode2-serve-bind" (dict "data" .) | fromJson }}
+
+    printPlain();
+
+    const opencode2ServeActive = yield* checkOpencode2Serve;
+    const opencode2ServeReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "{{ $bind.hostname }}:{{ $bind.port }}"]).pipe(
+      Effect.map((result) => result.ok),
+    );
+
+    if (opencode2ServeActive) {
+      print("green", [], "  ✓ opencode2 serve");
+      print("white", ["dim"], "    pitchfork daemon running");
+      if (opencode2ServeReachable) {
+        print("green", ["dim"], "    {{ $bind.hostname }}:{{ $bind.port }} reachable");
+      } else {
+        print("yellow", ["dim"], "    {{ $bind.hostname }}:{{ $bind.port }} not reachable");
+      }
+    } else {
+      print("yellow", [], "  ✗ opencode2 serve");
+      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode2-serve");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}

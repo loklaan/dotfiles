@@ -19,6 +19,11 @@ Library/**
 .local/bin/df-opencode-serve
 .config/dotfiles/opencode-serve.env
 {{ end }}
+{{ if not (dig "openCode2Server" false .) }}
+.local/bin/df-opencode2-serve
+.config/dotfiles/opencode2-serve.env
+.config/dotfiles/opencode2.env
+{{ end }}
 {{ if not (and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .)) }}
 .local/bin/df-mcpproxy-serve
 .config/dotfiles/mcpproxy-serve.env

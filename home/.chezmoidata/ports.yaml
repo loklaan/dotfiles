@@ -12,6 +12,15 @@ ports:
   opencode:
     external: 4096
     internal: 4097
+  # OpenCode 2 (`opencode2 serve`) has no nginx front today: it binds this port
+  # directly, following the OpenCode 1 posture — loopback on macOS and behind
+  # nginx, 0.0.0.0 on Linux without one — and is overridable per machine under
+  # [data.opencode2.serve]. Its CLI default is 4097 — the port OpenCode 1 owns
+  # above — so the port is pinned in ~/.config/opencode2/opencode.json
+  # (private_dot_config/opencode2/modify_opencode.json) from this value.
+  # Without the pin, a bare `opencode2 serve` lands on OpenCode 1's port.
+  opencode2:
+    internal: 4098
   mcpproxy:
     external: 9183
     internal: 18321

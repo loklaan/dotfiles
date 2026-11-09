@@ -29,7 +29,7 @@ runtimeTiers:
       tier: bootstrap
       lang: bash
 
-    # --- home/private_dot_local/bin (26) ---
+    # --- home/private_dot_local/bin (28) ---
     - path: home/private_dot_local/bin/executable_cw
       tier: runtime
       lang: deno
@@ -64,6 +64,9 @@ runtimeTiers:
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-opencode-serve
+      tier: runtime
+      lang: bash
+    - path: home/private_dot_local/bin/executable_df-opencode2-serve
       tier: runtime
       lang: bash
     - path: home/private_dot_local/bin/executable_df-setup.tmpl

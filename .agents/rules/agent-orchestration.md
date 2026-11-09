@@ -18,6 +18,7 @@ Coder workspaces are reached through their standard `coder.<workspace>` SSH host
 | Process | Where | Manager | Lifecycle |
 |---|---|---|---|
 | `opencode serve` | Any machine | Pitchfork when `openCodeServer`; otherwise per-session or manual | Long-running opt-in or per-session |
+| `opencode2 serve` | Any machine | Pitchfork when `openCode2Server`; otherwise per-session or manual | Long-running opt-in or per-session |
 
 ## Server Model
 
@@ -121,9 +122,9 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 | Path | Purpose |
 |---|---|
 | `home/private_dot_config/mise/config.toml` + `mise.lock` | Installs Pitchfork, OpenCode, and Linux-only (`os = ["linux"]`) services, from the committed lock |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-skulk` (every machine), plus `df-opencode-serve` and `df-mcpproxy` when their gates are enabled |
-| `home/private_dot_local/bin/executable_df-{opencode,mcpproxy,skulk}-serve` | Stable daemon `run` commands; read `~/.config/dotfiles/{opencode,mcpproxy,skulk}-serve.env` |
-| `home/private_dot_config/private_dotfiles/{opencode,mcpproxy,skulk}-serve.env.tmpl` | Daemon settings (bind, port, flags); Pitchfork watches them and restarts the daemon on change |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-skulk` (every machine), plus `df-opencode-serve` when `openCodeServer` and `df-opencode2-serve` when `openCode2Server` are enabled, and `df-mcpproxy` when its gate is enabled |
+| `home/private_dot_local/bin/executable_df-{opencode,opencode2,mcpproxy,skulk}-serve` | Stable daemon `run` commands; read `~/.config/dotfiles/{opencode,opencode2,mcpproxy,skulk}-serve.env` |
+| `home/private_dot_config/private_dotfiles/{opencode,opencode2,mcpproxy,skulk}-serve.env.tmpl` | Daemon settings (bind, port, flags); Pitchfork watches them and restarts the daemon on change |
 | `home/.chezmoiscripts/run_onchange_after_install-056-pitchfork-daemons.sh.tmpl` | On config/gate change: `pitchfork boot enable`, start enabled daemons, stop disabled ones |
 | `home/.chezmoiscripts/run_once_after_install-055-retire-legacy-daemons.sh.tmpl` | One-time teardown of launchd/systemd units Pitchfork and MCPProxy.app replaced; moves running daemons onto the wrappers |
 | `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
@@ -176,7 +177,7 @@ Running boxes converge immediately through the manual fleet update. Stopped boxe
 1. `chezmoi init` must NOT pass `--data=false`, which hides cached `[data]` and forces every `promptStringOnce` or `promptBoolOnce` to fall through to an interactive prompt. It MUST pass `--no-tty`, so a genuinely missing prompt fails fast in the boot log instead of hanging on `/dev/tty`. Every prompt declared in `home/.chezmoi.toml.tmpl` MUST have an exact-text-matching `--promptString` or `--promptBool` seed in `install.sh`.
 2. The source sync uses `git fetch origin main` plus `git reset --hard origin/main`, not a plain pull. A fast-forward-only pull aborts on a diverged clone, leaving the box pinned to a stale source. The hard reset self-heals on every boot.
 
-Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, plus the Linux-gated `mcpproxy` daemon.
+Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, `opencode2 serve` when `openCode2Server = true`, plus the Linux-gated `mcpproxy` daemon. Both OpenCode server gates default to false and are independent.
 
 > **Daemons are config-driven.** A running Pitchfork daemon never picks up a changed `run` or `env`; even watch and retry restarts reuse the stored command. So each daemon's `run` is a stable wrapper in `~/.local/bin` that reads a chezmoi-rendered env file, and `watch` lists the env file, the wrapper and the binary's mise install dir. `chezmoi apply` only writes files; Pitchfork restarts the daemon itself. The one lifecycle script (056) runs only when the rendered config or a gate changes: it runs `pitchfork boot enable` (which rewrites the login entry against `[settings.boot] executable`, mise's stable `latest` pitchfork), starts enabled daemons (a no-op when running) and stops disabled ones. `boot_start = true` is per-daemon and does nothing until Pitchfork itself is boot-enabled.
 

@@ -209,4 +209,30 @@
 {{-   $config = unset $config "model" -}}
 {{- end -}}
 
+{{- /* server: V2's `serve` default port is 4097, which OpenCode 1 binds on this
+     machine (ports.yaml opencode.internal), so a bare `opencode2 serve` would
+     collide with it. Bind comes from .chezmoitemplates/opencode2-serve-bind —
+     the same source the pitchfork daemon's env file reads — so the two can
+     never disagree: loopback behind nginx, 0.0.0.0 on Linux without one,
+     overridable per machine under [data.opencode2.serve]; port always
+     ports.yaml opencode2.internal.
+
+     Gated on openCode2Server like V1's server block
+     (opencode/modify_opencode.json), so config state matches daemon state:
+     disabling the V2 serve daemon removes the key again. V2 has its own gate
+     so enabling OpenCode 1's API server never also exposes V2's web UI.
+
+     The key is marked deprecated in V2's schema ("Server configuration for
+     opencode serve and web commands") but 2.0.32 still honours it — verified
+     by running `serve` and observing the configured bind. CLI flags still
+     override it. */ -}}
+{{- if dig "openCode2Server" false . -}}
+{{-   $bind := includeTemplate "opencode2-serve-bind" (dict "data" .) | fromJson -}}
+{{-   $config = $config | setValueAtPath "server" (dict
+        "hostname" $bind.hostname
+        "port" $bind.port) -}}
+{{- else -}}
+{{-   $config = unset $config "server" -}}
+{{- end -}}
+
 {{ $config | toPrettyJson }}

@@ -7,3 +7,22 @@
 opencode2:
   # renovate: datasource=npm depName=@opencode/cli
   version: "2.0.32"
+  # `serve` bind hostname. Empty means the same posture as OpenCode 1: loopback
+  # on macOS and behind nginx, 0.0.0.0 on Linux without an nginx front. Override
+  # per machine in the machine-local chezmoi config (`chezmoi edit-config`):
+  #
+  #   [data.opencode2.serve]
+  #   hostname = "lochlanio.exe.xyz"
+  #
+  # Only the hostname lives here; the port is in ports.yaml
+  # (opencode2.internal), where it is kept clear of OpenCode 1's 4097.
+  # The daemon itself is opt-in: set `openCode2Server = true` (default false)
+  # to run `opencode2 serve` under Pitchfork; these settings are ignored until
+  # then.
+  serve:
+    hostname: ""
+    # Public URL of the serve daemon, e.g. "https://box.example.com:4098".
+    # `opencode2 pair` prints links for the bound address, which is useless in a
+    # browser on another machine; setting this here makes the wrapper pass it as
+    # --url so the printed link works as-is. Empty leaves `pair` untouched.
+    publicUrl: ""

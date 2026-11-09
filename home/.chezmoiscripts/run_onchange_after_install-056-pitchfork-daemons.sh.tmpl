@@ -5,11 +5,13 @@
        (a no-op when running) and stops disabled ones. Renders empty — nothing
        recorded, retried next apply — until pitchfork is on PATH. */ -}}
 {{- $openCode := dig "openCodeServer" false . -}}
+{{- $openCode2 := dig "openCode2Server" false . -}}
 {{- $mcpproxy := and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) -}}
 {{- /* df-skulk is ungated: always enabled. */ -}}
 {{- $enabled := list "df-skulk" -}}
 {{- $disabled := list -}}
 {{- if $openCode }}{{ $enabled = append $enabled "df-opencode-serve" }}{{ else }}{{ $disabled = append $disabled "df-opencode-serve" }}{{ end -}}
+{{- if $openCode2 }}{{ $enabled = append $enabled "df-opencode2-serve" }}{{ else }}{{ $disabled = append $disabled "df-opencode2-serve" }}{{ end -}}
 {{- if $mcpproxy }}{{ $enabled = append $enabled "df-mcpproxy" }}{{ else }}{{ $disabled = append $disabled "df-mcpproxy" }}{{ end -}}
 {{- if lookPath "pitchfork" -}}
 #!/usr/bin/env bash

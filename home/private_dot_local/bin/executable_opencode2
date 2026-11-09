@@ -45,6 +45,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 usage() { grep '^#/' "$0" | cut -c4-; }
 
 readonly BINARY="${HOME}/.local/share/opencode2/bin/opencode2"
+readonly PAIR_ENV="${HOME}/.config/dotfiles/opencode2.env"
 
 main() {
   if [ ! -x "$BINARY" ]; then
@@ -60,6 +61,28 @@ main() {
   # client and inherits the env of whichever client started it. Because that
   # service is reused by later invocations, the isolation above only holds while
   # every client goes through this wrapper.
+  #
+  # `pair` prints a link for the address the server is BOUND to, which on a
+  # headless box is loopback or a private IP and therefore useless in a browser
+  # elsewhere. ~/.config/dotfiles/opencode2.env carries the machine's public URL
+  # (from [data.opencode2.serve].publicUrl) so the link printed here is usable
+  # as-is. An explicit --url always wins.
+  if [ -r "$PAIR_ENV" ] && [ "${1:-}" = "pair" ]; then
+    # shellcheck source=/dev/null
+    source "$PAIR_ENV"
+    if [ -n "${OPENCODE2_PAIR_URL:-}" ]; then
+      has_url=0
+      for arg in "$@"; do
+        case "$arg" in
+          --url|--url=*|--remote|-h|--help) has_url=1; break ;;
+        esac
+      done
+      if [ "$has_url" -eq 0 ]; then
+        set -- "$@" --url "$OPENCODE2_PAIR_URL"
+      fi
+    fi
+  fi
+
   exec "$BINARY" "$@"
 }
 

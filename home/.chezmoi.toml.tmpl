@@ -10,6 +10,7 @@
 {{- $openCodeCostHosts := promptStringOnce . "openCodeCostHosts" "Hosts for df-opencode-cost, comma-separated (or empty)" -}}
 {{- $machineProfile := promptStringOnce . "machineProfile" "Machine profile (work|personal)" "personal" -}}
 {{- $openCodeServer := promptBoolOnce . "openCodeServer" "Run opencode serve as a pitchfork daemon?" false -}}
+{{- $openCode2Server := promptBoolOnce . "openCode2Server" "Run opencode2 serve (web UI) as a pitchfork daemon?" false -}}
 {{- $mcpproxyGate := promptBoolOnce . "mcpproxyGate" "Run mcpproxy on this machine?" true -}}
 {{- $nginxProxy := promptBoolOnce . "nginxProxy" "Put nginx reverse proxy in front of services (gzip, loopback daemons)?" false -}}
 {{- $ephemeralCache := promptBoolOnce . "ephemeralCache" "Use ephemeral storage for ~/.cache on this machine?" false -}}
@@ -36,6 +37,7 @@
   openCodeCostHosts = {{ $openCodeCostHosts | quote }}
   machineProfile = {{ $machineProfile | quote }}
   openCodeServer = {{ $openCodeServer }}
+  openCode2Server = {{ $openCode2Server }}
   mcpproxyGate = {{ $mcpproxyGate }}
   nginxProxy = {{ $nginxProxy }}
   ephemeralCache = {{ $ephemeralCache }}
@@ -43,7 +45,7 @@
        toToml renders each under its own name; prefix the headers with data.
        Init data holds only this file's values, not .chezmoidata defaults, so
        dictationArchive overrides are carried without freezing its defaults. */}}
-{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" "dictationArchive" "mcpServersLocal" "mcpStdioServers" }}
+{{- range $table := list "checkouts" "skillSources" "skillProviders" "skills" "dictationArchive" "mcpServersLocal" "mcpStdioServers" "opencode2" }}
 {{-   with dig $table nil $ }}
 {{ regexReplaceAll "(?m)^(\\s*\\[\\[?)" (toToml (dict $table .)) "${1}data." | trimSuffix "\n" }}
 {{-   end }}

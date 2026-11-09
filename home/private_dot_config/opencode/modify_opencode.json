@@ -166,15 +166,21 @@
 
 {{- /* server: only if openCodeServer flag is true AND profile has a non-null
       server. The hostname/port match the pitchfork daemon bind: loopback +
-      internal port when nginxProxy is on, 0.0.0.0 + external port when off. */ -}}
-{{- if and (dig "openCodeServer" false .) (ne nil (dig "server" nil $p)) -}}
-{{-   $ocHost := "0.0.0.0" -}}
-{{-   $ocPort := .ports.opencode.external -}}
-{{-   if dig "nginxProxy" false . -}}
-{{-     $ocHost = "127.0.0.1" -}}
-{{-     $ocPort = .ports.opencode.internal -}}
+      internal port when nginxProxy is on, 0.0.0.0 + external port when off.
+      When the flag is off, any previously rendered server key is removed so a
+      machine that opts out keeps serving nothing. */ -}}
+{{- if dig "openCodeServer" false . -}}
+{{-   if ne nil (dig "server" nil $p) -}}
+{{-     $ocHost := "0.0.0.0" -}}
+{{-     $ocPort := .ports.opencode.external -}}
+{{-     if dig "nginxProxy" false . -}}
+{{-       $ocHost = "127.0.0.1" -}}
+{{-       $ocPort = .ports.opencode.internal -}}
+{{-     end -}}
+{{-     $config = $config | setValueAtPath "server" (dict "hostname" $ocHost "port" $ocPort) -}}
 {{-   end -}}
-{{-   $config = $config | setValueAtPath "server" (dict "hostname" $ocHost "port" $ocPort) -}}
+{{- else -}}
+{{-   $config = unset $config "server" -}}
 {{- end -}}
 
 {{- /* share from profile (only if base doesn't have it) */ -}}

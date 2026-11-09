@@ -3,8 +3,9 @@
       `run`/`env` (even watch/retry restarts reuse the stored command), so each
       `run` is a stable chezmoi-managed wrapper that reads its settings from a
       chezmoi-rendered env file. `watch` lists that env file, the wrapper and
-      the binary's mise install dir: chezmoi only writes files, and Pitchfork
-      restarts the daemon when any of them changes. The lifecycle script
+      the binary's install dir (mise, or the private npm prefix where mise does
+      not install it): chezmoi only writes files, and Pitchfork restarts the
+      daemon when any of them changes. The lifecycle script
       run_onchange_after_install-056-pitchfork-daemons only starts/stops
       daemons when a gate flips and keeps the login service registered. */ -}}
 {{- $home := .chezmoi.homeDir -}}
@@ -38,6 +39,21 @@ watch = [
   "{{ $home }}/.config/dotfiles/opencode-serve.env",
   "{{ $home }}/.local/bin/df-opencode-serve",
   "{{ $mise }}/opencode/**",
+]
+dir = "{{ $home }}"
+env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }
+retry = true
+boot_start = true
+ready_delay = 2
+{{  end -}}
+{{- if dig "openCode2Server" false . }}
+[daemons.df-opencode2-serve]
+run = "{{ $home }}/.local/bin/df-opencode2-serve"
+watch = [
+  "{{ $home }}/.config/dotfiles/opencode2-serve.env",
+  "{{ $home }}/.local/bin/df-opencode2-serve",
+  "{{ $home }}/.local/bin/opencode2",
+  "{{ $home }}/.local/share/opencode2/**",
 ]
 dir = "{{ $home }}"
 env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }

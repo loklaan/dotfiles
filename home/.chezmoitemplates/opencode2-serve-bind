@@ -1,0 +1,33 @@
+{{- /* Single source for OpenCode 2's `serve` bind, shared by the pitchfork
+       daemon's env file (opencode2-serve.env.tmpl) and the V2 config's
+       `server` block (private_dot_config/opencode2/modify_opencode.json), so
+       the two can never disagree.
+
+     Hostname: .opencode2.serve.hostname wins when set. Empty means the same
+     posture as OpenCode 1 (opencode-serve.env.tmpl): loopback on macOS and
+     behind nginx, 0.0.0.0 only on Linux without an nginx front. An override
+     is the machine-local escape hatch, set under [data.opencode2.serve] in
+     `chezmoi edit-config`, e.g. hostname = "lochlanio.exe.xyz" to bind eth0.
+
+     Port: ports.opencode2.internal. 4097 belongs to OpenCode 1.
+
+     Arguments (dict):
+       data  the template root context (`.`)
+
+     Output: JSON {"hostname": "...", "port": <int>}. */ -}}
+{{- $d := .data -}}
+{{- $serve := dig "serve" (dict) (dig "opencode2" (dict) $d) -}}
+{{- if not (kindIs "map" $serve) -}}
+{{-   fail "opencode2.serve must be an object" -}}
+{{- end -}}
+{{- $host := dig "hostname" "" $serve -}}
+{{- if not (kindIs "string" $host) -}}
+{{-   fail "opencode2.serve.hostname must be a string" -}}
+{{- end -}}
+{{- if eq $host "" -}}
+{{-   $host = "127.0.0.1" -}}
+{{-   if and (eq $d.chezmoi.os "linux") (not (dig "nginxProxy" false $d)) -}}
+{{-     $host = "0.0.0.0" -}}
+{{-   end -}}
+{{- end -}}
+{{- dict "hostname" $host "port" (dig "opencode2" "internal" (dict) $d.ports) | toJson -}}
