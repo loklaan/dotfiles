@@ -41,16 +41,16 @@ printf '#!/bin/sh\nprintf "secret-for-%%s" "$1"\n' > "$TEST_HOME/.local/lib/bws-
 chmod +x "$SHIMS/bws" "$TEST_HOME/.local/lib/bws-get-or-empty"
 printf 'fake-token\n' > "$TEST_HOME/token"
 
-# render <template> <overrides-json> [stdin]
+# render <template> <overrides-json> [stdin] [source-dir]
 render() {
-  local template=$1 overrides=$2 existing=${3-'{}'}
+  local template=$1 overrides=$2 existing=${3-'{}'} src=${4:-$ROOT}
   local data="${TEST_ROOT}/data.json"
   jq -n --arg home "$TEST_HOME" --argjson o "$overrides" '
     {machineProfile: "personal", chezmoi: {homeDir: $home},
      openCodeWorkPlugin: "", npmWorkRegistry: "",
      bwsTokenPath: ($home + "/missing-token")} * $o' > "$data"
   printf '%s\n' "$existing" |
-    PATH="${SHIMS}:${PATH}" chezmoi execute-template --config "$EMPTY_CONFIG" -S "$ROOT" -D "$DEST" \
+    PATH="${SHIMS}:${PATH}" chezmoi execute-template --config "$EMPTY_CONFIG" -S "$src" -D "$DEST" \
       --override-data-file "$data" --with-stdin -f "$template"
 }
 
@@ -179,6 +179,105 @@ done
 [ "$(render "$OC2" "$o" | jq -c '.mcp.servers | keys')" = "$LANES" ] || fail "local addition changed client lanes"
 printf 'PASS: local additions merge; catalogue-name conflicts and malformed entries fail\n'
 
+# --- Upstream OAuth: callback origin reaches opted-in servers only ------------
+oauth_base='https://mcp.example.xyz:9184'
+o=$(jq -nc --arg b "$oauth_base" '{machineProfile: "personal",
+  mcpproxy: {oauthCallbackBaseUrl: $b}}')
+proxy=$(render "$MCPPROXY" "$o")
+jq -e --arg b "$oauth_base" '
+  (.mcpServers | map({key: .name, value: .}) | from_entries) as $s |
+  $s.notion.oauth == {callback_base_url: $b} and
+  ($s.notion.oauth | has("client_id") | not) and
+  ($s.context7 | has("oauth") | not) and
+  ($s.gh_grep | has("oauth") | not)
+' <<< "$proxy" >/dev/null ||
+  fail "oauthCallbackBaseUrl reached the wrong servers: $(jq -c '[.mcpServers[] | {name, oauth}]' <<< "$proxy")"
+if grep -q 'redirect_uri' <<< "$proxy"; then
+  fail "OAuth redirect_uri was rendered; it is loopback-only and MCPProxy derives it"
+fi
+# No shipped mcpproxy honours client_name, so the template must not write it.
+if grep -q 'client_name' <<< "$proxy"; then
+  fail "client_name was rendered; 0.73.0 drops it and nothing sets it now"
+fi
+# The origin is canonicalised: the host is case-insensitive.
+jq -e '.mcpServers[] | select(.name == "notion") | .oauth.callback_base_url == "https://mcp.example.xyz:9184"' \
+  <<< "$(render "$MCPPROXY" '{"mcpproxy":{"oauthCallbackBaseUrl":"https://MCP.EXAMPLE.XYZ:9184"}}')" >/dev/null ||
+  fail "callback_base_url was not a canonical lowercase origin"
+
+# A second pass over its own output is byte-identical.
+again=$(render "$MCPPROXY" "$o" "$proxy")
+[ "$again" = "$proxy" ] || fail "OAuth render is not byte-identical on a second pass"
+
+# A deployed-style entry keeps DCR state and provider enrichment, gains the
+# origin, and has any client_name an earlier render left behind removed.
+deployed='{"mcpServers":[{"name":"notion","url":"https://mcp.notion.com/mcp","created":"2025-01-01T00:00:00Z","oauth":{"client_id":"dcr-abc","redirect_uri":"http://127.0.0.1:33333","client_name":"old-name"}}]}'
+jq -e --arg b "$oauth_base" '
+  .mcpServers[] | select(.name == "notion") |
+  .oauth == {client_id: "dcr-abc", redirect_uri: "http://127.0.0.1:33333", callback_base_url: $b} and
+  .created == "2025-01-01T00:00:00Z"
+' <<< "$(render "$MCPPROXY" "$o" "$deployed")" >/dev/null ||
+  fail "the origin clobbered DCR client_id or provider-enriched state"
+
+# Withdrawing the opt-in strips the public origin. chezmoi deep-merges
+# --override-data-file into the catalogue, so an override that merely omits
+# `oauth` cannot delete the key from the yaml entry; patch a copy of the
+# catalogue, which is what deleting `oauth: {}` does on a real machine.
+optsrc="${TEST_ROOT}/optout-src"
+mkdir -p "$optsrc/.chezmoitemplates" "$optsrc/.chezmoidata"
+cp "${H}/.chezmoitemplates/mcp-catalogue-tmpl" "$optsrc/.chezmoitemplates/"
+cp "${H}/.chezmoidata/"*.yaml "$optsrc/.chezmoidata/"
+grep -v '^    oauth: {}$' "${H}/.chezmoidata/mcpproxy.yaml" > "${TEST_ROOT}/mcpproxy-optout.yaml"
+cp "${TEST_ROOT}/mcpproxy-optout.yaml" "$optsrc/.chezmoidata/mcpproxy.yaml"
+if grep -q 'oauth: {}' "$optsrc/.chezmoidata/mcpproxy.yaml"; then
+  fail "opt-out fixture still opts a catalogue entry into OAuth"
+fi
+
+# Override data names the entry without an `oauth` key; the deployed entry keeps
+# the state a previous render/DCR left behind.
+optout_o=$(jq -nc --arg b "$oauth_base" '{machineProfile: "personal",
+  chezmoi: {hostname: "testhost"}, mcpproxy: {oauthCallbackBaseUrl: $b},
+  mcpServers: {notion: {url: "https://mcp.notion.com/mcp"}}}')
+optout_deployed='{"mcpServers":[{"name":"notion","url":"https://mcp.notion.com/mcp","created":"2025-01-01T00:00:00Z","oauth":{"client_id":"dcr-abc","callback_base_url":"https://mcp.example.xyz:9184","client_name":"old-name"}}]}'
+optout=$(render "$MCPPROXY" "$optout_o" "$optout_deployed" "$optsrc")
+jq -e '.mcpServers[] | select(.name == "notion") |
+  .oauth == {client_id: "dcr-abc"} and .created == "2025-01-01T00:00:00Z"' \
+  <<< "$optout" >/dev/null ||
+  fail "withdrawing the oauth opt-in left the public origin behind: $(jq -c '.mcpServers[] | select(.name == "notion")' <<< "$optout")"
+[ "$(render "$MCPPROXY" "$optout_o" "$optout" "$optsrc")" = "$optout" ] ||
+  fail "opt-out render is not stable on a second pass"
+
+# Opt-in is http-only: a stdio entry with an oauth block is left alone.
+o_stdio=$(jq -nc '{machineProfile: "personal",
+  mcpServersLocal: {"local-stdio": {command: "example-mcp", oauth: {}}}}')
+jq -e 'select(.name == "local-stdio") |
+  .protocol == "stdio" and (.oauth | has("callback_base_url") | not)' \
+  <<< "$(render "$MCPPROXY" "$o_stdio" | jq -c '.mcpServers[]')" >/dev/null ||
+  fail "the callback origin touched a stdio server"
+
+# Invalid origins fail the render and name the key. Trailing slash, path,
+# scheme, port range and credentials are all rejected (MCPProxy's own rule).
+for bad in 'http://mcp.example.xyz:9184' \
+  'https://mcp.example.xyz:9184/path' \
+  'https://mcp.example.xyz:9184/' \
+  'https://mcp.example.xyz:99999' \
+  'https://user@mcp.example.xyz:9184'; do
+  if out=$(render "$MCPPROXY" "$(jq -nc --arg b "$bad" '{mcpproxy: {oauthCallbackBaseUrl: $b}}')" 2>&1); then
+    fail "invalid mcpproxy.oauthCallbackBaseUrl was accepted: ${bad}"
+  fi
+  grep -q 'mcpproxy.oauthCallbackBaseUrl' <<< "$out" ||
+    fail "invalid mcpproxy.oauthCallbackBaseUrl error did not name the key: ${bad}"
+done
+
+# Without the callback key the opt-in block stays empty and nothing else moves.
+proxy=$(render "$MCPPROXY" '{"machineProfile":"personal"}')
+jq -e 'select(.name == "notion") | .oauth == {}' \
+  <<< "$(jq -c '.mcpServers[]' <<< "$proxy")" >/dev/null ||
+  fail "notion lost its opt-in oauth block without oauthCallbackBaseUrl"
+if grep -q 'callback_base_url' <<< "$proxy"; then
+  fail "callback_base_url was rendered without oauthCallbackBaseUrl"
+fi
+printf 'PASS: upstream OAuth origin reaches opted-in servers only; invalid origins fail\n'
+
 # --- Claude Code: only top-level mcpServers is replaced ------------------------
 existing='{"mcpServers": {"mcpproxy": {"command": "npx"}}, "projects": {"/p": {"mcpServers": {"keep": {"type": "stdio", "command": "k"}}}}, "other": 1}'
 render "$CLAUDE" '{}' "$existing" | jq -e --argjson l "$LANES" '
@@ -243,11 +342,12 @@ printf 'PASS: Codex legacy block salvaged and renamed, foreign tables kept, re-r
 
 # --- Re-init carries the machine-local MCP tables ------------------------------
 jq -n '{data: {
+  mcpproxy: {oauthCallbackBaseUrl: "https://mcp.example.xyz:9184", hosts: ["mcp.example.xyz"]},
   mcpServersLocal: {"local-http": {url: "https://mcp.example.invalid/mcp", headers: {x: "y"}}},
   mcpStdioServers: {legacy: {command: "legacy-mcp", args: ["serve"], env: {A: "b"}}}}}' > "${TEST_ROOT}/init.json"
 chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/init.json" \
   -S "$ROOT" -D "$DEST" -f "${H}/.chezmoi.toml.tmpl" > "${TEST_ROOT}/config.toml"
-for table in mcpServersLocal mcpStdioServers; do
+for table in mcpproxy mcpServersLocal mcpStdioServers; do
   [ "$(chezmoi execute-template --config "${TEST_ROOT}/config.toml" -S "$ROOT" -D "$DEST" "{{ .${table} | toJson }}" | jq -S -c .)" = \
     "$(jq -S -c --arg t "$table" '.data[$t]' "${TEST_ROOT}/init.json")" ] ||
     fail "config-template rendering did not carry [data.${table}] across re-init"
@@ -255,4 +355,4 @@ done
 chezmoi execute-template --init --no-tty --config "${TEST_ROOT}/config.toml" \
   -S "$ROOT" -D "$DEST" -f "${H}/.chezmoi.toml.tmpl" | cmp -s - "${TEST_ROOT}/config.toml" ||
   fail "config-template rendering of MCP tables is not stable across re-init"
-printf 'PASS: config-template carries mcpServersLocal and mcpStdioServers across re-init\n'
+printf 'PASS: config-template carries mcpproxy, mcpServersLocal and mcpStdioServers across re-init\n'

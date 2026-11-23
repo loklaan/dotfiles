@@ -24,5 +24,7 @@ ports:
   mcpproxy:
     external: 9183
     internal: 18321
+    # The upstream-OAuth callback ingress port is machine-local: it lives only
+    # in the conf.d block on the machine, never in this file.
   edge:
     port: 8000

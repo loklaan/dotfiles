@@ -49,6 +49,92 @@ Keep seeding **before targets** to avoid requiring two applies. Applies never ro
   entries' OAuth/quarantine state. It does not approve tools. Upstream `env`,
   `headers` and OAuth authenticate proxy → server, not client → proxy.
 
+## Upstream OAuth
+
+A server with its own provider OAuth (notion today) authenticates provider →
+MCPProxy, not client → proxy. The API key above never reaches the provider;
+MCPProxy holds the grant. Two per-server OAuth keys look similar, and only one
+is public:
+
+| Key | Meaning |
+|---|---|
+| `oauth.redirect_uri` | Loopback only (`http`, loopback host, explicit port). MCPProxy derives it; never set it from dotfiles. |
+| `oauth.callback_base_url` | Absolute **https origin** for the provider's browser redirect. This is the public knob. |
+
+A catalogue entry opts in by carrying an `oauth` block. `mcp-catalogue-tmpl`
+fills `callback_base_url` from machine-local
+`[data.mcpproxy] oauthCallbackBaseUrl` and leaves `client_id` empty so DCR
+registers the proxy; entries without the block never gain one. The value is
+validated once per render — `https`, no credentials, path, query, fragment or
+trailing slash, optional port 1-65535 — so a bad origin fails the render
+instead of the proxy at start.
+
+`oauth.client_id` is never generated. A non-empty id skips DCR, and the provider
+then rejects the unregistered id at its authorization endpoint (`invalid_client`,
+never a redirect), so only an id an entry already carries is preserved. Dropping
+an entry's `oauth` block withdraws `callback_base_url` from the deployed entry,
+so the public origin is unregistered rather than left behind.
+
+Setting the DCR `client_name` would need an upstream mcpproxy change: 0.73.0
+hardcodes `mcpproxy-go` and drops an `oauth.client_name` key from config, so
+dotfiles do not attempt it. Notion keys a custom client on its redirect URL,
+which is why `oauth.callback_base_url` is what distinguishes machines.
+
+MCPProxy registers `https://<base>/oauth/callback/<server-name>` and serves it on
+its main listener. A machine-local nginx server block that chezmoi does not
+manage publishes exactly that prefix on the dedicated ingress port and returns
+404 for everything else. Only `/oauth/callback/` is published — `/oauth/authorize`
+and `/oauth/token` are not — which is why that prefix, not the host, is the
+whole trust boundary. The block is written by hand because it is
+machine-specific ingress, so nothing in this repo renders or removes it:
+
+```nginx
+map $http_x_forwarded_proto $fwd_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+limit_req_zone $binary_remote_addr zone=oauth_callback:1m rate=10r/s;
+
+server {
+    listen 9184 default_server;
+    listen [::]:9184 default_server;
+    server_name _;
+    server_tokens off;
+    client_max_body_size 8k;
+
+    location /oauth/callback/ {
+        limit_except GET { deny all; }   # only if the provider redirect is GET
+        limit_req zone=oauth_callback burst=20 nodelay;
+        proxy_pass http://127.0.0.1:18321;   # no URI part: path forwarded verbatim
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $fwd_proto;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 120s;
+    }
+
+    location / { return 404; }
+}
+```
+
+The provider's browser redirect cannot carry a bearer key, so the path is
+deliberately outside the api_key boundary. Do not widen it, and do not reuse the
+control-panel port: that one proxies the whole admin UI.
+
+The flow is protected by a single-use `state` value plus PKCE, so publishing the
+callback URL does not by itself let anyone redeem a code. `proxy_read_timeout`
+bounds a single proxied request at 120 seconds; it is not the consent deadline.
+Consent happens at the provider, and MCPProxy's own pending-flow window is 120
+seconds — that window, not nginx, is the binding limit. A consent that outlasts
+it has to be restarted.
+
+On exe.dev, switch the one public share port to the dedicated ingress port and
+make it public; keep the admin UI port private. Only one port can be public, so
+the admin UI and the callback cannot share it.
+
 ## Check authentication
 
 These POST probes invoke no upstream tools. Use the effective endpoint if it

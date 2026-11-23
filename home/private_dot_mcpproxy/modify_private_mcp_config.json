@@ -1,11 +1,21 @@
 {{- /* chezmoi:modify-template */ -}}
 {{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
 
+{{- /* Never synthesize oauth.client_id: a non-empty id skips Dynamic Client
+       Registration, and the provider then rejects an unregistered id at the
+       authorization endpoint (invalid_client, no redirect). */ -}}
+
 {{- /* The server set comes from the shared catalogue (.chezmoidata/mcpproxy.yaml)
        merged with machine-local [data.mcpServersLocal.<name>] tables (legacy
        [data.mcpStdioServers.<name>] still read), filtered by each entry's
        conditions. Secrets resolve from BWS here, at render time. */ -}}
 {{- $catalogue := includeTemplate "mcp-catalogue-tmpl" (dict "data" . "secrets" true) | fromJson -}}
+
+{{- /* The raw machine-local tables, keyed by name. `$catalogue` above already
+       includes them, but these stay reachable so the withdrawal step can
+       resolve an entry's *declared* source. */ -}}
+{{- $mcpServersLocal := dig "mcpServersLocal" (dict) . -}}
+{{- $mcpStdioServers := dig "mcpStdioServers" (dict) . -}}
 
 {{- /* Project the optional machine-local host allowlist. MCPProxy accepts
        loopback separately; these entries cover non-loopback Host/Origin values. */ -}}
@@ -99,13 +109,17 @@
 
 {{- /* Keep the deployed order for servers that already exist, so an apply
        with no catalogue change rewrites nothing; new servers follow by name.
-       Servers absent from the catalogue are dropped. */ -}}
+       Servers absent from the catalogue are dropped. The entry is deep-copied
+       first because sprig's `merge` writes into its destination: without the
+       copy the deployed oauth block would be merged into `$catalogue` itself,
+       and the withdrawal step below could no longer tell a declared opt-in
+       from state a previous render left behind. */ -}}
 {{- $mergedServers := list -}}
 {{- $placed := list -}}
 {{- range $existing := $existingServers -}}
 {{-   $name := get $existing "name" -}}
 {{-   if and (hasKey $catalogue $name) (not (has $name $placed)) -}}
-{{-     $mergedServers = append $mergedServers (merge (get $catalogue $name) $existing) -}}
+{{-     $mergedServers = append $mergedServers (merge (deepCopy (get $catalogue $name)) $existing) -}}
 {{-     $placed = append $placed $name -}}
 {{-   end -}}
 {{- end -}}
@@ -115,6 +129,37 @@
 {{-   end -}}
 {{- end -}}
 
+{{- /* Withdraw the public callback origin when an entry stops declaring
+       `oauth`. The merge above overlays the deployed entry onto the catalogue,
+       so a callback_base_url set by a previous render survives after the
+       catalogue drops `oauth: {}`; trusting the merged copy would leave the
+       public origin registered. Resolve the declared entry by name (catalogue,
+       then the machine-local tables) and drop the injected key when the entry
+       no longer opts in, leaving client_id and other provider-populated fields
+       intact. client_name is dropped unconditionally: an earlier version of
+       this template wrote it, and no shipped mcpproxy honours the key. */ -}}
+{{- $withdrawnServers := list -}}
+{{- range $server := $mergedServers -}}
+{{-   $serverName := get $server "name" -}}
+{{-   $declared := dict -}}
+{{-   $found := false -}}
+{{-   range $table := list $catalogue $mcpServersLocal $mcpStdioServers -}}
+{{-     if and (not $found) (hasKey $table $serverName) -}}
+{{-       $declared = get $table $serverName -}}
+{{-       $found = true -}}
+{{-     end -}}
+{{-   end -}}
+{{-   if and (eq (default "" (get $server "protocol")) "http") (hasKey $server "oauth") -}}
+{{-     $optedIn := and $found (kindIs "map" $declared) (hasKey $declared "oauth") -}}
+{{-     $oauth := omit (deepCopy (get $server "oauth")) "client_name" -}}
+{{-     if not $optedIn -}}
+{{-       $oauth = omit $oauth "callback_base_url" -}}
+{{-     end -}}
+{{-     $server = set $server "oauth" $oauth -}}
+{{-   end -}}
+{{-   $withdrawnServers = append $withdrawnServers $server -}}
+{{- end -}}
+
 {{- /* Overlay our managed keys, preserve everything else */ -}}
 {{- $config := $base -}}
 {{- $_ := unset $config "top_k" -}}
@@ -122,7 +167,7 @@
 {{- $config = $config | setValueAtPath "data_dir" (printf "%s/.mcpproxy" .chezmoi.homeDir) -}}
 {{- $config = $config | setValueAtPath "tools_limit" 15 -}}
 {{- $config = $config | setValueAtPath "tool_response_limit" 20000 -}}
-{{- $config = $config | setValueAtPath "mcpServers" $mergedServers -}}
+{{- $config = $config | setValueAtPath "mcpServers" $withdrawnServers -}}
 {{- $config = $config | setValueAtPath "routing_mode" "code_execution" -}}
 {{- $config = $config | setValueAtPath "enable_code_execution" true -}}
 {{- /* Authentication is mandatory even on loopback: nginxProxy can forward

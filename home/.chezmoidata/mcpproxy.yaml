@@ -12,13 +12,20 @@
 #      (OpenCode 1/2, Claude Code, Claude Desktop, Codex) the single proxy
 #      lane `mcpproxy` -> /mcp/. MCPProxy itself gets no profiles.
 #
-# Entry shape (every key other than the meta keys passes through to MCPProxy):
+# Entry shape. Every key other than the meta keys (when, trust, envSecrets,
+# headerSecrets) passes through to MCPProxy untouched:
 #   protocol       stdio | http (defaults to stdio with command, http with url)
 #   command, args  stdio servers; a leading `~/` in command expands to $HOME
 #   url            http servers
 #   env, headers   literal values (never secrets)
 #   envSecrets     {VAR: <bwsId data key>}, resolved from BWS at render time
 #   headerSecrets  {Header: <bwsId data key>}, resolved from BWS at render time
+#   oauth          MCPProxy's per-server oauth block (client_id, client_secret,
+#                  scopes, pkce_enabled, ...). An empty block opts the server
+#                  into the machine's mcpproxy.oauthCallbackBaseUrl, rendered
+#                  as oauth.callback_base_url; leave client_id empty to let
+#                  DCR register the client. Never set redirect_uri: it is
+#                  loopback-only and MCPProxy derives it itself.
 #   when           machineProfile: work|personal (or a list), os: darwin|linux
 #                  (or a list), requiresSecret: <bwsId data key>. The last one
 #                  drops the server unless that secret resolves.
@@ -55,9 +62,12 @@ mcpServers:
   # grep.app public code search (streamable HTTP, no auth).
   gh_grep:
     url: https://mcp.grep.app
-  # Hosted remote MCP with user OAuth; MCPProxy persists the grant.
+  # Hosted remote MCP with user OAuth; MCPProxy persists the grant. The empty
+  # oauth block opts the server into this machine's mcpproxy.oauthCallbackBaseUrl
+  # (a public https origin); client_id stays empty so DCR registers the client.
   notion:
     url: https://mcp.notion.com/mcp
+    oauth: {}
 
 # MCP servers that OpenCode plugins register themselves, bypassing the proxy,
 # mapped to the catalogue server that replaces each one. A built-in is put in

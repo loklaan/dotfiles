@@ -12,12 +12,38 @@
 
      Output: {<name>: {name, protocol, command|url, args, env, headers,
      enabled, trust_mode?, ...pass-through keys}}. The meta keys (when, trust,
-     envSecrets, headerSecrets) are consumed here and never emitted. */ -}}
+     envSecrets, headerSecrets) are consumed here and never emitted. When the
+     machine sets mcpproxy.oauthCallbackBaseUrl, servers that carry an `oauth`
+     block and no callback_base_url of their own get it as
+     oauth.callback_base_url. */ -}}
 {{- $d := .data -}}
 {{- $resolve := dig "secrets" false . -}}
 {{- $profile := dig "machineProfile" "personal" $d -}}
 {{- $os := $d.chezmoi.os -}}
 {{- $home := $d.chezmoi.homeDir -}}
+
+{{- /* Public origin for upstream OAuth callbacks, machine-local and optional.
+       MCPProxy accepts an absolute https origin only (no credentials, path,
+       query, fragment or trailing slash) with an optional port 1-65535, so a
+       bad value fails the render here rather than at proxy start. Lowercased
+       because the host is case-insensitive and the value is canonicalised
+       before it reaches the callback registration. */ -}}
+{{- $oauthBase := dig "oauthCallbackBaseUrl" "" (dig "mcpproxy" (dict) $d) -}}
+{{- if ne "" $oauthBase -}}
+{{-   if not (kindIs "string" $oauthBase) -}}
+{{-     fail "mcpproxy.oauthCallbackBaseUrl must be a string" -}}
+{{-   end -}}
+{{-   $oauthBase = lower $oauthBase -}}
+{{-   if not (regexMatch `^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$` $oauthBase) -}}
+{{-     fail (printf "mcpproxy.oauthCallbackBaseUrl %q must be an https origin: https://<host>[:<port>] with no path, query, fragment, trailing slash or credentials" $oauthBase) -}}
+{{-   end -}}
+{{-   if regexMatch ":[0-9]+$" $oauthBase -}}
+{{-     $portNumber := atoi (regexReplaceAll "^.*:" $oauthBase "") -}}
+{{-     if or (lt $portNumber 1) (gt $portNumber 65535) -}}
+{{-       fail (printf "mcpproxy.oauthCallbackBaseUrl %q has a port outside 1-65535" $oauthBase) -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
 
 {{- /* Soft-fail BWS access, as in coding-patterns.md § Bitwarden Secrets Guard:
        the token path, never the value, goes to the wrapper. */ -}}
@@ -154,6 +180,15 @@
 {{-       $server = set $server "headers" $headers -}}
 {{-     end -}}
 {{-     $trust := dig "trust" "auto" $server -}}
+{{- /* Opt-in upstream OAuth: copy rather than mutate shared data, and never
+       touch redirect_uri (loopback-only; MCPProxy derives it). */ -}}
+{{-     if and (ne "" $oauthBase) (hasKey $server "oauth") -}}
+{{-       $oauth := deepCopy (get $server "oauth") -}}
+{{-       if not (hasKey $oauth "callback_base_url") -}}
+{{-         $oauth = set $oauth "callback_base_url" $oauthBase -}}
+{{-       end -}}
+{{-       $server = set $server "oauth" $oauth -}}
+{{-     end -}}
 {{-     $server = omit $server "when" "trust" "envSecrets" "headerSecrets" -}}
 {{-     if hasKey $server "command" -}}
 {{-       $command := get $server "command" -}}
