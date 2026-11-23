@@ -1,12 +1,13 @@
 {
   "deno.config": "./deno.json",
   "deno.enable": true,
-  "deno.enablePaths": ["home/private_dot_local/bin"],
+  "deno.enablePaths": [
+    "home/private_dot_local/bin"
+  ],
   "files.associations": {
     "**/home/private_dot_local/bin/executable_cw": "typescript",
     "**/home/private_dot_local/bin/executable_df-json-escape": "typescript",
     "**/home/private_dot_local/bin/executable_df-lint-runtimes": "typescript",
-    "**/home/private_dot_local/bin/executable_df-omo-profile": "typescript",
     "**/home/private_dot_local/bin/executable_df-task-chezmoi-update": "typescript",
     "**/home/private_dot_local/bin/executable_df-task-mise-upgrade": "typescript",
     "**/home/private_dot_local/bin/executable_notify": "typescript",

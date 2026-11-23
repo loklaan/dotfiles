@@ -78,7 +78,7 @@ one-line root-cause read. Lead with what's broken.
 ## for-tasks-2
 | JTBD | Result | Evidence |
 |------|--------|----------|
-| 1 Open agents          | PASS | opencode 1.17.11 · claude 2.1.193 · codex 0.142.0 |
+| 1 Open agents          | PASS | opencode 2.2.5 · claude 2.1.193 · codex 0.142.0 |
 | 2 OMO config loads     | PASS | plugin registered · Sisyphus listed · cache package present |
 | 3 Proxy auth           | PASS | opencode run returned "pong" via bedrock SigV4 |
 | 4 Rules/skills resolve | PASS | ~/.claude/rules → ../.agents/rules, 6 rules · 24 skills |

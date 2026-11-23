@@ -33,7 +33,7 @@ Render, but do not apply, both global configs:
 
 ```bash
 chezmoi cat ~/.config/opencode/opencode.json
-chezmoi cat ~/.config/opencode2/opencode.json
+chezmoi cat ~/.config/opencode/opencode.json
 ```
 
 Require byte-equivalent `references.effect-v4` objects containing only the

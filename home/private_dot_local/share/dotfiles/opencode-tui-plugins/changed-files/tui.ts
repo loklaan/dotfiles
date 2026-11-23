@@ -14,7 +14,7 @@ import {
 //|---------------------------------------------------------------------------|
 //| OpenCode 2 adapter for /changes (behaviour lives in changes.ts)           |
 //|                                                                           |
-//| Discovered through the ~/.config/opencode2/plugins/changed-files symlink. |
+//| Discovered through the ~/.config/opencode/plugins/changed-files symlink. |
 //| OpenCode 2 resolves "effect" to its own copy and refuses this package's   |
 //| node_modules, so the shared core runs on the host's Effect here.          |
 //|                                                                           |

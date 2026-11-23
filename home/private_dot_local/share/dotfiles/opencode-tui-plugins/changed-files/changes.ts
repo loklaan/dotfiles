@@ -16,17 +16,16 @@ import {
 //|---------------------------------------------------------------------------|
 //| /changes: open the files this session changed in micro                    |
 //|                                                                           |
-//| Shared by both OpenCode versions. opencode.tsx (OpenCode 1) and tui.ts    |
-//| (OpenCode 2) adapt each TUI's plugin API to the Host service below; this  |
-//| module owns the behaviour.                                                |
+//| Loaded by OpenCode 2 through tui.ts; the V1 adapter was retired.          |
+//| tui.ts adapts the host plugin API to the Host service below; this module  |
+//| owns the behaviour.                                                       |
 //|                                                                           |
-//| ## One module, two Effect versions                                        |
+//| ## Effect comes from the host                                             |
 //|                                                                           |
 //| OpenCode 2 hands TUI plugins its own effect and refuses a plugin's copy.  |
-//| OpenCode 1 provides none, so it resolves the pinned effect that           |
-//| run_after_install-072 installs into this package's node_modules. Import   |
-//| only from the root "effect" barrel: subpaths such as the process modules  |
-//| sit at different paths in the two versions.                               |
+//| This package therefore has no dependencies: import only from the root     |
+//| "effect" barrel, because subpaths such as the process modules move        |
+//| between Effect versions.                                                  |
 //|                                                                           |
 //| ## Operating system                                                       |
 //|                                                                           |

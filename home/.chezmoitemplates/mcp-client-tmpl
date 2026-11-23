@@ -1,7 +1,7 @@
 {{- /* One client's MCP entries: the same single lane for every client, projected
      into that client's config shape.
 
-       mcpproxy   -> <origin>/mcp/      (opencode2: <origin>/mcp/all/)
+       mcpproxy   -> <origin>/mcp/      (opencode: <origin>/mcp/all/)
 
      <origin> is loopback plus .ports.mcpproxy.internal, which MCPProxy binds
      (its `listen` in ~/.mcpproxy/mcp_config.json). With nginxProxy on, nginx
@@ -10,8 +10,8 @@
 
      Arguments (dict):
        data    the template root context (`.`)
-       client  opencode | opencode2 | claude-code | claude-desktop | codex
-               | oh-my-opencode-slim | oh-my-openagent
+       client  opencode | claude-code | claude-desktop | codex
+               | oh-my-opencode-slim
 
      Output: a JSON object of entries keyed by name. For codex the output is
      TOML text: one [mcp_servers.<name>] table per lane. For the two OpenCode
@@ -39,14 +39,14 @@
 {{    $disabled | sortAlpha | toJson }}
 {{- else -}}
 {{- $origin := printf "http://127.0.0.1:%v" $d.ports.mcpproxy.internal -}}
-{{- /* OpenCode 2 dials /mcp/all/, which lists every upstream tool directly
+{{- /* OpenCode dials /mcp/all/, which lists every upstream tool directly
      (named server__tool) instead of hiding them behind retrieve_tools. Its
      Code Mode indexes all MCP tools itself and exposes them through a
      synchronous search() that no plugin can extend, so hidden tools would be
      unreachable by that search. Calls bypass call_tool_* (no
      read/write/destructive intent). */ -}}
 {{- $path := "/mcp/" -}}
-{{- if eq $client "opencode2" -}}
+{{- if eq $client "opencode" -}}
 {{-   $path = "/mcp/all/" -}}
 {{- end -}}
 {{- $lanes := list (list "mcpproxy" (printf "%s%s" $origin $path)) -}}
@@ -68,12 +68,6 @@
 {{-     $url := index $lane 1 -}}
 {{-     $bridgeArgs := list "-y" "mcp-remote@latest" $url "--header-file" $headerFile -}}
 {{-     if eq $client "opencode" -}}
-{{-       $server := dict "type" "remote" "enabled" true "url" $url -}}
-{{-       if ne "" $apiKey -}}
-{{-         $server = set $server "headers" $authHeaders -}}
-{{-       end -}}
-{{-       $out = set $out $name $server -}}
-{{-     else if eq $client "opencode2" -}}
 {{-       $server := dict "type" "remote" "url" $url "disabled" false -}}
 {{-       if ne "" $apiKey -}}
 {{-         $server = set $server "headers" $authHeaders -}}

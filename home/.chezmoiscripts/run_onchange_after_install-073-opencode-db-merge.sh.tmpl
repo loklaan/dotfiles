@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "opencode" }}
+# One-time merge of the retired OpenCode 2-era database into the unified one.
+#
+# OpenCode 1 and OpenCode 2 kept separate SQLite files. OpenCode 2 now owns the
+# default path (~/.local/share/opencode/opencode.db), and its own migration
+# runner upgrades an OpenCode 1 database in place, so the only remaining data is
+# the sessions written to opencode2.db while both binaries were installed.
+#
+# The merge uses OpenCode's own surface only: `session export` reads the legacy
+# file and `session import` writes through the running server (or a standalone
+# process when no daemon is enabled). Sessions are exported parents-first so
+# subagent parentage survives; imports are idempotent because a re-run reports
+# "Session already exists" for anything already merged.
+#
+# The legacy file is renamed to opencode2.db.merged when every session lands.
+# That is also the idempotency key: a re-run no-ops.
+#
+# run_onchange: re-runs only when this script or the mise lock changes, and the
+# rename guard makes it a no-op after a clean merge.
+
+export PATH="${HOME}/.local/share/mise/shims:${PATH}"
+
+readonly DATA="${HOME}/.local/share/opencode"
+readonly STATE="${HOME}/.local/state/opencode"
+readonly LEGACY="${DATA}/opencode2.db"
+readonly TARGET="${DATA}/opencode.db"
+
+mode=""
+work=""
+
+cleanup() {
+  [ -n "$work" ] && rm -rf "$work"
+}
+trap cleanup EXIT
+
+# Opens TARGET so OpenCode's migrations run, and proves the server is reachable.
+detect_mode() {
+  if opencode session list >/dev/null 2>&1; then
+    mode="service"
+  elif opencode --standalone session list >/dev/null 2>&1; then
+    mode="standalone"
+  fi
+}
+
+import_session() {
+  local file="$1" output
+  if [ "$mode" = "service" ]; then
+    output=$(opencode session import "$file" 2>&1) && return 0
+  else
+    output=$(opencode --standalone session import "$file" 2>&1) && return 0
+  fi
+  case "$output" in
+    *"Session already exists"*) return 0 ;;
+  esac
+  printf '%s\n' "$output" >&2
+  return 1
+}
+
+legacy_session_ids() {
+  node -e '
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(process.argv[1], { readOnly: true });
+    const rows = db
+      .prepare("select id from session_v2 order by (parent_id is not null), time_created, id")
+      .all();
+    for (const row of rows) console.log(row.id);
+    db.close();
+  ' "$LEGACY"
+}
+
+main() {
+  [ -f "$LEGACY" ] || return 0
+
+  if ! command -v opencode >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+    log_detail "opencode or node not on PATH; leaving ${LEGACY} for the next apply"
+    return 0
+  fi
+
+  detect_mode
+  if [ -z "$mode" ]; then
+    log_warn "OpenCode cannot open ${TARGET}; leaving ${LEGACY} for the next apply"
+    return 0
+  fi
+
+  local ids
+  if ! ids=$(legacy_session_ids); then
+    log_warn "Could not read session ids from ${LEGACY}; leaving it in place"
+    return 0
+  fi
+  [ -n "$ids" ] || {
+    log_detail "Legacy database has no sessions; archiving it"
+    mv "$LEGACY" "${LEGACY}.merged"
+    for suffix in -wal -shm; do
+      [ -f "${LEGACY}${suffix}" ] && mv "${LEGACY}${suffix}" "${LEGACY}${suffix}.merged"
+    done
+    return 0
+  }
+
+  local sid failed=0 merged=0
+  mkdir -p "$STATE"
+  work=$(mktemp -d "${STATE}/merge.XXXXXX")
+
+  log_step "Merging retired OpenCode 2 sessions"
+
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    if ! OPENCODE_DB="$LEGACY" opencode --standalone session export "$sid" \
+      >"${work}/${sid}.json" 2>/dev/null; then
+      log_warn "Could not export ${sid}"
+      failed=1
+      continue
+    fi
+    if import_session "${work}/${sid}.json"; then
+      merged=$((merged + 1))
+    else
+      log_warn "Could not import ${sid}"
+      failed=1
+    fi
+  done <<<"$ids"
+
+  if [ "$failed" -ne 0 ]; then
+    log_warn "Merged ${merged} session(s); ${LEGACY} kept for the next apply"
+    return 0
+  fi
+
+  mv "$LEGACY" "${LEGACY}.merged"
+  for suffix in -wal -shm; do
+    [ -f "${LEGACY}${suffix}" ] && mv "${LEGACY}${suffix}" "${LEGACY}${suffix}.merged"
+  done
+  log_detail "Merged ${merged} session(s) into ${TARGET}; archived ${LEGACY##*/} as ${LEGACY##*/}.merged"
+}
+
+main

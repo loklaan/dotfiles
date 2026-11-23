@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFS=$'\n\t'
+
+#/ Usage:
+#/   df-opencode-pair [<opencode pair args>...]
+#/
+#/ Description:
+#/   `opencode pair` with this machine's public URL. OpenCode prints links for
+#/   the address it is bound to, which on a headless box is loopback or a
+#/   private address and therefore useless in a browser elsewhere.
+#/   OPENCODE_PUBLIC_URL (rendered into opencode-serve.env) supplies the URL a
+#/   human actually opens. An explicit --url always wins.
+#/
+#/   Exists because `opencode` itself is the mise binary: there is no wrapper
+#/   left to inject the flag.
+#/
+#/ Options:
+#/   --help:      Display this help message
+usage() { grep '^#/' "$0" | cut -c4-; }
+
+ENV_FILE="${HOME}/.config/dotfiles/opencode-serve.env"
+
+main() {
+  if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+  fi
+
+  local public_url=""
+  if [ -r "$ENV_FILE" ]; then
+    # Parse, never `source`: the URL is user data and must not run as shell.
+    public_url=$(sed -n 's/^OPENCODE_PUBLIC_URL=//p' "$ENV_FILE" | head -1)
+  fi
+
+  if [ -n "$public_url" ]; then
+    local arg
+    for arg in "$@"; do
+      case "$arg" in
+        --url|--url=*|--remote) exec opencode pair "$@" ;;
+      esac
+    done
+    exec opencode pair --url "$public_url" "$@"
+  fi
+
+  exec opencode pair "$@"
+}
+
+main "$@"

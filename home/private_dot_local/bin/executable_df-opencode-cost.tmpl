@@ -1,19 +1,18 @@
 #!/usr/bin/env -S DENO_NO_PACKAGE_JSON=1 deno run -q --no-prompt --allow-run --allow-env=HOME,PATH,SSH_AUTH_SOCK,NODE_V8_COVERAGE --allow-read
 
-// df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts
-// and ACROSS opencode generations (v1 = opencode.db, v2 = opencode2.db).
+// df-opencode-cost — opencode spend, grouped by PROJECT, aggregated ACROSS hosts.
 // Single-file Deno + Effect v4 tool. Import paths pinned to effect@4.0.0
 // (repo-wide canonical version; the frozen deno.lock projected into ~/.local/bin
 // resolves it — no --minimum-dependency-age needed, unlike a standalone script).
 //
-// Each (host × source) runs a node:sqlite snippet over `zsh -lc` (login shell
-// surfaces the mise-activated deno on Coder boxes). Each source is one
-// `UsageSource` service with two layers that differ only in DB file + SQL; both
-// emit the same normalized UsageRow. A missing DB file on a host is "absent"
-// (source skipped for that host), not a failure. The coordinator normalizes
-// paths, folds worktrees into their parent repo, folds devbox ~/work/<repo> into
-// ~/dev/canva/<repo>, and renders a heatmap table with per-host, per-source and
-// per-worktree granularity.
+// Each host runs a node:sqlite snippet over `zsh -lc` (login shell surfaces the
+// mise-activated deno on Coder boxes) against the unified OpenCode database,
+// ~/.local/share/opencode/opencode.db. Per-message assistant rows are the
+// authoritative token/cost source; session rollups are unreliable. A missing DB
+// file on a host is "absent" (host skipped), not a failure. The coordinator
+// normalizes paths, folds worktrees into their parent repo, folds devbox
+// ~/work/<repo> into ~/dev/canva/<repo>, and renders a heatmap table with
+// per-host and per-worktree granularity.
 
 import {
   Console,
@@ -53,9 +52,8 @@ class BoxFailure extends Schema.TaggedError<BoxFailure>()("BoxFailure", {
   detail: Schema.String,
 }) {}
 
-const SOURCE_IDS = ["v1", "v2"] as const;
+const SOURCE_IDS = ["opencode"] as const;
 type SourceId = (typeof SOURCE_IDS)[number];
-type SourceSelection = SourceId | "all";
 
 type Basis = "created" | "updated";
 type Window = {
@@ -153,29 +151,10 @@ type SourceSpec = {
   readonly select: (col: string) => string;
 };
 
-const V1_SPEC: SourceSpec = {
-  id: "v1",
-  label: "OpenCode 1",
+const OPENCODE_SPEC: SourceSpec = {
+  id: "opencode",
+  label: "OpenCode",
   dbFile: "opencode.db",
-  select: (col) =>
-    "SELECT directory AS dir, " +
-    "COALESCE(SUM(cost), 0) AS cost, " +
-    "COALESCE(SUM(tokens_input), 0) AS input, " +
-    "COALESCE(SUM(tokens_output), 0) AS output, " +
-    "COALESCE(SUM(tokens_reasoning), 0) AS reasoning, " +
-    "COALESCE(SUM(tokens_cache_read), 0) AS cacheRead, " +
-    "COALESCE(SUM(tokens_cache_write), 0) AS cacheWrite " +
-    "FROM session WHERE directory IS NOT NULL AND " +
-    col + " >= ? AND " + col + " <= ? " +
-    "GROUP BY directory",
-};
-
-// session_v2 token rollups are unreliable, so sum the authoritative per-message
-// assistant rows instead. Window is on the owning session's time column.
-const V2_SPEC: SourceSpec = {
-  id: "v2",
-  label: "OpenCode 2",
-  dbFile: "opencode2.db",
   select: (col) => {
     const t = "s." + col;
     const sum = (path: string) =>
@@ -422,7 +401,7 @@ const collectHost = Effect.fn("collectHost")(
   },
 );
 
-// --- UsageSource service: one interface, two layers (v1 / v2) -----------
+// --- UsageSource service -------------------------------------------------
 type UsageSourceService = {
   readonly id: SourceId;
   readonly label: string;
@@ -447,28 +426,19 @@ const makeUsageSource = (spec: SourceSpec): UsageSourceService => ({
 class UsageSource extends Context.Service<UsageSource, UsageSourceService>()(
   "df-opencode-cost/UsageSource",
 ) {
-  static readonly v1 = Layer.succeed(
+  static readonly opencode = Layer.succeed(
     UsageSource,
-    UsageSource.of(makeUsageSource(V1_SPEC)),
-  );
-  static readonly v2 = Layer.succeed(
-    UsageSource,
-    UsageSource.of(makeUsageSource(V2_SPEC)),
+    UsageSource.of(makeUsageSource(OPENCODE_SPEC)),
   );
 }
 
-const sourceLayer = (id: SourceId) =>
-  id === "v1" ? UsageSource.v1 : UsageSource.v2;
+const sourceLayer = (_id: SourceId) => UsageSource.opencode;
 
 const queryPair = (source: SourceId, host: string, window: Window) =>
   Effect.gen(function* () {
     const usage = yield* UsageSource;
     return yield* usage.query(host, window);
   }).pipe(Effect.provide(sourceLayer(source)));
-
-const selectedSources = (
-  selection: SourceSelection,
-): readonly SourceId[] => selection === "all" ? SOURCE_IDS : [selection];
 
 // --- Settlement: partition per-(host × source) outcomes ------------------
 type PairOutcome = {
@@ -795,13 +765,6 @@ const basisFlag = Flag.Literals("time-basis", ["created", "updated"]).pipe(
   ),
   Flag.withDefault("created" as Basis),
 );
-const sourceFlag = Flag.Literals("source", ["v1", "v2", "all"]).pipe(
-  Flag.withDescription(
-    "OpenCode generation: v1 (opencode.db), v2 (opencode2.db), or all. [default: all]",
-  ),
-  Flag.withDefault("all" as SourceSelection),
-);
-
 const costCommand = Command.make(
   "df-opencode-cost",
   {
@@ -810,7 +773,6 @@ const costCommand = Command.make(
     until: untilFlag,
     concurrency: concurrencyFlag,
     "time-basis": basisFlag,
-    source: sourceFlag,
   },
   (opts) =>
     Effect.gen(function* () {
@@ -843,7 +805,7 @@ const costCommand = Command.make(
       }
 
       const window: Window = { sinceMs, untilMs, basis };
-      const sources = selectedSources(opts.source);
+      const sources = SOURCE_IDS;
       // Host-major so answered hosts keep their configured order.
       const pairs = hosts.flatMap((host) =>
         sources.map((source) => ({ host, source }))
@@ -995,66 +957,40 @@ if (!import.meta.main) {
     }
   });
 
-  Deno.test("sources: v1 and v2 scripts differ only in DB path and SQL", () => {
-    const v1 = makeUsageSource(V1_SPEC).script(testWindow);
-    const v2 = makeUsageSource(V2_SPEC).script(testWindow);
+  Deno.test("sources: script queries the unified DB with per-message tokens", () => {
+    const script = makeUsageSource(OPENCODE_SPEC).script(testWindow);
     const must = (ok: boolean, what: string) => {
       if (!ok) throw new Error(what);
     };
     must(
-      v1.includes("/.local/share/opencode/opencode.db") &&
-        !v1.includes("opencode2.db"),
-      "v1 path",
+      script.includes("/.local/share/opencode/opencode.db") &&
+        !script.includes("opencode2.db"),
+      "unified DB path",
     );
     must(
-      v2.includes("/.local/share/opencode/opencode2.db") &&
-        !v2.includes("/opencode.db"),
-      "v2 path",
+      script.includes("FROM session_message m JOIN session_v2 s") &&
+        !script.includes("FROM session WHERE"),
+      "per-message SQL",
     );
     must(
-      v1.includes("FROM session WHERE") && !v1.includes("session_message"),
-      "v1 sql",
+      script.includes("$.tokens.cache.read") &&
+        script.includes("$.tokens.reasoning") &&
+        script.includes("m.type = 'assistant'"),
+      "token paths",
     );
-    must(
-      v2.includes("FROM session_message m JOIN session_v2 s") &&
-        !v2.includes("FROM session WHERE"),
-      "v2 sql",
-    );
-    must(
-      v1.includes("tokens_cache_read") && v1.includes("tokens_reasoning"),
-      "v1 cache/reasoning columns",
-    );
-    must(
-      v2.includes("$.tokens.cache.read") && v2.includes("$.tokens.reasoning") &&
-        v2.includes("m.type = 'assistant'"),
-      "v2 per-message tokens",
-    );
-    must(
-      v1.includes("existsSync(path)") && v2.includes("existsSync(path)"),
-      "absent-file guard",
-    );
-    must(
-      v1.startsWith("deno eval ") && v2.startsWith("deno eval "),
-      "transport prefix",
-    );
+    must(script.includes("existsSync(path)"), "absent-file guard");
+    must(script.startsWith("deno eval "), "transport prefix");
   });
 
   Deno.test("sources: basis selects the matching time column", () => {
     const updated: Window = { ...testWindow, basis: "updated" };
-    const v1 = makeUsageSource(V1_SPEC).script(updated);
-    const v2 = makeUsageSource(V2_SPEC).script(updated);
-    if (!v1.includes("time_updated >= ?") || v1.includes("time_created >= ?")) {
-      throw new Error("v1 basis");
+    const script = makeUsageSource(OPENCODE_SPEC).script(updated);
+    if (
+      !script.includes("s.time_updated >= ?") ||
+      script.includes("s.time_created >= ?")
+    ) {
+      throw new Error("basis");
     }
-    if (!v2.includes("s.time_updated >= ?") || v2.includes("s.time_created >= ?")) {
-      throw new Error("v2 basis");
-    }
-  });
-
-  Deno.test("sources: --source selects v1, v2 or both", () => {
-    if (selectedSources("all").join() !== "v1,v2") throw new Error("all");
-    if (selectedSources("v1").join() !== "v1") throw new Error("v1");
-    if (selectedSources("v2").join() !== "v2") throw new Error("v2");
   });
 
   Deno.test("collectHost: local and SSH argv pass through the process spawner", async () => {
@@ -1176,7 +1112,7 @@ if (!import.meta.main) {
     }
   });
 
-  Deno.test("UsageSource.v2: queries opencode2.db through the service", async () => {
+  Deno.test("UsageSource: queries the unified DB through the service", async () => {
     const commands: ChildProcess.Command[] = [];
     const payload = payloadOf([{
       dir: "/Users/lochlan/dev/canva/x",
@@ -1192,7 +1128,7 @@ if (!import.meta.main) {
         const usage = yield* UsageSource;
         return yield* usage.query("local", testWindow);
       }).pipe(
-        Effect.provide(UsageSource.v2),
+        Effect.provide(UsageSource.opencode),
         Effect.provide(
           transportFor({ stdout: payload, stderr: "", exitCode: 0 }, commands),
         ),
@@ -1204,9 +1140,9 @@ if (!import.meta.main) {
     const [command] = commands;
     if (
       command?._tag !== "StandardCommand" ||
-      !command.args.join(" ").includes("opencode2.db")
+      !command.args.join(" ").includes("/opencode.db")
     ) {
-      throw new Error("v2 source did not query opencode2.db");
+      throw new Error("source did not query opencode.db");
     }
   });
 
@@ -1235,19 +1171,23 @@ if (!import.meta.main) {
         })),
       ),
     );
-    const settled = settle([
-      { host: "box", source: "v1", result: absent },
-      { host: "box", source: "v2", result: present },
+    const settledAbsent = settle([
+      { host: "box", source: "opencode", result: absent },
     ]);
-    if (settled.failed.length !== 0) throw new Error("absent counted as failure");
-    if (settled.sources.join() !== "v2") {
-      throw new Error(`sources should be v2 only, got ${settled.sources}`);
+    if (settledAbsent.failed.length !== 0) {
+      throw new Error("absent DB counted as failure");
     }
-    if (settled.answered.join() !== "box") {
+    if (settledAbsent.rows.length !== 0) {
+      throw new Error("absent DB contributed rows");
+    }
+    if (settledAbsent.answered.join() !== "box") {
       throw new Error("absent host should still count as answered");
     }
-    if (settled.rows.length !== 1 || settled.rows[0].source !== "v2") {
-      throw new Error("only the present source should contribute rows");
+    const settled = settle([
+      { host: "box", source: "opencode", result: present },
+    ]);
+    if (settled.rows.length !== 1 || settled.rows[0].source !== "opencode") {
+      throw new Error("the present DB should contribute rows");
     }
   });
 
@@ -1259,9 +1199,10 @@ if (!import.meta.main) {
         ),
       ),
     );
-    const settled = settle([{ host: "box", source: "v2", result: failed }]);
+    const settled = settle([{ host: "box", source: "opencode", result: failed }]);
     if (
-      settled.failed.length !== 1 || settled.failed[0].source !== "v2" ||
+      settled.failed.length !== 1 ||
+      settled.failed[0].source !== "opencode" ||
       settled.failed[0].detail !== "unable to open database"
     ) {
       throw new Error(`unexpected failure: ${JSON.stringify(settled.failed)}`);
@@ -1269,11 +1210,11 @@ if (!import.meta.main) {
     if (settled.answered.length !== 0) throw new Error("failed host answered");
   });
 
-  Deno.test("aggregate: v1 + v2 merge per project, keep per-source split", () => {
+  Deno.test("aggregate: hosts and worktrees fold per project", () => {
     const { projects, grand } = aggregate([
       {
         host: "local",
-        source: "v1",
+        source: "opencode",
         rows: [{
           dir: "/Users/lochlan/dev/canva/canva",
           cost: 13.41,
@@ -1286,7 +1227,7 @@ if (!import.meta.main) {
       },
       {
         host: "local",
-        source: "v2",
+        source: "opencode",
         rows: [{
           dir: "/Users/lochlan/dev/canva/canva",
           cost: 4,
@@ -1299,7 +1240,7 @@ if (!import.meta.main) {
       },
       {
         host: "for-tasks-1.coder",
-        source: "v1",
+        source: "opencode",
         rows: [{
           dir: "/home/coder/work/canva",
           cost: 15.36,
@@ -1319,11 +1260,8 @@ if (!import.meta.main) {
     if (Math.abs(p.total.cost - 32.77) > 0.001) {
       throw new Error(`total ${p.total.cost}`);
     }
-    if (Math.abs((p.bySource.get("v1")?.cost ?? 0) - 28.77) > 0.001) {
-      throw new Error("v1 split");
-    }
-    if (Math.abs((p.bySource.get("v2")?.cost ?? 0) - 4) > 0.001) {
-      throw new Error("v2 split");
+    if (Math.abs((p.bySource.get("opencode")?.cost ?? 0) - 32.77) > 0.001) {
+      throw new Error("source total");
     }
     if (Math.abs((p.byHost.get("local")?.cost ?? 0) - 17.41) > 0.001) {
       throw new Error("local host");

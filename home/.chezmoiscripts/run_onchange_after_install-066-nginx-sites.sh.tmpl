@@ -25,7 +25,14 @@ main() {
     return 0
   fi
 
-  if ! command -v nginx >/dev/null 2>&1; then
+  # nginx lives in /usr/sbin on Debian/Ubuntu, which is not on the PATH a
+  # chezmoi script inherits. Resolve it explicitly rather than skipping the
+  # whole site sync on a machine where nginx is installed and running.
+  NGINX_BIN=$(command -v nginx 2>/dev/null || true)
+  if [ -z "$NGINX_BIN" ] && [ -x /usr/sbin/nginx ]; then
+    NGINX_BIN=/usr/sbin/nginx
+  fi
+  if [ -z "$NGINX_BIN" ]; then
     log_warn "Skipping nginx sites — nginx not installed (install with: sudo apt install nginx)"
     return 0
   fi
@@ -33,6 +40,22 @@ main() {
   log_step "Syncing nginx sites"
 
   sudo mkdir -p "$SITES_AVAILABLE" "$SITES_ENABLED"
+
+  # Older renders named the site without ".conf" (sites-enabled/opencode ->
+  # sites-available/opencode). Those entries are no longer managed; remove
+  # them or a stale proxy block survives every rename and keeps its old port.
+  for site in $MANAGED_SITES; do
+    legacy_link="${SITES_ENABLED}/${site}"
+    legacy_src="${SITES_AVAILABLE}/${site}"
+    if [ -L "$legacy_link" ] || [ -e "$legacy_link" ]; then
+      sudo rm -f "$legacy_link"
+      log_detail "Removed legacy symlink: ${site}"
+    fi
+    if [ -f "$legacy_src" ]; then
+      sudo rm -f "$legacy_src"
+      log_detail "Removed legacy site: ${site}"
+    fi
+  done
 
   for site in $MANAGED_SITES; do
     src="${SRC_DIR}/${site}.conf"
@@ -70,7 +93,7 @@ main() {
   # take down a working nginx with a bad render. run_quiet keeps success
   # chatter out of the terminal and filters it from the log; a failure dumps
   # nginx's diagnostics before the fatal.
-  if ! run_quiet sudo nginx -t; then
+  if ! run_quiet sudo "$NGINX_BIN" -t; then
     fatal "nginx -t failed — config NOT reloaded. Fix the template and re-apply."
     return 1
   fi

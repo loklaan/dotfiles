@@ -71,20 +71,75 @@ function harness(options: { panePid: string; pane?: string }): Harness {
   };
 }
 
-function fakeClient(
-  sessions: Record<string, { id: string; parentID?: string }>,
-) {
+type SessionLike = { sessionID?: string; id?: string; parentID?: string | null };
+type Envelope = { type: string; data: Record<string, unknown> };
+
+// OpenCode 2 plugin context stand-in: captures the prompt hook, exposes an
+// async event stream the test can push into, and records `session.get` calls.
+function fakeContext(sessions: Record<string, SessionLike> = {}) {
   const calls: string[] = [];
-  return {
-    calls,
-    client: {
-      session: {
-        get: (args: { path: { id: string } }) => {
-          calls.push(args.path.id);
-          const found = sessions[args.path.id];
-          return Promise.resolve({ data: found });
-        },
+  const queue: Envelope[] = [];
+  const waiters: Array<(value: IteratorResult<Envelope>) => void> = [];
+  let prompt: ((event: { sessionID: string }) => Promise<void>) | undefined;
+  let closed = false;
+
+  const push = (event: Envelope) => {
+    const waiter = waiters.shift();
+    if (waiter !== undefined) waiter({ value: event, done: false });
+    else queue.push(event);
+  };
+
+  const ctx = {
+    session: {
+      hook: async (
+        name: "prompt",
+        cb: (event: { sessionID: string }) => Promise<void>,
+      ) => {
+        assert.equal(name, "prompt");
+        prompt = cb;
+        return {};
       },
+      get: async (input: { sessionID: string }) => {
+        calls.push(input.sessionID);
+        return sessions[input.sessionID];
+      },
+    },
+    event: {
+      subscribe: (_options: { signal: AbortSignal }) => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => {
+              if (closed) return Promise.resolve({ done: true, value: undefined });
+              if (queue.length > 0) {
+                return Promise.resolve({
+                  value: queue.shift() as Envelope,
+                  done: false,
+                });
+              }
+              return new Promise<IteratorResult<Envelope>>((resolve) => {
+                waiters.push(resolve);
+              });
+            },
+            return: () => {
+              closed = true;
+              for (const waiter of waiters.splice(0)) {
+                waiter({ done: true, value: undefined });
+              }
+              return Promise.resolve({ done: true, value: undefined });
+            },
+          };
+        },
+      }),
+    },
+  };
+
+  return {
+    ctx,
+    calls,
+    push,
+    sendPrompt: (sessionID: string) => {
+      assert.ok(prompt !== undefined, "prompt hook was not registered");
+      return prompt({ sessionID });
     },
   };
 }
@@ -93,29 +148,24 @@ async function loadPlugin() {
   // Cache-busted so each test observes a freshly-evaluated module rather than
   // inheriting another test's captured environment.
   const mod = await import(`${PLUGIN}#${crypto.randomUUID()}`);
-  return mod.TmuxResurrect;
+  return mod.default;
 }
 
-function sessionEvent(
-  type: "session.created" | "session.updated" | "session.deleted",
-  info: { id: string; parentID?: string },
-) {
-  return { event: { type, properties: { info } } };
-}
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-Deno.test("exports only the plugin factory", async () => {
-  // opencode's legacy loader invokes every export as a plugin factory, so any
-  // extra export is called with the plugin context and fails the whole module.
+Deno.test("exports exactly one plugin definition", async () => {
   const mod = await import(`${PLUGIN}#${crypto.randomUUID()}`);
-  assert.deepEqual(Object.keys(mod), ["TmuxResurrect"]);
+  assert.deepEqual(Object.keys(mod), ["default"]);
+  assert.equal(mod.default.id, "dotfiles:tmux-resurrect");
+  assert.equal(typeof mod.default.setup, "function");
 });
 
 Deno.test("writes a claim carrying pid, start time and pane for a root session", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({ ses_root: { id: "ses_root" } });
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_root" }, {});
+    const fake = fakeContext({ ses_root: { sessionID: "ses_root" } });
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_root");
 
     const state = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(state.agent, "opencode");
@@ -128,14 +178,14 @@ Deno.test("writes a claim carrying pid, start time and pane for a root session",
   }
 });
 
-Deno.test("never records a subagent session (bug 2)", async () => {
+Deno.test("never records a subagent session", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({
-      ses_child: { id: "ses_child", parentID: "ses_root" },
+    const fake = fakeContext({
+      ses_child: { sessionID: "ses_child", parentID: "ses_root" },
     });
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_child" }, {});
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_child");
     assert.ok(!existsSync(h.stateFile));
   } finally {
     h.restore();
@@ -145,13 +195,13 @@ Deno.test("never records a subagent session (bug 2)", async () => {
 Deno.test("a subagent turn cannot overwrite an established root claim", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({
-      ses_root: { id: "ses_root" },
-      ses_child: { id: "ses_child", parentID: "ses_root" },
+    const fake = fakeContext({
+      ses_root: { sessionID: "ses_root" },
+      ses_child: { sessionID: "ses_child", parentID: "ses_root" },
     });
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_root" }, {});
-    await hooks["chat.message"]({ sessionID: "ses_child" }, {});
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_root");
+    await fake.sendPrompt("ses_child");
 
     const state = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(state.session_id, "ses_root");
@@ -163,33 +213,32 @@ Deno.test("a subagent turn cannot overwrite an established root claim", async ()
 Deno.test("session.created supplies parentID without any lookup", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client, calls } = fakeClient({});
-    const hooks = await (await loadPlugin())({ client });
-    await hooks.event(sessionEvent("session.created", {
-      id: "ses_child",
-      parentID: "ses_root",
-    }));
-    await hooks["chat.message"]({ sessionID: "ses_child" }, {});
+    const fake = fakeContext({});
+    await (await loadPlugin()).setup(fake.ctx);
+    fake.push({
+      type: "session.created",
+      data: { sessionID: "ses_child", parentID: "ses_root" },
+    });
+    await flush();
+    await fake.sendPrompt("ses_child");
 
     assert.ok(!existsSync(h.stateFile));
-    assert.deepEqual(calls, []);
+    assert.deepEqual(fake.calls, []);
   } finally {
     h.restore();
   }
 });
 
-Deno.test("deleting an unrelated session leaves the claim intact (F6)", async () => {
+Deno.test("deleting an unrelated session leaves the claim intact", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({ ses_root: { id: "ses_root" } });
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_root" }, {});
+    const fake = fakeContext({ ses_root: { sessionID: "ses_root" } });
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_root");
     assert.ok(existsSync(h.stateFile));
 
-    await hooks.event(sessionEvent("session.deleted", {
-      id: "ses_child",
-      parentID: "ses_root",
-    }));
+    fake.push({ type: "session.deleted", data: { sessionID: "ses_child" } });
+    await flush();
     assert.ok(existsSync(h.stateFile));
   } finally {
     h.restore();
@@ -199,22 +248,23 @@ Deno.test("deleting an unrelated session leaves the claim intact (F6)", async ()
 Deno.test("deleting the tracked session retracts the claim", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({ ses_root: { id: "ses_root" } });
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_root" }, {});
-    await hooks.event(sessionEvent("session.deleted", { id: "ses_root" }));
+    const fake = fakeContext({ ses_root: { sessionID: "ses_root" } });
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_root");
+    fake.push({ type: "session.deleted", data: { sessionID: "ses_root" } });
+    await flush();
     assert.ok(!existsSync(h.stateFile));
   } finally {
     h.restore();
   }
 });
 
-Deno.test("refuses to claim a pane it is not running in (F8)", async () => {
+Deno.test("refuses to claim a pane it is not running in", async () => {
   const h = harness({ panePid: "999999" });
   try {
-    const { client } = fakeClient({ ses_root: { id: "ses_root" } });
-    const hooks = await (await loadPlugin())({ client });
-    assert.equal(Object.keys(hooks).length, 0);
+    const fake = fakeContext({ ses_root: { sessionID: "ses_root" } });
+    const cleanup = await (await loadPlugin()).setup(fake.ctx);
+    assert.equal(cleanup, undefined);
     assert.ok(!existsSync(h.stateFile));
   } finally {
     h.restore();
@@ -225,9 +275,10 @@ Deno.test("does nothing outside tmux", async () => {
   const h = harness({ panePid: String(process.pid) });
   delete process.env.TMUX_PANE;
   try {
-    const { client } = fakeClient({});
-    const hooks = await (await loadPlugin())({ client });
-    assert.equal(Object.keys(hooks).length, 0);
+    const fake = fakeContext({});
+    const cleanup = await (await loadPlugin()).setup(fake.ctx);
+    assert.equal(cleanup, undefined);
+    assert.equal(fake.calls.length, 0);
   } finally {
     h.restore();
   }
@@ -236,9 +287,23 @@ Deno.test("does nothing outside tmux", async () => {
 Deno.test("an unresolvable session is not written (fails closed)", async () => {
   const h = harness({ panePid: String(process.pid) });
   try {
-    const { client } = fakeClient({});
-    const hooks = await (await loadPlugin())({ client });
-    await hooks["chat.message"]({ sessionID: "ses_unknown" }, {});
+    const fake = fakeContext({});
+    await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_unknown");
+    assert.ok(!existsSync(h.stateFile));
+  } finally {
+    h.restore();
+  }
+});
+
+Deno.test("cleanup retracts the claim", async () => {
+  const h = harness({ panePid: String(process.pid) });
+  try {
+    const fake = fakeContext({ ses_root: { sessionID: "ses_root" } });
+    const cleanup = await (await loadPlugin()).setup(fake.ctx);
+    await fake.sendPrompt("ses_root");
+    assert.ok(existsSync(h.stateFile));
+    cleanup?.();
     assert.ok(!existsSync(h.stateFile));
   } finally {
     h.restore();

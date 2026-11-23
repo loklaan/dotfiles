@@ -18,11 +18,10 @@ Coder workspaces are reached through their standard `coder.<workspace>` SSH host
 | Process | Where | Manager | Lifecycle |
 |---|---|---|---|
 | `opencode serve` | Any machine | Pitchfork when `openCodeServer`; otherwise per-session or manual | Long-running opt-in or per-session |
-| `opencode2 serve` | Any machine | Pitchfork when `openCode2Server`; otherwise per-session or manual | Long-running opt-in or per-session |
 
 ## Server Model
 
-`opencode serve` is the managed HTTP and SSE server. Each instance has its own SQLite state and does not federate with other instances.
+`opencode serve` is the managed HTTP and SSE server, and also serves the web UI. Each instance has its own SQLite state and does not federate with other instances.
 
 ## Bootstrap
 
@@ -43,94 +42,64 @@ If new patterns ever require a static inventory, prefer:
 2. Bitwarden Secrets storing JSON, parsed via `fromJson` in templates
 3. Keep dynamic discovery wherever possible
 
-## OpenCode 1 and OpenCode 2
+## OpenCode
 
-Both `opencode` (V1) and `opencode2` (V2 beta) are installed. V2 reads V1's
-config locations by default, so its isolation is deliberate and easy to break:
+One binary: OpenCode 2, installed by mise (`opencode = "2"` in
+`home/private_dot_config/mise/config.toml`, exact build in `mise.lock`). There is
+no second config directory, database override, or wrapper.
 
-- NEVER export `OPENCODE_CONFIG_DIR` or `OPENCODE_DB` from the shell
-  environment. V1 reads them too, so exporting redirects `opencode` as well.
-  They are set per-invocation by the `~/.local/bin/opencode2` wrapper.
-- NEVER isolate V2 with `XDG_*` overrides. opencode's child processes inherit
-  them, which breaks mise, gh, git and chezmoi inside the agent's bash tool.
-- Every `opencode2` invocation must go through the wrapper. V2's background
-  service inherits the env of whichever client started it and is then reused.
+- Config: `~/.config/opencode/` — `opencode.json` (native V2 shape, rendered by
+  `private_dot_config/opencode/modify_private_opencode.json`), `cli.json` (terminal
+  client), `AGENTS.md` (shared global rules), and `plugins/`.
+- Database: `~/.local/share/opencode/opencode.db` (the default). OpenCode's own
+  migration runner upgrades an OpenCode 1 database in place.
+- Service: `df-opencode-serve` execs `opencode serve --service` on
+  `ports.opencode.internal`, behind nginx on `ports.opencode.external`.
+  `df-opencode-pair` adds the machine's public URL.
+- Sessions: `opencode session list|export|import`. `df-opencode-cost` reads the
+  unified database; `df-agent-state` reads its `session_v2` table.
+- Plugins: OpenCode 2 API only. `oh-my-opencode-slim` is pinned in
+  `modify_private_opencode.json` and `modify_cli.json`; local plugins are
+  `rtk.ts`, `tmux-resurrect.ts`, `webtools.js`, `websearch/`, and the
+  `changed-files` TUI symlink. V1 plugins (`oh-my-openagent`, the llmproxy work
+  plugin) do not load and are gone.
+- LSP: OpenCode 2 accepts `lsp` configuration but does not run language servers
+  or expose LSP tools. Do not reintroduce an `lsp` block expecting behaviour.
 
-See [OpenCode 1 / OpenCode 2 Coexistence](../resources/opencode-v1-v2-coexistence.md).
+Retirement happened in one change: the V1 config/plugin machinery, the
+`opencode2` wrapper, the second daemon and port, the OMO config and tier
+switcher, and every work-profile conditional were removed. Historical sessions
+were merged with OpenCode's own `session export`/`import`; see
+[OpenCode migration](../resources/opencode.md).
 
 ## Plugin Versioning
 
-opencode keeps a private plugin cache (`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux), managed by an embedded bun runtime compiled into the opencode binary. The cache stays sticky on whatever version was first installed — `@latest` in `opencode.json` does NOT trigger re-resolution at launch. Without a bridge, plugins freeze at first-install version indefinitely.
-
-### Why cache busting and not a second installer
-
-opencode already owns plugin installation. The bridge must not install `oh-my-openagent` with mise or write packages into opencode's cache with npm, because that creates a second package owner and can break `chezmoi apply` when npm/mise resolution fails.
-
-Instead, the bridge removes only opencode's cached package directories on every apply:
-
-- `packages/oh-my-openagent@latest/`
-- `packages/@canva/opencode-plugin-llmproxy@latest/`
-- legacy `packages/@canva/opencode-plugin-llmproxy/`
-
-On the next opencode launch, opencode's embedded bun reinstalls the configured `@latest` plugin specs. Chezmoi does not probe plugin versions or install plugins itself; it only invalidates the sticky cache.
-
-`opencode plugin <module>` exists as a first-class CLI command but doesn't fit the bridge use case: it mutates `~/.config/opencode/opencode.json` (which chezmoi owns) and updates `packages/<spec>/` rather than forcing opencode to re-resolve an already-configured `@latest` plugin. Use cache busting instead.
-
-### The bridge
-
-Two opencode-owned package caches are cleared today:
-
-```
-chezmoi apply
-  run_after_install-067-sync-opencode-plugins.sh.tmpl
-  deletes opencode's cached plugin package dirs
-  opencode reinstalls @latest on next launch
-```
-
-Both plugins are opencode-owned:
-
-- **omo** is always cache-busted because it is configured as `oh-my-openagent@latest` in opencode.
-- **llmproxy** is cache-busted on work-profile machines when no local dist path overrides it.
-
-Both flow through the same `tcs_bust_opencode_plugin` primitive in `home/private_dot_local/lib/tool-cache-sync.sh`.
-
-### Upgrade ritual
-
-`chezmoi apply` clears opencode plugin cache directories. Restart opencode after the apply so opencode reinstalls and loads the current dist-tagged packages.
-
-Verify OMO after opencode has launched at least once:
+Plugins are pinned exactly (`oh-my-opencode-slim@3.0.1`), so there is no
+`@latest` re-resolution and no cache-busting bridge. OpenCode keeps an installed
+copy under `~/.cache/opencode/npm/`; changing the pin is what triggers a fresh
+install on the next launch. Bump all occurrences together:
 
 ```bash
-jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json
-opencode agent list
+rg -n 'oh-my-opencode-slim@' home/private_dot_config/opencode
 ```
 
-The cached package should exist after opencode has restarted, and `opencode agent list` should include the Sisyphus primary agent.
-
-For llmproxy, verify by checking the version on disk:
-
-```bash
-jq -r .version ~/Library/Caches/opencode/packages/@canva/opencode-plugin-llmproxy@latest/node_modules/@canva/opencode-plugin-llmproxy/package.json
-```
-
-If the package path is missing after opencode restarts, opencode did not reinstall the configured plugin.
-
-The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bust_opencode_plugin`) live in `home/private_dot_local/lib/tool-cache-sync.sh` so future scripts that need to refresh another tool's private cache can be one-liners.
+Local plugins are chezmoi-managed files under
+`~/.config/opencode/plugins/` and update on apply.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `home/private_dot_config/mise/config.toml` + `mise.lock` | Installs Pitchfork, OpenCode, and Linux-only (`os = ["linux"]`) services, from the committed lock |
-| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-skulk` (every machine), plus `df-opencode-serve` when `openCodeServer` and `df-opencode2-serve` when `openCode2Server` are enabled, and `df-mcpproxy` when its gate is enabled |
-| `home/private_dot_local/bin/executable_df-{opencode,opencode2,mcpproxy,skulk}-serve` | Stable daemon `run` commands; read `~/.config/dotfiles/{opencode,opencode2,mcpproxy,skulk}-serve.env` |
-| `home/private_dot_config/private_dotfiles/{opencode,opencode2,mcpproxy,skulk}-serve.env.tmpl` | Daemon settings (bind, port, flags); Pitchfork watches them and restarts the daemon on change |
+| `home/private_dot_config/pitchfork/config.toml.tmpl` | Defines `df-skulk` (every machine), `df-opencode-serve` when `openCodeServer`, and `df-mcpproxy` when its gate is enabled |
+| `home/private_dot_local/bin/executable_df-{opencode,mcpproxy,skulk}-serve` | Stable daemon `run` commands; read `~/.config/dotfiles/{opencode,mcpproxy,skulk}-serve.env` |
+| `home/private_dot_local/bin/executable_df-opencode-pair` | `opencode pair` with the machine's public URL |
+| `home/private_dot_config/private_dotfiles/{opencode,mcpproxy,skulk}-serve.env.tmpl` | Daemon settings (bind, port, flags); Pitchfork watches them and restarts the daemon on change |
 | `home/.chezmoiscripts/run_onchange_after_install-056-pitchfork-daemons.sh.tmpl` | On config/gate change: `pitchfork boot enable`, start enabled daemons, stop disabled ones |
 | `home/.chezmoiscripts/run_once_after_install-055-retire-legacy-daemons.sh.tmpl` | One-time teardown of launchd/systemd units Pitchfork and MCPProxy.app replaced; moves running daemons onto the wrappers |
-| `home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl` | Clears opencode-owned plugin cache directories on every apply |
-| `home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl` | Installs the shared TUI plugin package's dependencies for OpenCode 1, only when its lockfile changes |
+| `home/.chezmoiscripts/run_once_after_install-072-retire-opencode1-daemon.sh.tmpl` | Cutover: stops the retired V1/`opencode2` daemons and restarts `df-opencode-serve` on the mise-managed V2 binary |
+| `home/.chezmoiscripts/run_onchange_after_install-073-opencode-db-merge.sh.tmpl` | One-time merge of retired `opencode2.db` sessions into the unified database, using `session export`/`import` |
 | `home/private_dot_local/lib/pitchfork-lifecycle.sh` | Shared Pitchfork lifecycle helpers |
-| `home/private_dot_local/lib/tool-cache-sync.sh` | Plugin cache helpers |
 | `home/private_dot_local/bin/executable_cw` | Coder workspace CLI: `cw connect`, `cw fleet`, and `cw migrate` |
 
 ## Operating Runbook
@@ -141,12 +110,12 @@ The bridge primitives (`tcs_require_command`, `tcs_get_opencode_cache`, `tcs_bus
 cw <workspace>
 ```
 
-**Upgrade OMO plugin (every machine):**
-1. `chezmoi apply` clears the cached `oh-my-openagent@latest` package directory.
-2. Restart opencode so it reinstalls the configured plugin.
-3. Run `opencode agent list` to verify the Sisyphus primary agent is present.
+**Update OpenCode:** bump `opencode` in the mise config (or let `mise run update`
+bump the lock), then `chezmoi apply`. Pitchfork restarts the daemon when the
+watched mise install directory changes.
 
-If the package cache is still absent after the restart, opencode did not reinstall the configured plugin.
+**Update the slim plugin:** bump the pin in `modify_private_opencode.json` and
+`modify_cli.json`, then `chezmoi apply` and restart the client.
 
 ## Update Architecture
 
@@ -177,7 +146,7 @@ Running boxes converge immediately through the manual fleet update. Stopped boxe
 1. `chezmoi init` must NOT pass `--data=false`, which hides cached `[data]` and forces every `promptStringOnce` or `promptBoolOnce` to fall through to an interactive prompt. It MUST pass `--no-tty`, so a genuinely missing prompt fails fast in the boot log instead of hanging on `/dev/tty`. Every prompt declared in `home/.chezmoi.toml.tmpl` MUST have an exact-text-matching `--promptString` or `--promptBool` seed in `install.sh`.
 2. The source sync uses `git fetch origin main` plus `git reset --hard origin/main`, not a plain pull. A fast-forward-only pull aborts on a diverged clone, leaving the box pinned to a stale source. The hard reset self-heals on every boot.
 
-Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, `opencode2 serve` when `openCode2Server = true`, plus the Linux-gated `mcpproxy` daemon. Both OpenCode server gates default to false and are independent.
+Pitchfork is installed on macOS and Linux. It manages `opencode serve` when `openCodeServer = true`, plus the Linux-gated `mcpproxy` daemon. The OpenCode server gate defaults to false.
 
 > **Daemons are config-driven.** A running Pitchfork daemon never picks up a changed `run` or `env`; even watch and retry restarts reuse the stored command. So each daemon's `run` is a stable wrapper in `~/.local/bin` that reads a chezmoi-rendered env file, and `watch` lists the env file, the wrapper and the binary's mise install dir. `chezmoi apply` only writes files; Pitchfork restarts the daemon itself. The one lifecycle script (056) runs only when the rendered config or a gate changes: it runs `pitchfork boot enable` (which rewrites the login entry against `[settings.boot] executable`, mise's stable `latest` pitchfork), starts enabled daemons (a no-op when running) and stops disabled ones. `boot_start = true` is per-daemon and does nothing until Pitchfork itself is boot-enabled.
 
@@ -199,7 +168,7 @@ cw fleet --include-local update
 | Scenario | Action |
 |---|---|
 | A `latest`-pinned mise tool has an update | `mise run update` locally, or `cw fleet --include-local update` for the fleet |
-| An opencode `@latest` plugin has an update | `chezmoi apply`, then restart opencode so it reinstalls the cleared plugin cache |
+| The slim plugin pin is behind | Bump `oh-my-opencode-slim@…` in `modify_private_opencode.json` and `modify_cli.json`, then `chezmoi apply` |
 | Effect v4 reference is missing or stale | `mise run effect-v4:install`, which also runs during normal package installation |
 | The repository is behind `origin/main` | `mise run update` locally, or `cw fleet --include-local update` for the fleet |
 

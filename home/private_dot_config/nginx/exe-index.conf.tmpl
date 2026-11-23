@@ -3,11 +3,12 @@
 # The exe.dev HTTPS proxy forwards https://lochlanio.exe.xyz/ to this port.
 # nginx serves a static, mobile-friendly directory of links to the
 # other services on this VM (reached via transparent port forwarding):
-#   https://lochlanio.exe.xyz:{{ .ports.opencode.external }}/  -> opencode web   (nginx -> pitchfork df-opencode-serve)
+#   https://lochlanio.exe.xyz:{{ .ports.opencode.external }}/  -> opencode web   (direct bind: pitchfork df-opencode-serve)
 #   https://lochlanio.exe.xyz:{{ .ports.mcpproxy.external }}/  -> mcpproxy web UI (nginx -> pitchfork df-mcpproxy)
 #
 # Ports are defined in .chezmoidata/ports.yaml — nginx owns the external
 # ports, pitchfork daemons bind to the internal ports (when nginxProxy is on).
+# A daemon bound directly ([data.opencode.serve].port) has no nginx site.
 server {
     listen {{ .ports.edge.port }} default_server;
     listen [::]:{{ .ports.edge.port }} default_server;

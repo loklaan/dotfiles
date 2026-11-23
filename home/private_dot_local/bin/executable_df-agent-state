@@ -394,7 +394,7 @@ const readSessions = (
         `select id,
                 coalesce(nullif(parent_id,''), '') as parentId,
                 coalesce(title,'') as title
-           from session where id in (${marks})`,
+           from session_v2 where id in (${marks})`,
       ).all(...ids) as Array<
         { id: string; parentId: string; title: string }
       >;

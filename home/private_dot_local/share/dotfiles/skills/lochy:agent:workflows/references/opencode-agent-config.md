@@ -9,8 +9,10 @@ user's AI tools. OpenCode is a first-class worker agent; prefer it inside
 ## OpenCodeAgent
 
 `OpenCodeAgent` spawns `opencode run --agent <name>` as a local subprocess. The
-`agentName` resolves model and system prompt from `~/.omo/omo.jsonc`; no
-separate API keys are needed beyond what opencode already has.
+`agentName` is one of the oh-my-opencode-slim agents; its model, variant and MCP
+access resolve from the rendered
+`~/.config/opencode/oh-my-opencode-slim.json` preset. No separate API keys are
+needed beyond what OpenCode already has.
 
 ### Factory pattern (`.smithers/agents/opencode.ts`)
 
@@ -19,36 +21,37 @@ const agent = (agentName: string) =>
   new SmithersOpenCodeAgent({ agentName, cwd: process.cwd() });
 ```
 
-## OMO agent roster
+## Agent roster
 
-| Export | agentName | Role |
-|--------|-----------|------|
-| `sisyphusJunior` | `sisyphus-junior` | Focused executor — default for most tasks |
-| `sisyphus` | `sisyphus` | Heavy implementation — complex multi-file work |
-| `hephaestus` | `hephaestus` | Heaviest implementation — frontier model, costly |
-| `oracle` | `oracle` | Read-only reasoning — verification, audits |
-| `momus` | `momus` | Plan critic — review gates |
-| `prometheus` | `prometheus` | Planner |
-| `atlas` | `atlas` | Orchestrator |
-| `metis` | `metis` | Pre-planning consultant |
-| `explore` | `explore` | Codebase search |
-| `librarian` | `librarian` | Docs / remote repos |
-| `multimodal-looker` | `multimodal-looker` | Image/diagram inspection |
+OpenCode 1's OMO roster (`sisyphus`, `hephaestus`, `prometheus`, `atlas`,
+`metis`, `momus`, `sisyphus-junior`, `multimodal-looker`) no longer exists.
+OpenCode 2 runs oh-my-opencode-slim:
 
-Models resolve at runtime from the rendered `[opencode]` block of
-`~/.omo/omo.jsonc`. Inspect the current mapping with:
+| agentName | Mode | Role |
+|-----------|------|------|
+| `orchestrator` | primary | Delegating default; routes work to specialists |
+| `fixer` | subagent | Focused implementation |
+| `explorer` | subagent | Codebase search and mapping |
+| `librarian` | subagent | Official docs, GitHub examples, library internals |
+| `oracle` | subagent | Read-only reasoning, review, simplification |
+| `designer` | subagent | UI/UX implementation |
+| `observer` | subagent | Image, screenshot and diagram analysis (vision model) |
+
+`opencode run` also has the built-in `build` and `plan` primaries. Models
+resolve at runtime from the rendered preset. Inspect the current mapping with:
 
 ```bash
-sed 's#^[[:space:]]*//.*$##' ~/.omo/omo.jsonc | jq '.["[opencode]"].agents'
+jq '.presets[.preset]' ~/.config/opencode/oh-my-opencode-slim.json
 ```
 
 ## Semantic pools (`.smithers/agents.ts`)
 
 ```typescript
-agents.implement       // [sisyphusJunior] — focused execution (most tasks)
-agents.implement_heavy // [sisyphus]       — complex multi-file work
-agents.verify          // [oracle]         — read-only checks, deno fmt/lint/test
-agents.review          // [momus]          — critique and approval gates
+agents.implement       // [fixer]     — focused execution (most tasks)
+agents.implement_heavy // [fixer]     — same agent; raise its model in the preset
+agents.verify          // [oracle]    — read-only checks, deno fmt/lint/test
+agents.review          // [oracle]    — critique and approval gates
+agents.explore         // [explorer]  — codebase search
 ```
 
 Routing rule: convert/implement → `agents.implement`; heavy rewrites →

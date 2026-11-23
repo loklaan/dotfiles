@@ -1,4 +1,4 @@
-# Web-fetch capability (the `webfetch` tool for OpenCode 1 and 2).
+# Web-fetch capability (the `webfetch` tool for OpenCode).
 # Projected to ~/.config/dotfiles/web-tools.json by
 # private_dot_config/private_dotfiles/private_web-tools.json.tmpl. The entry
 # reads that file once, and WEBTOOLS_* / EXA_API_KEY environment variables
@@ -12,15 +12,14 @@
 #   This is the FALLBACK list, used when extractionModelsByProfile has no entry
 #   for the active machine profile.
 #
-# extractionModelsByProfile: the same, per machine profile (work, personal).
+# extractionModelsByProfile: the same, per machine profile.
 #   The active profile is `machineProfile`. An entry here wins over
 #   extractionModels for that profile. An empty list for a profile disables
 #   extraction on that profile only.
 #
-# extractionModelsByProfile is set to each profile's cheap explorer/librarian
-# model (home/.chezmoidata/profiles.json: the `cheap` preset on work, the
-# `personal` preset on personal). The flat extractionModels stays [], so a machine
-# profile with no entry keeps extraction OFF. The summariser spends tokens on these.
+# An entry here wins for the active machine profile. The flat extractionModels
+# stays [], so a profile with no entry keeps extraction OFF. The summariser
+# spends tokens on these models, so keep the list to cheap ones.
 #
 # llmsTxt: try the docs site's /llms.txt on docs-like hosts (default true).
 #
@@ -39,7 +38,6 @@
 webtools:
   extractionModels: []
   extractionModelsByProfile:
-    work: ["amazon-bedrock/global.openai.gpt-6-luna"]
     personal: ["opencode-go/deepseek-v4.1-flash"]
   llmsTxt: true
   limits: {}

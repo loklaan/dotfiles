@@ -2994,11 +2994,24 @@ export const expandLifecyclePath = (
   );
 // A registered plugin names the package bare, with a version or dist-tag, or
 // as a local path; only the first two count as the package being registered.
-export const pluginRegistered = (plugins: unknown, name: string) =>
-  Array.isArray(plugins) && plugins.some((spec) =>
-    typeof spec === "string" &&
-    (spec === name || spec.startsWith(`${name}@`))
-  );
+// OpenCode 2 `plugins` entries are either that string or `{ package, options }`.
+export const pluginRegistered = (plugins: unknown, name: string) => {
+  const spec = (entry: unknown): string | null => {
+    if (typeof entry === "string") return entry;
+    if (
+      entry !== null && typeof entry === "object" &&
+      typeof (entry as { package?: unknown }).package === "string"
+    ) {
+      return (entry as { package: string }).package;
+    }
+    return null;
+  };
+  return Array.isArray(plugins) &&
+    plugins.some((entry) => {
+      const value = spec(entry);
+      return value === name || (value?.startsWith(`${name}@`) ?? false);
+    });
+};
 // Paragraphs under each `## ` heading become one official setup step. Line
 // breaks inside a paragraph are soft wraps, so they collapse to spaces.
 export const parseSetupDocument = Effect.fn(function* (document: string) {
@@ -3311,7 +3324,7 @@ const collectSetups = Effect.fn(function* (repoRoot: string, home: string) {
           `${home}/.config/opencode/opencode.json`,
         ]);
         plugins = yield* Effect.try({
-          try: () => (JSON.parse(rendered) as { plugin?: unknown }).plugin,
+          try: () => (JSON.parse(rendered) as { plugins?: unknown }).plugins,
           catch: (cause) =>
             exportFault(
               "ContractInvalid",

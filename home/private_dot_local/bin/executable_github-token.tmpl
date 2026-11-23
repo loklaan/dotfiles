@@ -14,35 +14,19 @@ source "${HOME}/.local/lib/bash-logging.sh"
 #/   Prints a GitHub API token to stdout for use by tools that need
 #/   authenticated GitHub access (brew, gh, scripts, etc.).
 #/
-{{ if eq .machineProfile "work" -}}
-#/   On work machines, fetches a short-lived token from the git
-#/   credential agent (requires `gh auth login`).
-{{ else -}}
-#/   On personal machines, prints the static GITHUB_TOKEN from the
-#/   shell environment (sourced from Bitwarden Secrets).
-{{- end }}
+#/   Prints the static GITHUB_TOKEN from the shell environment (sourced from
+#/   Bitwarden Secrets).
 #/
 #/ Options:
 #/   --help:      Display this help message
 main() {
   bl_parse_help "$@"
 
-{{ if eq .machineProfile "work" }}
-  local token
-  token=$(echo "url=https://github.com" | git credential fill 2>/dev/null | sed -n 's/^password=//p')
-
-  if [ -z "${token:-}" ]; then
-    fatal "No GitHub credential found. Run 'gh auth login' first."
-  fi
-
-  echo "$token"
-{{ else }}
   if [ -z "${GITHUB_TOKEN:-}" ]; then
     fatal "GITHUB_TOKEN is not set. Check BWS configuration with 'df-setup'."
   fi
 
   echo "$GITHUB_TOKEN"
-{{- end }}
 }
 
 main "$@"

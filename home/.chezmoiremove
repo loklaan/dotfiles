@@ -70,3 +70,25 @@
        would register two `webfetch` tools. Remove the stale copy on every machine.
        Keep this line for one release cycle after every machine has applied. */}}
 .config/opencode/tools/webfetch.ts
+{{- /* OpenCode 1 retirement. The V1 config/plugin/OMO machinery is gone from
+       the source, but runtime state it created is not chezmoi-managed and would
+       otherwise linger forever. Only retired, V1-specific paths are listed:
+       OpenCode 2 owns auth state, service.json, opencode.jsonc, and the
+       command/plugin/tools discovery directories, so none of those appear. */}}
+.config/opencode2
+.cache/opencode/packages/oh-my-openagent@latest
+.cache/opencode/packages/oh-my-openagent@beta
+.cache/opencode/npm/oh-my-opencode-slim@latest
+.local/share/dotfiles/opencode-tui-plugins/node_modules
+.local/bin/gh
+.local/bin/opencode2
+.local/share/opencode2
+.local/bin/df-opencode2-serve
+.config/dotfiles/opencode2-serve.env
+.config/dotfiles/opencode2.env
+.config/opencode/rules
+.config/opencode/skills
+.config/opencode/oh-my-openagent
+.config/opencode/lsp-install-decisions.json
+.config/opencode/.omo-profile.json
+.config/opencode/plugin

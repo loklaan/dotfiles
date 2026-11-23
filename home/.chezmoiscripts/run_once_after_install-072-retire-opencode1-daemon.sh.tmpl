@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+{{ includeTemplate "script-prelude" "opencode" }}
+# One-time teardown of the retired OpenCode 1 service surface.
+#
+# OpenCode 1 and the side-by-side `opencode2` daemon are gone from the source,
+# so Pitchfork no longer defines them. Files are applied before these scripts
+# run, which means the old processes are still running when the new daemon is
+# meant to start on OpenCode 1's port:
+#
+#   - `df-opencode-serve` is still the 1.19 process on 127.0.0.1:4097. A plain
+#     `pitchfork start` treats it as running and leaves it there.
+#   - `df-opencode2-serve` is no longer in the config, so `pitchfork stop` for
+#     it cannot reach the process; the wrapper's `retry = true` supervisor may
+#     also have lost track of it.
+#
+# Stop the V1 daemon through Pitchfork, kill anything left by exact install
+# path (so a V2 process can never match), then restart the daemon so it execs
+# the mise-managed OpenCode 2 binary on the original port.
+#
+# run_once: a fresh machine has nothing to retire; this is the cutover, not a
+# recurring convergence step. The merge of old sessions is separate (073).
+
+readonly PITCHFORK_BIN="$(command -v pitchfork 2>/dev/null || true)"
+
+# pgrep narrows the candidates; the executable check decides. Matching argv
+# alone would kill an editor, pager, or grep whose command line happens to
+# contain one of these strings.
+readonly RETIRED_PATTERNS=(
+  '/installs/opencode/1\.[0-9.]*/opencode serve'
+  '/@opencode/cli/bin/opencode\.exe serve --service'
+  '/opencode2 serve'
+)
+retired_pids() {
+  local pattern pid exe cmd
+  for pattern in "${RETIRED_PATTERNS[@]}"; do
+    while IFS= read -r pid; do
+      [ -n "$pid" ] || continue
+      exe=$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)
+      if [ -n "$exe" ]; then
+        case "$exe" in
+          */installs/opencode/1.*/opencode|*/opencode2/bin/opencode2|*/opencode2/lib/node_modules/@opencode/cli/bin/opencode.exe)
+            printf '%s\n' "$pid" ;;
+        esac
+        continue
+      fi
+      # macOS: no /proc. Require the executable to be the first argv word.
+      cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+      case "$cmd" in
+        */installs/opencode/1.*/opencode\ serve*|*/opencode2/bin/opencode2\ serve*|*/@opencode/cli/bin/opencode.exe\ serve*)
+          printf '%s\n' "$pid" ;;
+      esac
+    done < <(pgrep -f -- "$pattern" 2>/dev/null || true)
+  done | sort -u
+}
+
+retired_found=0
+
+stop_retired_daemons() {
+  if [ -n "$PITCHFORK_BIN" ]; then
+    "$PITCHFORK_BIN" stop df-opencode2-serve >/dev/null 2>&1 || true
+  fi
+
+  local pids
+  pids=$(retired_pids)
+  if [ -z "$pids" ]; then
+    log_detail "No retired OpenCode daemon is running"
+    return 0
+  fi
+  retired_found=1
+
+  log_step "Stopping retired OpenCode daemons"
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+
+  local wait_ticks=0
+  while [ -n "$(retired_pids)" ] && [ "$wait_ticks" -lt 20 ]; do
+    sleep 0.25
+    wait_ticks=$((wait_ticks + 1))
+  done
+
+  if [ -n "$(retired_pids)" ]; then
+    # shellcheck disable=SC2086
+    kill -9 $(retired_pids) 2>/dev/null || true
+    sleep 1
+  fi
+  log_detail "Retired OpenCode daemons stopped"
+}
+
+start_current_daemon() {
+{{- if dig "openCodeServer" false . }}
+  if [ "$retired_found" -eq 0 ]; then
+    log_detail "Leaving df-opencode-serve alone (nothing was retired)"
+    return 0
+  fi
+  if [ -z "$PITCHFORK_BIN" ]; then
+    log_warn "pitchfork not on PATH; start df-opencode-serve after the apply"
+    return 0
+  fi
+  if "$PITCHFORK_BIN" restart df-opencode-serve >/dev/null 2>&1; then
+    log_detail "Restarted df-opencode-serve on OpenCode 2"
+  else
+    log_warn "Could not restart df-opencode-serve; check: pitchfork logs df-opencode-serve"
+  fi
+{{- else }}
+  log_detail "openCodeServer is disabled; no daemon to restart"
+{{- end }}
+}
+
+main() {
+  stop_retired_daemons
+  start_current_daemon
+}
+
+main

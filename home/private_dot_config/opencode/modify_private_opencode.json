@@ -1,0 +1,158 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /* OpenCode 2 global config (native V2 shape).
+
+     This is the only OpenCode config: OpenCode 1 is retired. The template
+     deliberately unsets every V1 key so a machine still carrying the old
+     rendered file (or a V1 config) converges on one clean document.
+
+     Native V2 names used here: `plugins`, `agents`, `providers`, `settings`,
+     `mcp.servers`, `update`, an ordered `policies` array, and `experimental`.
+     V1 `instructions` is supported in V2 and is used to load per-project rules;
+     global rules arrive through the rendered AGENTS.md beside this file. */ -}}
+{{- $base := fromJson (default "{}" .chezmoi.stdin) -}}
+
+{{- $profileName := dig "machineProfile" "personal" . -}}
+{{- if not (hasKey .profiles $profileName) -}}
+{{-   fail (printf "machineProfile %q is not configured (the work profile was removed); set machineProfile = \"personal\" in ~/.config/chezmoi/chezmoi.toml (have: %s)" $profileName (keys .profiles | sortAlpha | join ", ")) -}}
+{{- end -}}
+{{- $p := index .profiles $profileName -}}
+{{- $config := $base -}}
+
+{{- $config = $config | setValueAtPath "$schema" "https://opencode.ai/config.json" -}}
+
+{{- /* Chezmoi owns the installed version; mise pins it. V2 would otherwise
+       auto-install compatible updates and fight the pin. */ -}}
+{{- $config = unset $config "autoupdate" -}}
+{{- $config = $config | setValueAtPath "update" "disable" -}}
+
+{{- /* Agent plugin. Keep the pin in step with modify_cli.json. */ -}}
+{{- $config = unset $config "plugin" -}}
+{{- $config = $config | setValueAtPath "plugins" (list "oh-my-opencode-slim@3.0.1") -}}
+
+{{- /* V2's built-in explore/general agents are replaced by the plugin's
+       specialists; leaving them enabled doubles the delegated roster. */ -}}
+{{- $config = unset $config "agent" -}}
+{{- $config = $config | setValueAtPath "agents" (dict
+      "explore" (dict "disabled" true)
+      "general" (dict "disabled" true)) -}}
+
+{{- /* V1 `small_model` was the cheap title/summary model. V2 has no such field;
+       the title agent owns it. */ -}}
+{{- $smallModel := dig "small_model" "" $p -}}
+{{- if ne "" $smallModel -}}
+{{-   $config = $config | setValueAtPath "agents.title.model" $smallModel -}}
+{{- end -}}
+{{- $config = unset $config "small_model" -}}
+
+{{- /* Per-project rules. V2 discovers AGENTS.md natively, but not
+       `.agents/rules`; V1 loaded them through this same instructions array, so
+       listing them restores parity. Relative patterns are resolved from each
+       directory between the workspace and its project root. */ -}}
+{{- $config = $config | setValueAtPath "instructions" (list ".agents/rules/*.md") -}}
+
+{{- $config = $config | setValueAtPath "references.effect-v4" (dict
+      "path" (joinPath .chezmoi.homeDir ".local/share/mise/effect-v4-reference/current")
+      "description" "Effect v4 APIs, migrations, examples, source, and tests"
+) -}}
+
+{{- /* Templates were a V1 agent setting with no V2 counterpart here. */ -}}
+{{- $config = unset $config "lsp" -}}
+
+{{- /* Snapshots: mirror the V1 behaviour of disabling them on Coder boxes when
+       the profile opts out. */ -}}
+{{- if and (ne "" (env "CODER")) (not (dig "snapshot" true $p)) -}}
+{{-   $config = $config | setValueAtPath "snapshots" false -}}
+{{- end -}}
+
+{{- /* The dotfiles web-tools plugin registers `webfetch`; V2's built-in search
+       is disabled because search is provided by the plugin's EXA tool. */ -}}
+{{- $config = $config | setValueAtPath "websearch" false -}}
+
+{{- /* MCPProxy lane: `mcpproxy` only, projected from the shared catalogue. */ -}}
+{{- $servers := includeTemplate "mcp-client-tmpl" (dict "data" . "client" "opencode") | fromJson -}}
+{{- $config = unset $config "mcp" -}}
+{{- $config = $config | setValueAtPath "mcp.servers" $servers -}}
+
+{{- /* Providers. Only the opencode-family providers are configurable here: they
+       are built into V2's registry and authenticate with the single
+       SKU-agnostic account key from BWS. Proxied (work) providers need a plugin
+       that injects rotating credentials; that profile is not configured.
+
+       The key is embedded literally rather than via {env:OPENCODE_API_KEY}: that
+       variable is exported only by zsh, so a service-spawned or bash-launched
+       process would see it empty. */ -}}
+{{- $v1Providers := dig "provider_block" (dict) $p -}}
+{{- $opencodeFamily := list "opencode-go" "opencode" -}}
+{{- $portable := dict -}}
+{{- range $id, $entry := $v1Providers -}}
+{{-   if has $id $opencodeFamily -}}
+{{-     $provider := dict -}}
+{{-     if hasKey $entry "name" -}}
+{{-       $provider = set $provider "name" (get $entry "name") -}}
+{{-     end -}}
+{{-     $portable = set $portable $id $provider -}}
+{{-   end -}}
+{{- end -}}
+
+{{- if gt (len $portable) 0 -}}
+{{-   $bwsToken := "" -}}
+{{-   if and (lookPath "bws") (stat .bwsTokenPath) -}}
+{{-     $bwsToken = include .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   $bwsGet := joinPath .chezmoi.homeDir ".local/lib/bws-get-or-empty" -}}
+{{-   $apiKey := "" -}}
+{{-   $bwsIdOpencodeApiKey := dig "bwsIdOpencodeApiKey" "" . -}}
+{{-   if and (ne "" $bwsToken) (ne "" $bwsIdOpencodeApiKey) (stat $bwsGet) -}}
+{{-     $apiKey = output $bwsGet $bwsIdOpencodeApiKey .bwsTokenPath | trim -}}
+{{-   end -}}
+{{-   if ne "" $apiKey -}}
+{{-     $withKeys := dict -}}
+{{-     range $id, $provider := $portable -}}
+{{-       $withKeys = set $withKeys $id (set $provider "settings" (dict "apiKey" $apiKey)) -}}
+{{-     end -}}
+{{-     $portable = $withKeys -}}
+{{-   else -}}
+{{- /* A keyless provider would be advertised and fail every call. */ -}}
+{{-     $portable = dict -}}
+{{-   end -}}
+{{- end -}}
+{{- $config = unset $config "provider" -}}
+{{- $config = unset $config "enabled_providers" -}}
+{{- if gt (len $portable) 0 -}}
+{{-   $config = $config | setValueAtPath "providers" $portable -}}
+{{- else -}}
+{{-   $config = unset $config "providers" -}}
+{{- end -}}
+
+{{- /* Provider admission is deny-by-default, then allow exactly the providers
+       this template configured. V2 never prompts for a policy decision. */ -}}
+{{- $enabled := list -}}
+{{- range $id, $_ := $portable -}}
+{{-   $enabled = append $enabled $id -}}
+{{- end -}}
+{{- $enabled = $enabled | sortAlpha -}}
+{{- $policies := list (dict "action" "provider.use" "resource" "*" "effect" "deny") -}}
+{{- range $id := $enabled -}}
+{{-   $policies = append $policies (dict "action" "provider.use" "resource" $id "effect" "allow") -}}
+{{- end -}}
+{{- $config = $config | setValueAtPath "policies" $policies -}}
+
+{{- /* Model: only carry the profile's default when its provider is admitted;
+       otherwise leave it unset so V2 picks one from an enabled provider. */ -}}
+{{- $model := dig "model" "" $p -}}
+{{- if and (ne "" $model) (has (index (splitList "/" $model) 0) $enabled) -}}
+{{-   $config = $config | setValueAtPath "model" $model -}}
+{{- else -}}
+{{-   $config = unset $config "model" -}}
+{{- end -}}
+
+{{- /* V2 ignores this key and the daemon passes the bind on the command line. */ -}}
+{{- $config = unset $config "server" -}}
+
+{{- /* V1 session sharing has no V2 equivalent used here. */ -}}
+{{- $config = unset $config "share" -}}
+
+{{- /* Todos are part of the V1 working style and are off by default in V2. */ -}}
+{{- $config = $config | setValueAtPath "experimental.todo" true -}}
+
+{{ $config | toPrettyJson }}

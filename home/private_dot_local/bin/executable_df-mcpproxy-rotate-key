@@ -23,7 +23,7 @@ source "${HOME}/.local/lib/bash-logging.sh"
 #/   passed in argv, or written to a session log.
 #/
 #/   Clients are re-rendered with `chezmoi apply --exclude=scripts`, so no
-#/   lifecycle script (package install, daemon teardown, opencode2 update) runs
+#/   lifecycle script (package install, daemon teardown, opencode update) runs
 #/   as a side effect. The running proxy is then restarted and checked with a
 #/   secret-safe 401/200 probe. If no proxy is running, clients pick up the new
 #/   key on their next launch.

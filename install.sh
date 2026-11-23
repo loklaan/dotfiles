@@ -163,20 +163,19 @@ main() {
   config_email="${CONFIG_EMAIL-$(result=$(chezmoi execute-template "{{ .email }}" 2>/dev/null || echo ""); echo "${result:-"bunn@lochlan.io"}")}"
   config_email_work="${CONFIG_EMAIL_WORK-$(result=$(chezmoi execute-template "{{ .emailWork }}" 2>/dev/null || echo ""); echo "${result:-"lochlan@canva.com"}")}"
   config_signing_key="${CONFIG_SIGNING_KEY-$(result=$(chezmoi execute-template "{{ .signingKey }}" 2>/dev/null || echo ""); echo "${result:-}")}"
-  config_npm_work_registry="$(chezmoi execute-template "{{ .npmWorkRegistry }}" 2>/dev/null || echo "")"
-  config_opencode_work_plugin="$(chezmoi execute-template "{{ .openCodeWorkPlugin }}" 2>/dev/null || echo "")"
-  config_opencode_work_plugin_local_path="$(chezmoi execute-template "{{ .openCodeWorkPluginLocalPath }}" 2>/dev/null || echo "")"
-  config_opencode_work_plugin_v2="$(chezmoi execute-template "{{ .openCodeWorkPluginV2 }}" 2>/dev/null || echo "")"
-  config_jetbrains_license_server="$(chezmoi execute-template "{{ .jetbrainsLicenseServer }}" 2>/dev/null || echo "")"
   config_work_fork_remote="$(chezmoi execute-template "{{ .workForkRemote }}" 2>/dev/null || echo "")"
   config_opencode_cost_hosts="$(chezmoi execute-template "{{ .openCodeCostHosts }}" 2>/dev/null || echo "")"
   config_machine_profile="$(chezmoi execute-template "{{ .machineProfile }}" 2>/dev/null || echo "personal")"
+  case "$config_machine_profile" in
+    personal) ;;
+    *)
+      log_warn "machineProfile '${config_machine_profile}' is no longer supported; using personal"
+      config_machine_profile="personal"
+      ;;
+  esac
   config_opencode_server="$(chezmoi execute-template "{{ .openCodeServer }}" 2>/dev/null || echo "false")"
-  config_opencode2_server="$(chezmoi execute-template "{{ dig \"openCode2Server\" false . }}" 2>/dev/null || echo "false")"
-  config_code_server="$(chezmoi execute-template "{{ .codeServer }}" 2>/dev/null || echo "false")"
   config_mcpproxy_gate="$(chezmoi execute-template "{{ .mcpproxyGate }}" 2>/dev/null || echo "true")"
   config_nginx_proxy="$(chezmoi execute-template "{{ .nginxProxy }}" 2>/dev/null || echo "false")"
-  config_ephemeral_cache="$(chezmoi execute-template "{{ dig \"ephemeralCache\" false . }}" 2>/dev/null || echo "false")"
 
   # BWS token setup - save to file if provided
   bws_xtrace_was_enabled=0
@@ -228,20 +227,12 @@ main() {
     --promptString="Email for you=${config_email}" \
     --promptString="Email for Canva=${config_email_work}" \
     --promptString="Your commit-signing key (e.g. public ssh/gpg key)=${config_signing_key}" \
-    --promptString="Work npm registry (or empty)=${config_npm_work_registry}" \
-    --promptString="OpenCode work plugin (or empty)=${config_opencode_work_plugin}" \
-    --promptString="OpenCode work plugin LOCAL dist path (or empty — overrides openCodeWorkPlugin when set)=${config_opencode_work_plugin_local_path}" \
-    --promptString="OpenCode 2 work plugin entry — absolute bundle path or package spec (or empty to leave opencode2 without proxied providers)=${config_opencode_work_plugin_v2}" \
-    --promptString="JetBrains license server (or empty)=${config_jetbrains_license_server}" \
     --promptString="Work fork remote URL for this dotfiles repo (or empty)=${config_work_fork_remote}" \
     --promptString="Hosts for df-opencode-cost, comma-separated (or empty)=${config_opencode_cost_hosts}" \
-    --promptString="Machine profile (work|personal)=${config_machine_profile}" \
+    --promptString="Machine profile (only personal is configured)=${config_machine_profile}" \
     --promptBool="Run opencode serve as a pitchfork daemon?=${config_opencode_server}" \
-    --promptBool="Run opencode2 serve (web UI) as a pitchfork daemon?=${config_opencode2_server}" \
-    --promptBool="Run code-server on this machine?=${config_code_server}" \
     --promptBool="Run mcpproxy on this machine?=${config_mcpproxy_gate}" \
     --promptBool="Put nginx reverse proxy in front of services (gzip, loopback daemons)?=${config_nginx_proxy}" \
-    --promptBool="Use ephemeral storage for ~/.cache on this machine?=${config_ephemeral_cache}" \
     --apply \
     --force \
     --exclude=scripts \

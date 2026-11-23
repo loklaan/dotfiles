@@ -65,80 +65,59 @@ resolve its provider, nothing else matters.
 
 ---
 
-## JTBD 2 — opencode loads its oh-my-openagent config
+## JTBD 2 — opencode loads its plugin and agents
 
-**Job:** When I open opencode, my oh-my-openagent (OMO) agent configuration is
-live — the Sisyphus orchestrator and its sub-agents are available, and the OMO
-plugin is registered in opencode.
+**Job:** When I open opencode, oh-my-opencode-slim is loaded and its agents are
+available.
 
-**Why it matters:** OMO is the orchestration layer (Sisyphus, sub-agents, skills,
-the ast-grep/debugging/review tooling). A stale or unhealthy plugin silently
-degrades every opencode session. This job was added after `for-tasks-2` showed a
-real OMO health regression (ast-grep `sg` unavailable).
+**Why it matters:** The plugin is the orchestration layer (orchestrator and
+specialists, ast-grep, task tools). A failed load silently degrades every
+session; a stale pin silently keeps an old roster.
 
-**Background:** opencode loads plugins from a private cache
-(`~/Library/Caches/opencode/` on macOS, `~/.cache/opencode/` on Linux). The cache
-is sticky — a chezmoi bridge script clears the opencode-owned package cache so
-opencode reinstalls `oh-my-openagent@latest` on next launch. See
-`agent-orchestration.md` § Plugin Versioning.
+**Background:** Plugins are pinned exactly in
+`~/.config/opencode/opencode.json` (`plugins`) and
+`~/.config/opencode/cli.json` (`plugins`). OpenCode installs them into its npm
+cache on first launch; there is no cache-busting script. Bump the pin to update.
+The old OMO plugin and its `@latest` cache bridge are gone.
 
 **Validation:**
-1. **Plugins are registered:** `jq -c .plugin ~/.config/opencode/opencode.json`
-   includes `oh-my-openagent@latest` (and `@canva/opencode-plugin-llmproxy` on
-   work machines / Coder boxes).
-2. **Agents are loaded:** `opencode agent list` includes the Sisyphus primary
-   (output starts with `Sisyphus - ultraworker (primary)`).
-   - PASS: Sisyphus present. Empty/erroring list is a FAIL.
-3. **Plugin cache materialises after opencode launch:**
-   - macOS: `jq -r .version ~/Library/Caches/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
-   - Linux: `jq -r .version ~/.cache/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/package.json`
-   - PASS: prints a version. Missing package means opencode did not reinstall the configured plugin.
-4. **ast-grep resolves** (the original regression): `ast-grep --version` succeeds.
-   - PASS: `ast-grep --version` prints a version.
+1. **Plugins are registered:** `opencode plugin list` shows
+   `oh-my-opencode-slim` at the pinned version plus the local plugins
+   (`dotfiles:rtk`, `dotfiles:tmux-resurrect`, `dotfiles:webtools`,
+   `dotfiles:websearch`, `changed-files`).
+2. **Agents are loaded:** `opencode debug agents` lists `orchestrator`, `fixer`,
+   `explorer`, `librarian`, `oracle`, `designer`, and `observer`.
+   - PASS: every specialist is present. A missing roster means the plugin did
+     not load.
+3. **ast-grep resolves:** `ast-grep --version` succeeds.
 
 ---
 
-## JTBD 3 — Agents authenticate to the LLM proxy
+## JTBD 3 — Agents can call a model
 
-**Job:** My agents can actually talk to a model — auth resolves via the correct
-path for the environment, and a real model call returns a response.
+**Job:** A real model call returns a response through the configured provider.
 
-**Why it matters:** Versions and config can all look right while auth silently
-fails. The only true test is a round-trip model call.
+**Why it matters:** Config can look right while auth silently fails. The only
+true test is a round-trip model call.
 
-**Background (see `home/private_dot_local/share/opencode/modify_private_auth.json`):** auth
-routes through `@canva/opencode-plugin-llmproxy`, with two modes:
-- **Coder box** (`CODER=true`): AWS IMDS credentials + SigV4 signing. The
-  `amazon-bedrock` auth.json entry is **omitted** on Coder (a placeholder key
-  would break the SigV4 path).
-- **VPN / macbook** (no `CODER`): the plugin fetches a bearer token and injects it
-  as the `llmproxy` placeholder key, which **must** be present in auth.json for
-  opencode to invoke the plugin's auth loader.
-- `google` + `openai` placeholders are unconditional (both modes route through the
-  proxy).
+**Background:** The provider is `opencode-go`, built into OpenCode's registry.
+Its account key is embedded at render time from Bitwarden Secrets into
+`providers.opencode-go.settings.apiKey`; `policies` denies every other provider.
+There is no auth.json seeding, no separate auth directory, and no LLM-proxy
+plugin on this machine.
 
 **Validation:**
-1. **auth.json shape matches the environment:**
-   - On a Coder box (`CODER` set): `~/.config/opencode/auth.json` (or
-     `~/.local/share/opencode/auth.json`) has `google` + `openai` but **no**
-     `amazon-bedrock` placeholder.
-   - On the macbook (no `CODER`): all of `amazon-bedrock`, `google`, `openai`
-     placeholders present.
+1. **Provider is admitted:** `opencode debug config` shows one `providers` entry
+   (`opencode-go`) and a `policies` list that denies `*` then allows it.
 2. **A real model call succeeds** (the authoritative gate):
-   `opencode run --model <provider/model> "reply with the single word: pong"`
-   returns a response containing text (no auth/SigV4/token error).
-   - Use a **whitelisted** model ID in full form — the bedrock whitelist is the
-     work profile's `provider_block["amazon-bedrock"].whitelist` in
-     `home/.chezmoidata/profiles.json` (e.g.
-     `amazon-bedrock/global.anthropic.claude-sonnet-5-5` is a cheap option). A
-     short/unlisted ID like `…/anthropic.claude-sonnet-5-5` returns an
-     `UnknownError` server-side error followed by `Model not found … Did you
-     mean …?` — that is NOT an auth failure, don't misread it as one.
-   - PASS: a coherent response (e.g. `pong`). A `401`/`403`/SigV4/`otter` token
-     error is a FAIL with the error captured.
-3. **llmproxy plugin present** where expected:
-   `jq -c .plugin ~/.config/opencode/opencode.json` includes
-   `@canva/opencode-plugin-llmproxy` on work machines and Coder boxes.
+   `opencode run --model opencode-go/deepseek-v4.1-flash "reply with the single word: pong"`
+   returns text containing `pong`.
+   - PASS: a coherent response. A `401`/`403` or "model not found" is a FAIL;
+     capture the error. `opencode-go` model IDs come from the provider catalog,
+     not a whitelist.
+3. **Key resolution:** `df-setup` reports BWS healthy (the key is fetched at
+   apply time; a rotated or expired BWS token renders a keyless provider and
+   `opencode debug config` then shows no provider).
 
 ---
 
@@ -153,11 +132,11 @@ shared to each vendor via symlinks. A broken symlink or an unsynced skill means 
 agent silently runs without its guardrails or tooling.
 
 **Background (see README § Code Agent Adoption):** `~/.agents/` holds the shared
-`rules/` and `skills/`. Vendor dirs symlink into it:
+`rules/` and `skills/`. Vendors reach them differently:
 - `~/.claude/rules` → `~/.agents/rules`, `~/.claude/skills` → `~/.agents/skills`
-- `~/.config/opencode/rules` + `skills` symlink into `~/.agents/` similarly
-- opencode's `instructions` config references `~/.agents/rules/*.md` +
-  `.claude/rules/*.md`.
+- OpenCode renders the global rules into `~/.config/opencode/AGENTS.md` and
+  discovers `~/.agents/skills` natively. Project `.agents/rules/*.md` is loaded
+  through the `instructions` array.
 
 > Note the distinction: `~/.agents/rules/` holds the **user-wide** rules deployed
 > by chezmoi (`coding-system-prompts.md`, `mutation-safety.md`, `prompt-output.md`).
@@ -169,17 +148,16 @@ agent silently runs without its guardrails or tooling.
 **Validation:**
 1. **Shared dirs exist and are populated:** `~/.agents/rules/` and
    `~/.agents/skills/` exist and are non-empty.
-2. **Vendor symlinks resolve to the shared dirs:**
+2. **Claude symlinks resolve to the shared dirs:**
    - `readlink ~/.claude/rules` → `~/.agents/rules` (and `skills` likewise).
-   - opencode's `~/.config/opencode/rules` / `skills` resolve into `~/.agents/`.
    - PASS: symlinks point at the shared dirs and the targets exist (not dangling).
-3. **A known rule is visible to each agent:** a user-wide rule that is actually
-   deployed (e.g. `~/.agents/rules/coding-system-prompts.md`) is readable through
-   each vendor path (`~/.claude/rules/coding-system-prompts.md`, etc.). Do NOT use
-   a repo-root-only rule like `agent-orchestration.md` here — it is not deployed to
-   `~` and would be a false FAIL.
-4. **Skills are present in the OMO/opencode skill surface:** the skill dirs under
-   `~/.agents/skills/` (e.g. `lochy:*`) appear and are not empty.
+3. **A known rule is visible to each agent:** a user-wide rule (e.g.
+   `~/.agents/rules/file-hosting.md`) is readable through the Claude path and is
+   present in `~/.config/opencode/AGENTS.md`. Do NOT use a repo-root-only rule
+   like `agent-orchestration.md` here — it is not deployed to `~`.
+4. **Skills are present in the OpenCode skill surface:** the skill dirs under
+   `~/.agents/skills/` (e.g. `lochy:*`) appear and are not empty, and a session
+   advertises them.
    - PASS: the same skill set is reachable from each vendor path.
 
 ---

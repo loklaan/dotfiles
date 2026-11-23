@@ -42,9 +42,9 @@ prepare_home() {
 }
 
 render_github_token() {
-  local profile="$1" output="$2"
+  local output="$1"
   chezmoi execute-template -S "$REPO/home" \
-    --override-data "{\"machineProfile\":\"$profile\"}" \
+    --override-data '{"machineProfile":"personal"}' \
     --file "$REPO/home/private_dot_local/bin/executable_github-token.tmpl" > "$output"
   chmod 755 "$output"
 }
@@ -84,38 +84,31 @@ logs_contain_token() {
 }
 
 run_github_token_case() {
-  local profile="$1" debug="$2"
-  local home="$ROOT/github-${profile}-${debug}"
+  local debug="$1"
+  local home="$ROOT/github-${debug}"
   local session_log output
   prepare_home "$home"
-  render_github_token "$profile" "$home/github-token"
+  render_github_token "$home/github-token"
   session_log="$home/.cache/dotfiles/logs/chezmoi-session.fixture.log"
   : > "$session_log"
   chmod 600 "$session_log"
   printf '%s\n' "$session_log" > "$home/.cache/dotfiles/chezmoi-session-current"
   chmod 600 "$home/.cache/dotfiles/chezmoi-session-current"
 
-  if [[ "$profile" == work ]]; then
-    make_fake "$home/shims/git" 'printf "protocol=https\nhost=github.com\npassword=%s\n" "$FAKE_TOKEN"'
-    output=$(env HOME="$home" DEBUG="$debug" FAKE_TOKEN="$FAKE_TOKEN" PATH="$home/shims:$PATH" "$home/github-token")
-  else
-    output=$(env HOME="$home" DEBUG="$debug" GITHUB_TOKEN="$FAKE_TOKEN" "$home/github-token")
-  fi
+  output=$(env HOME="$home" DEBUG="$debug" GITHUB_TOKEN="$FAKE_TOKEN" "$home/github-token")
 
-  check "$profile profile with DEBUG=$debug returns only the token" "$output" "$FAKE_TOKEN"
+  check "with DEBUG=$debug returns only the token" "$output" "$FAKE_TOKEN"
   if logs_contain_token "$home"; then
-    no "$profile profile with DEBUG=$debug keeps token out of logs"
+    no "with DEBUG=$debug keeps token out of logs"
   else
-    ok "$profile profile with DEBUG=$debug keeps token out of logs"
+    ok "with DEBUG=$debug keeps token out of logs"
   fi
 }
 
 printf '\ngithub-token output is never session-logged\n'
-run_github_token_case personal 0
-run_github_token_case personal 1
-run_github_token_case work 0
-run_github_token_case work 1
-if env HOME="$ROOT/github-personal-0" "$ROOT/github-personal-0/github-token" --help | grep -q 'Usage:'; then
+run_github_token_case 0
+run_github_token_case 1
+if env HOME="$ROOT/github-0" "$ROOT/github-0/github-token" --help | grep -q 'Usage:'; then
   ok "github-token help works without session logging setup"
 else
   no "github-token help failed without session logging setup"
@@ -242,7 +235,6 @@ done
 
 printf '\nprivate source attributes and bootstrap tracing\n'
 for source in \
-  home/private_dot_local/share/opencode/modify_private_auth.json \
   home/dot_codex/modify_private_config.toml \
   home/private_dot_mcpproxy/private_mcp-client-headers.tmpl; do
   [[ -f "$REPO/$source" ]] && ok "private source exists: $source" ||

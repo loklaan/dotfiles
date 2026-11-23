@@ -46,21 +46,6 @@ retry = true
 boot_start = true
 ready_delay = 2
 {{  end -}}
-{{- if dig "openCode2Server" false . }}
-[daemons.df-opencode2-serve]
-run = "{{ $home }}/.local/bin/df-opencode2-serve"
-watch = [
-  "{{ $home }}/.config/dotfiles/opencode2-serve.env",
-  "{{ $home }}/.local/bin/df-opencode2-serve",
-  "{{ $home }}/.local/bin/opencode2",
-  "{{ $home }}/.local/share/opencode2/**",
-]
-dir = "{{ $home }}"
-env = { HOME = "{{ $home }}", PATH = "{{ $path }}" }
-retry = true
-boot_start = true
-ready_delay = 2
-{{  end -}}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
 [daemons.df-mcpproxy]
 run = "{{ $home }}/.local/bin/df-mcpproxy-serve"

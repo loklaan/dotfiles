@@ -1,9 +1,6 @@
 {
   "name": "dotfiles-opencode-tui-plugins",
-  "description": "Dependencies of the OpenCode TUI plugins in this directory. OpenCode 2 provides effect to its plugins itself; OpenCode 1 resolves it from here.",
+  "description": "TUI plugins shared by this repository's OpenCode configuration. OpenCode 2 provides effect and @opencode/plugin to its plugins itself; this package carries no dependencies.",
   "private": true,
-  "type": "module",
-  "dependencies": {
-    "effect": "4.0.0"
-  }
+  "type": "module"
 }

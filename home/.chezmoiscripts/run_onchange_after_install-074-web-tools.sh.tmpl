@@ -1,8 +1,8 @@
-{{- /* Builds the web-fetch host entry (dist/entry.js) that OpenCode 1 and OpenCode 2
-       load through the plugin symlinks, after `bun install --frozen-lockfile`.
+{{- /* Builds the web-fetch host entry (dist/entry.js) that OpenCode loads
+       through the plugin symlink, after `bun install --frozen-lockfile`.
 
-       The template renders empty, and chezmoi runs nothing, unless OpenCode 1 or
-       OpenCode 2 is installed. A host without the bundle would load nothing.
+       The template renders empty, and chezmoi runs nothing, unless OpenCode is
+       installed. A host without the bundle would load nothing.
 
        Rebuild gate: a content hash over the build inputs (src/**, package.json,
        bun.lock, tsconfig.json). The hash is embedded in this script, so a change to
@@ -10,8 +10,8 @@
        deliberately excluded: tests do not change the bundle, and a test edit must not
        trigger a rebuild. `glob` + `include` lists the tree, which is the house
        pattern (coding-patterns.md, "Content-Hash Embedding"). */ -}}
-{{- $hostsInstalled := or (lookPath "opencode") (lookPath "opencode2") -}}
-{{- if $hostsInstalled -}}
+{{- $hostInstalled := lookPath "opencode" -}}
+{{- if $hostInstalled -}}
 {{- $root := joinPath .chezmoi.homeDir ".local/share/dotfiles/web-tools" -}}
 {{- $source := "private_dot_local/share/dotfiles/web-tools" -}}
 {{- $srcDir := joinPath .chezmoi.sourceDir $source -}}

@@ -33,10 +33,6 @@
 #
 # Data holds BWS id KEY NAMES only (e.g. bwsIdExaApiKey), never secret values.
 mcpServers:
-  otter:
-    command: otter
-    args: [mcp, serve]
-    when: {machineProfile: work}
   # Local single-file Deno server; useless without its token, so it is only
   # registered when the token resolves.
   pushbullet:
@@ -72,12 +68,8 @@ mcpServers:
 # MCP servers that OpenCode plugins register themselves, bypassing the proxy,
 # mapped to the catalogue server that replaces each one. A built-in is put in
 # the plugin's disabled_mcps when its catalogue server is in the merged set.
-# OMO's lsp and ast_grep are local tools, so they stay enabled.
+# The plugin's lsp and ast_grep are local tools, so they stay enabled.
 mcpPluginBuiltins:
   oh-my-opencode-slim:
     context7: context7
     gh_grep: gh_grep
-  oh-my-openagent:
-    context7: context7
-    websearch: websearch
-    grep_app: gh_grep

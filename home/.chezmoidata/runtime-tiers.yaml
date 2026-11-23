@@ -60,16 +60,13 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_df-mcpproxy-rotate-key
       tier: runtime
       lang: bash
-    - path: home/private_dot_local/bin/executable_df-omo-profile
-      tier: runtime
-      lang: deno
     - path: home/private_dot_local/bin/executable_df-opencode-cost.tmpl
       tier: runtime
       lang: deno
     - path: home/private_dot_local/bin/executable_df-opencode-serve
       tier: runtime
       lang: bash
-    - path: home/private_dot_local/bin/executable_df-opencode2-serve
+    - path: home/private_dot_local/bin/executable_df-opencode-pair
       tier: runtime
       lang: bash
     - path: home/private_dot_local/bin/executable_df-setup.tmpl
@@ -105,9 +102,6 @@ runtimeTiers:
     - path: home/private_dot_local/bin/executable_notify
       tier: runtime
       lang: deno
-    - path: home/private_dot_local/bin/executable_opencode2
-      tier: runtime
-      lang: bash
     - path: home/private_dot_local/bin/executable_pushbullet-mcp
       tier: runtime
       lang: bash
@@ -130,9 +124,6 @@ runtimeTiers:
     - path: home/.chezmoiscripts/run_before_install-056-generate-mcpproxy-api-key.sh.tmpl
       tier: bootstrap
       lang: bash
-    - path: home/.chezmoiscripts/run_after_install-049-ephemeral-cache.sh.tmpl
-      tier: runtime
-      lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-050-install-packages.sh.tmpl
       tier: bootstrap
       lang: bash
@@ -145,31 +136,22 @@ runtimeTiers:
     - path: home/.chezmoiscripts/run_onchange_after_install-056-pitchfork-daemons.sh.tmpl
       tier: runtime
       lang: bash
-    - path: home/.chezmoiscripts/run_after_install-058-fix-system-gitconfig-refspec.sh.tmpl
-      tier: runtime
-      lang: bash
     - path: home/.chezmoiscripts/run_after_install-060-skills.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-066-nginx-sites.sh.tmpl
       tier: runtime
       lang: bash
-    - path: home/.chezmoiscripts/run_after_install-067-sync-opencode-plugins.sh.tmpl
-      tier: runtime
-      lang: bash
-    - path: home/.chezmoiscripts/run_onchange_after_install-068-rtk-opencode-plugin.sh.tmpl
-      tier: runtime
-      lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-068-reload-hex-settings.sh.tmpl
       tier: runtime
       lang: bash
-    - path: home/.chezmoiscripts/run_onchange_after_install-071-opencode2.sh.tmpl
-      tier: runtime
-      lang: bash
-    - path: home/.chezmoiscripts/run_after_install-072-opencode-tui-plugins.sh.tmpl
-      tier: runtime
-      lang: bash
     - path: home/.chezmoiscripts/run_after_install-073-sync-checkouts.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_once_after_install-072-retire-opencode1-daemon.sh.tmpl
+      tier: runtime
+      lang: bash
+    - path: home/.chezmoiscripts/run_onchange_after_install-073-opencode-db-merge.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-074-web-tools.sh.tmpl
@@ -179,9 +161,6 @@ runtimeTiers:
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_once_after_install-100-change-term.sh.tmpl
-      tier: runtime
-      lang: bash
-    - path: home/.chezmoiscripts/run_onchange_after_install-100-canva-misc.sh.tmpl
       tier: runtime
       lang: bash
     - path: home/.chezmoiscripts/run_onchange_after_install-100-install-fonts.sh.tmpl
@@ -213,16 +192,8 @@ runtimeTiers:
       tier: na
       lang: bash
       sourced: true
-    - path: home/private_dot_local/lib/tool-cache-sync.sh
-      tier: bootstrap
-      lang: bash
-      sourced: true
     - path: home/private_dot_local/lib/checkout-sync.sh
       tier: runtime
-      lang: bash
-      sourced: true
-    - path: home/private_dot_local/lib/brew.zsh.tmpl
-      tier: na
       lang: bash
       sourced: true
     - path: home/private_dot_local/lib/open.sh

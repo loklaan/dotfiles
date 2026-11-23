@@ -2,12 +2,12 @@
      (chezmoi source: dot_agents/exact_rules) are concatenated here with
      frontmatter stripped.
 
-     mcpproxy.md is swapped for opencode2-tools-rule.md: this client dials
+     mcpproxy.md is swapped for opencode-tools-rule.md: this client dials
      /mcp/all/ (see .chezmoitemplates/mcp-client-tmpl), where upstream tools
      are listed directly, so retrieve_tools/call_tool_* advice does not apply. */ -}}
 {{- range $rule := glob (joinPath .chezmoi.sourceDir "dot_agents/exact_rules/*.md") -}}
 {{-   if eq (base $rule) "mcpproxy.md" -}}
-{{-     $rule = joinPath $.chezmoi.sourceDir ".chezmoitemplates/opencode2-tools-rule.md" -}}
+{{-     $rule = joinPath $.chezmoi.sourceDir ".chezmoitemplates/opencode-tools-rule.md" -}}
 {{-   end -}}
 {{ regexReplaceAll "(?s)\\A---.*?---[ \t]*\n" (include $rule) "" | trim }}
 

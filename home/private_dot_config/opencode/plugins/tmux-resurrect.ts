@@ -7,7 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { Plugin } from "@opencode-ai/plugin";
 
 //|---------------------------------------------------------------------------|
 //| OpenCode session tracker for tmux-resurrect-code-agents                   |
@@ -16,6 +15,16 @@ import type { Plugin } from "@opencode-ai/plugin";
 //| tmux-resurrect post-save hook can record it and the post-restore hook     |
 //| can resume it with `opencode -s <id>`.                                    |
 //|                                                                           |
+//| ## OpenCode 2 plugin API                                                   |
+//|                                                                           |
+//| The V1 object entrypoint (`chat.message` + `event` + `dispose` returned   |
+//| from a factory) does not load in OpenCode 2. This exports the V2           |
+//| definition shape directly: `{ id, setup(ctx) }`, with `session.hook` and   |
+//| `event.subscribe`; the cleanup function returned by `setup` replaces       |
+//| `dispose`. V2 event payloads live under `data` and `session.created` is    |
+//| flat `{ sessionID, parentID? }` (the slim plugin's event adapter documents |
+//| that shape; `properties` is accepted as a fallback).                      |
+//|                                                                           |
 //| ## The state file is a CLAIM, not a note                                   |
 //|                                                                           |
 //| See the LIVENESS CONTRACT block in                                        |
@@ -23,34 +32,24 @@ import type { Plugin } from "@opencode-ai/plugin";
 //| normative definition and the bash/zsh readers implement it. In short: the |
 //| file carries `claim.pid` + `claim.start` so a reader can PROVE the        |
 //| claiming process is still alive, because no exit hook is reliable enough  |
-//| to retract it. Measured on opencode 1.18.23, `dispose` below does NOT     |
-//| fire on SIGINT or SIGTERM — only on an explicit POST /instance/dispose.   |
-//| It is kept as hygiene, never relied on for correctness.                    |
+//| to retract it.                                                            |
 //|                                                                           |
 //| `claim.start` MUST be whitespace-normalised the same way                  |
 //| `tcsa_normalise_ws` does it, or every reader will reject every claim.     |
 //|                                                                           |
-//| ## Only ROOT sessions are tracked                                          |
+//| ## Only ROOT sessions are tracked                                         |
 //|                                                                           |
-//| Subagent (child) sessions run in this same process and fire these same    |
-//| hooks. Recording one would point the pane's restore at a subagent's       |
-//| transcript instead of the user's conversation, so children are filtered.  |
-//| `session.created` / `session.updated` carry a full `Session` — including  |
-//| `parentID` — which is the cheap source for that verdict; `chat.message`   |
-//| does not, so a session first seen there costs one localhost lookup.       |
+//| Subagent (child) sessions run in this same server process and fire the    |
+//| same prompt hook. Recording one would point the pane's restore at a       |
+//| subagent's transcript instead of the user's conversation, so children are |
+//| filtered. `session.created` carries `parentID`; a session first seen in    |
+//| the prompt hook costs one `session.get` lookup when the host exposes it.   |
 //|                                                                           |
-//| A previous revision dropped the `event` hook believing its payloads       |
-//| "carry no session identifier". They do: `properties.info.id` and          |
-//| `properties.sessionID`. The original read looked for snake_case           |
-//| `session_id`, which is not a field any of them has. Do not re-derive that |
-//| conclusion — `home/private_dot_local/lib/tmux-resurrect-code-agents/`     |
-//| ships a live-server test that asserts these payload shapes.               |
+//| ## Latency budget                                                         |
 //|                                                                           |
-//| ## Latency budget                                                          |
-//|                                                                           |
-//| All process/tmux/dir probing happens once, at plugin init. On the         |
-//| interactive path: a cache hit is a Map lookup and an early return; the    |
-//| first message of a never-before-seen session adds one localhost request.  |
+//| All process/tmux/dir probing happens once, at setup. On the interactive    |
+//| path: a cache hit is a Map lookup and an early return; the first message   |
+//| of a never-before-seen session adds one lookup.                           |
 //|---------------------------------------------------------------------------|
 
 // Mirrors the shared bash/zsh resolver (state-dir.sh: tcsa_state_dir_path):
@@ -67,12 +66,6 @@ function resolveStateDir(env: Record<string, string | undefined>): string {
 // The ONE normal form for claim.start, mirrored by tcsa_normalise_ws in
 // state-dir.sh. `ps -o lstart=` pads inconsistently across platforms, so
 // writer and reader agree on a normal form rather than on raw bytes.
-//
-// NOT exported, deliberately. opencode's legacy loader calls EVERY export of a
-// plugin module as a plugin factory (plugin/index.ts: getLegacyPlugins). An
-// exported helper gets invoked with the plugin context, throws, and takes the
-// whole module down with it: `text.replace is not a function`. The only export
-// this file may have is TmuxResurrect; plugin.test.ts enforces that.
 function normaliseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -149,7 +142,9 @@ function ensureGuardedStateDir(dir: string): boolean {
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
-    console.error(`tmux-resurrect: cannot create state dir ${dir}: ${String(err)}`);
+    console.error(
+      `tmux-resurrect: cannot create state dir ${dir}: ${String(err)}`,
+    );
     return false;
   }
   let info: ReturnType<typeof lstatSync>;
@@ -182,72 +177,104 @@ function ensureGuardedStateDir(dir: string): boolean {
   return true;
 }
 
-type SessionLike = { id?: string; parentID?: string };
+type SessionLike = {
+  id?: string;
+  sessionID?: string;
+  parentID?: string | null;
+};
 
-export const TmuxResurrect: Plugin = async ({ client }) => {
-  const pane = process.env.TMUX_PANE;
-  if (!pane) return {};
+type PromptEvent = { sessionID: string };
 
-  const pid = process.pid;
-  if (!paneHostsProcess(pane, pid)) {
-    console.error(
-      `tmux-resurrect: not tracking ${pane}: this process (pid ${pid}) is not running in that pane`,
-    );
-    return {};
-  }
+type EventEnvelope = {
+  type: string;
+  data?: Record<string, unknown>;
+  properties?: Record<string, unknown>;
+};
 
-  // A claim we cannot prove is worse than no claim, because readers would have
-  // to fall back to guessing from mtime. Refuse to write one.
-  const start = processStartTime(pid);
-  if (start === undefined) {
-    console.error(
-      `tmux-resurrect: not tracking ${pane}: cannot read start time for pid ${pid}`,
-    );
-    return {};
-  }
-
-  const stateDir = resolveStateDir(process.env);
-  if (!ensureGuardedStateDir(stateDir)) return {};
-  const stateFile = join(stateDir, pane);
-
-  const isRoot = new Map<string, boolean>();
-  let tracked: string | undefined;
-
-  const noteSession = (info: SessionLike | undefined) => {
-    if (!info?.id) return;
-    isRoot.set(info.id, !info.parentID);
+// The subset of the OpenCode 2 plugin context this plugin uses. Kept local (no
+// runtime import) so the Deno test can load the module with no package
+// resolution, matching how OpenCode loads it.
+type PluginContext = {
+  session: {
+    hook(
+      name: "prompt",
+      cb: (event: PromptEvent) => Promise<void>,
+    ): Promise<unknown>;
+    get?(input: { sessionID: string }): Promise<unknown>;
   };
+  event: {
+    subscribe(options: { signal: AbortSignal }): AsyncIterable<EventEnvelope>;
+  };
+};
 
-  const resolveIsRoot = async (sessionID: string): Promise<boolean | undefined> => {
-    const cached = isRoot.get(sessionID);
-    if (cached !== undefined) return cached;
-    try {
-      const response = await client.session.get({ path: { id: sessionID } });
-      const info = response.data as SessionLike | undefined;
-      if (!info?.id) return undefined;
-      noteSession(info);
-      return isRoot.get(sessionID);
-    } catch {
-      return undefined;
+type PluginDefinition = {
+  id: string;
+  setup(ctx: PluginContext): Promise<void | (() => void)>;
+};
+
+const plugin: PluginDefinition = {
+  id: "dotfiles:tmux-resurrect",
+  async setup(ctx: PluginContext) {
+    const pane = process.env.TMUX_PANE;
+    if (!pane) return;
+
+    const pid = process.pid;
+    if (!paneHostsProcess(pane, pid)) {
+      console.error(
+        `tmux-resurrect: not tracking ${pane}: this process (pid ${pid}) is not running in that pane`,
+      );
+      return;
     }
-  };
 
-  const remove = () => {
-    tracked = undefined;
-    try {
-      unlinkSync(stateFile);
-    } catch {}
-  };
+    // A claim we cannot prove is worse than no claim, because readers would
+    // have to fall back to guessing from mtime. Refuse to write one.
+    const start = processStartTime(pid);
+    if (start === undefined) {
+      console.error(
+        `tmux-resurrect: not tracking ${pane}: cannot read start time for pid ${pid}`,
+      );
+      return;
+    }
 
-  return {
-    "chat.message": async (input) => {
-      const sessionID = input.sessionID;
-      if (!sessionID || sessionID === tracked) return;
+    const stateDir = resolveStateDir(process.env);
+    if (!ensureGuardedStateDir(stateDir)) return;
+    const stateFile = join(stateDir, pane);
 
-      // Fail closed: an unresolvable session is not written, because writing a
-      // subagent's id would silently redirect this pane's restore.
-      if ((await resolveIsRoot(sessionID)) !== true) return;
+    const isRoot = new Map<string, boolean>();
+    let tracked: string | undefined;
 
+    const noteSession = (info: SessionLike | undefined) => {
+      const id = info?.id ?? info?.sessionID;
+      if (id === undefined) return;
+      isRoot.set(id, info?.parentID == null);
+    };
+
+    const resolveIsRoot = async (
+      sessionID: string,
+    ): Promise<boolean | undefined> => {
+      const cached = isRoot.get(sessionID);
+      if (cached !== undefined) return cached;
+      const get = ctx.session.get;
+      if (get === undefined) return undefined;
+      try {
+        const info = (await get({ sessionID })) as SessionLike | undefined;
+        noteSession(info);
+        return isRoot.get(sessionID);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const remove = () => {
+      tracked = undefined;
+      try {
+        unlinkSync(stateFile);
+      } catch {
+        // already gone
+      }
+    };
+
+    const write = (sessionID: string) => {
       if (isSymlink(stateFile)) {
         console.error(
           `tmux-resurrect: refusing to write ${stateFile}: it is a symlink`,
@@ -261,23 +288,50 @@ export const TmuxResurrect: Plugin = async ({ client }) => {
       });
       writeFileSync(stateFile, state + "\n", { mode: 0o600 });
       tracked = sessionID;
-    },
-    event: async ({ event }) => {
-      if (event.type === "session.created" || event.type === "session.updated") {
-        noteSession(event.properties.info as SessionLike);
-        return;
+    };
+
+    await ctx.session.hook("prompt", async (event) => {
+      const sessionID = event.sessionID;
+      if (!sessionID || sessionID === tracked) return;
+
+      // Fail closed: an unresolvable session is not written, because writing a
+      // subagent's id would silently redirect this pane's restore.
+      if ((await resolveIsRoot(sessionID)) !== true) return;
+      write(sessionID);
+    });
+
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        for await (
+          const event of ctx.event.subscribe({ signal: controller.signal })
+        ) {
+          const data = event.data ?? event.properties ?? {};
+          const info = (data.info ?? data) as SessionLike;
+          if (event.type === "session.created") {
+            noteSession(info);
+            continue;
+          }
+          if (event.type === "session.deleted") {
+            const id = info.id ?? info.sessionID;
+            if (id === undefined) continue;
+            isRoot.delete(id);
+            // Only the session this pane actually tracks may retract the
+            // claim. Subagent sessions are deleted routinely; treating any
+            // deletion as ours would wipe the pane's real state.
+            if (id === tracked) remove();
+          }
+        }
+      } catch {
+        // aborted on plugin unload
       }
-      if (event.type === "session.deleted") {
-        const info = event.properties.info as SessionLike;
-        if (info?.id) isRoot.delete(info.id);
-        // Only the session this pane actually tracks may retract the claim.
-        // Subagent sessions are deleted routinely; treating any deletion as
-        // ours would wipe the pane's real state.
-        if (info?.id && info.id === tracked) remove();
-      }
-    },
-    dispose: async () => {
+    })();
+
+    return () => {
+      controller.abort();
       if (tracked) remove();
-    },
-  };
+    };
+  },
 };
+
+export default plugin;

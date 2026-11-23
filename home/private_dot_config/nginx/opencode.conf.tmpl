@@ -1,4 +1,7 @@
-{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) (dig "openCodeServer" false .) -}}
+{{- /* A machine that binds OpenCode directly ([data.opencode.serve].port) has
+       no nginx front: a site on the same port would collide with the daemon. */ -}}
+{{- $serve := dig "opencode" "serve" (dict) . -}}
+{{- if and (eq .chezmoi.os "linux") (dig "nginxProxy" false .) (dig "openCodeServer" false .) (not (dig "port" 0 $serve)) -}}
 server {
     listen {{ .ports.opencode.external }};
     listen [::]:{{ .ports.opencode.external }};

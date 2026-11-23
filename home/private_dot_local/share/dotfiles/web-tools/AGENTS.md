@@ -238,11 +238,10 @@ Set extraction models for each machine profile in `home/.chezmoidata/webtools.ya
 webtools:
   extractionModels: []                 # fallback for a profile with no entry
   extractionModelsByProfile:
-    work: ["amazon-bedrock/global.openai.gpt-6-luna"]
     personal: ["opencode-go/deepseek-v4.1-flash"]
 ```
 
-`work` and `personal` are the cheap explorer and librarian models of each profile preset (`home/.chezmoidata/profiles.json`). The rendered file carries one resolved list for the active `machineProfile`. The host reads that single list.
+Each key is a machine profile; the dotfiles define `personal` only. The rendered file carries one resolved list for the active `machineProfile`. The host reads that single list.
 
 Cost-safety rules:
 

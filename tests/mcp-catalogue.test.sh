@@ -9,14 +9,12 @@ IFS=$'\n\t'
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 H="${ROOT}/home"
 MCPPROXY="${H}/private_dot_mcpproxy/modify_private_mcp_config.json"
-OC1="${H}/private_dot_config/opencode/modify_opencode.json"
-OC2="${H}/private_dot_config/opencode2/modify_opencode.json"
+OC="${H}/private_dot_config/opencode/modify_private_opencode.json"
 CLAUDE="${H}/modify_dot_claude.json"
 DESKTOP="${H}/Library/Application Support/Claude/modify_claude_desktop_config.json"
 CODEX="${H}/dot_codex/modify_private_config.toml"
 HEADERS="${H}/private_dot_mcpproxy/private_mcp-client-headers.tmpl"
-SLIM="${H}/private_dot_config/opencode2/oh-my-opencode-slim.json.tmpl"
-OMO="${H}/dot_omo/modify_omo.jsonc"
+SLIM="${H}/private_dot_config/opencode/oh-my-opencode-slim.json.tmpl"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -47,7 +45,6 @@ render() {
   local data="${TEST_ROOT}/data.json"
   jq -n --arg home "$TEST_HOME" --argjson o "$overrides" '
     {machineProfile: "personal", chezmoi: {homeDir: $home},
-     openCodeWorkPlugin: "", npmWorkRegistry: "",
      bwsTokenPath: ($home + "/missing-token")} * $o' > "$data"
   printf '%s\n' "$existing" |
     PATH="${SHIMS}:${PATH}" chezmoi execute-template --config "$EMPTY_CONFIG" -S "$src" -D "$DEST" \
@@ -58,11 +55,10 @@ LANES='["mcpproxy"]'
 
 # --- MCPProxy server set per os x machine profile -----------------------------
 for os in darwin linux; do
-  for profile in work personal; do
+  for profile in personal; do
     o=$(jq -nc --arg os "$os" --arg p "$profile" '{chezmoi: {os: $os}, machineProfile: $p}')
     proxy=$(render "$MCPPROXY" "$o")
     expected='["chrome-devtools","context7","figma-desktop","gh_grep","notion","pdf-tools","websearch"]'
-    [ "$profile" = work ] && expected=$(jq -c '. + ["otter"] | sort' <<< "$expected")
     jq -e --argjson e "$expected" '[.mcpServers[].name] | sort == $e' <<< "$proxy" >/dev/null ||
       fail "MCPProxy server set wrong for ${os}/${profile}: $(jq -c '[.mcpServers[].name]' <<< "$proxy")"
     jq -e 'all(.mcpServers[]; .trust_mode == "auto" and .enabled == true)' <<< "$proxy" >/dev/null ||
@@ -75,12 +71,9 @@ for os in darwin linux; do
     [ "$again" = "$proxy" ] || fail "MCPProxy render not stable for ${os}/${profile}"
 
     # Every client: identical lane names.
-    jq -e --argjson l "$LANES" '.mcp | keys == $l and
-      .["mcpproxy"] == {type: "remote", enabled: true, url: "http://127.0.0.1:18321/mcp/"}' \
-      <<< "$(render "$OC1" "$o")" >/dev/null || fail "OpenCode 1 lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" '.mcp.servers | keys == $l and
       .["mcpproxy"] == {type: "remote", url: "http://127.0.0.1:18321/mcp/all/", disabled: false}' \
-      <<< "$(render "$OC2" "$o")" >/dev/null || fail "OpenCode 2 lanes wrong for ${os}/${profile}"
+      <<< "$(render "$OC" "$o")" >/dev/null || fail "OpenCode lanes wrong for ${os}/${profile}"
     jq -e --argjson l "$LANES" --arg home "$TEST_HOME" '.mcpServers | keys == $l and
       .["mcpproxy"] == {command: "npx", args: ["-y", "mcp-remote@latest", "http://127.0.0.1:18321/mcp/", "--header-file", ($home + "/.mcpproxy/mcp-client-headers")]}' \
       <<< "$(render "$CLAUDE" "$o")" >/dev/null || fail "Claude Code lanes wrong for ${os}/${profile}"
@@ -93,11 +86,9 @@ for os in darwin linux; do
     # Plugin built-ins the proxy serves are disabled on every profile.
     jq -e '.disabled_mcps == ["context7", "gh_grep"]' <<< "$(render "$SLIM" "$o")" >/dev/null ||
       fail "slim disabled_mcps wrong for ${os}/${profile}"
-    jq -e '.["[opencode]"].disabled_mcps == ["context7", "grep_app", "websearch"]' \
-      <<< "$(render "$OMO" "$o")" >/dev/null || fail "OMO disabled_mcps wrong for ${os}/${profile}"
   done
 done
-printf 'PASS: catalogue conditions and identical lanes for every client (darwin/linux x work/personal)\n'
+printf 'PASS: catalogue conditions and identical lanes for every client (darwin/linux)\n'
 
 # --- MCPProxy auth: the seeded key reaches every client; missing key fails closed
 MCPPROXY_CONFIG="${TEST_HOME}/.mcpproxy/mcp_config.json"
@@ -105,10 +96,8 @@ mkdir -p "$(dirname "$MCPPROXY_CONFIG")"
 printf '{"api_key":"test-key"}\n' > "$MCPPROXY_CONFIG"
 o='{"machineProfile":"personal"}'
 
-jq -e '.mcp.mcpproxy.headers == {Authorization: "Bearer test-key"}' \
-  <<< "$(render "$OC1" "$o")" >/dev/null || fail "OpenCode 1 did not receive the MCPProxy api_key"
 jq -e '.mcp.servers.mcpproxy.headers == {Authorization: "Bearer test-key"}' \
-  <<< "$(render "$OC2" "$o")" >/dev/null || fail "OpenCode 2 did not receive the MCPProxy api_key"
+  <<< "$(render "$OC" "$o")" >/dev/null || fail "OpenCode did not receive the MCPProxy api_key"
 for client in "$CLAUDE" "$DESKTOP"; do
   jq -e --arg home "$TEST_HOME" '.mcpServers.mcpproxy.args[-2:] == ["--header-file", ($home + "/.mcpproxy/mcp-client-headers")]' \
     <<< "$(render "$client" "$o")" >/dev/null || fail "Claude client did not use the private header file"
@@ -121,10 +110,8 @@ jq -e '.require_mcp_auth == true' <<< "$(render "$MCPPROXY" "$o")" >/dev/null ||
   fail "MCPProxy auth was not required"
 
 rm -f "$MCPPROXY_CONFIG"
-jq -e '.mcp.mcpproxy | has("headers") | not' <<< "$(render "$OC1" "$o")" >/dev/null ||
-  fail "OpenCode 1 sent headers without an api_key"
-jq -e '.mcp.servers.mcpproxy | has("headers") | not' <<< "$(render "$OC2" "$o")" >/dev/null ||
-  fail "OpenCode 2 sent headers without an api_key"
+jq -e '.mcp.servers.mcpproxy | has("headers") | not' <<< "$(render "$OC" "$o")" >/dev/null ||
+  fail "OpenCode sent headers without an api_key"
 if grep -q 'http_headers' <<< "$(render "$CODEX" "$o" "")"; then
   fail "Codex sent headers without an api_key"
 fi
@@ -147,7 +134,7 @@ jq -e --arg home "$TEST_HOME" '
 o=$(jq -nc --arg t "$TEST_HOME/token" '{bwsTokenPath: $t, bwsIdPushbulletAccessToken: ""}')
 render "$MCPPROXY" "$o" | jq -e '[.mcpServers[].name] | index("pushbullet") | not' >/dev/null ||
   fail "pushbullet registered without a resolvable token"
-for t in "$OC1" "$CLAUDE" "$OMO" "$SLIM"; do
+for t in "$OC" "$CLAUDE" "$SLIM"; do
   if render "$t" "$(jq -nc --arg t "$TEST_HOME/token" '{bwsTokenPath: $t, bwsIdContext7ApiKey: "id-c7"}')" | grep -q 'secret-for-'; then
     fail "client projection resolved a secret: ${t}"
   fi
@@ -176,7 +163,7 @@ for bad in '{"mcpServersLocal": {"context7": {"url": "https://x.invalid"}}}' \
   fi
 done
 # A local addition joins no lane by itself, so clients are unchanged.
-[ "$(render "$OC2" "$o" | jq -c '.mcp.servers | keys')" = "$LANES" ] || fail "local addition changed client lanes"
+[ "$(render "$OC" "$o" | jq -c '.mcp.servers | keys')" = "$LANES" ] || fail "local addition changed client lanes"
 printf 'PASS: local additions merge; catalogue-name conflicts and malformed entries fail\n'
 
 # --- Upstream OAuth: callback origin reaches opted-in servers only ------------

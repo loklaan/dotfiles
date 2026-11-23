@@ -40,14 +40,3 @@ providers:
       licenseUrl: https://github.com/cloudflare/security-audit-skill/blob/c1c8a8c1471069fb0e188eeaff69b8e8db6564a8/LICENSE
     notices:
       - LICENSE
-
-  omo-setup:
-    label: OhMyOpenCode setup information
-    upstreamUrl: https://www.npmjs.com/package/oh-my-openagent
-    permission:
-      _tag: UserAttestedSeparatePermission
-      attestation: >-
-        The owner attests permission to describe this setup and link to its
-        official installation. No harness content, skill copy or archive is
-        distributed under this basis.
-      independentlyLegallyVerified: false

@@ -75,7 +75,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 
 ```go
 .email                            // User's email
-.emailWork                        // Work email (gates all work-specific config)
+.emailWork                        // Work email (git identity / labelling only)
 .signingKey                       // GPG/SSH signing key
 .brewprefix                       // Homebrew prefix path
 .bwsTokenPath                     // Absolute path to BWS access token file
@@ -84,11 +84,7 @@ Defined in `.chezmoi.toml.tmpl` under `[data]`:
 .skillSources                     // Machine-local filesystem/Git/archive skill sources
 .skillProviders                   // Machine-local command/pack provider contracts
 .skills                           // Desired provider-owned skill IDs
-.npmWorkRegistry                  // Scoped npm registry for work packages
-.openCodeWorkPlugin               // OpenCode plugin for work environments
-.openCodeWorkPluginRepo           // Local plugin monorepo; overrides openCodeWorkPluginLocalPath and openCodeWorkPluginV2; empty means off
 .checkouts                        // Machine-local git checkouts kept on their branch tip and built; see 073-sync-checkouts
-.jetbrainsLicenseServer           // JetBrains license server URL
 .mcpServersLocal                  // Machine-local MCP servers layered on the shared catalogue (any protocol)
 .mcpStdioServers                  // Legacy machine-local stdio MCP servers (still read)
 ```
@@ -122,15 +118,14 @@ One dataset feeds every MCP client:
 
 | Client | Target | Entry shape |
 |---|---|---|
-| OpenCode 1 | `~/.config/opencode/opencode.json` `mcp` | `{type: remote, enabled, url, headers?}` |
-| OpenCode 2 | `~/.config/opencode2/opencode.json` `mcp.servers` | `{type: remote, url, disabled, headers?}` |
+| OpenCode | `~/.config/opencode/opencode.json` `mcp.servers` | `{type: remote, url, disabled, headers?}` |
 | Claude Code | `~/.claude.json` top-level `mcpServers` only | `npx -y mcp-remote@latest <url> --header-file <file>` (stdio) |
 | Claude Desktop | `claude_desktop_config.json` `mcpServers` | `npx -y mcp-remote@latest <url> --header-file <file>` (stdio-only) |
 | Codex | `~/.codex/config.toml` marked section (private file) | `[mcp_servers.<lane>] url = ...` + `http_headers.Authorization` |
 
-`mcp-client-tmpl` also generates the `disabled_mcps` lists for
-oh-my-opencode-slim (V2) and oh-my-openagent (`~/.omo/omo.jsonc`). A plugin
-built-in is disabled when its catalogue replacement is in the merged set.
+`mcp-client-tmpl` also generates the `disabled_mcps` list for
+oh-my-opencode-slim. A plugin built-in is disabled when its catalogue
+replacement is in the merged set.
 `tests/mcp-catalogue.test.sh` covers the contract.
 
 ### Adding a new data-variable key (fleet apply hazard)
@@ -158,7 +153,7 @@ Never ship a bare `{{ .newKey }}` for a newly-added key as a follow-up "seed it 
 - `home/private_dot_local/lib/bash-logging.sh` — shared logging library for all bash scripts
 - `home/private_dot_local/bin/executable_df-skills` — single-file Deno coordinator for skill planning, observation, reconciliation, packaging, and catalogue export (`df-skills export --out <dir>`); Claude pack ZIPs and the catalogue share one verified skill-file reader (`exportedFiles`)
 - `.agents/catalogue/` — repo-level publication facts that chezmoi never applies: `setups/*.md` (curated setup entries, checked against the rendered OpenCode plugin list), `providers.yaml` (label, upstream and permission basis per provider), and `notices/<provider>/` (licence texts that travel with that provider's items)
-- `home/private_dot_local/share/dotfiles/web-tools/` — the web-fetch capability for OpenCode 1 and 2: a Bun/Effect v4 source tree (`src/host/entry.ts` is the single host entry; `src/core`, `src/key`, `src/summariser` are the engine). Deployed to `~/.local/share/dotfiles/web-tools/` with `test/`, `dist/` and `node_modules/` ignored. `run_onchange_after_install-074-web-tools.sh.tmpl` builds `dist/entry.js`; `symlink_webtools.js.tmpl` under `private_dot_config/opencode{,2}/plugins/` loads it. Runtime config renders to `~/.config/dotfiles/web-tools.json` from `home/.chezmoidata/webtools.yaml`. See the tree's `AGENTS.md`
+- `home/private_dot_local/share/dotfiles/web-tools/` — the web-fetch capability for OpenCode: a Bun/Effect v4 source tree (`src/host/entry.ts` is the single host entry; `src/core`, `src/key`, `src/summariser` are the engine). Deployed to `~/.local/share/dotfiles/web-tools/` with `test/`, `dist/` and `node_modules/` ignored. `run_onchange_after_install-074-web-tools.sh.tmpl` builds `dist/entry.js`; `symlink_webtools.js.tmpl` under `private_dot_config/opencode/plugins/` loads it. Runtime config renders to `~/.config/dotfiles/web-tools.json` from `home/.chezmoidata/webtools.yaml`. See the tree's `AGENTS.md`
 - `home/private_dot_local/share/dotfiles/skills/` — repository/Git/archive skill store acquired or materialized by chezmoi; `df-skills` owns only receipt-recorded derived archive trees and individual links in the mixed `~/.agents/skills/` registry
 - `home/.chezmoitemplates/zshrc-body` — zsh entry point; `home/modify_private_dot_zshrc` renders it as a marked section so installer-appended lines survive and apply never prompts (same for `zprofile-body`)
 - `home/private_dot_config/private_zsh/init/*.zsh.tmpl` — zsh init modules
@@ -219,20 +214,15 @@ Scripts sharing a subject share a topic; the topic is always lowercase.
 |---|---|
 | `skills` | skills (060): reconcile, then package/observe eligible skills |
 | `packages` | install-packages (050) + install-my-packages |
-| `cache` | ephemeral-cache (049) |
 | `tmux` | tmux-continuum-boot (054) |
 | `daemons` | retire-legacy-daemons (055), pitchfork-daemons (056) |
 | `mcpproxy` | run_before MCPProxy API-key seed (056) |
-| `gitconfig` | fix-system-gitconfig-refspec (058) |
-| `plugins` | sync-opencode-plugins + opencode-tui-plugins (067/072) |
 | `nginx` | nginx-sites (066) |
-| `rtk` | rtk-opencode-plugin (068) |
 | `hex` | reload-hex-settings (068) |
-| `opencode2` | opencode2 (071) |
+| `opencode` | opencode-db-merge (073) |
 | `fonts` | install-fonts (100, Linux) |
 | `completions` | install-zsh-completions (100) |
 | `shell` | change-term (100) |
-| `canva` | canva-misc (100) |
 | `install` | install.sh |
 | `github` | github-token (no session logging; stdout is a secret) |
 | `mise` | df-task-mise-upgrade (bumps the source mise.lock) |
@@ -327,30 +317,3 @@ Scripts may run in non-TTY environments (Docker, Devcontainers, Coder). Commands
 | `chsh` | Cannot be forced — will prompt for password |
 
 When adding commands, check if they can prompt and add the appropriate flag.
-
-## Maintaining the OpenCode Bedrock Whitelist
-
-The work profile in `home/.chezmoidata/profiles.json` sets a `whitelist` on the `amazon-bedrock` provider, which `modify_opencode.json` projects, to control which models appear in the model picker. Without it, every model variant from models.dev is shown (bare, `us.`, `eu.`, `global.`, `au.` — often 4+ entries per model).
-
-> For routine model ID bumps (all in `home/.chezmoidata/profiles.json`), see `update-deps` § 8.
-
-### Principles
-
-- **Anthropic models:** use `global.` prefixed inference profile IDs only. The `global.` prefix routes to all regions. Bare IDs (no prefix) are invalid on Bedrock and will error.
-- **Third-party models:** use bare IDs (e.g. `moonshotai.kimi-k2.5`). These don't have inference profile prefixes.
-- **One per family:** only whitelist the latest generation of each model family. Don't include older versions alongside newer ones.
-- **Context limit overrides:** only needed when models.dev reports incorrect limits (e.g. 1M instead of Bedrock's 200K for Opus), or to cap a model below a pricing tier (deliberately unused: a cap below the working context makes sessions compaction-loop). Add entries to the `models` dict to override.
-
-### Evaluating new models
-
-When updating the whitelist for new model releases:
-
-1. Read `~/.cache/opencode/models.json` to see all available bedrock models
-2. Group by vendor prefix (e.g. `deepseek.`, `qwen.`, `minimax.`)
-3. For each vendor family, pick the latest model — compare version numbers, release dates, and parameter counts
-4. Prefer models with tool calling and reasoning support (required for agentic workflows)
-5. Check the model card page on AWS docs to confirm exact model IDs and available inference profile prefixes
-
-### oh-my-openagent model references
-
-`dot_omo/modify_omo.jsonc` (renders the `[opencode]` block of `~/.omo/omo.jsonc`) projects the agent and category models of the active profile tier from `home/.chezmoidata/profiles.json`. These must reference models that are either in the whitelist or from a non-bedrock provider. Keep these in sync when updating the whitelist.

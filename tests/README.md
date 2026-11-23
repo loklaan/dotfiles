@@ -8,12 +8,10 @@ Run everything:
 ```bash
 bash tests/tmux-resurrect-code-agents/liveness.test.sh
 deno test -A --no-check tests/tmux-resurrect-code-agents/
-bash tests/omo-profile-config.test.sh
 bash tests/mcp-catalogue.test.sh
 bash tests/checkout-sync.test.sh
 bash tests/skill-reconcile.test.sh
 zsh tests/terminal-restore.test.zsh
-bash tests/opencode-tui-plugins/install.test.sh
 (for test in tests/security-integrations/*.test.sh; do
   bash "$test" || exit
 done)
@@ -48,25 +46,10 @@ implementations. They do not migrate real state. Run just these cases with:
 deno test -A --filter migrate home/private_dot_local/bin/executable_cw
 ```
 
-## OMO profile config
-
-`omo-profile-config.test.sh` validates the source profile table and renders three
-modify templates with temporary data, sidecar, and destination paths. It covers
-tier names, exact agent/category routing, Bedrock model registration, legacy
-tier migration, and invalid-value fallback without running `chezmoi apply` or
-writing managed targets under `$HOME`. It also rejects any pin on an OpenCode
-service-tier alias (`-fast`, `-flex`, `-ultrafast`), which Coder boxes do not
-list, any pinned `amazon-bedrock` model missing from the work whitelist, and
-any Bedrock model override for a model that is not whitelisted. The override
-map carries limits only for models that define one (Opus), and Haiku 5.5 must
-carry none, so it uses its catalogue context window. The OpenCode 2
-template must carry each Bedrock model limit when the work plugin lever is set,
-and must write or admit no Bedrock provider when the lever is empty or cleared.
-
 ## MCP catalogue
 
 `mcp-catalogue.test.sh` renders the MCPProxy config and every client projection
-(OpenCode 1/2, Claude Code, Claude Desktop, Codex, and both plugins'
+(OpenCode, Claude Code, Claude Desktop, Codex, and the plugin's
 `disabled_mcps`) for darwin/linux × work/personal. Every client must get the
 same lane set. It checks the catalogue conditions (otter work-only, pushbullet
 only when its token resolves, and untrusted). A shim `bws` and a fake
@@ -89,22 +72,6 @@ script runs under a temporary `HOME` with the real `jq` binary linked ahead of
 any mise shim. `SKILL_RECONCILE_SCRIPT=<file>` runs it against another
 revision.
 
-## OpenCode TUI plugins
-
-`opencode-tui-plugins/install.test.sh` renders
-`run_after_install-072-opencode-tui-plugins.sh.tmpl` with a temporary
-`homeDir` and runs it against a copy of the plugin package. The template must
-render to whitespace once `node_modules` matches the source `package.json` and
-`bun.lock`, so chezmoi skips it. It must render again when the install stamp is
-stale or `node_modules` is gone. Shims that fail like an uninstalled mise tool
-check the fallback to the Bun built into `opencode`, and the warning when
-neither runs. With the package installed, it also runs
-`opencode-tui-plugins/changes.test.ts` next to the shared `/changes` core, so
-`effect` resolves from the installed package as it does under OpenCode 1. Those
-tests cover the picker, the tmux popup, handing the terminal to micro and
-taking it back, and error reporting. It skips without `opencode` on `PATH`, and
-needs network on a cold Bun cache.
-
 ## Terminal restore
 
 `terminal-restore.test.zsh` guards the precmd hook in
@@ -126,21 +93,18 @@ Three layers guarding the per-pane code-agent session state described by the
 
 | File | Layer | Covers |
 |---|---|---|
-| `plugin.test.ts` | unit | The OpenCode plugin in isolation: root-session filtering, claim contents, discriminated `session.deleted`, pane-ownership refusal |
-| `opencode-events.test.ts` | integration | A real `opencode serve`, asserting the event payload shapes the plugin depends on |
+| `plugin.test.ts` | unit | The OpenCode 2 plugin definition in isolation: root-session filtering, claim contents, `session.deleted`, pane-ownership refusal, cleanup |
+| `opencode-events.test.ts` | integration | A real `opencode serve`, asserting the V2 event payload shapes (`sessionID`, `parentID`) the plugin depends on |
 | `liveness.test.sh` | unit | `tcsa_claim_is_live`, `tcsa_agent_pid`, and `save.sh`'s liveness gate |
 
 ### Why `--no-check`
 
-The plugin does `import type { Plugin } from "@opencode-ai/plugin"`. That
-package is installed inside OpenCode's own cache, at a path that differs per
-platform, so Deno cannot resolve it and reports implicit-`any` errors for the
-hook parameters. The import is type-only and erases at runtime, so the module
-loads and behaves correctly. OpenCode does not type-check plugins at runtime
-either — the value here is behavioural, not structural.
+The plugin is a plain `{ id, setup }` object with no runtime import, so it loads
+under Deno exactly as OpenCode loads it. `--no-check` still keeps the harness
+free of implicit-`any` noise around the hand-written context type.
 
-To genuinely type-check the plugin, borrow OpenCode's own `node_modules` rather
-than trying to teach Deno where the package lives:
+To genuinely type-check the plugin against OpenCode's own declarations, borrow
+OpenCode's `node_modules` and add the `@opencode/plugin` types:
 
 ```bash
 T=$(mktemp -d)
@@ -154,15 +118,17 @@ JSON
 ```
 
 That resolves the real `Plugin`, `Event` and `Session` types and passes clean
-under `strict`.
+under `strict` (add `@opencode/plugin` to the borrowed tree).
 
 ### Why the integration test exists
 
-Every defect in the original implementation was a **wrong belief about runtime
-behaviour**, not a type error: that session events carry no session id, that
+The original V1 implementation failed on **wrong beliefs about runtime
+behaviour**, not type errors: that session events carry no session id, that
 `session.updated` is never emitted, that `dispose` runs on exit. All three
 type-check. All three would survive unit tests written against a hand-authored
-fake payload, because the fake would encode the same misunderstanding.
+fake payload, because the fake would encode the same misunderstanding. The V2
+port keeps that layer: it asserts `session.created` carries `sessionID` and
+`parentID`, and `session.deleted` carries `sessionID`.
 
 `opencode-events.test.ts` is the only layer that can catch that class, so treat
 a failure there as "OpenCode's contract moved", not as flakiness. It invokes no

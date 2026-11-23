@@ -48,7 +48,7 @@ render_client() {
     "{{ includeTemplate \"mcp-client-tmpl\" (dict \"data\" . \"client\" \"$client\") }}" > "$output"
 }
 
-render_v2() {
+render_opencode() {
   local home="$1" output="$2"
   local data
   data="$(jq -cn --arg home "$home" '{
@@ -58,7 +58,7 @@ render_v2() {
     bwsTokenPath: ($home + "/missing-bws-token")
   }')"
   chezmoi execute-template -S "$REPO/home" --override-data "$data" \
-    --file "$REPO/home/private_dot_config/opencode2/modify_opencode.json" > "$output"
+    --file "$REPO/home/private_dot_config/opencode/modify_private_opencode.json" > "$output"
 }
 
 render_proxy_config() {
@@ -99,14 +99,12 @@ EXISTING_HOME="$ROOT/existing-home"
 mkdir -p "$EXISTING_HOME/.mcpproxy"
 jq -n --arg key "$SCRATCH_KEY" '{api_key: $key, unrelated: "preserved"}' > "$EXISTING_HOME/.mcpproxy/mcp_config.json"
 chmod 600 "$EXISTING_HOME/.mcpproxy/mcp_config.json"
-render_client "$EXISTING_HOME" opencode "$ROOT/opencode.json"
 render_client "$EXISTING_HOME" claude-code "$ROOT/claude.json"
 chezmoi execute-template -S "$REPO/home" \
   --override-data "{\"chezmoi\":{\"homeDir\":\"$EXISTING_HOME\"}}" \
   --file "$REPO/home/private_dot_mcpproxy/private_mcp-client-headers.tmpl" > "$ROOT/mcp-client-headers"
-render_v2 "$EXISTING_HOME" "$ROOT/opencode2.json"
-check "OpenCode V1 sends the bearer header" "$(jq -r '.mcpproxy.headers.Authorization' "$ROOT/opencode.json")" "Bearer $SCRATCH_KEY"
-check "OpenCode V2 preserves the bearer header" "$(jq -r '.mcp.servers.mcpproxy.headers.Authorization' "$ROOT/opencode2.json")" "Bearer $SCRATCH_KEY"
+render_opencode "$EXISTING_HOME" "$ROOT/opencode.json"
+check "OpenCode preserves the bearer header" "$(jq -r '.mcp.servers.mcpproxy.headers.Authorization' "$ROOT/opencode.json")" "Bearer $SCRATCH_KEY"
 check "Claude reads the private header file" "$(jq -r '.mcpproxy.args | join(" ")' "$ROOT/claude.json")" "-y mcp-remote@latest http://127.0.0.1:18321/mcp/ --header-file $EXISTING_HOME/.mcpproxy/mcp-client-headers"
 if jq -r '.mcpproxy.args[]' "$ROOT/claude.json" | grep -qF "$SCRATCH_KEY"; then
   no "Claude process argv excludes the credential"

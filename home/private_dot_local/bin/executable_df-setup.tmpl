@@ -459,18 +459,6 @@ const checkOpencodeServe: Effect.Effect<boolean, never, DoctorServices> = Effect
 });
 {{- end }}
 
-{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCode2Server" false .) }}
-
-const checkOpencode2Serve: Effect.Effect<boolean, never, DoctorServices> = Effect.gen(function* () {
-  const pitchfork = (yield* hasCommand("pitchfork"))
-    ? "pitchfork"
-    : (yield* run("mise", ["which", "pitchfork"])).stdout.trim();
-  if (pitchfork === "") return false;
-  const result = yield* run(pitchfork, ["status", "df-opencode2-serve"]);
-  return result.ok && /Status:\s*running/.test(result.stdout);
-});
-{{- end }}
-
 {{- if eq .chezmoi.os "linux" }}
 
 const checkMcpproxy: Effect.Effect<
@@ -496,48 +484,8 @@ const checkMcpproxyKey: Effect.Effect<
   return { ok: result.ok, message };
 });
 
-{{- if eq .machineProfile "work" }}
-
-const checkGhAuth: Effect.Effect<
-  boolean,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = run("gh", ["auth", "status"]).pipe(
-  Effect.map((result) => result.ok && `${result.stdout}${result.stderr}`.includes("Logged in")),
-);
-
-const workConfigVars = [
-  ["signingKey", '{{ "{{" }} .signingKey {{ "}}" }}'],
-  ["npmWorkRegistry", '{{ "{{" }} .npmWorkRegistry {{ "}}" }}'],
-  ["openCodeWorkPlugin", '{{ "{{" }} .openCodeWorkPlugin {{ "}}" }}'],
-  ["jetbrainsLicenseServer", '{{ "{{" }} .jetbrainsLicenseServer {{ "}}" }}'],
-] as const;
-
-const checkWorkConfig: Effect.Effect<
-  ReadonlyArray<string>,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> = Effect.gen(function* () {
-  const missing: string[] = [];
-  for (const [name, template] of workConfigVars) {
-    const result = yield* run("chezmoi", ["execute-template", template]);
-    if (!result.ok || result.stdout.trim() === "") missing.push(name);
-  }
-  return missing;
-});
-{{- end }}
-
-{{- if eq .machineProfile "work" }}
-
-const formatMissingList = (missing: ReadonlyArray<string>): string => missing.join(", ");
-{{- end }}
-
 const printStatus = (
   bwsState: BwsState,
-{{- if eq .machineProfile "work" }}
-  hasGhAuth: boolean,
-  workMissing: ReadonlyArray<string>,
-{{- end }}
 ): Effect.Effect<void, never, DoctorServices> =>
   Effect.gen(function* () {
     printPlain();
@@ -562,28 +510,6 @@ const printStatus = (
         print("white", ["dim"], "    Secrets not available (npm auth, GitHub tokens)");
         break;
     }
-{{- if eq .machineProfile "work" }}
-
-    printPlain();
-
-    if (hasGhAuth) {
-      print("green", [], "  ✓ GitHub CLI auth");
-      print("white", ["dim"], "    Short-lived tokens available via git credential agent");
-    } else {
-      print("yellow", [], "  ✗ GitHub CLI auth");
-      print("white", ["dim"], "    Tools needing GitHub access will fail (brew, github-token)");
-    }
-
-    printPlain();
-
-    if (workMissing.length === 0) {
-      print("green", [], "  ✓ Work config");
-      print("white", ["dim"], "    Signing key, npm registry, tooling configured");
-    } else {
-      print("yellow", [], "  ✗ Work config");
-      print("white", ["dim"], `    Missing: ${formatMissingList(workMissing)}`);
-    }
-{{- end }}
 {{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCodeServer" false .) }}
 
     printPlain();
@@ -594,7 +520,7 @@ const printStatus = (
     );
 
     if (opencodeServeActive) {
-      print("green", [], "  ✓ opencode serve");
+      print("green", [], "  ✓ opencode serve (v2)");
       print("white", ["dim"], "    pitchfork daemon running");
       if (opencodeServeReachable) {
         print("green", ["dim"], "    localhost:{{ .ports.opencode.external }} reachable");
@@ -604,29 +530,6 @@ const printStatus = (
     } else {
       print("yellow", [], "  ✗ opencode serve");
       print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode-serve");
-    }
-{{- end }}
-{{- if and (or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin")) (dig "openCode2Server" false .) }}
-{{-   $bind := includeTemplate "opencode2-serve-bind" (dict "data" .) | fromJson }}
-
-    printPlain();
-
-    const opencode2ServeActive = yield* checkOpencode2Serve;
-    const opencode2ServeReachable = yield* run("curl", ["-sf", "-o", "/dev/null", "{{ $bind.hostname }}:{{ $bind.port }}"]).pipe(
-      Effect.map((result) => result.ok),
-    );
-
-    if (opencode2ServeActive) {
-      print("green", [], "  ✓ opencode2 serve");
-      print("white", ["dim"], "    pitchfork daemon running");
-      if (opencode2ServeReachable) {
-        print("green", ["dim"], "    {{ $bind.hostname }}:{{ $bind.port }} reachable");
-      } else {
-        print("yellow", ["dim"], "    {{ $bind.hostname }}:{{ $bind.port }} not reachable");
-      }
-    } else {
-      print("yellow", [], "  ✗ opencode2 serve");
-      print("white", ["dim"], "    Opted in but not running. Run: pitchfork status df-opencode2-serve");
     }
 {{- end }}
 {{- if and (eq .chezmoi.os "linux") (dig "mcpproxyGate" true .) }}
@@ -750,17 +653,9 @@ const hostname: Effect.Effect<
 const printInstructions = (
   bwsState: BwsState,
   tokenPath: string,
-{{- if eq .machineProfile "work" }}
-  hasGhAuth: boolean,
-  workMissing: ReadonlyArray<string>,
-{{- end }}
 ): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
-{{- if eq .machineProfile "work" }}
-    if (bwsState === "ok" && hasGhAuth && workMissing.length === 0 && skillsConverged && effectReferenceConverged) {
-{{- else }}
     if (bwsState === "ok" && skillsConverged && effectReferenceConverged) {
-{{- end }}
       print("green", ["bold"], "  All configuration complete!");
       printPlain();
       return;
@@ -818,37 +713,7 @@ const printInstructions = (
         printPlain();
         step += 1;
         break;
-{{- if eq .machineProfile "work" }}
-      case "ok":
-        break;
-{{- end }}
     }
-    {{- if eq .machineProfile "work" }}
-
-    if (!hasGhAuth) {
-      print("white", ["bold"], `  ${step}. Authenticate GitHub CLI`);
-      printPlain();
-      print("white", ["dim"], "     Run:");
-      printPlain("     gh auth login");
-      printPlain();
-      step += 1;
-    }
-
-    if (workMissing.length > 0) {
-      print("white", ["bold"], `  ${step}. Configure work-specific values`);
-      printPlain();
-      print("white", ["dim"], "     Run:");
-      printPlain("     chezmoi edit-config");
-      printPlain();
-      print("white", ["dim"], "     Add under [data]:");
-      for (const variable of workMissing) {
-        printPlain(`       ${variable} = "..."`);
-      }
-      printPlain();
-      step += 1;
-    }
-{{- end }}
-
     print("white", ["bold"], `  ${step}. Re-apply dotfiles`);
     printPlain();
     print("white", ["dim"], "     Re-apply to pick up changes:");
@@ -867,19 +732,9 @@ const main = (
   }
 
   yield* detectColorSupport;
-{{- if eq .machineProfile "work" }}
-
-  const hasGhAuth = yield* checkGhAuth;
-  const workMissing = yield* checkWorkConfig;
-  const tokenPath = yield* bwsTokenPath;
-
-  yield* printStatus(bws.state, hasGhAuth, workMissing);
-  yield* printInstructions(bws.state, tokenPath, hasGhAuth, workMissing);
-{{- else }}
   const tokenPath = yield* bwsTokenPath;
   yield* printStatus(bws.state);
   yield* printInstructions(bws.state, tokenPath);
-{{- end }}
   return 0;
   });
 

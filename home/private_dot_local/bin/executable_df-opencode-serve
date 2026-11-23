@@ -12,10 +12,17 @@ IFS=$'\n\t'
 #/   by chezmoi), so changing them never changes the command Pitchfork stored;
 #/   Pitchfork watches the env file and restarts this wrapper instead.
 #/
+#/   Runs the mise-managed OpenCode binary, so there is no config-directory or
+#/   database override: OpenCode uses ~/.config/opencode and the default
+#/   ~/.local/share/opencode/opencode.db. `--service` makes this process the
+#/   shared background server that clients discover and `opencode pair`
+#/   mints links for.
+#/
 #/   Before starting, it stops any orphaned `opencode serve` still holding the
-#/   port. The supervisor can lose track of its child (VM resume, kill) while
-#/   the child keeps serving; without this the restart fails with EADDRINUSE
-#/   and, with retry=true, crash-loops forever.
+#/   port (including the retired `opencode2 serve`). The supervisor can lose
+#/   track of its child (VM resume, kill) while the child keeps serving;
+#/   without this the restart fails with EADDRINUSE and, with retry=true,
+#/   crash-loops forever.
 #/
 #/ Options:
 #/   --help:      Display this help message
@@ -61,13 +68,15 @@ main() {
     echo "df-opencode-serve: missing ${ENV_FILE} (is openCodeServer enabled?)" >&2
     exit 1
   fi
-  # shellcheck source=/dev/null
-  source "$ENV_FILE"
+  # Read values, never `source` the file: it is rendered from user data, and a
+  # URL containing `&`, `;`, or `$(...)` must not become shell syntax.
+  OPENCODE_SERVE_HOSTNAME=$(sed -n 's/^OPENCODE_SERVE_HOSTNAME=//p' "$ENV_FILE" | head -1)
+  OPENCODE_SERVE_PORT=$(sed -n 's/^OPENCODE_SERVE_PORT=//p' "$ENV_FILE" | head -1)
   : "${OPENCODE_SERVE_HOSTNAME:?not set in ${ENV_FILE}}"
   : "${OPENCODE_SERVE_PORT:?not set in ${ENV_FILE}}"
 
   reap_orphans "$OPENCODE_SERVE_PORT"
-  exec opencode serve --hostname "$OPENCODE_SERVE_HOSTNAME" --port "$OPENCODE_SERVE_PORT"
+  exec opencode serve --service --hostname "$OPENCODE_SERVE_HOSTNAME" --port "$OPENCODE_SERVE_PORT"
 }
 
 main "$@"

@@ -35,7 +35,7 @@ The script prints the output path to stdout. Read it to verify the result.
 ### opencode
 
 opencode stores sessions in an internal SQLite DB, but the **paved path** is the
-official `opencode export` / `opencode import` commands — do NOT read the DB
+official `opencode session export` / `opencode session import` commands — do NOT read the DB
 directly (its schema is migration-versioned and drifts between releases). See
 [opencode.md](references/opencode.md) for the full landscape (CLI, SDK, server API)
 and known quirks.
@@ -47,9 +47,9 @@ opencode install (e.g. a devbox). The JSON round-trips exactly; no information
 is lost to an intermediate format.
 
 ```bash
-opencode export <session-id> --pure > session.json   # source machine
+opencode session export <session-id> > session.json   # source machine
 # copy session.json across, then on the target machine:
-opencode import session.json
+opencode session import session.json
 ```
 
 Prefer this whenever the goal is to *resume the session elsewhere*. It beats
@@ -67,8 +67,8 @@ The script prints the output path to stdout. Read it to verify the result.
 
 **Options:**
 - `--text-only` — user/assistant text only; tool calls collapse to a one-line marker (mirrors cc-extract). Default is FULL (tool inputs + outputs, patches, file attachments).
-- `--sanitize` — pass through to `opencode export --sanitize` to redact sensitive transcript/file data
-- `--file PATH` — render an already-exported JSON file instead of calling `opencode export` (offline / pre-captured exports)
+- `--sanitize` — pass through to `opencode session export --sanitize` to redact sensitive transcript/file data
+- `--file PATH` — render an already-exported JSON file instead of calling `opencode session export` (offline / pre-captured exports)
 - `--output PATH` — write to a custom path instead of a temp file
 
 **Which path?**

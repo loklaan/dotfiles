@@ -16,8 +16,7 @@
 [tool_alias]
 # `opencode` keeps its tool name (installs dir, `mise exec -- opencode`, the
 # completion installer and the pitchfork watch path all key on it) but resolves
-# through the github backend. The registry's aqua:anomalyco/opencode lists
-# only the 2.x releases, so it can no longer resolve OpenCode 1.
+# through the github backend.
 opencode = "github:anomalyco/opencode"
 
 [tools]
@@ -28,9 +27,8 @@ opencode = "github:anomalyco/opencode"
 "github:psastras/sarif-rs" = { version = "sarif-fmt-v0.8.0", exe = "sarif-fmt", matching = "sarif-fmt", tag_regex = "^sarif-fmt", os = ["macos/arm64", "linux/x64"] }
 # RTK — Rust CLI that rewrites shell commands to compact output, saving 60-90%
 # of token spend on common dev commands (git status, ls, cargo test, etc.).
-# Installed on every machine. Its OpenCode plugin (~/.config/opencode/plugins/
-# rtk.ts) is not in this repo: run_onchange_after_install-068 generates it
-# with `rtk init -g --opencode` whenever mise.lock changes.
+# Installed on every machine. Its OpenCode plugin is the chezmoi-managed
+# ~/.config/opencode/plugins/rtk.ts (OpenCode 2 plugin API).
 "github:rtk-ai/rtk" = { version = "v0.50.0", exe = "rtk" }
 # tmux's official prebuilt binary: no source build; the asdf plugin cannot build 3.7 on macOS.
 "github:tmux/tmux-builds" = "3.7c"
@@ -65,9 +63,8 @@ jq = "latest"
 yq = "latest"
 micro = "latest"
 node = "26.10.0"
-# OpenCode 1. "1" rather than "latest": `latest` on the repo would jump to 2.x,
-# which is a separate binary installed as opencode2 (see below).
-opencode = "1"
+# OpenCode 2. Pinned to the major line; Renovate/mise.lock own the exact build.
+opencode = "2"
 python = "3.14"
 ripgrep = "latest"
 rust = "1.98.1"
@@ -79,7 +76,7 @@ uv = "0.12.21"
 DISABLE_AUTOUPDATER = "1"
 DENO_NO_UPDATE_CHECK = "1"
 # mise's own (tera) templating: this file is not a chezmoi template.
-SKULK_OPENCODE = "{{ env.HOME }}/.local/bin/opencode2"
+SKULK_OPENCODE = "{{ env.HOME }}/.local/share/mise/shims/opencode"
 SKULK_ALLOW_EXEC = "0"
 
 [settings]

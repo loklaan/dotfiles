@@ -39,7 +39,7 @@ Keep seeding **before targets** to avoid requiring two applies. Applies never ro
   Proxy/header/Codex files have `private_` attributes. OpenCode relies on its
   private `.config` ancestor, **not** an explicit 0600 file attribute.
 - `home/.chezmoitemplates/mcp-client-tmpl` owns every client projection from the
-  same lane, including auth. `home/private_dot_config/opencode2/modify_opencode.json`
+  same lane, including auth. `home/private_dot_config/opencode/modify_private_opencode.json`
   consumes it directly, so V1/V2 headers cannot drift.
 - `home/dot_codex/modify_private_config.toml` is a private marked-section
   modifier: it keeps Codex-owned settings outside the managed block while the

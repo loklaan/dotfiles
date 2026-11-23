@@ -10,19 +10,18 @@ Drizzle detail that changes between releases. Use the official commands.
 
 | Command | Purpose |
 |---------|---------|
-| `opencode export [sessionID]` | Full session as JSON to **stdout** (info + all messages + all parts). No id → interactive picker. |
-| `opencode export <id> --sanitize` | Same, redacting sensitive transcript/file data. |
-| `opencode export <id> --pure` | Run without external plugins → clean JSON (no plugin-written terminal-title prefix). |
-| `opencode import <file\|url>` | Reverse op: import a session JSON file OR an opencode share URL. Round-trips `export`. |
-| `opencode session list` / `session delete <id>` | Enumerate / remove sessions. |
-| `opencode db <query> --format json\|tsv` / `db path` | Raw SQLite **escape hatch only** — not a stable API. |
+| `opencode session export [sessionID]` | Full session as JSON to **stdout** (info + all messages + all parts). No id → interactive picker. |
+| `opencode session export <id> --sanitize` | Same, redacting sensitive transcript/file data. |
+| `opencode session import <file\|url>` | Reverse op: import a session JSON file OR an opencode share URL. Round-trips `export`. |
+| `opencode session list` / `opencode session delete <id>` | Enumerate / remove sessions. |
+| `opencode debug paths db` | Print the database path. There is no general SQL escape hatch in V2. |
 
 - Docs: <https://opencode.ai/docs/cli/#export>, <https://opencode.ai/docs/cli/#import>
 
 ### SDK (fallback) / Server API
 
-- `@opencode-ai/sdk`: `client.session.get({path:{id}})`, `client.session.messages({path:{id}})` — needs a running server. <https://opencode.ai/docs/sdk/#sessions>
-- HTTP: `opencode serve [--port 4096]` then `GET /session/:id`, `GET /session/:id/message`. OpenAPI at `/doc`. <https://opencode.ai/docs/server/#sessions>
+- `@opencode/client`: the V2 API client (`session.get`, `session.messages`, streaming iterables). <https://opencode.ai/v2/docs/build/client>
+- HTTP: `opencode serve [--port 4096]`, then `GET /api/session/:id` with Basic auth (`opencode:<password>`). OpenAPI at `/openapi.json`. <https://opencode.ai/v2/docs/api>
 
 ## Two extraction paths
 
@@ -33,9 +32,9 @@ the JSON round-trips exactly; nothing is lost to an intermediate format.
 
 ```bash
 # source machine
-opencode export <session-id> --pure > session.json
+opencode session export <session-id> > session.json
 # copy across (scp/rsync), then on the target machine:
-opencode import session.json        # prints the imported session id
+opencode session import session.json        # prints the imported session id
 ```
 
 `import` mints a session resumable with `opencode --session <id>` (or via the TUI
@@ -44,7 +43,7 @@ project files, or the 2GB+ global DB — just the one JSON.
 
 ### Path B — human-readable markdown (`oc-extract.py`)
 
-Reading, auditing, or seeding a *different* agent. Wraps `opencode export` and
+Reading, auditing, or seeding a *different* agent. Wraps `opencode session export` and
 renders markdown.
 
 ```bash
@@ -69,14 +68,13 @@ Part types: `text` · `tool` · `step-start` · `step-finish` · `file` · `patc
 
 ## Known quirks (IMPORTANT)
 
-- **64KB pipe truncation.** `opencode export` truncates at a 64KB pipe buffer when
+- **64KB pipe truncation.** `opencode session export` truncates at a 64KB pipe buffer when
   stdout is a *pipe* (e.g. Python `subprocess.run(capture_output=True)`). Redirect to
   a real **file** instead (`> file.json`, or `subprocess` with `stdout=<file handle>`),
   then read the file. `oc-extract.py` does this. A shell `>` redirect is unaffected.
 - **OSC title prefix.** In a TTY/plugin context, stdout is prefixed by a terminal-title
-  escape `\033]0;<cwd>: ready\007` before the leading `{`. Fixes: run with `--pure`
-  (no plugins → clean JSON) and/or strip bytes up to the first `{` before parsing.
-  `oc-extract.py` does both.
+  escape `\033]0;<cwd>: ready\007` before the leading `{`. Strip bytes up to the
+  first `{` before parsing. `oc-extract.py` does this.
 - **`Exporting session: <id>`** is written to **stderr** (safe; does not pollute stdout JSON).
 
 ## oc-extract.py
@@ -84,10 +82,10 @@ Part types: `text` · `tool` · `step-start` · `step-finish` · `file` · `patc
 **Path:** `scripts/oc-extract.py`
 
 **Algorithm:**
-1. `opencode export <id> --pure [--sanitize]` → temp **file** (avoids 64KB pipe bug)
+1. `opencode session export <id> [--sanitize]` → temp **file** (avoids 64KB pipe bug)
 2. Strip any leading OSC prefix to the first `{`, then `json.loads`
-3. Walk `messages[]` in order; render each `parts[]` entry by type
-4. FULL mode renders tool input+output, patches, file attachments, compaction markers; `--text-only` keeps user/assistant text and collapses tools to a one-line marker
+3. Walk `messages[]` in order. V2 exports `content[]` blocks on assistant messages and `text`/`files` on user messages (V1's `parts[]` shape is still accepted); render each block by type.
+4. FULL mode renders tool input+output, reasoning, patches, file attachments; `--text-only` keeps user/assistant text and collapses tools to a one-line marker
 5. Emit YAML frontmatter (source, session, title, agent, model, directory, timestamps, turn counts, mode, summary) + markdown body
 6. Write to `$TMPDIR/chat-extract-<id>-<ts>.md` mode `0600` (or `--output PATH`); print the path
 
@@ -95,5 +93,5 @@ Part types: `text` · `tool` · `step-start` · `step-finish` · `file` · `patc
 
 - `opencode session list`
 - The TUI session picker
-- `opencode export` with no id → interactive picker
+- `opencode session export` with no id → interactive picker
 - An `info.id` field inside any export JSON (e.g. `ses_0fe328e5cffe...`)

@@ -20,7 +20,7 @@ env = { SLIM_PRESET = "cheap" }
 run = '''
 set -eu
 f=.opencode/oh-my-opencode-slim.json
-user=$HOME/.config/opencode2/oh-my-opencode-slim.json
+user=$HOME/.config/opencode/oh-my-opencode-slim.json
 if [ -e "$f" ] && [ "${usage_force:-false}" != "true" ]; then exit 0; fi
 if ! jq -e --arg p "$SLIM_PRESET" '.presets[$p]' "$user" >/dev/null 2>&1; then
   echo "opencode:slim: $user has no \"$SLIM_PRESET\" preset yet; not writing $f" >&2

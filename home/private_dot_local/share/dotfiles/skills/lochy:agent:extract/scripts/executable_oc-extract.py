@@ -54,8 +54,7 @@ from pathlib import Path
 def _strip_leading_noise(raw: bytes) -> bytes:
     """opencode plugins may prepend a terminal-title OSC escape
     (\\033]0;<cwd>: ready\\007) before the JSON. Drop everything before the
-    first top-level '{'. (`--pure` also avoids it, but stripping is robust
-    even when plugins are active and stdout is piped.)"""
+    first top-level '{' so a plugin banner cannot break parsing."""
     brace = raw.find(b"{")
     if brace == -1:
         return raw
@@ -63,13 +62,13 @@ def _strip_leading_noise(raw: bytes) -> bytes:
 
 
 def export_session_to_file(session_id: str, sanitize: bool, dest: str) -> None:
-    """Run `opencode export <id>`, writing the JSON to `dest`.
+    """Run `opencode session export <id>`, writing the JSON to `dest`.
 
     IMPORTANT: stdout is redirected to a real file handle, NOT captured via a
     pipe. `opencode export` truncates at a 64KB pipe buffer when stdout is a
     pipe (subprocess capture_output), but writes the full payload to a file.
     """
-    cmd = ["opencode", "export", session_id, "--pure"]
+    cmd = ["opencode", "session", "export", session_id]
     if sanitize:
         cmd.append("--sanitize")
     try:
@@ -84,12 +83,12 @@ def export_session_to_file(session_id: str, sanitize: bool, dest: str) -> None:
         sys.exit(1)
     if proc.returncode != 0:
         err = proc.stderr.decode("utf-8", "replace").strip()
-        print(f"Error: `opencode export {session_id}` failed: {err}", file=sys.stderr)
+        print(f"Error: `opencode session export {session_id}` failed: {err}", file=sys.stderr)
         sys.exit(1)
 
 
 def export_session(session_id: str, sanitize: bool) -> dict:
-    """Export a session via the paved `opencode export` path and parse it."""
+    """Export a session via the paved `opencode session export` path."""
     fd, tmp = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     try:
@@ -100,7 +99,7 @@ def export_session(session_id: str, sanitize: bool) -> dict:
             os.unlink(tmp)
         except OSError:
             pass
-    return _parse_export(raw, source=f"opencode export {session_id}")
+    return _parse_export(raw, source=f"opencode session export {session_id}")
 
 
 def load_export_file(path: str) -> dict:
@@ -134,7 +133,8 @@ def _fence(text: str, lang: str = "") -> str:
 
 
 def _render_tool(d: dict, text_only: bool) -> str:
-    tool = d.get("tool", "?")
+    # V2 tool parts carry the name at `name` (V1 used `tool`).
+    tool = d.get("name") or d.get("tool", "?")
     state = d.get("state") or {}
     status = state.get("status", "?")
     if text_only:
@@ -147,7 +147,13 @@ def _render_tool(d: dict, text_only: bool) -> str:
             out.append(f"_input ({k}):_\n" + _fence(v))
         else:
             out.append("_input:_\n" + _fence(json.dumps(inp, indent=2)))
+    # V2 reports output as content blocks; V1 used a plain `output` field.
     output = state.get("output")
+    if output is None:
+        blocks = state.get("content") or []
+        if isinstance(blocks, list):
+            texts = [b.get("text", "") for b in blocks if isinstance(b, dict)]
+            output = "\n".join(t for t in texts if t)
     if output:
         out.append("_output:_\n" + _fence(output if isinstance(output, str) else json.dumps(output, indent=2)))
     err = state.get("error")
@@ -162,6 +168,13 @@ def _render_part(d: dict, text_only: bool) -> str | None:
         return (d.get("text") or "").strip() or None
     if t == "tool":
         return _render_tool(d, text_only)
+    if t == "reasoning":
+        if text_only:
+            return None
+        text = (d.get("text") or "").strip()
+        if not text:
+            return None
+        return "<details><summary>reasoning</summary>\n\n" + text + "\n\n</details>"
     if t == "file":
         if text_only:
             return None
@@ -212,8 +225,10 @@ def format_conversation(export: dict, text_only: bool) -> tuple[str, dict]:
     first_ts = last_ts = ""
 
     for m in messages:
-        minfo = m.get("info", {})
-        role = minfo.get("role", "?")
+        # V1 exported {info, parts}; V2 exports the message itself plus
+        # `content` blocks (assistant) or `text`/`files` (user).
+        minfo = m.get("info") or m
+        role = minfo.get("role") or m.get("type") or "?"
         created = _ts(_msg_created(minfo))
         if created:
             first_ts = first_ts or created
@@ -232,8 +247,17 @@ def format_conversation(export: dict, text_only: bool) -> tuple[str, dict]:
             header = f"## {role}"
             meta_line = created
 
+        parts = m.get("parts")
+        if parts is None:
+            parts = m.get("content") if isinstance(m.get("content"), list) else []
+        if role == "user" and not parts:
+            parts = [{"type": "text", "text": m.get("text", "")}]
+            for f in m.get("files") or []:
+                if isinstance(f, dict):
+                    parts.append({"type": "file", **f})
+
         chunks: list[str] = []
-        for p in m.get("parts", []):
+        for p in parts:
             rendered = _render_part(p, text_only)
             if rendered:
                 chunks.append(rendered)
