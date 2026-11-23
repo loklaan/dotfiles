@@ -36,7 +36,7 @@ opencode = "github:anomalyco/opencode"
 "github:tmux/tmux-builds" = "3.7c"
 # Linux only: macOS installs mcpproxy from its Homebrew cask. The lock still
 # carries every platform; `os` only gates install and activation.
-"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.70.0", exe = "mcpproxy", os = ["linux"] }
+"github:smart-mcp-proxy/mcpproxy-go" = { version = "0.73.0", exe = "mcpproxy", os = ["linux"] }
 # usage — jdx's CLI shell-completion runtime. Required by pitchfork's
 # `completion` subcommand; kept next to pitchfork since they're paired.
 usage = "6.12.0"

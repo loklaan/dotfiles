@@ -330,24 +330,24 @@ url = "https://github.com/rtk-ai/rtk/releases/download/v0.50.0/rtk-x86_64-apple-
 url_api = "https://api.github.com/repos/rtk-ai/rtk/releases/assets/585679941"
 
 [[tools."github:smart-mcp-proxy/mcpproxy-go"]]
-version = "0.70.0"
+version = "0.73.0"
 backend = "github:smart-mcp-proxy/mcpproxy-go"
-specifiers = ["0.70.0"]
+specifiers = ["0.73.0"]
 
 [tools."github:smart-mcp-proxy/mcpproxy-go"."platforms.linux-x64"]
-checksum = "sha256:97bdf9385105553cc609a9a49b21513ac38c0d815152f3d58e684544924a2699"
-url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.70.0/mcpproxy-0.70.0-linux-amd64.tar.gz"
-url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/609028946"
+checksum = "sha256:b2fcb5aa0879c363e2a2469f7d44506e3e4bd9ceca5be429553f2c82528395f7"
+url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.73.0/mcpproxy-0.73.0-linux-amd64.tar.gz"
+url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/721383121"
 
 [tools."github:smart-mcp-proxy/mcpproxy-go"."platforms.macos-arm64"]
-checksum = "sha256:077d2ec0c783aa7bf0f724fec6e257018320d07abfa051315bf2f12a17e1eaf7"
-url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.70.0/mcpproxy-0.70.0-darwin-arm64.tar.gz"
-url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/609028940"
+checksum = "sha256:5afc89a3b520c44cb06d245f4b8854eee66ef3251b50910ff9bb4fafa5a1ada4"
+url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.73.0/mcpproxy-0.73.0-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/721383120"
 
 [tools."github:smart-mcp-proxy/mcpproxy-go"."platforms.macos-x64"]
-checksum = "sha256:8c2e3016f3f21e1482e74b92e12179ab6044eb0d36ba7661816b175ed33c5366"
-url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.70.0/mcpproxy-0.70.0-darwin-amd64.tar.gz"
-url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/609028952"
+checksum = "sha256:7aa4c5fa15e331fd7de75f8549906cad0608d67efed1a1c0cf43e6e9d0cc9600"
+url = "https://github.com/smart-mcp-proxy/mcpproxy-go/releases/download/v0.73.0/mcpproxy-0.73.0-darwin-amd64.tar.gz"
+url_api = "https://api.github.com/repos/smart-mcp-proxy/mcpproxy-go/releases/assets/721383126"
 
 [[tools."github:tmux/tmux-builds"]]
 version = "3.7c"
