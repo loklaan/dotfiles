@@ -30,7 +30,9 @@ mode=""
 work=""
 
 cleanup() {
-  [ -n "$work" ] && rm -rf "$work"
+  # Never return non-zero: the EXIT trap's status becomes the script's status
+  # under `set -e`, so a false test here fails an otherwise successful merge.
+  [ -z "$work" ] || rm -rf "$work"
 }
 trap cleanup EXIT
 
